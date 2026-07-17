@@ -1,0 +1,39 @@
+# ── Blender ──────────────────────────────────────────────
+*.blend1
+*.blend2
+*.blend@
+# Blender autosave / temp
+blender_*.crash.txt
+
+# ── Renders (outputs are regenerable — never commit) ─────
+/renders/**
+!/renders/.gitkeep
+# per-project render dirs are also outputs
+projects/**/renders/**
+!projects/**/renders/.gitkeep
+
+# ── Agent/headless-generated .blend files (regenerable) ──
+**/_generated/
+
+# ── Caches (simulation, fluid, bake, etc.) ───────────────
+**/cache/
+**/*_cache/
+**/blendcache_*/
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# ── Editor / OS ──────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Big binaries that live outside VCS by choice ─────────
+# (uncomment if you'd rather keep HDRIs/textures local-only
+#  instead of in LFS)
+# /library/hdri/**
+# /library/textures/**

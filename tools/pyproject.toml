@@ -1,0 +1,24 @@
+[project]
+name = "bobtools"
+version = "0.1.0"
+description = "Integrations & automation for the BobBlender repo — MCP server, ComfyUI bridge, batch workflows"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2"]
+
+# Install only what a given workflow needs:
+#   pip install -e '.[mcp]'      # MCP server
+#   pip install -e '.[comfyui]'  # ComfyUI client
+#   pip install -e '.[all]'
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+comfyui = ["httpx>=0.27", "websockets>=12"]
+all = ["mcp>=1.2", "httpx>=0.27", "websockets>=12"]
+
+[project.scripts]
+bob-new-project = "bobtools.scaffold:main"
+bob-mcp = "bobtools.mcp_server:main"
+bob-setup = "bobtools.setup:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

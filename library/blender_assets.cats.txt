@@ -1,0 +1,17 @@
+# This is an Asset Catalog Definition file for Blender.
+#
+# Empty lines and lines starting with `#` are ignored.
+# The first non-ignored line should be the version indicator.
+# Other lines are of the format "UUID:catalog/path/for/tree/view:simple catalog name"
+
+VERSION 1
+
+a1b2c3d4-0001-4000-8000-000000000001:Geometry Nodes:Geometry Nodes
+a1b2c3d4-0001-4000-8000-000000000002:Geometry Nodes/Scatter:Geometry Nodes-Scatter
+a1b2c3d4-0001-4000-8000-000000000003:Geometry Nodes/Noise:Geometry Nodes-Noise
+a1b2c3d4-0001-4000-8000-000000000004:Geometry Nodes/Curves:Geometry Nodes-Curves
+a1b2c3d4-0001-4000-8000-000000000005:Geometry Nodes/Math:Geometry Nodes-Math
+a1b2c3d4-0002-4000-8000-000000000001:Materials:Materials
+a1b2c3d4-0002-4000-8000-000000000002:Materials/Procedural:Materials-Procedural
+a1b2c3d4-0002-4000-8000-000000000003:Materials/Surfaces:Materials-Surfaces
+a1b2c3d4-0003-4000-8000-000000000001:Macros:Macros

@@ -1,0 +1,7 @@
+# Shared config, read by BOTH the tools venv and Blender's bundled Python.
+# Env vars override these: BOB_BRIDGE_HOST, BOB_BRIDGE_PORT, BOB_BLENDER, BOB_REPO.
+
+[bridge]
+# The live MCP bridge socket inside a running Blender (localhost only).
+host = "127.0.0.1"
+port = 9876

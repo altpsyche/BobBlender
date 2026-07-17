@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "bob_blender_mcp"
+version = "0.1.0"
+name = "Bob Blender MCP"
+tagline = "Live MCP bridge — let agents author into this Blender session"
+maintainer = "Siva <sivasubramanyam@mayhem-studios.com>"
+type = "add-on"
+
+blender_version_min = "5.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Pipeline", "Development"]
+
+# Infra glue for THIS repo's MCP pipeline (imports bbmcp from ../..).
+# Dev-install by symlinking this folder into Blender's extensions dir
+# (`bob-setup`). Not a general publishable addon.

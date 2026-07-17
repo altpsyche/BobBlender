@@ -1,0 +1,48 @@
+"""Live executor — apply ops to the CURRENTLY OPEN Blender via the socket bridge.
+
+Mirrors executor.run_build's shape but targets a running session instead of
+spawning Blender. This is the "swappable executor" from decision 0003.
+Requires blender/bridge/live_server.py to be running inside Blender.
+"""
+
+import json
+import socket
+
+from . import config
+from .contracts import BuildResult, OpResult
+
+
+def run_build_live(
+    ops: list[dict],
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    timeout: float = 60.0,
+) -> BuildResult:
+    host = host or config.bridge_host()
+    port = port or config.bridge_port()
+    payload = (json.dumps({"ops": ops}) + "\n").encode()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.sendall(payload)
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+    except (ConnectionRefusedError, OSError) as exc:
+        return BuildResult(
+            ok=False,
+            output_file="(live)",
+            error=f"no live bridge on {host}:{port} ({exc}). Start "
+            "blender/bridge/live_server.py inside Blender.",
+        )
+
+    raw = json.loads(buf.decode() or "{}")
+    return BuildResult(
+        ok=raw.get("ok", False),
+        output_file="(live)",
+        results=[OpResult(**r) for r in raw.get("results", [])],
+        error=raw.get("error"),
+    )

@@ -1,0 +1,33 @@
+# ── Git-LFS: large binary assets ─────────────────────────
+# Requires: git lfs install   (once, per machine)
+#
+# .blend files are binary and grow fast — always LFS.
+*.blend        filter=lfs diff=lfs merge=lfs -text
+
+# Image textures / HDRIs
+*.exr          filter=lfs diff=lfs merge=lfs -text
+*.hdr          filter=lfs diff=lfs merge=lfs -text
+*.png          filter=lfs diff=lfs merge=lfs -text
+*.jpg          filter=lfs diff=lfs merge=lfs -text
+*.jpeg         filter=lfs diff=lfs merge=lfs -text
+*.tif          filter=lfs diff=lfs merge=lfs -text
+*.tiff         filter=lfs diff=lfs merge=lfs -text
+*.tga          filter=lfs diff=lfs merge=lfs -text
+*.psd          filter=lfs diff=lfs merge=lfs -text
+
+# Volumes / point clouds / caches worth keeping
+*.vdb          filter=lfs diff=lfs merge=lfs -text
+*.abc          filter=lfs diff=lfs merge=lfs -text
+*.usd          filter=lfs diff=lfs merge=lfs -text
+*.usdc         filter=lfs diff=lfs merge=lfs -text
+*.usdz         filter=lfs diff=lfs merge=lfs -text
+
+# Video output (mp4 kept only if intentionally versioned)
+*.mp4          filter=lfs diff=lfs merge=lfs -text
+*.mov          filter=lfs diff=lfs merge=lfs -text
+
+# ── Keep text/code diffable ──────────────────────────────
+*.py           text
+*.md           text
+*.toml         text
+*.txt          text
