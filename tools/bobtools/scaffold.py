@@ -29,6 +29,15 @@ def create_project(name: str, *, force: bool = False) -> str:
         shutil.rmtree(dest)
 
     shutil.copytree(template, dest)
+
+    # Fill the README placeholders so a new project does not ship the raw
+    # template text.
+    readme = dest / "README.md"
+    if readme.is_file():
+        text = readme.read_text()
+        text = text.replace("<project-name>", name).replace("<project>", slug)
+        readme.write_text(text)
+
     return str(dest)
 
 
