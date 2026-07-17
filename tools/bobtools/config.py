@@ -1,11 +1,12 @@
-"""Locate the repo, Blender, and shared settings — from anywhere, on any OS.
+"""Locate the repo, Blender, and shared settings, from anywhere and on any OS.
 
-Repo root resolution: $BOB_REPO → walk up from CWD for projects/+library/ →
-install-relative fallback (tools/bobtools/config.py → parents[2]).
+Repo root resolution order: $BOB_REPO, then walk up from the CWD looking for
+projects/ and library/, then an install-relative fallback
+(tools/bobtools/config.py, parents[2]).
 
-Shared config lives in <repo>/bob.toml so both the external venv and Blender's
-bundled Python read the same host/port (a file is the DRY cross-interpreter
-surface, same as the JSON build boundary).
+Shared config lives in <repo>/bob.toml so both the venv and Blender's bundled
+Python read the same host and port. A file is the config surface both
+interpreters can share, the same way JSON is the build boundary.
 """
 
 import glob
@@ -15,7 +16,7 @@ import shutil
 from pathlib import Path
 
 try:
-    import tomllib  # Python 3.11+ (and Blender 3.13's bundled Python)
+    import tomllib  # Python 3.11+, and Blender 3.13's bundled Python
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
@@ -61,7 +62,7 @@ def blender_runner(name: str) -> Path:
     return repo_root() / "blender" / "runners" / name
 
 
-# ── Shared settings (bob.toml) ────────────────────────────────────────────
+# Shared settings (bob.toml)
 def settings() -> dict:
     path = repo_root() / "bob.toml"
     if tomllib and path.is_file():
@@ -85,7 +86,7 @@ def bridge_port() -> int:
     return int(settings().get("bridge", {}).get("port", DEFAULT_BRIDGE_PORT))
 
 
-# ── Blender executable (cross-OS) ─────────────────────────────────────────
+# Blender executable, resolved per platform
 def _blender_candidates() -> list[Path]:
     system = platform.system()
     if system == "Linux":
@@ -127,7 +128,7 @@ def _blender_candidates() -> list[Path]:
 
 
 def blender_binary() -> str:
-    """Resolve Blender: $BOB_BLENDER → known install locations → PATH."""
+    """Resolve Blender: $BOB_BLENDER, then known install locations, then PATH."""
     env = os.environ.get("BOB_BLENDER")
     if env:
         return str(Path(env).expanduser())

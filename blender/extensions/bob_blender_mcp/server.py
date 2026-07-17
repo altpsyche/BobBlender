@@ -1,8 +1,8 @@
-"""Live bridge server — managed lifecycle (start/stop/reload).
+"""Live bridge server with a managed lifecycle (start, stop, reload).
 
 Runs the socket that lets MCP author into this Blender session. Ops execute on
-the main thread via a timer (the only safe way to mutate bpy from a socket) and
-only whitelisted `bbmcp` ops run (no arbitrary code).
+the main thread via a timer, which is the only safe way to mutate bpy from a
+socket, and only whitelisted bbmcp ops run (no arbitrary code).
 """
 
 import json
@@ -18,11 +18,11 @@ _state = {"sock": None, "thread": None, "running": False, "port": None}
 _jobs: "queue.Queue" = queue.Queue()
 
 
-# ── Path / config ─────────────────────────────────────────────────────────
+# Path and config
 def _repo_blender_dir() -> str:
-    """<repo>/blender — resolves the symlink so dev-installs find bbmcp."""
-    here = os.path.dirname(os.path.realpath(__file__))  # …/blender/extensions/bob_blender_mcp
-    return os.path.dirname(os.path.dirname(here))       # …/blender
+    """Return <repo>/blender, resolving the symlink so dev-installs find bbmcp."""
+    here = os.path.dirname(os.path.realpath(__file__))  # blender/extensions/bob_blender_mcp
+    return os.path.dirname(os.path.dirname(here))       # blender
 
 
 def _ensure_path() -> None:
@@ -45,7 +45,7 @@ def _configured_port() -> int:
         return 9876
 
 
-# ── Main-thread executor ──────────────────────────────────────────────────
+# Main-thread executor
 def _process_jobs():
     from bbmcp.dispatch import apply_op
 
@@ -67,7 +67,7 @@ def _process_jobs():
     return 0.1  # reschedule while registered
 
 
-# ── Socket plumbing ───────────────────────────────────────────────────────
+# Socket plumbing
 def _handle(conn: socket.socket):
     try:
         data = b""
@@ -101,7 +101,7 @@ def _serve():
         threading.Thread(target=_handle, args=(conn,), daemon=True).start()
 
 
-# ── Public lifecycle ──────────────────────────────────────────────────────
+# Public lifecycle
 def start(port: int | None = None) -> str:
     if _state["running"]:
         return f"already running on 127.0.0.1:{_state['port']}"

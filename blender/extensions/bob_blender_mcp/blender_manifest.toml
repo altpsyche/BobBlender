@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "bob_blender_mcp"
 version = "0.1.0"
 name = "Bob Blender MCP"
-tagline = "Live MCP bridge — let agents author into this Blender session"
+tagline = "Live MCP bridge for agents to author into this Blender session"
 maintainer = "Siva <sivasubramanyam@mayhem-studios.com>"
 type = "add-on"
 

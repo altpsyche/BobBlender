@@ -1,4 +1,4 @@
-"""Headless runner — executed INSIDE Blender by the executor.
+"""Headless runner, executed inside Blender by the executor.
 
     blender --background --factory-startup --python headless_build.py -- <req.json> <result.json>
 

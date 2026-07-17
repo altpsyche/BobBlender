@@ -1,8 +1,8 @@
-"""Live executor — apply ops to the CURRENTLY OPEN Blender via the socket bridge.
+"""Live executor: apply ops to the open Blender session via the socket bridge.
 
 Mirrors executor.run_build's shape but targets a running session instead of
-spawning Blender. This is the "swappable executor" from decision 0003.
-Requires blender/bridge/live_server.py to be running inside Blender.
+spawning Blender. This is the swappable executor described in docs/ARCHITECTURE.md.
+Requires the Bob Blender MCP extension to be enabled and its bridge running.
 """
 
 import json
@@ -35,8 +35,8 @@ def run_build_live(
         return BuildResult(
             ok=False,
             output_file="(live)",
-            error=f"no live bridge on {host}:{port} ({exc}). Start "
-            "blender/bridge/live_server.py inside Blender.",
+            error=f"no live bridge on {host}:{port} ({exc}). Enable the "
+            "Bob Blender MCP extension in Blender and start its bridge.",
         )
 
     raw = json.loads(buf.decode() or "{}")

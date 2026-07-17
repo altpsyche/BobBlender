@@ -14,7 +14,7 @@ from pathlib import Path
 from . import config
 from .contracts import BuildRequest, BuildResult
 
-# Logs go to stderr (never stdout — that's the MCP stdio protocol channel).
+# Logs go to stderr. stdout is the MCP stdio protocol channel.
 log = logging.getLogger("bob.executor")
 
 
@@ -54,7 +54,7 @@ def run_build(request: BuildRequest, *, timeout: float = 300.0) -> BuildResult:
         if result_path.exists():
             return BuildResult.model_validate_json(result_path.read_text())
 
-    # Runner never wrote a result → surface Blender's stderr tail.
+    # Runner never wrote a result, so surface Blender's stderr tail.
     tail = "\n".join((proc.stderr or proc.stdout or "").splitlines()[-15:])
     log.error("headless build produced no result (exit %s)", proc.returncode)
     return BuildResult(

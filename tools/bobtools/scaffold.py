@@ -1,7 +1,7 @@
 """Scaffold a new project from projects/_template/.
 
-Pure stdlib — no dependencies. Usable as a CLI (`bob-new-project <name>`) or
-imported (the MCP server reuses `create_project`).
+Pure stdlib, no dependencies. Usable as a CLI (bob-new-project <name>) or
+imported; the MCP server reuses create_project.
 """
 
 import argparse

@@ -1,10 +1,10 @@
-"""`bob-setup` — dev-install the bob_blender_mcp extension into Blender, cross-OS.
+"""bob-setup: dev-install the bob_blender_mcp extension into Blender, cross-OS.
 
-Symlinks (or copies, where symlinks aren't available) the repo's
+Symlinks (or copies, where symlinks are unavailable) the repo's
 blender/extensions/bob_blender_mcp into Blender's user extensions dir, so
 enabling it in Preferences picks up live repo edits. Prints a readiness list.
 
-Run from a fresh clone:  uv run --project tools bob-setup
+Run from a fresh clone: uv run --project tools bob-setup
 """
 
 import argparse
@@ -37,8 +37,8 @@ def _latest_extensions_dir() -> Path | None:
     root = _blender_config_root()
     if not root or not root.is_dir():
         return None
-    # Highest version profile (extensions/ is created lazily by Blender, so we
-    # don't require it to pre-exist — just a real version dir).
+    # Highest version profile. Blender creates extensions/ lazily, so we do not
+    # require it to exist yet, only a real version dir.
     versions = sorted(
         (
             p
@@ -94,21 +94,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         print(f"blender: {config.blender_binary()}")
     except FileNotFoundError as exc:
-        print(f"blender: NOT FOUND — {exc}", file=sys.stderr)
+        print(f"blender: NOT FOUND: {exc}", file=sys.stderr)
     print(f"bridge:  {config.bridge_host()}:{config.bridge_port()}")
 
     if not args.skip_extension:
         try:
             print(f"addon:   {dev_install_extension()}")
         except (FileNotFoundError, OSError) as exc:
-            print(f"addon:   FAILED — {exc}", file=sys.stderr)
+            print(f"addon:   FAILED: {exc}", file=sys.stderr)
             return 1
 
     print(
         "\nNext:\n"
-        "  1. Blender → Preferences → Add-ons → enable 'Bob Blender MCP' (autostart on).\n"
-        "  2. Open a Claude Code session in this repo; approve the 'bob' MCP server.\n"
-        "  3. Ask the agent to build — it lands in your live viewport."
+        "  1. Blender > Preferences > Add-ons: enable 'Bob Blender MCP' "
+        "(autostart on).\n"
+        "  2. Open a Claude Code session in this repo and approve the "
+        "'bobblendermcp' MCP server.\n"
+        "  3. Ask the agent to build. It lands in your live viewport."
     )
     return 0
 

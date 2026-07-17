@@ -1,7 +1,7 @@
 [project]
 name = "bobtools"
 version = "0.1.0"
-description = "Integrations & automation for the BobBlender repo — MCP server, ComfyUI bridge, batch workflows"
+description = "Integrations and automation for the BobBlender repo: MCP server, ComfyUI bridge, batch workflows"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2"]
 

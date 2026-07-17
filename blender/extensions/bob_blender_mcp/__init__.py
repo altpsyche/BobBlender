@@ -1,8 +1,8 @@
-"""Bob Blender MCP — enable this addon to let MCP author into your live Blender.
+"""Bob Blender MCP: enable this addon to let MCP author into your live Blender.
 
-One-time enable (Preferences → Add-ons). With autostart on, the socket bridge
-comes up whenever Blender launches — no scripts to paste. The N-panel (View3D →
-sidebar → BobMCP) has Start/Stop and a Reload-builders button.
+Enable it once in Preferences > Add-ons. With autostart on, the socket bridge
+comes up whenever Blender launches, with no scripts to paste. The N-panel
+(View3D sidebar > BobMCP) has Start/Stop and a Reload Builders button.
 """
 
 import bpy
@@ -12,7 +12,7 @@ from bpy.types import AddonPreferences, Operator, Panel
 from . import server
 
 
-# ── Preferences ───────────────────────────────────────────────────────────
+# Preferences
 class BBMCP_AddonPreferences(AddonPreferences):
     bl_idname = __package__
 
@@ -32,7 +32,7 @@ def _prefs():
     return bpy.context.preferences.addons[__package__].preferences
 
 
-# ── Operators ─────────────────────────────────────────────────────────────
+# Operators
 class BBMCP_OT_start(Operator):
     bl_idname = "bob_blender_mcp.start"
     bl_label = "Start Bridge"
@@ -63,7 +63,7 @@ class BBMCP_OT_reload(Operator):
         return {"FINISHED"}
 
 
-# ── Panel ─────────────────────────────────────────────────────────────────
+# Panel
 class BBMCP_PT_panel(Panel):
     bl_label = "Bob Blender MCP"
     bl_idname = "BBMCP_PT_panel"

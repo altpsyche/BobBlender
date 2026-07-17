@@ -1,14 +1,11 @@
-"""MCP server exposing repo operations to agents/clients.
+"""MCP server exposing repo and build operations to agents.
 
-Run:  bob-mcp            (stdio transport)
-Deps: pip install -e '.[mcp]'
+Run: bob-mcp (stdio transport). Install with pip install -e '.[mcp]'.
+Registered for Claude Code in the repo's .mcp.json.
 
-Register with an MCP client (e.g. Claude Code):
-    claude mcp add bob -- bob-mcp
-
-Start small and safe: read the library, list/create projects. Add tools that
-*drive* Blender or ComfyUI as those bridges mature — but keep destructive ops
-behind explicit, obvious names.
+Tools cover reading the library, listing and creating projects, and building
+geometry (headless or into the open Blender session). Keep any destructive
+operation behind an explicit, obvious name.
 """
 
 import logging
@@ -19,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from . import bridge, config, executor, scaffold
 from .contracts import BuildRequest
 
-mcp = FastMCP("bob")
+mcp = FastMCP("bobblendermcp")
 
 
 @mcp.tool()
@@ -67,11 +64,11 @@ def build(output_file: str, ops: list[dict], base_file: str | None = None) -> di
 
 @mcp.tool()
 def build_live(ops: list[dict]) -> dict:
-    """Author ops into the CURRENTLY OPEN Blender session (live socket bridge).
+    """Author ops into the open Blender session over the live socket bridge.
 
-    Same op vocabulary as `build`, but applied to the running Blender instead of
-    a headless file — you see the result appear in your viewport. Requires
-    blender/bridge/live_server.py to be running inside Blender.
+    Same op vocabulary as build, but applied to the running Blender instead of a
+    headless file, so the result appears in the viewport. Requires the Bob
+    Blender MCP extension to be enabled with its bridge running.
     """
     request = BuildRequest(output_file="(live)", ops=ops)  # validate
     validated = [op.model_dump() for op in request.ops]
@@ -79,7 +76,7 @@ def build_live(ops: list[dict]) -> dict:
 
 
 def main() -> None:
-    # stderr only — stdout is the MCP stdio protocol channel.
+    # stderr only. stdout is the MCP stdio protocol channel.
     logging.basicConfig(
         level=logging.INFO, stream=sys.stderr, format="[%(name)s] %(message)s"
     )

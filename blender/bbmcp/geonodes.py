@@ -1,11 +1,11 @@
-"""Geometry-node recipes — each builds a reusable GeometryNodeTree.
+"""Geometry-node recipes. Each recipe builds a reusable GeometryNodeTree.
 
 A recipe is a named builder that constructs a whole node graph from a handful of
-params. This stays DRY (one function per recipe), futureproof (recipes grow into
-Asset Browser assets), and agent-friendly ("wave_grid, amplitude 2") — instead
-of modelling Blender's entire node system in the contract.
+params. One function per recipe keeps this DRY, recipes can grow into Asset
+Browser assets, and a name plus params is easy for an agent to call. This is
+simpler than modelling Blender's entire node system in the contract.
 
-Add a recipe: write a `build_<name>(ng, out, params)` and register it in RECIPES.
+To add a recipe, write build_<name>(ng, out, params) and register it in RECIPES.
 """
 
 import bpy
@@ -20,7 +20,7 @@ def _new_geometry_group(name: str):
     return ng, out
 
 
-# ── Recipes ────────────────────────────────────────────────────────────────
+# Recipes
 def build_wave_grid(ng, out, params: dict):
     """A grid whose Z ripples as sin(distance_from_center * frequency) * amplitude."""
     size = float(params.get("size", 10.0))
@@ -79,7 +79,7 @@ RECIPES = {
 }
 
 
-# ── Entry point (called by dispatch) ────────────────────────────────────────
+# Entry point (called by dispatch)
 def build_geonodes(op: dict) -> dict:
     recipe = op.get("recipe", "wave_grid")
     builder = RECIPES.get(recipe)

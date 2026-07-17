@@ -1,14 +1,14 @@
-"""Minimal ComfyUI API client — queue a workflow, wait, fetch outputs.
+"""Minimal ComfyUI API client: queue a workflow, wait, fetch outputs.
 
-Deps: pip install -e '.[comfyui]'
+Install with pip install -e '.[comfyui]'.
 
 Workflow pattern:
-  1. In ComfyUI, build a graph and use *Save (API Format)* to export JSON.
-  2. Save it under tools/workflows/ (or a project's src/).
-  3. queue it here, optionally templating inputs (prompt, seed, image path).
+  1. In ComfyUI, build a graph and use Save (API Format) to export JSON.
+  2. Save it under tools/workflows/ or a project's src/.
+  3. Queue it here, optionally templating inputs (prompt, seed, image path).
 
-This is deliberately thin: HTTP queue + history poll. Add the websocket
-progress feed (`/ws?clientId=…`) when you want live progress.
+Deliberately thin: an HTTP queue plus a history poll. Add the websocket
+progress feed (/ws?clientId=...) when you want live progress.
 """
 
 import json
@@ -64,5 +64,5 @@ class ComfyUIClient:
         )
 
     def run(self, workflow: dict) -> dict:
-        """Convenience: queue → wait. Returns the finished history entry."""
+        """Queue then wait. Returns the finished history entry."""
         return self.wait(self.queue(workflow))
