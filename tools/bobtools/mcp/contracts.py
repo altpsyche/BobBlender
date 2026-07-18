@@ -57,9 +57,20 @@ class ReloadImage(BaseModel):
     path: str | None = None  # absolute image path, or None to reload all
 
 
+class BuildSky(BaseModel):
+    op: Literal["build_sky"] = "build_sky"
+    # Params are recipe-like and checked by the builder (bbmcp/world.py), the same
+    # freeform pattern as build_geonodes. Keys: time_of_day, year, month, day,
+    # utc_offset, latitude, longitude (geographic sun); use_override,
+    # sun_elevation, sun_azimuth (manual sun in degrees); sun_strength, sun_angle,
+    # sun_disc, sun_intensity; altitude, air, ozone, turbidity, ground_albedo
+    # (the 5.2 MULTIPLE_SCATTERING sky); world_strength.
+    params: dict = Field(default_factory=dict)
+
+
 # Add MakeMaterial and other ops to this union as the library grows.
 Operation = Annotated[
-    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, ReloadImage],
+    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, ReloadImage, BuildSky],
     Field(discriminator="op"),
 ]
 
