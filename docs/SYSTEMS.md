@@ -24,6 +24,25 @@ Ops reach Blender two ways: `build` (headless, writes a .blend) and `build_live`
 (into the open session, via the Bob Blender MCP extension). After editing recipe
 code, press Reload Builders in the BobMCP panel so the live bridge reloads it.
 
+### Rebuilding in place
+
+`build_geonodes` is non-destructive: if an object of that name already exists, it
+refills that object's node group instead of respawning. The object, its
+transform, selection, and your tuned modifier knobs all survive a graph rebuild,
+so re-firing a build after a recipe edit updates the graph under your cursor. Pass
+`"reset": true` to discard the tuned knobs and reapply the op's params fresh.
+
+(Knob values in Blender 5.2 live on the node group interface socket defaults, not
+on the modifier, since a Nodes modifier has no IDProperties. The rebuild snapshots
+and restores them by socket name.)
+
+### reload_image
+
+`{"op": "reload_image", "path": "<abs path>"}` reloads image datablocks from disk
+(all of them if `path` is omitted) and tags objects to re-evaluate. Use it after
+`bake_heightfield` overwrites a heightmap PNG so the terrain updates without a
+manual reload.
+
 ## terrain (recipe: `terrain`)
 
 A fully procedural, live terrain. How it works: a grid, displaced in Z by a
@@ -51,53 +70,74 @@ the surface crosses z = 0; Height scales the relief.
 Tips: raise `ridged` for mountains, `warp` for organic shapes, lower `scale` and
 `shape_scale` for bigger features, move `sea_level` for the waterline.
 
-## Eroded terrain (recipe: `heightmap_terrain` + `bobtools.erosion`)
+## Eroded terrain (`bake_heightfield` + recipe `heightmap_terrain`)
 
-Higher quality than the live `terrain`, because erosion is simulated in numpy.
-Two parts:
+Higher quality than the live `terrain`, because erosion is simulated in the venv
+(numpy on CPU, a CuPy CUDA kernel on GPU). Two parts:
 
-1. The venv generates and erodes a heightmap PNG.
+1. The venv bakes an eroded heightmap PNG (`bake_heightfield`).
 2. `heightmap_terrain` displaces a grid by that image in Blender.
 
-### Generating and eroding the heightfield (venv)
+### Baking the heightfield (tool: `bake_heightfield`)
 
-`tools/bobtools/erosion.py`. Base generation is smooth scipy noise plus domain
-warp, ridged blend, and shape composition. Erosion alternates stream-power
-incision (carves valleys along drainage) with thermal slumping (talus slopes).
+`bobtools.heightfields`, a pure venv subpackage (graduated from the old
+`erosion.py`, which stays as a compat shim). Base generation is seeded scipy
+noise (domain warp, ridged blend, shape). Erosion is a list of passes:
 
-`generate_base(size, seed, octaves, roughness, ridged, warp, detail_strength)`:
+- `hydraulic`: droplet erosion with sediment transport and deposition. The GPU
+  track. Carves drainage rills. Erosion spreads over a `radius` brush so valleys
+  stay smooth instead of spiky. Params: `droplets`, `max_steps`, `radius`,
+  `inertia`, `capacity`, `deposition`, `erosion`, `evaporation`, `gravity`,
+  `min_slope`.
+- `thermal`: slumps slopes past a `talus` angle. Params: `talus`, `factor`,
+  `iterations`.
+- `smooth`: gaussian blur, `sigma`. Bracket the hydraulic pass with one (a coarse
+  base pre-smooth and a light final smooth) to keep the result from going gritty.
+- `stream_power`: drainage-area incision (CPU, the original pipeline). Params:
+  `iterations`, `erosion`, `m`, `n`, `talus`, `thermal_factor`.
 
-| Param | Default | What it does |
-|-------|---------|--------------|
-| `size` | required | Heightmap resolution in pixels (square). |
-| `seed` | 0 | Changes the terrain. |
-| `octaves` | 8 | Fractal detail. |
-| `roughness` | 0.55 | Finer-octave contribution. |
-| `ridged` | 0.6 | 0 smooth, 1 ridges. |
-| `warp` | size/22 | Domain-warp strength in pixels. |
-| `detail_strength` | 0.7 | Detail riding on the shape. |
+A good recipe: `smooth` (sigma ~1.5) -> `hydraulic` (droplets 1.5-2.5M, radius 4)
+-> `thermal` (iterations ~6) -> `smooth` (sigma ~0.8). The `foothills`, `alpine`,
+and `badlands` presets are built this way.
 
-`erode(h, iterations, rain, erosion, m, n, talus, thermal_factor)`:
+The MCP tool `bake_heightfield(out_file, params, preview, force)` writes a 16-bit
+PNG plus a `<name>.json` sidecar (the full recipe, so the field is reproducible),
+and a params-hash cache skips a re-bake when nothing changed. `preview=True` bakes
+at 256 for a fast look; `backend` is `auto` (GPU when present), `cpu`, or `gpu`.
+The CPU path is the deterministic reference; the GPU path is fast but not
+bit-identical (atomicAdd order).
 
-| Param | Default | What it does |
-|-------|---------|--------------|
-| `iterations` | 35 | More = deeper carving, slower. |
-| `erosion` | 0.6 | Incision strength. Higher carves harder. |
-| `m` | 0.9 | Drainage-area exponent (how much big rivers cut). |
-| `n` | 1.1 | Slope exponent. |
-| `talus` | 0.008 | Slope steeper than this slumps (thermal). |
-| `thermal_factor` | 0.35 | Thermal strength. High values smooth away valleys. |
-
-To change the heightfield, edit the params or seed and regenerate:
-
-```python
-from bobtools import erosion
-base = erosion.generate_base(512, seed=7, ridged=0.5)
-h = erosion.erode(base, iterations=70, erosion=1.6, thermal_factor=0.10)
-erosion.to_png16(h, "library/_generated/forest_height.png")
+```json
+{"op": "bake_heightfield", "out_file": "library/_generated/forest_height.png",
+ "params": {"size": 768, "seed": 5, "backend": "gpu",
+   "generate": {"ridged": 0.5, "detail_strength": 0.5, "octaves": 7},
+   "passes": [{"kind": "hydraulic", "droplets": 1200000, "erosion": 0.3,
+               "deposition": 0.4, "max_steps": 72},
+              {"kind": "thermal", "talus": 0.005, "factor": 0.45, "iterations": 8}]}}
 ```
 
-Then rebuild `heightmap_terrain` pointing at that file.
+Presets (`foothills`, `alpine`, `badlands`) are starting points: pass
+`"preset": "alpine"` in params and override fields. From a script,
+`bobtools.heightfields.bake(abs_path, params)` is the same entry.
+
+After a re-bake, send a `reload_image` op so the open session picks up the new
+pixels (see below), then rebuild `heightmap_terrain`.
+
+### From Blender: the Heightfield Terrain panel
+
+BobMCP sidebar (View3D > N > BobMCP) has a "Heightfield Terrain" panel with the
+shape, erosion, and displace knobs and a Bake + Build Terrain button. It bakes in
+the tools venv (so Blender's own Python does not need numpy or CuPy), reloads the
+image, and builds the terrain object in place. Preview bakes at 256 for a fast
+look; turn it off to commit at full resolution. The panel is part of the
+extension, so picking up a code change to it means re-enabling the addon or
+restarting Blender, not Reload Builders.
+
+When Blender is launched through Steam it runs inside the Steam pressure-vessel
+container, where the host venv and CUDA are not directly reachable. The operator
+detects this and runs the bake on the host via `steam-runtime-launch-client
+--alongside-steam`. Launching Blender directly (not via Steam) uses the venv
+python straight. If the launcher is unavailable, the panel says so.
 
 ### Displacing it in Blender (recipe: `heightmap_terrain`)
 

@@ -30,6 +30,7 @@ class BuildGeoNodes(BaseModel):
     params: dict = Field(default_factory=dict)  # recipe-specific, checked by the builder
     target: Literal["new_object", "library"] = "new_object"
     mark_asset: bool = False  # mark the node group as an Asset Browser asset
+    reset: bool = False  # rebuild in place but discard tuned knobs, reapply params
 
 
 class MakeProxies(BaseModel):
@@ -51,9 +52,15 @@ class MakePath(BaseModel):
     sea_level: float = 0.3
 
 
+class ReloadImage(BaseModel):
+    op: Literal["reload_image"] = "reload_image"
+    path: str | None = None  # absolute image path, or None to reload all
+
+
 # Add MakeMaterial and other ops to this union as the library grows.
 Operation = Annotated[
-    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath], Field(discriminator="op")
+    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, ReloadImage],
+    Field(discriminator="op"),
 ]
 
 

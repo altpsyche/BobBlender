@@ -29,6 +29,50 @@ def _clear_existing(name: str):
         bpy.data.node_groups.remove(group)
 
 
+def _gn_object(name):
+    """An existing object of this name plus its Nodes modifier, or (None, None)."""
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        return None, None
+    mod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    return obj, mod
+
+
+def _input_sockets(ng):
+    for item in ng.interface.items_tree:
+        if getattr(item, "item_type", None) == "SOCKET" and item.in_out == "INPUT":
+            yield item
+
+
+def _snapshot_knobs(ng):
+    """Read tuned knob values, keyed by socket name.
+
+    In Blender 5.2 a Nodes modifier has no IDProperties; a knob's value lives on
+    its node group interface socket default_value (and the group is per-object, so
+    that value is per-object). Datablock sockets have no meaningful default, so
+    reading them is skipped, the recipe sets those on nodes anyway.
+    """
+    snap = {}
+    for item in _input_sockets(ng):
+        try:
+            value = item.default_value
+        except (AttributeError, TypeError):
+            continue
+        if hasattr(value, "__len__") and not isinstance(value, str):
+            value = tuple(value)  # copy vectors/colors past the interface rebuild
+        snap[item.name] = value
+    return snap
+
+
+def _restore_knobs(ng, snap):
+    for item in _input_sockets(ng):
+        if item.name in snap:
+            try:
+                item.default_value = snap[item.name]
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+
 def build_geonodes(op: dict) -> dict:
     recipe_name = op.get("recipe", "wave_grid")
     build = recipes.get(recipe_name)
@@ -39,11 +83,37 @@ def build_geonodes(op: dict) -> dict:
 
     params = op.get("params", {})
     name = op.get("name") or recipe_name
-    if op.get("target", "new_object") == "new_object":
+    target = op.get("target", "new_object")
+    reset = op.get("reset", False)
+
+    # Rebuild in place: if a named object with a Nodes modifier already exists,
+    # refill its group instead of respawning. The object, its transform, and
+    # selection survive. Tuned knobs are preserved by socket name unless reset is
+    # asked, in which case the recipe's fresh defaults from params take over.
+    if target == "new_object":
+        obj, mod = _gn_object(name)
+        if obj is not None and mod is not None and mod.node_group is not None:
+            old = mod.node_group
+            old_name = old.name
+            snap = {} if reset else _snapshot_knobs(old)
+            # Build a fresh group and swap it onto the modifier. Clearing a group
+            # in place leaves the modifier evaluating an empty result (Blender
+            # caches the compiled tree), so a new group is the reliable path; the
+            # object, its transform, selection, and (restored) knobs still survive.
+            new_ng, out = new_group(old_name)
+            build(new_ng, out, params)
+            if snap:
+                _restore_knobs(new_ng, snap)
+            mod.node_group = new_ng
+            if old.users == 0:
+                bpy.data.node_groups.remove(old)
+            new_ng.name = old_name  # reclaim the clean name
+            obj.update_tag()
+            info = recipe_name + (" (in place, reset)" if reset else " (in place)")
+            return {"op": "build_geonodes", "created": [new_ng.name, obj.name], "info": info}
         _clear_existing(name)
+
     ng, out = new_group(name)
     build(ng, out, params)
-    created = place(
-        ng, name, target=op.get("target", "new_object"), mark_asset=op.get("mark_asset", False)
-    )
+    created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False))
     return {"op": "build_geonodes", "created": created, "info": recipe_name}

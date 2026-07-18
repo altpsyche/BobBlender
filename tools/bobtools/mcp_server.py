@@ -75,6 +75,47 @@ def build_live(ops: list[dict]) -> dict:
     return bridge.run_build_live(validated).model_dump()
 
 
+@mcp.tool()
+def bake_heightfield(
+    out_file: str,
+    params: dict | None = None,
+    preview: bool = False,
+    force: bool = False,
+) -> dict:
+    """Generate and erode a terrain heightfield PNG in the venv (numpy or CuPy).
+
+    Runs in the venv, not Blender: the heavy erosion is numpy on CPU or a CuPy
+    CUDA kernel on GPU. Writes a 16-bit PNG plus a params sidecar, and a Blender
+    heightmap_terrain build then displaces a grid by it. After re-baking, send a
+    reload_image op so the open session picks up the new pixels.
+
+    out_file: repo-relative PNG path (e.g. "library/_generated/forest_height.png").
+    params: {size, seed, backend: "auto"|"cpu"|"gpu", preset: name?,
+             generate: {octaves, roughness, ridged, warp, detail_strength},
+             passes: [{"kind": "hydraulic"|"thermal"|"stream_power", ...}]}.
+    preview: bake at 256 for a fast look, commit full-res without it.
+    force: ignore the params-hash cache and re-bake.
+
+    Returns metadata: {path, out_file, backend, platform, size, seconds, stats,
+    hash, cached}.
+    """
+    from .heightfields import bake, presets
+
+    p = dict(params or {})
+    preset = p.pop("preset", None)
+    if preset is not None:
+        base = presets.get(preset)
+        base.update(p)
+        p = base
+    if preview:
+        p["size"] = 256
+
+    out_abs = str((config.repo_root() / out_file).resolve())
+    result = bake(out_abs, p, force=force)
+    result["out_file"] = out_file
+    return result
+
+
 def main() -> None:
     # stderr only. stdout is the MCP stdio protocol channel.
     logging.basicConfig(
