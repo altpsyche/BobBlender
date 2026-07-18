@@ -2,7 +2,8 @@
 
 Code that runs inside Blender's Python. Everything here imports `bpy` and runs
 in Blender's bundled interpreter, never in `tools/.venv`. See
-`docs/ARCHITECTURE.md` for the two-worlds design.
+`docs/ARCHITECTURE.md` for the two-worlds design, and `docs/SYSTEMS.md` for the
+recipes and every tunable parameter.
 
 | Path | What it is |
 |------|-----------|

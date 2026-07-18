@@ -31,6 +31,7 @@ it: `BOB_BLENDER`, `BOB_REPO`, `BOB_BRIDGE_HOST`, `BOB_BRIDGE_PORT`.
 | `bobtools/bridge.py` | Live executor. Sends ops to the open Blender over a socket. | none |
 | `bobtools/mcp_server.py` | `bob-mcp`, the MCP server exposing repo and build tools. | `mcp` |
 | `bobtools/comfyui.py` | ComfyUI API client (queue a workflow, fetch outputs). | `httpx`, `websockets` |
+| `bobtools/erosion.py` | Heightfield generation and hydraulic/thermal erosion. Writes a heightmap PNG that `heightmap_terrain` displaces. See `../docs/SYSTEMS.md`. | `numpy`, `pillow`, `scipy` |
 
 ## MCP server
 

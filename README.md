@@ -57,7 +57,8 @@ cp -r projects/_template projects/<my-piece>
 
 Then follow `projects/_template/README.md`. Naming, output paths, and where
 files go are in `docs/CONVENTIONS.md`. The overall design is in
-`docs/ARCHITECTURE.md`.
+`docs/ARCHITECTURE.md`, and the terrain, erosion, and scatter systems with all
+their parameters are in `docs/SYSTEMS.md`.
 
 ## Target
 
