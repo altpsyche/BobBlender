@@ -25,15 +25,22 @@ class AddMesh(BaseModel):
 
 class BuildGeoNodes(BaseModel):
     op: Literal["build_geonodes"] = "build_geonodes"
-    recipe: str = "wave_grid"  # a named recipe in bbmcp/geonodes.py
+    recipe: str = "wave_grid"  # a named recipe in bbmcp/geonodes/recipes/
     name: str | None = None
     params: dict = Field(default_factory=dict)  # recipe-specific, checked by the builder
     target: Literal["new_object", "library"] = "new_object"
     mark_asset: bool = False  # mark the node group as an Asset Browser asset
 
 
+class MakeProxies(BaseModel):
+    op: Literal["make_proxies"] = "make_proxies"
+    kinds: list[str] = Field(default_factory=lambda: ["trees", "rocks", "plants"])
+
+
 # Add MakeMaterial and other ops to this union as the library grows.
-Operation = Annotated[Union[AddMesh, BuildGeoNodes], Field(discriminator="op")]
+Operation = Annotated[
+    Union[AddMesh, BuildGeoNodes, MakeProxies], Field(discriminator="op")
+]
 
 
 # Request and result envelope

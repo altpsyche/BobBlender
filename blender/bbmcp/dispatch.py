@@ -1,10 +1,11 @@
 """Op dispatch: map an op dict to its builder. One registry, grows over time."""
 
-from . import geonodes, mesh, util
+from . import geonodes, mesh, proxies, util
 
 _HANDLERS = {
     "add_mesh": mesh.add_mesh,
     "build_geonodes": geonodes.build_geonodes,
+    "make_proxies": proxies.make_proxies,
     # "make_material": materials.make,    # later
 }
 

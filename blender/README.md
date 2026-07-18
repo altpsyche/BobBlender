@@ -25,12 +25,23 @@ to the extension's socket and ops run on Blender's main thread.
 Both the runner and the extension put `bbmcp` on `sys.path`, so nothing needs to
 be installed into Blender.
 
-## Adding a builder
+## Adding a top-level op
 
 1. Add a function in `bbmcp/<area>.py` that takes an op dict and returns a result
    dict.
 2. Register it in `bbmcp/dispatch.py`.
 3. Add the matching op model in `tools/bobtools/contracts.py`.
 
-The contract (validated in the venv) and the builder (Blender-side) are the only
-two things that change when the vocabulary grows.
+## Adding a geometry-node recipe
+
+Recipes live under `bbmcp/geonodes/`, split into layers:
+
+- `scaffold.py`: group plumbing (`new_group`, `add_input`).
+- `blocks.py`: composable sub-graphs (`grid_source`, `noise_field`, `displace_z`, ...).
+- `recipes/`: one file per recipe, each a `build(ng, out, params)` decorated with
+  `@recipe("name")`.
+- `place.py`: object or library placement, so recipes never touch objects.
+
+To add one: drop a file in `recipes/`, compose it from blocks, decorate it, and
+add it to the import line in `recipes/__init__.py`. No other file changes, since
+`build`/`build_live` are generic over the `recipe` param.
