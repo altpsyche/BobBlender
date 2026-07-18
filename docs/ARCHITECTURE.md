@@ -63,6 +63,14 @@ the only safe way to mutate `bpy` from a socket, and it runs only whitelisted
 button (needed because Blender caches imports, so new builder code requires a
 purge), and a clean stop so it can restart. Dev-installed by `bob-setup`.
 
+Two-sided reload for op changes. The builder code runs in Blender; the op
+contract (`contracts.py`) runs in the long-running venv MCP server, which parses
+it once at startup. So changing an existing recipe body needs only Reload
+Builders, but adding or changing an op's contract also needs the MCP server
+reconnected (`/mcp reconnect bobblendermcp`, or restart the CLI). Restarting
+Blender alone does not reload the tools-side contract, `build_live` will reject
+the new op tag until the server is reconnected.
+
 ## Naming
 
 Everything is branded bob. To avoid Blender namespace collisions with other

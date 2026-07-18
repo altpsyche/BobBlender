@@ -109,6 +109,21 @@ Then rebuild `heightmap_terrain` pointing at that file.
 | `height` | 14 | yes | Vertical scale. |
 | `sea_level` | 0.3 | yes | Height value mapped to z = 0. |
 | `material` | none | no | Name of a material to assign to the surface. |
+| `path` | none | no | Name of a curve object to grade a level trail along. |
+| `path_width` | 2.4 | yes | Half-width in metres graded fully flat along the trail. |
+| `path_falloff` | 3.5 | yes | Metres over which the grade eases back to natural terrain. |
+| `path_depth` | 0.3 | yes | Metres to recess the trail below the sampled ground. |
+
+### Path grading
+
+With `path` set, the recipe levels a trail along the curve. For each grid point
+it reads the draped curve's own height at the nearest curve vertex, then blends
+the terrain toward that level within `path_width`, easing back over
+`path_falloff`. The result is a graded bench that follows the ground up and down
+but stays flat across its width, recessed by `path_depth`. The curve must be
+draped (build it with `make_path` and a `heightmap`, see below) so its smooth Z
+grades the trail; use a curve `resolution` of 64 or more to avoid terraced steps.
+Pair it with a `path` on the scatter layers to clear vegetation off the trail.
 
 ## scatter (recipe: `scatter`)
 
@@ -128,10 +143,49 @@ scale and Z rotation. Trees can stand upright; rocks can tilt to the surface.
 | `min_scale` | 0.8 | yes | Smallest per-instance scale. |
 | `max_scale` | 1.2 | yes | Largest per-instance scale. |
 | `min_normal_z` | 0.5 | yes | Slope cutoff. 1 = flat only, 0 = any slope. |
+| `path` | none | no | Name of a curve object to clear the scatter along. |
+| `path_width` | 3.0 | yes | Half-width in metres cleared fully (density 0) along the trail. |
+| `path_falloff` | 3.0 | yes | Metres over which density eases back to full. |
+
+Path clearing: with `path` set, a distance-from-curve mask drives the Poisson
+Density Factor, so density falls to zero within `path_width` of the curve and
+eases back over `path_falloff`. Give each layer its own width so trees pull back
+further than the rocks and plants that edge the trail. Use the same curve on the
+`heightmap_terrain` `path` input to grade the ground flat under the clearing.
 
 Replacing assets: point `assets` at your own collection, or edit the contents of
 the `BOB_Assets_<Kind>` collection the scatter already uses. Nothing in the graph
 changes; the instances update.
+
+## Path (op: `make_path`)
+
+Authors a NURBS curve object for the scatter and terrain `path` inputs, so a
+trail can be built through the pipeline rather than only by hand.
+
+```json
+{"op": "make_path", "name": "Forest_Path", "resolution": 96,
+ "points": [[16,-30,0],[9,-18,0],[2,-8,0],[-3,2,0],[-6,12,0],[-14,22,0],[-22,30,0]],
+ "heightmap": "/abs/forest_height.png", "size": 70, "height": 16, "sea_level": 0.30}
+```
+
+| Param | Default | What it does |
+|-------|---------|--------------|
+| `name` | `Path` | Curve object name. Re-running replaces a same-name curve. |
+| `points` | [] | NURBS control points [x, y, z]. Z is ignored when draping. |
+| `resolution` | 12 | Curve subdivisions. For grading use 64 or more, see below. |
+| `heightmap` | none | Drape the control points onto this heightmap (see below). |
+| `size` / `height` / `sea_level` | 60 / 14 / 0.3 | Must match the `heightmap_terrain` build so the drape sits on the surface. |
+
+Draping: with `heightmap` given, each control point's Z is set to the terrain
+surface height there, `(sample - sea_level) * height`. Because a NURBS curve has
+few control points, the draped profile is smooth, so `heightmap_terrain` grades a
+gently rising trail instead of copying the terrain's fine relief.
+
+Resolution and terracing: the terrain grade reads the curve's height at the
+nearest curve vertex, so a coarse curve leaves visible steps (the slope material
+paints the risers as rock). Use `resolution` 64 to 96 for grading; the steps then
+fall below the material's slope threshold. It does not matter for scatter-only
+paths, which use horizontal distance, not the curve's Z.
 
 ## Proxies (op: `make_proxies`)
 

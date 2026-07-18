@@ -12,11 +12,20 @@ The emitter object and the asset collection are set on the nodes (Blender 5.x
 GN modifiers no longer store object or collection inputs). Params: emitter (an
 object name) and assets (a collection name). Replace assets by editing that
 collection's contents or repointing the Collection Info node.
+
+Optional path param (a curve object name) clears a trail: density drops to zero
+within Path Width of the curve, easing back over Path Falloff. Both are live.
 """
 
 import bpy
 
-from ..blocks import math_node, object_geometry, random_value
+from ..blocks import (
+    curve_distance,
+    math_node,
+    object_geometry,
+    random_value,
+    smooth_falloff,
+)
 from ..scaffold import add_input
 from . import recipe
 
@@ -27,6 +36,7 @@ TAU = 6.283185307179586
 def build(ng, out, params: dict):
     emitter = bpy.data.objects.get(params.get("emitter", ""))
     assets = bpy.data.collections.get(params.get("assets", ""))
+    path = bpy.data.objects.get(params.get("path", ""))
 
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-1100, 0)
@@ -37,6 +47,9 @@ def build(ng, out, params: dict):
     add_input(ng, "Min Scale", "NodeSocketFloat", float(params.get("min_scale", 0.8)), 0.0)
     add_input(ng, "Max Scale", "NodeSocketFloat", float(params.get("max_scale", 1.2)), 0.0)
     add_input(ng, "Min Normal Z", "NodeSocketFloat", float(params.get("min_normal_z", 0.5)))
+    if path is not None:
+        add_input(ng, "Path Width", "NodeSocketFloat", float(params.get("path_width", 3.0)), 0.0)
+        add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.0)), 0.0)
 
     nodes, links = ng.nodes, ng.links
     seed = gi.outputs["Seed"]
@@ -60,6 +73,16 @@ def build(ng, out, params: dict):
     links.new(gi.outputs["Distance Min"], dist.inputs["Distance Min"])
     links.new(gi.outputs["Density"], dist.inputs["Density Max"])
     links.new(seed, dist.inputs["Seed"])
+
+    # Path clearing: drop density to zero along the trail curve. Density Factor
+    # is a 0..1 per-face field, so the smoothstep mask (0 on the path) carves the
+    # clearing without touching the slope selection above.
+    if path is not None:
+        p_inner = gi.outputs["Path Width"]
+        p_outer = math_node(ng, "ADD", p_inner, gi.outputs["Path Falloff"], (-720, 320))
+        dist_curve, _ = curve_distance(ng, path, (-1100, 500))
+        mask = smooth_falloff(ng, dist_curve, p_inner, p_outer, (-540, 420))
+        links.new(mask, dist.inputs["Density Factor"])
 
     # Asset instances from the collection, one separate child per instance.
     coll = nodes.new("GeometryNodeCollectionInfo")

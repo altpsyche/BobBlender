@@ -149,6 +149,114 @@ def object_geometry(ng, emitter, location=(-900, 0)):
     return info.outputs["Geometry"]
 
 
+def _flatten_xy(ng, vector, location=(0, 0)):
+    """Drop the Z of a vector to 0, so distances measure in the XY plane."""
+    sep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = location
+    ng.links.new(vector, sep.inputs[0])
+    flat = ng.nodes.new("ShaderNodeCombineXYZ")
+    flat.location = (location[0] + 180, location[1])
+    ng.links.new(sep.outputs["X"], flat.inputs["X"])
+    ng.links.new(sep.outputs["Y"], flat.inputs["Y"])
+    return flat.outputs["Vector"]
+
+
+def _curve_meshes(ng, path_obj, location):
+    """Turn a path curve into (draped_mesh, flat_mesh).
+
+    draped_mesh keeps the curve's Z (the graded trail profile); flat_mesh is the
+    same wire mesh flattened to z = 0 so horizontal distance and the nearest
+    point measure in the XY plane. Both share topology, so an index from one
+    reads the matching vertex on the other.
+    """
+    curve = object_geometry(ng, path_obj, location)
+    to_mesh = ng.nodes.new("GeometryNodeCurveToMesh")
+    to_mesh.location = (location[0] + 200, location[1])
+    ng.links.new(curve, to_mesh.inputs["Curve"])
+
+    flat_curve = _flatten_xy(ng, position(ng, (location[0] + 200, location[1] - 220)),
+                             (location[0] + 380, location[1] - 220))
+    set_pos = ng.nodes.new("GeometryNodeSetPosition")
+    set_pos.location = (location[0] + 560, location[1])
+    ng.links.new(to_mesh.outputs["Mesh"], set_pos.inputs["Geometry"])
+    ng.links.new(flat_curve, set_pos.inputs["Position"])
+    return to_mesh.outputs["Mesh"], set_pos.outputs["Geometry"]
+
+
+def _sample_grid_flat(ng, location):
+    """This point's position flattened to z = 0, for XY-plane proximity."""
+    return _flatten_xy(ng, position(ng, (location[0], location[1] - 40)),
+                       (location[0] + 180, location[1] - 40))
+
+
+def curve_distance(ng, path_obj, location=(-900, -500)):
+    """Horizontal distance from each point to a path curve.
+
+    Returns (distance, near_pos): the XY distance to the nearest curve edge and
+    the nearest point on the flattened curve, whose XY marks the trail centreline.
+    """
+    _, flat = _curve_meshes(ng, path_obj, location)
+    prox = ng.nodes.new("GeometryNodeProximity")
+    prox.target_element = "EDGES"
+    prox.location = (location[0] + 760, location[1])
+    ng.links.new(flat, prox.inputs["Geometry"])
+    ng.links.new(_sample_grid_flat(ng, (location[0] + 560, location[1] - 300)),
+                 prox.inputs["Sample Position"])
+    return prox.outputs["Distance"], prox.outputs["Position"]
+
+
+def curve_path_sample(ng, path_obj, location=(-900, -500)):
+    """Horizontal distance to a draped path curve, plus its height there.
+
+    Returns (distance, path_z): the XY distance to the nearest curve edge, and
+    the curve's own Z at the nearest curve vertex. Because a draped curve carries
+    a smooth grade in Z, path_z is a clean trail height, not the terrain's fine
+    relief. Used by heightmap_terrain to level a bench along the trail.
+    """
+    draped, flat = _curve_meshes(ng, path_obj, location)
+    sample = _sample_grid_flat(ng, (location[0] + 560, location[1] - 300))
+
+    prox = ng.nodes.new("GeometryNodeProximity")
+    prox.target_element = "EDGES"
+    prox.location = (location[0] + 760, location[1])
+    ng.links.new(flat, prox.inputs["Geometry"])
+    ng.links.new(sample, prox.inputs["Sample Position"])
+
+    nearest = ng.nodes.new("GeometryNodeSampleNearest")
+    nearest.domain = "POINT"
+    nearest.location = (location[0] + 760, location[1] - 200)
+    ng.links.new(flat, nearest.inputs["Geometry"])
+    ng.links.new(sample, nearest.inputs["Sample Position"])
+
+    # Read the draped mesh's Z at the nearest vertex index.
+    sep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (location[0] + 760, location[1] - 380)
+    ng.links.new(position(ng, (location[0] + 580, location[1] - 380)), sep.inputs[0])
+
+    idx = ng.nodes.new("GeometryNodeSampleIndex")
+    idx.data_type = "FLOAT"
+    idx.domain = "POINT"
+    idx.location = (location[0] + 960, location[1] - 260)
+    ng.links.new(draped, idx.inputs["Geometry"])
+    ng.links.new(sep.outputs["Z"], idx.inputs["Value"])
+    ng.links.new(nearest.outputs["Index"], idx.inputs["Index"])
+    return prox.outputs["Distance"], idx.outputs["Value"]
+
+
+def smooth_falloff(ng, value, inner, outer, location=(0, 0)):
+    """Smoothstep 0..1: 0 where value <= inner, 1 where value >= outer.
+
+    As a path mask over curve_distance: 0 on the trail, 1 on untouched ground.
+    """
+    node = ng.nodes.new("ShaderNodeMapRange")
+    node.interpolation_type = "SMOOTHSTEP"
+    node.location = location
+    _plug(ng, node.inputs["From Min"], inner)
+    _plug(ng, node.inputs["From Max"], outer)
+    ng.links.new(value, node.inputs["Value"])
+    return node.outputs["Result"]
+
+
 def random_value(ng, data_type, min_value, max_value, seed=None, location=(0, 0)):
     """A Random Value node. Setting data_type reduces the sockets to that type,
     so Min, Max, Value, and Seed are unambiguous by name."""

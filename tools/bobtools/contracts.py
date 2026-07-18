@@ -37,9 +37,23 @@ class MakeProxies(BaseModel):
     kinds: list[str] = Field(default_factory=lambda: ["trees", "rocks", "plants"])
 
 
+class MakePath(BaseModel):
+    op: Literal["make_path"] = "make_path"
+    name: str = "Path"
+    points: list[Vector3] = Field(default_factory=list)  # NURBS control points
+    resolution: int = 12  # curve subdivisions per segment
+    # Optional drape: sample this heightmap at the control points and set their Z
+    # to the terrain surface, so the path grades smoothly instead of copying the
+    # terrain's fine relief. Must match the heightmap_terrain build values.
+    heightmap: str | None = None
+    size: float = 60.0
+    height: float = 14.0
+    sea_level: float = 0.3
+
+
 # Add MakeMaterial and other ops to this union as the library grows.
 Operation = Annotated[
-    Union[AddMesh, BuildGeoNodes, MakeProxies], Field(discriminator="op")
+    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath], Field(discriminator="op")
 ]
 
 
