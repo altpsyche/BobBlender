@@ -38,6 +38,11 @@ def _gn_object(name):
     return obj, mod
 
 
+# Structural inputs define the mesh topology, so a rebuild must take them from the
+# op (a full-res bake needs the full-res grid), not preserve a stale tuned value.
+_STRUCTURAL = {"Size", "Resolution"}
+
+
 def _input_sockets(ng):
     for item in ng.interface.items_tree:
         if getattr(item, "item_type", None) == "SOCKET" and item.in_out == "INPUT":
@@ -50,10 +55,13 @@ def _snapshot_knobs(ng):
     In Blender 5.2 a Nodes modifier has no IDProperties; a knob's value lives on
     its node group interface socket default_value (and the group is per-object, so
     that value is per-object). Datablock sockets have no meaningful default, so
-    reading them is skipped, the recipe sets those on nodes anyway.
+    reading them is skipped, the recipe sets those on nodes anyway. Structural
+    inputs are skipped too, so the rebuild's params win for them.
     """
     snap = {}
     for item in _input_sockets(ng):
+        if item.name in _STRUCTURAL:
+            continue
         try:
             value = item.default_value
         except (AttributeError, TypeError):
@@ -96,15 +104,19 @@ def build_geonodes(op: dict) -> dict:
             old = mod.node_group
             old_name = old.name
             snap = {} if reset else _snapshot_knobs(old)
-            # Build a fresh group and swap it onto the modifier. Clearing a group
-            # in place leaves the modifier evaluating an empty result (Blender
-            # caches the compiled tree), so a new group is the reliable path; the
-            # object, its transform, selection, and (restored) knobs still survive.
+            # Build a fresh group and give the object a fresh modifier pointing at
+            # it. Reusing the group or the modifier leaves Blender evaluating a
+            # stale result (empty geometry, or the old resolution) because it
+            # caches the compiled tree and mesh; a new group plus a new modifier
+            # forces a clean re-eval. The object, transform, selection, and
+            # (restored) knobs still survive.
             new_ng, out = new_group(old_name)
             build(new_ng, out, params)
             if snap:
                 _restore_knobs(new_ng, snap)
-            mod.node_group = new_ng
+            obj.modifiers.remove(mod)
+            new_mod = obj.modifiers.new(name="GeometryNodes", type="NODES")
+            new_mod.node_group = new_ng
             if old.users == 0:
                 bpy.data.node_groups.remove(old)
             new_ng.name = old_name  # reclaim the clean name

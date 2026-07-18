@@ -93,19 +93,30 @@ noise (domain warp, ridged blend, shape). Erosion is a list of passes:
   `iterations`.
 - `smooth`: gaussian blur, `sigma`. Bracket the hydraulic pass with one (a coarse
   base pre-smooth and a light final smooth) to keep the result from going gritty.
+- `falloff`: taper the field toward the borders so the edges sink (islands,
+  plateaus). Params: `margin` (fraction of the shorter side eased in), `power`,
+  `floor`. Run it before `hydraulic` so drainage flows out to the sunk rim.
 - `stream_power`: drainage-area incision (CPU, the original pipeline). Params:
   `iterations`, `erosion`, `m`, `n`, `talus`, `thermal_factor`.
 
 A good recipe: `smooth` (sigma ~1.5) -> `hydraulic` (droplets 1.5-2.5M, radius 4)
--> `thermal` (iterations ~6) -> `smooth` (sigma ~0.8). The `foothills`, `alpine`,
-and `badlands` presets are built this way.
+-> `thermal` (iterations ~6) -> `smooth` (sigma ~0.8). The presets are built this
+way. `build_params(knobs)` (in `heightfields/params.py`) is the one place that
+expands a flat knob set into this pass list, shared by the presets, the panel, and
+the CLI.
+
+Droplet count is a density: a hydraulic pass may give `density` (the count at
+768px) instead of an absolute `droplets`, and the pipeline scales it to the bake
+resolution, so a preview and a full bake stay consistent instead of the low-res one
+over-eroding.
 
 The MCP tool `bake_heightfield(out_file, params, preview, force)` writes a 16-bit
 PNG plus a `<name>.json` sidecar (the full recipe, so the field is reproducible),
 and a params-hash cache skips a re-bake when nothing changed. `preview=True` bakes
-at 256 for a fast look; `backend` is `auto` (GPU when present), `cpu`, or `gpu`.
-The CPU path is the deterministic reference; the GPU path is fast but not
-bit-identical (atomicAdd order).
+at 256 for a fast look (a real `preview` arg on `bake()`, so agent and CLI runs are
+resolution-independent too, not just the panel); `backend` is `auto` (GPU when
+present), `cpu`, or `gpu`. The CPU path is the deterministic reference; the GPU path
+is fast but not bit-identical (atomicAdd order).
 
 ```json
 {"op": "bake_heightfield", "out_file": "library/_generated/forest_height.png",
@@ -116,22 +127,39 @@ bit-identical (atomicAdd order).
               {"kind": "thermal", "talus": 0.005, "factor": 0.45, "iterations": 8}]}}
 ```
 
-Presets (`foothills`, `alpine`, `badlands`) are starting points: pass
-`"preset": "alpine"` in params and override fields. From a script,
-`bobtools.heightfields.bake(abs_path, params)` is the same entry.
+Presets (`foothills`, `alpine`, `badlands`, `rolling`, `canyon`, `mesa`,
+`islands`) are starting points: pass `"preset": "alpine"` in params and override
+fields. Each is a flat knob set (`presets.PRESET_KNOBS`) expanded through
+`build_params`. From a script, `bobtools.heightfields.bake(abs_path, params,
+preview=...)` is the same entry.
 
 After a re-bake, send a `reload_image` op so the open session picks up the new
 pixels (see below), then rebuild `heightmap_terrain`.
 
 ### From Blender: the Heightfield Terrain panel
 
-BobMCP sidebar (View3D > N > BobMCP) has a "Heightfield Terrain" panel with the
-shape, erosion, and displace knobs and a Bake + Build Terrain button. It bakes in
-the tools venv (so Blender's own Python does not need numpy or CuPy), reloads the
-image, and builds the terrain object in place. Preview bakes at 256 for a fast
-look; turn it off to commit at full resolution. The panel is part of the
-extension, so picking up a code change to it means re-enabling the addon or
-restarting Blender, not Reload Builders.
+BobMCP sidebar (View3D > N > BobMCP) has a "Heightfield Terrain" panel with a
+Bake + Build Terrain button. It bakes in the tools venv (so Blender's own Python
+does not need numpy or CuPy), reloads the image, and builds the terrain object in
+place. Preview bakes at 256 for a fast look; turn it off to commit at full
+resolution. The panel is part of the extension, so picking up a code change to it
+means re-enabling the addon or restarting Blender, not Reload Builders.
+
+Panel features:
+
+- 2D preview: the baked heightfield PNG is shown top-down above the button, so you
+  read height and drainage without orbiting the viewport. It refreshes each bake.
+- Preset dropdown: pick a preset (`foothills`, `alpine`, `badlands`, `rolling`,
+  `canyon`, `mesa`, `islands`) to populate the sliders in one click; `custom`
+  leaves your values alone. The generation knobs are generated from the venv
+  presets into `presets.json` (see `tools/scripts/gen_panel_presets.py`), so the
+  two stay in sync; the panel adds a display height and sea level per preset.
+- Collapsible Shape / Erosion / Displace sub-panels group the knobs.
+- Backend: `auto` (GPU when present, else CPU), `gpu`, or `cpu`. The question-mark
+  button probes the venv and shows what is available; a bake that falls back to CPU
+  reports a warning.
+- Material: a real material picker; the chosen material is assigned to the surface.
+- The bake shows a wait cursor and progress while it runs.
 
 When Blender is launched through Steam it runs inside the Steam pressure-vessel
 container, where the host venv and CUDA are not directly reachable. The operator

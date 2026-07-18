@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import config
+from .. import config
 from .contracts import BuildRequest, BuildResult
 
 # Logs go to stderr. stdout is the MCP stdio protocol channel.

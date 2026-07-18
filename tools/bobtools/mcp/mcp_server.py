@@ -13,7 +13,8 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from . import bridge, config, executor, scaffold
+from .. import config, scaffold
+from . import bridge, executor
 from .contracts import BuildRequest
 
 mcp = FastMCP("bobblendermcp")
@@ -99,7 +100,7 @@ def bake_heightfield(
     Returns metadata: {path, out_file, backend, platform, size, seconds, stats,
     hash, cached}.
     """
-    from .heightfields import bake, presets
+    from ..heightfields import bake, presets
 
     p = dict(params or {})
     preset = p.pop("preset", None)
@@ -107,11 +108,9 @@ def bake_heightfield(
         base = presets.get(preset)
         base.update(p)
         p = base
-    if preview:
-        p["size"] = 256
 
     out_abs = str((config.repo_root() / out_file).resolve())
-    result = bake(out_abs, p, force=force)
+    result = bake(out_abs, p, force=force, preview=preview)
     result["out_file"] = out_file
     return result
 

@@ -31,7 +31,7 @@ be installed into Blender.
 1. Add a function in `bbmcp/<area>.py` that takes an op dict and returns a result
    dict.
 2. Register it in `bbmcp/dispatch.py`.
-3. Add the matching op model in `tools/bobtools/contracts.py`.
+3. Add the matching op model in `tools/bobtools/mcp/contracts.py`.
 
 ## Adding a geometry-node recipe
 

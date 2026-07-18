@@ -12,25 +12,6 @@ def new_group(name: str):
     return ng, out
 
 
-def reset_group(ng):
-    """Clear an existing group's nodes and interface, ready to refill in place.
-
-    Re-adds the Geometry output and Group Output so a recipe can build into the
-    same datablock a modifier already points at, which is how a rebuild keeps the
-    object instead of respawning it. Returns the Group Output node.
-    """
-    ng.nodes.clear()
-    for item in list(ng.interface.items_tree):
-        try:
-            ng.interface.remove(item)
-        except (RuntimeError, TypeError):
-            pass
-    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
-    out = ng.nodes.new("NodeGroupOutput")
-    out.location = (900, 0)
-    return out
-
-
 def add_input(ng, name, socket_type, default=None, min_value=None):
     """Add a group input socket and return the interface item.
 

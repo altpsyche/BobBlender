@@ -1,32 +1,63 @@
 """CLI for a bake, so Blender (a different interpreter) can drive one by
 subprocess: `python -m bobtools.heightfields --out X.png --params-file p.json`.
 
-Prints the result metadata as JSON on the last stdout line.
+Prints the result metadata as JSON on the last stdout line. `--backends` prints
+the available compute backends (and the GPU device name if present) instead of
+baking, so the panel can show a backend hint without importing numpy or CuPy.
 """
 
 import argparse
 import json
 
-from .pipeline import bake
 from . import presets
+from .params import build_params
+from .pipeline import bake
+
+
+def _print_backends():
+    from . import backend as backend_mod
+
+    names = backend_mod.available()
+    info = {"available": names}
+    if "gpu" in names:
+        try:
+            info["device"] = backend_mod.select("gpu").info().get("device")
+        except Exception:
+            pass
+    print(json.dumps(info))
 
 
 def main():
     ap = argparse.ArgumentParser(prog="bobtools.heightfields")
-    ap.add_argument("--out", required=True, help="absolute PNG path")
-    ap.add_argument("--params-file", required=True, help="JSON params file")
+    ap.add_argument("--out", help="absolute PNG path")
+    ap.add_argument("--params-file", help="JSON full-params file")
+    ap.add_argument("--knobs-file", help="JSON flat-knobs file (expanded via build_params)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--preview", action="store_true", help="bake at preview resolution")
+    ap.add_argument("--backends", action="store_true",
+                    help="print available backends as JSON and exit")
     args = ap.parse_args()
 
-    with open(args.params_file) as fh:
-        params = json.load(fh)
-    preset = params.pop("preset", None)
-    if preset is not None:
-        base = presets.get(preset)
-        base.update(params)
-        params = base
+    if args.backends:
+        _print_backends()
+        return
 
-    result = bake(args.out, params, force=args.force)
+    if not args.out or not (args.params_file or args.knobs_file):
+        ap.error("need --out and one of --params-file/--knobs-file, unless --backends")
+
+    if args.knobs_file:
+        with open(args.knobs_file) as fh:
+            params = build_params(json.load(fh))
+    else:
+        with open(args.params_file) as fh:
+            params = json.load(fh)
+        preset = params.pop("preset", None)
+        if preset is not None:
+            base = presets.get(preset)
+            base.update(params)
+            params = base
+
+    result = bake(args.out, params, force=args.force, preview=args.preview)
     print(json.dumps(result))
 
 

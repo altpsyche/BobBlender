@@ -26,12 +26,12 @@ it: `BOB_BLENDER`, `BOB_REPO`, `BOB_BRIDGE_HOST`, `BOB_BRIDGE_PORT`.
 | `bobtools/naming.py` | Naming helpers (slugs). | none |
 | `bobtools/scaffold.py` | `bob-new-project <name>`, a new project from the template. | none |
 | `bobtools/setup.py` | `bob-setup`, dev-installs the extension and prints a checklist. | none |
-| `bobtools/contracts.py` | Pydantic op vocabulary, validated at the boundary. | `pydantic` |
-| `bobtools/executor.py` | Headless executor. Spawns Blender to build a `.blend`. | none |
-| `bobtools/bridge.py` | Live executor. Sends ops to the open Blender over a socket. | none |
-| `bobtools/mcp_server.py` | `bob-mcp`, the MCP server exposing repo and build tools. | `mcp` |
+| `bobtools/mcp/contracts.py` | Pydantic op vocabulary, validated at the boundary. | `pydantic` |
+| `bobtools/mcp/executor.py` | Headless executor. Spawns Blender to build a `.blend`. | none |
+| `bobtools/mcp/bridge.py` | Live executor. Sends ops to the open Blender over a socket. | none |
+| `bobtools/mcp/mcp_server.py` | `bob-mcp`, the MCP server exposing repo and build tools. | `mcp` |
+| `bobtools/heightfields/` | Terrain heightfield generation and erosion (CPU/GPU). Writes a heightmap PNG that `heightmap_terrain` displaces. See `../docs/SYSTEMS.md`. | `numpy`, `pillow`, `scipy`, optional `cupy` |
 | `bobtools/comfyui.py` | ComfyUI API client (queue a workflow, fetch outputs). | `httpx`, `websockets` |
-| `bobtools/erosion.py` | Heightfield generation and hydraulic/thermal erosion. Writes a heightmap PNG that `heightmap_terrain` displaces. See `../docs/SYSTEMS.md`. | `numpy`, `pillow`, `scipy` |
 
 ## MCP server
 
@@ -39,7 +39,7 @@ Registered in `../.mcp.json` with a portable `uv run` invocation. Tools:
 `list_projects`, `list_library_assets`, `create_project`, `build` (headless),
 and `build_live` (into the open Blender via the Bob Blender MCP extension).
 
-Adding a build op stays small: an op model in `contracts.py`, a builder in
+Adding a build op stays small: an op model in `mcp/contracts.py`, a builder in
 `../blender/bbmcp/`, and one line in its `dispatch.py`. No new MCP tool is
 needed, since `build` and `build_live` are generic over ops.
 

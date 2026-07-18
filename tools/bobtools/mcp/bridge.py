@@ -8,7 +8,7 @@ Requires the Bob Blender MCP extension to be enabled and its bridge running.
 import json
 import socket
 
-from . import config
+from .. import config
 from .contracts import BuildResult, OpResult
 
 

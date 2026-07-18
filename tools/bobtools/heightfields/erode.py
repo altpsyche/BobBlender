@@ -85,6 +85,25 @@ def smooth(h, sigma=1.0):
     return gaussian_filter(h, max(sigma, 1e-3), mode="nearest")
 
 
+def edge_falloff(h, margin=0.15, power=2.0, floor=0.0):
+    """Taper the field toward the borders so the edges sink (islands, plateaus).
+
+    margin is the fraction of the shorter side over which the taper eases in from
+    the edge; power shapes the ease; floor is the lowest multiplier at the very
+    edge (0 sinks edges to the field minimum). Run before hydraulic so drainage
+    flows out to the sunk rim.
+    """
+    rows, cols = h.shape
+    yy = np.linspace(0.0, 1.0, rows)[:, None]
+    xx = np.linspace(0.0, 1.0, cols)[None, :]
+    dy = np.minimum(yy, 1.0 - yy)  # (rows, 1) distance to nearest horizontal edge
+    dx = np.minimum(xx, 1.0 - xx)  # (1, cols) distance to nearest vertical edge
+    dist = np.minimum(dy, dx) / max(margin, 1e-6)  # broadcasts to (rows, cols)
+    mask = np.clip(dist, 0.0, 1.0) ** max(power, 1e-6)
+    mask = floor + (1.0 - floor) * mask
+    return h * mask
+
+
 def stream_power(h, iterations=35, rain=1.0, erosion=0.6, m=0.9, n=1.1,
                  talus=0.008, thermal_factor=0.35):
     """Alternate stream-power incision with thermal slumping. CPU."""
@@ -148,21 +167,17 @@ void hydraulic(float* h, const int W, const int H,
         dx = dx*inertia - gx*(1.f-inertia);
         dy = dy*inertia - gy*(1.f-inertia);
         float len = sqrtf(dx*dx + dy*dy);
-        bool leaving = false;
-        float nx = px, ny = py;
-        if (len < 1e-6f) {
-            leaving = true;
-        } else {
-            dx /= len; dy /= len;
-            nx = px + dx; ny = py + dy;
-            if (nx < 0 || nx >= W - 1 || ny < 0 || ny >= H - 1) leaving = true;
-        }
-        if (leaving) {  // drop the load bilinearly and stop
+        if (len < 1e-6f) {  // stalled in an interior pit: drop the load here
             atomicAdd(&h[y0*W+x0], sed*(1-fx)*(1-fy));
             atomicAdd(&h[y0*W+x1], sed*fx*(1-fy));
             atomicAdd(&h[y1*W+x0], sed*(1-fx)*fy);
             atomicAdd(&h[y1*W+x1], sed*fx*fy);
             break;
+        }
+        dx /= len; dy /= len;
+        float nx = px + dx, ny = py + dy;
+        if (nx < 0 || nx >= W - 1 || ny < 0 || ny >= H - 1) {
+            break;  // ran off the grid: discard the load so borders build no rim
         }
         int mx0 = (int)floorf(nx), my0 = (int)floorf(ny);
         float mfx = nx - mx0, mfy = ny - my0;
@@ -278,8 +293,7 @@ def _hydraulic_cpu(h, sx, sy, p):
             dx /= ln; dy /= ln
             nx = px + dx; ny = py + dy
             if nx < 0 or nx >= W - 1 or ny < 0 or ny >= H - 1:
-                deposit(y0, x0, fx, fy, sed)
-                break
+                break  # ran off the grid: discard the load so borders build no rim
             mx0 = int(nx); my0 = int(ny)
             mfx = nx - mx0; mfy = ny - my0
             m00 = hg(my0, mx0); m10 = hg(my0, mx0 + 1); m01 = hg(my0 + 1, mx0); m11 = hg(my0 + 1, mx0 + 1)
@@ -326,6 +340,8 @@ def run_passes(h, passes, backend, seed=0):
             thermal(h, **spec)
         elif kind == "smooth":
             h = smooth(h, **spec)
+        elif kind == "falloff":
+            h = edge_falloff(h, **spec)
         elif kind == "stream_power":
             h = stream_power(h, **spec)
         else:

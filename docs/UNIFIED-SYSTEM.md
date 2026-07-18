@@ -176,6 +176,119 @@ isolated behind the fast loop it needs.
 Router and any plugin/registry machinery: deferred until a real second consumer
 or repo split forces them.
 
+## Terrain improvement plan (2026-07-18)
+
+Slice 1 is done. Remaining order revised: do the BobBlenderTools umbrella reorg
+FIRST, so the panel and cleanup work build against the final import structure
+instead of being moved later (mostly saves rework in Slice 3 and the mcp_server
+bake tool; Slice 2 is largely extension-side and less affected).
+
+### Slice 1: bugs + quick wins (done)
+
+- B1 edge peaks (root-caused): droplets that run off the grid dump their whole
+  sediment load into the border cell, so the rim collects spikes and that spike
+  steals the global max, crushing interior contrast. Fix (done): discard a
+  droplet's load on grid exit, plus erode a reflected margin and crop it off so
+  the visible edges were interior during erosion.
+- B2 pixelated terrain: in-place rebuild preserved the Resolution knob and did not
+  re-evaluate topology. Fix (done): Size/Resolution are structural (`_STRUCTURAL`,
+  taken from the op), and the rebuild uses a fresh group AND a fresh modifier so
+  the mesh re-evaluates.
+- Quick wins (done): randomize-seed button, last-bake readout on the panel.
+
+### Slice 2 (done, 2026-07-18): BobBlenderTools umbrella (naming + structure)
+
+Done: brand-only (kept the import package `bobtools`). The four framework files
+moved into `bobtools/mcp/` (contracts, executor, bridge, mcp_server); added
+`mcp/__init__.py` documenting MCP as the bus. Imports fixed (`config`/`scaffold`/
+`heightfields` are `..`-relative from inside `mcp/`; the real `mcp` SDK import is
+absolute so no shadowing). `bob-mcp` entry point is now
+`bobtools.mcp.mcp_server:main`; `.mcp.json` calls the console script so it did not
+change. `heightfields/` untouched (already pure). Verified: server imports and
+lists all six tools, `bob-mcp` starts, venv tests pass (8), and the extension's
+exact `-m bobtools.heightfields` subprocess still bakes.
+
+Original direction (kept for context): brand the whole suite BobBlenderTools, a
+roof over MCP, HeightFields, and (later) Scatter and more. Spans both Python
+worlds (tools/ venv + blender/).
+
+- Model MCP as the framework/bus, not a peer: contracts, executors, bridge,
+  server. HeightFields (venv compute) and Scatter (Blender builders) are
+  capabilities delivered over it. Keep each extract-ready so a polyrepo split
+  yields BobBlenderMCP / BobBlenderHeightFields / BobBlenderScatter under a
+  BobBlenderTools org or meta-repo.
+- Low-risk internal reorg: group the loose MCP files into `bobtools/mcp/`
+  (contracts, executor, bridge, mcp_server); heightfields/ is already clean; add
+  a `scatter/` home when scatter grows a venv side. Blender-side bbmcp builders
+  stay or mirror the layout.
+- OPEN DECISION: keep the import package `bobtools` (short) and use BobBlenderTools
+  only as the brand/repo name (recommended, ~free), OR rename the package to
+  `bobblendertools` (wide: every import, the bob-* console scripts, .mcp.json
+  server id, the extension's `-m bobtools.heightfields` subprocess, and a forced
+  MCP server restart). Do the full rename only if import-level brand consistency
+  is wanted, as its own verified pass.
+- Cross-cutting refactor: after it, verify the MCP server starts and the panel
+  bake still works end to end.
+
+### Slice 3 (done, 2026-07-18): panel UX
+
+Verified headless (register the addon, drive the bake operator end to end, 19
+checks green). Delivered:
+
+- 2D heightfield preview: baked PNG loaded into a `bpy.utils.previews` collection
+  (created in register, freed in unregister) and drawn with
+  `layout.template_icon(scale=8)`. The file is overwritten each bake, so the
+  loader clears and reloads under a fixed key.
+- Preset dropdown (`foothills`/`alpine`/`badlands`/`custom`) that populates the
+  sliders via an EnumProperty update callback. Preset knob sets live in the
+  extension for now; Slice 4 moves the canonical set into the venv.
+- Collapsible Shape / Erosion / Displace sub-panels (child Panels via
+  `bl_parent_id`).
+- Wait cursor + progress spinner around the blocking bake (guarded for headless
+  where there is no window). A full modal was skipped so the operator stays
+  headless-verifiable.
+- Backend hint: a Check Backends operator runs `-m bobtools.heightfields
+  --backends` and shows GPU/CPU availability; a bake that falls back to CPU when
+  GPU/auto was requested reports a warning.
+- Material is a real material picker (PointerProperty to `bpy.types.Material`),
+  assigned to the surface by name through the recipe's Set Material node.
+
+Deferred to Slice 4: relabel Droplets as a density (tied to the density-scaling
+move into the pipeline).
+
+### Slice 4 (done, 2026-07-18): feature / code cleanup
+
+Done and verified (23 venv tests green, headless panel round-trip green):
+
+- Droplet-density scaling moved into the pipeline. A hydraulic pass may quote
+  `density` (count at 768px); `pipeline._scale_passes` resolves it to an absolute
+  `droplets` at the bake resolution (floor `MIN_DROPLETS`). An explicit `droplets`
+  is left untouched (back-compat, tests). `bake(preview=True)` overrides the size
+  to `PREVIEW_SIZE` and hashes the overridden params, so agent/CLI previews are
+  resolution-independent, not just the panel.
+- One shared `build_params(knobs)` in `heightfields/params.py` expands a flat knob
+  set into the pass list. Presets, the panel (via `--knobs-file`), and the CLI all
+  use it, so the pass list is no longer hand-written in the panel. Presets are now
+  flat knob dicts (`presets.PRESET_KNOBS`) run through `build_params`.
+- Edge falloff is a reusable erosion pass (`erode.edge_falloff`, `kind: "falloff"`)
+  and a `build_params` knob; the `islands` preset uses it, and the panel exposes an
+  Edge Falloff slider.
+- Dropped the now-unused `reset_group` (the in-place rebuild uses a fresh group).
+- Presets added: `rolling`, `canyon`, `mesa`, `islands` (now 7 total).
+- Tests: border-spike regression (edge p99 <= interior), density scaling + floor +
+  absolute-untouched, preview resolution, edge-falloff sink, a committed small
+  golden (`tools/tests/data/golden_hf.npy`, regen via `make_golden.py`), all presets
+  expand, and the panel-presets drift test. Determinism/GPU-parity tests kept.
+
+Panel preset source (done via codegen): the venv `presets.PRESET_KNOBS` is the
+single authored source. `tools/scripts/gen_panel_presets.py` writes the exposed
+generation-knob subset to `blender/extensions/bob_blender_mcp/presets.json`
+(committed); the panel reads that local file and merges its own Blender-side
+display knobs (`height`, `sea_level`), which are not heightfield-generation params.
+A drift test (`test_panel_presets_json_in_sync`) fails if the JSON is stale, so the
+two worlds never silently diverge. Regenerate and commit the JSON when presets
+change.
+
 ## Extraction readiness (polyrepo)
 
 One-way dependencies, so a split is mechanical:

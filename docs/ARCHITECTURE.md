@@ -10,8 +10,9 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
   Blender Asset Library. Agent output can land in `library/_generated/`
   (gitignored) and be appended into hand-edited files via the Asset Browser.
 - `tools/`: a Python project (`bobtools`) that runs in its own venv, not inside
-  Blender. Holds the MCP server, the executors, repo utilities, and the ComfyUI
-  client.
+  Blender. `bobtools/mcp/` is the framework and bus (contracts, executors, bridge,
+  MCP server); `bobtools/heightfields/` is the pure terrain-compute capability;
+  repo utilities and the ComfyUI client sit alongside.
 - `blender/`: code that runs inside Blender's Python. `bbmcp/` is the authoring
   library, `runners/` are headless entry scripts, `extensions/bob_blender_mcp/`
   is the live bridge as an installable extension.
@@ -35,11 +36,12 @@ which both interpreters read.
 contracts (Pydantic ops, validated in the venv)
       |  JSON
       v
-tools/bobtools (venv, no bpy)          blender/ (bpy, no mcp)
-  contracts.py   op vocabulary           bbmcp/      builders
-  executor.py    headless executor  -->  runners/    headless entry
-  bridge.py      live executor           extensions/bob_blender_mcp  live bridge
-  mcp_server.py  MCP tools
+tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
+  mcp/contracts.py    op vocabulary         bbmcp/      builders
+  mcp/executor.py     headless executor -->  runners/    headless entry
+  mcp/bridge.py       live executor          extensions/bob_blender_mcp  live bridge
+  mcp/mcp_server.py   MCP tools
+  heightfields/       terrain compute
 ```
 
 - The op vocabulary (`contracts.py`) is validated where agent input enters, so
@@ -50,9 +52,9 @@ tools/bobtools (venv, no bpy)          blender/ (bpy, no mcp)
   reproducible builds; `bridge.py` targets the open session for live work. Both
   present the same shape, so adding one did not change anything upstream.
 
-To grow the vocabulary: add an op model in `contracts.py`, a builder in
-`blender/bbmcp/`, and one line in `blender/bbmcp/dispatch.py`. Geometry-node
-builders are recipes registered in `blender/bbmcp/geonodes.py`.
+To grow the vocabulary: add an op model in `bobtools/mcp/contracts.py`, a builder
+in `blender/bbmcp/`, and one line in `blender/bbmcp/dispatch.py`. Geometry-node
+builders are recipes in `blender/bbmcp/geonodes/recipes/`.
 
 ## The live bridge extension
 
@@ -87,11 +89,13 @@ Git plus Git-LFS. `.blend`, textures, and volumes go through LFS
 
 ## Repo boundary (kept extract-ready)
 
-BobBlenderMCP stays in this monorepo for now. The framework (contracts,
-executor, bridge, extension, dispatch) is kept separable from art-specific
-builders so it can later be split into a standalone repo with `git subtree` or
-published as a package. Extract when the op vocabulary stabilises, or when a
-second project or a public release needs it.
+BobBlenderMCP stays in this monorepo for now. The framework (`bobtools/mcp/`:
+contracts, executor, bridge, server, plus the extension and dispatch) is the bus;
+compute capabilities (`bobtools/heightfields/`, later a scatter package) ride over
+it and stay separable. Everything is kept extract-ready so a piece can later split
+into its own repo (BobBlenderMCP / BobBlenderHeightFields / BobBlenderScatter under
+a BobBlenderTools umbrella) with `git subtree`. Extract when the op vocabulary
+stabilises, or when a second project or a public release needs it.
 
 ## Daily use
 
