@@ -25,7 +25,7 @@ PANEL_KNOBS = ("octaves", "ridged", "detail_strength", "droplets", "erosion",
                "deposition", "radius", "max_steps", "thermal_iters", "edge_falloff")
 
 OUT = (pathlib.Path(__file__).resolve().parents[2]
-       / "blender" / "extensions" / "bob_blender_mcp" / "presets.json")
+       / "blender" / "extensions" / "bob_blender_tools" / "presets.json")
 
 
 def build_panel_presets() -> dict:

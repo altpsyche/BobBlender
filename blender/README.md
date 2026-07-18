@@ -9,7 +9,7 @@ recipes and every tunable parameter.
 |------|-----------|
 | `bbmcp/` | The authoring library. Builders turn a validated op dict into meshes, geometry nodes, or materials. Reused by the headless executor and the live bridge. Named `bbmcp`, not `bob_build`, to avoid sys.path clashes with other bob tools. |
 | `runners/` | Entry scripts launched by Blender. `headless_build.py` reads a request, applies ops via `bbmcp`, saves the `.blend`, and writes a result JSON. |
-| `extensions/bob_blender_mcp/` | The live bridge as a Blender extension (id `bob_blender_mcp`, "Bob Blender MCP"). A managed socket server with start/stop/status, autostart, and reload, that applies ops to the open session. Dev-installed by `bob-setup`. |
+| `extensions/bob_blender_tools/` | The BobBlenderTools addon (id `bob_blender_tools`), the Bob suite's Blender-side host: one `BobBlenderTools` N-panel tab with the MCP Bridge (a managed socket server with start/stop/status, autostart, reload), the Heightfield Terrain panel, and next Scatter. Dev-installed by `bob-setup`. |
 
 ## Two ways it is invoked
 

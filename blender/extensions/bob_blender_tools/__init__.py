@@ -1,8 +1,10 @@
-"""Bob Blender MCP: enable this addon to let MCP author into your live Blender.
+"""BobBlenderTools: the Bob procedural suite inside Blender.
 
-Enable it once in Preferences > Add-ons. With autostart on, the socket bridge
-comes up whenever Blender launches, with no scripts to paste. The N-panel
-(View3D sidebar > BobMCP) has Start/Stop and a Reload Builders button.
+Enable this addon once in Preferences > Add-ons. Everything lives in the
+BobBlenderTools tab of the View3D N-panel: the MCP Bridge (start/stop the live
+socket that lets agents author into this session, plus Reload Builders), the
+Heightfield Terrain panel, and (next) Scatter. MCP is one capability here, not the
+whole thing. With autostart on, the bridge comes up whenever Blender launches.
 """
 
 import json
@@ -56,7 +58,7 @@ def _load_hf_presets():
         with open(path) as fh:
             gen = json.load(fh).get("presets", {})
     except (OSError, ValueError) as exc:
-        print(f"[bob_blender_mcp] presets.json not loaded: {exc}")
+        print(f"[bob_blender_tools] presets.json not loaded: {exc}")
         return {}
     return {name: {**knobs, **_HF_DISPLAY.get(name, _HF_DISPLAY_DEFAULT)}
             for name, knobs in gen.items()}
@@ -89,11 +91,11 @@ def _load_preview(png_path):
         _preview_coll.clear()
         _preview_coll.load(_PREVIEW_KEY, png_path, "IMAGE")
     except Exception as exc:
-        print(f"[bob_blender_mcp] preview load failed: {exc}")
+        print(f"[bob_blender_tools] preview load failed: {exc}")
 
 
 # Preferences
-class BBMCP_AddonPreferences(AddonPreferences):
+class BBT_AddonPreferences(AddonPreferences):
     bl_idname = __package__
 
     autostart: BoolProperty(
@@ -113,8 +115,8 @@ def _prefs():
 
 
 # Operators
-class BBMCP_OT_start(Operator):
-    bl_idname = "bob_blender_mcp.start"
+class BBT_OT_start(Operator):
+    bl_idname = "bob_blender_tools.start"
     bl_label = "Start Bridge"
     bl_description = "Start the live MCP bridge socket"
 
@@ -123,8 +125,8 @@ class BBMCP_OT_start(Operator):
         return {"FINISHED"}
 
 
-class BBMCP_OT_stop(Operator):
-    bl_idname = "bob_blender_mcp.stop"
+class BBT_OT_stop(Operator):
+    bl_idname = "bob_blender_tools.stop"
     bl_label = "Stop Bridge"
     bl_description = "Stop the live MCP bridge socket"
 
@@ -133,8 +135,8 @@ class BBMCP_OT_stop(Operator):
         return {"FINISHED"}
 
 
-class BBMCP_OT_reload(Operator):
-    bl_idname = "bob_blender_mcp.reload_builders"
+class BBT_OT_reload(Operator):
+    bl_idname = "bob_blender_tools.reload_builders"
     bl_label = "Reload Builders"
     bl_description = "Refresh bbmcp so new op code is picked up without restarting"
 
@@ -144,7 +146,7 @@ class BBMCP_OT_reload(Operator):
 
 
 # Heightfield terrain: bake in the venv, build in place here.
-class BBMCP_HeightfieldProps(PropertyGroup):
+class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
     material: PointerProperty(name="Material", type=bpy.types.Material,
                               description="Material assigned to the terrain surface")
@@ -180,15 +182,15 @@ class BBMCP_HeightfieldProps(PropertyGroup):
     last_bake: StringProperty(name="Last bake", default="")
 
 
-class BBMCP_OT_random_seed(Operator):
-    bl_idname = "bob_blender_mcp.random_seed"
+class BBT_OT_random_seed(Operator):
+    bl_idname = "bob_blender_tools.random_seed"
     bl_label = "Randomize Seed"
     bl_description = "Pick a new random terrain seed"
 
     def execute(self, context):
         import random
 
-        context.scene.bbmcp_hf.seed = random.randint(0, 99999)
+        context.scene.bbt_hf.seed = random.randint(0, 99999)
         return {"FINISHED"}
 
 
@@ -219,13 +221,13 @@ def _host_argv(repo, extra):
     return inner
 
 
-class BBMCP_OT_detect_backends(Operator):
-    bl_idname = "bob_blender_mcp.detect_backends"
+class BBT_OT_detect_backends(Operator):
+    bl_idname = "bob_blender_tools.detect_backends"
     bl_label = "Check Backends"
     bl_description = "Ask the venv which compute backends are available (GPU/CPU)"
 
     def execute(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         repo = os.path.dirname(server._repo_blender_dir())
         argv = _host_argv(repo, ["--backends"])
         try:
@@ -253,13 +255,13 @@ class BBMCP_OT_detect_backends(Operator):
         return {"FINISHED"}
 
 
-class BBMCP_OT_bake_terrain(Operator):
-    bl_idname = "bob_blender_mcp.bake_terrain"
+class BBT_OT_bake_terrain(Operator):
+    bl_idname = "bob_blender_tools.bake_terrain"
     bl_label = "Bake + Build Terrain"
     bl_description = "Bake an eroded heightfield in the venv (GPU), then build the terrain in place"
 
     def execute(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         repo = os.path.dirname(server._repo_blender_dir())
         out_abs = os.path.join(repo, "library", "_generated", f"{hf.target}_hf.png")
         # Send flat knobs; the pipeline (build_params + preview) expands the pass
@@ -348,12 +350,12 @@ class BBMCP_OT_bake_terrain(Operator):
 
 
 # Panel
-class BBMCP_PT_panel(Panel):
-    bl_label = "Bob Blender MCP"
-    bl_idname = "BBMCP_PT_panel"
+class BBT_PT_panel(Panel):
+    bl_label = "MCP Bridge"
+    bl_idname = "BBT_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "BobMCP"
+    bl_category = "BobBlenderTools"
 
     def draw(self, context):
         layout = self.layout
@@ -363,21 +365,21 @@ class BBMCP_PT_panel(Panel):
             icon="PROP_ON" if running else "PROP_OFF",
         )
         row = layout.row(align=True)
-        row.operator("bob_blender_mcp.start", icon="PLAY", text="Start")
-        row.operator("bob_blender_mcp.stop", icon="PAUSE", text="Stop")
-        layout.operator("bob_blender_mcp.reload_builders", icon="FILE_REFRESH")
+        row.operator("bob_blender_tools.start", icon="PLAY", text="Start")
+        row.operator("bob_blender_tools.stop", icon="PAUSE", text="Stop")
+        layout.operator("bob_blender_tools.reload_builders", icon="FILE_REFRESH")
 
 
-class BBMCP_PT_heightfield(Panel):
+class BBT_PT_heightfield(Panel):
     bl_label = "Heightfield Terrain"
-    bl_idname = "BBMCP_PT_heightfield"
+    bl_idname = "BBT_PT_heightfield"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "BobMCP"
+    bl_category = "BobBlenderTools"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         layout = self.layout
 
         if _preview_coll is not None and _PREVIEW_KEY in _preview_coll:
@@ -390,7 +392,7 @@ class BBMCP_PT_heightfield(Panel):
 
         row = layout.row(align=True)
         row.prop(hf, "backend", expand=True)
-        row.operator("bob_blender_mcp.detect_backends", text="", icon="QUESTION")
+        row.operator("bob_blender_tools.detect_backends", text="", icon="QUESTION")
         if hf.backend_hint:
             icon = "ERROR" if hf.backend_hint.startswith(("CPU", "none", "venv", "probe")) else "INFO"
             layout.label(text=hf.backend_hint, icon=icon)
@@ -399,42 +401,42 @@ class BBMCP_PT_heightfield(Panel):
         row.prop(hf, "preview")
         row.prop(hf, "resolution")
 
-        layout.operator("bob_blender_mcp.bake_terrain", icon="MOD_OCEAN", text="Bake + Build Terrain")
+        layout.operator("bob_blender_tools.bake_terrain", icon="MOD_OCEAN", text="Bake + Build Terrain")
         if hf.last_bake:
             layout.label(text=f"Last: {hf.last_bake}", icon="INFO")
 
 
-class BBMCP_PT_hf_shape(Panel):
+class BBT_PT_hf_shape(Panel):
     bl_label = "Shape"
-    bl_idname = "BBMCP_PT_hf_shape"
+    bl_idname = "BBT_PT_hf_shape"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "BobMCP"
-    bl_parent_id = "BBMCP_PT_heightfield"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_heightfield"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         layout = self.layout
         row = layout.row(align=True)
         row.prop(hf, "seed")
-        row.operator("bob_blender_mcp.random_seed", text="", icon="FILE_REFRESH")
+        row.operator("bob_blender_tools.random_seed", text="", icon="FILE_REFRESH")
         layout.prop(hf, "octaves")
         layout.prop(hf, "ridged")
         layout.prop(hf, "detail_strength")
 
 
-class BBMCP_PT_hf_erosion(Panel):
+class BBT_PT_hf_erosion(Panel):
     bl_label = "Erosion"
-    bl_idname = "BBMCP_PT_hf_erosion"
+    bl_idname = "BBT_PT_hf_erosion"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "BobMCP"
-    bl_parent_id = "BBMCP_PT_heightfield"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_heightfield"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         layout = self.layout
         layout.prop(hf, "droplets")
         layout.prop(hf, "erosion")
@@ -445,17 +447,17 @@ class BBMCP_PT_hf_erosion(Panel):
         layout.prop(hf, "edge_falloff")
 
 
-class BBMCP_PT_hf_displace(Panel):
+class BBT_PT_hf_displace(Panel):
     bl_label = "Displace"
-    bl_idname = "BBMCP_PT_hf_displace"
+    bl_idname = "BBT_PT_hf_displace"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "BobMCP"
-    bl_parent_id = "BBMCP_PT_heightfield"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_heightfield"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        hf = context.scene.bbmcp_hf
+        hf = context.scene.bbt_hf
         layout = self.layout
         layout.prop(hf, "terrain_size")
         layout.prop(hf, "height")
@@ -463,19 +465,19 @@ class BBMCP_PT_hf_displace(Panel):
 
 
 _CLASSES = (
-    BBMCP_AddonPreferences,
-    BBMCP_HeightfieldProps,
-    BBMCP_OT_start,
-    BBMCP_OT_stop,
-    BBMCP_OT_reload,
-    BBMCP_OT_random_seed,
-    BBMCP_OT_detect_backends,
-    BBMCP_OT_bake_terrain,
-    BBMCP_PT_panel,
-    BBMCP_PT_heightfield,
-    BBMCP_PT_hf_shape,
-    BBMCP_PT_hf_erosion,
-    BBMCP_PT_hf_displace,
+    BBT_AddonPreferences,
+    BBT_HeightfieldProps,
+    BBT_OT_start,
+    BBT_OT_stop,
+    BBT_OT_reload,
+    BBT_OT_random_seed,
+    BBT_OT_detect_backends,
+    BBT_OT_bake_terrain,
+    BBT_PT_panel,
+    BBT_PT_heightfield,
+    BBT_PT_hf_shape,
+    BBT_PT_hf_erosion,
+    BBT_PT_hf_displace,
 )
 
 
@@ -484,7 +486,7 @@ def _autostart():
         if _prefs().autostart and not server.is_running():
             server.start()
     except Exception as exc:  # never let autostart break registration
-        print(f"[bob_blender_mcp] autostart skipped: {exc}")
+        print(f"[bob_blender_tools] autostart skipped: {exc}")
     return None  # one-shot timer
 
 
@@ -492,7 +494,7 @@ def register():
     global _preview_coll
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.bbmcp_hf = PointerProperty(type=BBMCP_HeightfieldProps)
+    bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
@@ -504,6 +506,6 @@ def unregister():
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
-    del bpy.types.Scene.bbmcp_hf
+    del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

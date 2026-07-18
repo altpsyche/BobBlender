@@ -167,7 +167,7 @@ isolated behind the fast loop it needs.
   coarse base pre-smooth, a light final smooth). A render shows a real eroded
   mountain, rocky crest, drainage rills, smooth flanks. Presets updated to this
   recipe.
-- Phase D (done): the BobHeightField N-panel. `blender/extensions/bob_blender_mcp`
+- Phase D (done): the BobHeightField N-panel. `blender/extensions/bob_blender_tools`
   gained a "Heightfield Terrain" panel (shape / erosion / displace knobs) and a
   Bake + Build operator that subprocesses `<repo>/tools/.venv/bin/python -m
   bobtools.heightfields` (so Blender's interpreter drives the venv bake), then
@@ -282,12 +282,132 @@ Done and verified (23 venv tests green, headless panel round-trip green):
 
 Panel preset source (done via codegen): the venv `presets.PRESET_KNOBS` is the
 single authored source. `tools/scripts/gen_panel_presets.py` writes the exposed
-generation-knob subset to `blender/extensions/bob_blender_mcp/presets.json`
+generation-knob subset to `blender/extensions/bob_blender_tools/presets.json`
 (committed); the panel reads that local file and merges its own Blender-side
 display knobs (`height`, `sea_level`), which are not heightfield-generation params.
 A drift test (`test_panel_presets_json_in_sync`) fails if the JSON is stale, so the
 two worlds never silently diverge. Regenerate and commit the JSON when presets
 change.
+
+## Scatter panel plan (BobScatter, 2026-07-19)
+
+The next capability panel: a GScatter-style multi-layer scattering UI in the
+`bob_blender_tools` extension, the Scatter counterpart to the Heightfield Terrain
+panel. Planned in full here; implement in verified vertical slices (below).
+
+### What makes it different from the Heightfield panel
+
+Scatter has no venv side. It is pure geometry nodes, so the panel drives the
+existing `bbmcp` `scatter` recipe in-process through `apply_op` (the same path the
+terrain panel uses for its build step), with no subprocess, no bake, and no Steam
+container hop. No new op contract is needed (it reuses `build_geonodes` with
+`recipe: "scatter"`, plus `make_proxies` and optionally `make_path`), so changes to
+it need only an addon re-enable/restart, never an MCP reconnect. The real design
+work is that scatter is inherently multi-layer (one asset type per layer), which
+the recipe already models as one built object per layer.
+
+### Placement, naming, extract-readiness
+
+- A sibling panel in the `BobBlenderTools` tab, label "Scatter". Classes `BBT_*`
+  (`BBT_PT_scatter`, `BBT_ScatterProps`, `BBT_ScatterLayer`,
+  `BBT_UL_scatter_layers`, `BBT_OT_scatter_*`).
+- Future `BobBlenderScatter` polyrepo split = the `scatter` recipe + `proxies.py` +
+  this panel, all `bpy`-only. The seam to the rest stays the op contract
+  (`build_geonodes recipe=scatter`), consistent with the bus model.
+
+### Data model
+
+- `Scene.bbt_scatter` (`BBT_ScatterProps`): `emitter` (PointerProperty ->
+  Object, usually the terrain), `path` (PointerProperty -> Object, optional curve),
+  `layers` (CollectionProperty of `BBT_ScatterLayer`), `active` (int index for the
+  UIList).
+- `BBT_ScatterLayer`: `name`, `enabled` (bool), `assets` (PointerProperty ->
+  Collection), `align` (enum up/normal), `object_name` (str, the built object,
+  cached at first build so renames do not orphan), and the live knobs `density`,
+  `distance_min`, `seed`, `min_scale`, `max_scale`, `min_normal_z`, plus
+  `path_width`, `path_falloff` (used when the scene path is set).
+- Per-scene for v1 (one scatter setup per scene). Per-emitter storage is a possible
+  later change if multiple terrains need independent setups; note the limitation.
+
+### Structural vs live (drives build vs push)
+
+- Structural (change the graph, need a rebuild via `apply_op`): `align`, `assets`,
+  `emitter`, and path presence (path set/cleared). Gated behind the Build button so
+  they do not trigger surprise heavy rebuilds mid-edit.
+- Live knobs (modifier interface socket defaults, the 5.2 mechanism): `density`,
+  `distance_min`, `seed`, `min_scale`, `max_scale`, `min_normal_z`, `path_width`,
+  `path_falloff`. After a layer is built these push straight to the built object's
+  node-group interface socket by name (`Density`, `Distance Min`, `Seed`,
+  `Min Scale`, `Max Scale`, `Min Normal Z`, `Path Width`, `Path Falloff`) with no
+  rebuild. Implement as PropertyGroup update callbacks that find
+  `self.object_name`'s modifier and set the socket default; guard when the layer is
+  not built yet.
+
+### Object lifecycle
+
+Each enabled layer builds a `Scatter_<name>` object (name cached in `object_name`).
+Build/Build-All calls `apply_op {"op":"build_geonodes","recipe":"scatter",
+"name":<object_name>, "params":{emitter, assets, align, <knobs>, path?, path_width,
+path_falloff}}`; in-place rebuild keeps the object and tuned knobs. Removing a layer
+deletes its object (`bpy.data.objects.remove`, Blender-side in the operator, not an
+op).
+
+### Layer type presets
+
+A Blender-side Python dict in the panel (no codegen needed, since no second
+interpreter reads it, unlike the heightfield presets): Trees (align up, sparse,
+upright, wider path pull-back), Rocks (align normal, tilt to surface), Plants
+(align normal, denser), Grass (align normal, dense, small). "Add Layer" takes a
+type, appends a layer with those defaults, ensures the matching `BOB_Assets_<Kind>`
+collection (via `make_proxies` for that kind), and points `assets` at it.
+
+### Panel layout
+
+- `BBT_PT_scatter` (parent): emitter picker + "Use Active" convenience, path
+  picker, the `BBT_UL_scatter_layers` list with add (type menu) / remove /
+  duplicate / move up-down, Build All, and a summary readout.
+- `BBT_PT_scatter_layer` (child sub-panel): the active layer's assets, align,
+  knobs, and (when the scene path is set) path width/falloff, plus Build This Layer
+  and a per-layer randomize-seed.
+
+### Operators
+
+Make Proxies, Add Layer (by type), Remove Layer, Duplicate Layer, Move Layer,
+Build Active, Build All, Randomize Seed (active layer).
+
+### Verification (headless, each slice)
+
+Register the addon, build a grid emitter (`add_mesh` grid, which has faces with
+area and up normals), run make_proxies, add layers programmatically to
+`scene.bbt_scatter`, invoke Build All, then assert for each enabled layer: the
+`Scatter_<name>` object exists, has a NODES modifier, and evaluates to instances
+> 0. Count instances via the dependency graph: iterate
+`context.evaluated_depsgraph_get().object_instances` and count those whose
+`parent` is the scatter object (GN instances are not mesh data).
+
+### Slices
+
+- S1 multi-layer core: data model + UIList, emitter picker, Make Proxies, add/
+  remove/duplicate/move layers, per-layer assets/align/knobs, Build All/Active,
+  object lifecycle. Verify: grid emitter + proxies, 3 layers (trees/rocks/plants),
+  build all, 3 Scatter objects with modifiers and instances > 0.
+- S2 type presets + UX: Add Layer by type (Trees/Rocks/Plants/Grass) ensuring and
+  pointing at `BOB_Assets_<Kind>`, active-layer sub-panel, enable toggles, seed
+  randomize, summary readout. Verify: each preset type builds with align/assets
+  wired correctly.
+- S3 path clearing + live tuning: scene path picker, per-layer width/falloff builds
+  with clearing, live-knob push via update callbacks (no rebuild). Verify: path set
+  clears the trail, tuning density updates the socket without a rebuild.
+- S4 (optional): tighter terrain integration (emitter defaults to the Heightfield
+  panel target), optional Make Path helper, per-emitter layer storage if needed.
+
+### Open decisions for implementation
+
+- Per-scene vs per-emitter layer storage (start per-scene).
+- Whether Add Layer is a dropdown menu of types or a single button plus a type
+  enum on the new layer.
+- Make Path in-panel (needs point input UX) vs consume an existing curve only
+  (start with consume-only; path authoring stays with `make_path`/the agent).
 
 ## Extraction readiness (polyrepo)
 

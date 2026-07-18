@@ -21,7 +21,7 @@ _jobs: "queue.Queue" = queue.Queue()
 # Path and config
 def _repo_blender_dir() -> str:
     """Return <repo>/blender, resolving the symlink so dev-installs find bbmcp."""
-    here = os.path.dirname(os.path.realpath(__file__))  # blender/extensions/bob_blender_mcp
+    here = os.path.dirname(os.path.realpath(__file__))  # blender/extensions/bob_blender_tools
     return os.path.dirname(os.path.dirname(here))       # blender
 
 
@@ -123,7 +123,7 @@ def start(port: int | None = None) -> str:
     if not bpy.app.timers.is_registered(_process_jobs):
         bpy.app.timers.register(_process_jobs, persistent=True)
 
-    print(f"[bob_blender_mcp] listening on 127.0.0.1:{port}")
+    print(f"[bob_blender_tools] listening on 127.0.0.1:{port}")
     return f"listening on 127.0.0.1:{port}"
 
 
@@ -141,7 +141,7 @@ def stop() -> str:
     _state["port"] = None
     if bpy.app.timers.is_registered(_process_jobs):
         bpy.app.timers.unregister(_process_jobs)
-    print("[bob_blender_mcp] stopped")
+    print("[bob_blender_tools] stopped")
     return "stopped"
 
 

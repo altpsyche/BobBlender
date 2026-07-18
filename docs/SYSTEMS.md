@@ -21,8 +21,8 @@ object with a Geometry Nodes modifier. Two kinds of parameter:
   (emitter, assets, align, material, heightmap). Changing these means rebuilding.
 
 Ops reach Blender two ways: `build` (headless, writes a .blend) and `build_live`
-(into the open session, via the Bob Blender MCP extension). After editing recipe
-code, press Reload Builders in the BobMCP panel so the live bridge reloads it.
+(into the open session, via the BobBlenderTools extension). After editing recipe
+code, press Reload Builders in the MCP Bridge panel so the live bridge reloads it.
 
 ### Rebuilding in place
 
@@ -138,7 +138,7 @@ pixels (see below), then rebuild `heightmap_terrain`.
 
 ### From Blender: the Heightfield Terrain panel
 
-BobMCP sidebar (View3D > N > BobMCP) has a "Heightfield Terrain" panel with a
+The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Heightfield Terrain" panel with a
 Bake + Build Terrain button. It bakes in the tools venv (so Blender's own Python
 does not need numpy or CuPy), reloads the image, and builds the terrain object in
 place. Preview bakes at 256 for a fast look; turn it off to commit at full

@@ -14,8 +14,8 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
   MCP server); `bobtools/heightfields/` is the pure terrain-compute capability;
   repo utilities and the ComfyUI client sit alongside.
 - `blender/`: code that runs inside Blender's Python. `bbmcp/` is the authoring
-  library, `runners/` are headless entry scripts, `extensions/bob_blender_mcp/`
-  is the live bridge as an installable extension.
+  library, `runners/` are headless entry scripts, `extensions/bob_blender_tools/`
+  is the BobBlenderTools addon (MCP bridge, heightfield panel, next scatter).
 - `renders/`: outputs, gitignored.
 - `config/`, `docs/`, `references/`.
 
@@ -39,7 +39,7 @@ contracts (Pydantic ops, validated in the venv)
 tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
   mcp/contracts.py    op vocabulary         bbmcp/      builders
   mcp/executor.py     headless executor -->  runners/    headless entry
-  mcp/bridge.py       live executor          extensions/bob_blender_mcp  live bridge
+  mcp/bridge.py       live executor          extensions/bob_blender_tools  the addon
   mcp/mcp_server.py   MCP tools
   heightfields/       terrain compute
 ```
@@ -56,14 +56,19 @@ To grow the vocabulary: add an op model in `bobtools/mcp/contracts.py`, a builde
 in `blender/bbmcp/`, and one line in `blender/bbmcp/dispatch.py`. Geometry-node
 builders are recipes in `blender/bbmcp/geonodes/recipes/`.
 
-## The live bridge extension
+## The BobBlenderTools extension
 
-`blender/extensions/bob_blender_mcp/` is a Blender extension that runs a local
-socket server. It applies ops on Blender's main thread through a timer, which is
-the only safe way to mutate `bpy` from a socket, and it runs only whitelisted
-`bbmcp` ops. It has start/stop/status, autostart on launch, a Reload Builders
-button (needed because Blender caches imports, so new builder code requires a
-purge), and a clean stop so it can restart. Dev-installed by `bob-setup`.
+`blender/extensions/bob_blender_tools/` is the Bob suite's Blender-side host: one
+addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panels
+(MCP Bridge, Heightfield Terrain, and next Scatter). MCP is one capability here,
+not the roof.
+
+Its MCP Bridge runs a local socket server, applying ops on Blender's main thread
+through a timer (the only safe way to mutate `bpy` from a socket) and running only
+whitelisted `bbmcp` ops. It has start/stop/status, autostart on launch, a Reload
+Builders button (needed because Blender caches imports, so new builder code
+requires a purge), and a clean stop so it can restart. Dev-installed by
+`bob-setup`.
 
 Two-sided reload for op changes. The builder code runs in Blender; the op
 contract (`contracts.py`) runs in the long-running venv MCP server, which parses
@@ -75,10 +80,20 @@ the new op tag until the server is reconnected.
 
 ## Naming
 
-Everything is branded bob. To avoid Blender namespace collisions with other
-bob tools, this pipeline uses unique names: extension id `bob_blender_mcp`,
-operators `bob_blender_mcp.*`, classes `BBMCP_*`, N-panel tab `BobMCP`, the
-sys.path module `bbmcp` (not `bob_build`), and the MCP server `bobblendermcp`.
+The suite is branded BobBlenderTools; MCP, HeightFields, and Scatter are
+capabilities under it, not the roof. Names that denote the umbrella use the Tools
+brand; names that denote the MCP capability keep MCP, because they genuinely are
+the MCP bus.
+
+- Umbrella (Blender side): extension id `bob_blender_tools`, operators
+  `bob_blender_tools.*`, classes `BBT_*`, N-panel tab `BobBlenderTools`, scene
+  props `bbt_*`.
+- MCP capability (kept MCP, correctly): the MCP server `bobblendermcp` (in
+  `.mcp.json`), the venv package `bobtools/mcp/`, and the live MCP Bridge panel.
+- Builder library: the sys.path module `bbmcp` (not `bob_build`). It builds the
+  whole suite (terrain, scatter, proxies, paths), so the MCP-flavoured name is a
+  legacy misnomer kept for now; rename deferred to the polyrepo extraction.
+
 Rule: anything that lands on Blender's global sys.path gets a collision-proof
 name.
 
@@ -99,7 +114,7 @@ stabilises, or when a second project or a public release needs it.
 
 ## Daily use
 
-1. Enable the Bob Blender MCP addon once, with autostart on.
+1. Enable the BobBlenderTools addon once, with autostart on.
 2. Open a Claude Code session in this repo and approve the `bobblendermcp` MCP
    server (declared in `.mcp.json`).
 3. Ask an agent to build. Results appear in the open viewport (`build_live`) or

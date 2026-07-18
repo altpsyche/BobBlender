@@ -37,7 +37,7 @@ it: `BOB_BLENDER`, `BOB_REPO`, `BOB_BRIDGE_HOST`, `BOB_BRIDGE_PORT`.
 
 Registered in `../.mcp.json` with a portable `uv run` invocation. Tools:
 `list_projects`, `list_library_assets`, `create_project`, `build` (headless),
-and `build_live` (into the open Blender via the Bob Blender MCP extension).
+and `build_live` (into the open Blender via the BobBlenderTools extension).
 
 Adding a build op stays small: an op model in `mcp/contracts.py`, a builder in
 `../blender/bbmcp/`, and one line in its `dispatch.py`. No new MCP tool is

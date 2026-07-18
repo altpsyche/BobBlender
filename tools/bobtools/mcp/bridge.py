@@ -2,7 +2,7 @@
 
 Mirrors executor.run_build's shape but targets a running session instead of
 spawning Blender. This is the swappable executor described in docs/ARCHITECTURE.md.
-Requires the Bob Blender MCP extension to be enabled and its bridge running.
+Requires the BobBlenderTools extension to be enabled and its MCP bridge running.
 """
 
 import json
@@ -36,7 +36,7 @@ def run_build_live(
             ok=False,
             output_file="(live)",
             error=f"no live bridge on {host}:{port} ({exc}). Enable the "
-            "Bob Blender MCP extension in Blender and start its bridge.",
+            "BobBlenderTools extension in Blender and start its MCP bridge.",
         )
 
     raw = json.loads(buf.decode() or "{}")

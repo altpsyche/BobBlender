@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "bob_blender_tools"
+version = "0.1.0"
+name = "BobBlenderTools"
+tagline = "Bob procedural suite: MCP bridge, heightfield terrain, scatter"
+maintainer = "Siva <sivasubramanyam@mayhem-studios.com>"
+type = "add-on"
+
+blender_version_min = "5.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Pipeline", "Development"]
+
+# The Bob procedural suite in Blender: the live MCP bridge, the heightfield
+# terrain panel, and (next) scatter, all in one BobBlenderTools tab. Imports the
+# bbmcp builders from ../.. . Dev-install by symlinking this folder into Blender's
+# extensions dir (`bob-setup`). Not a general publishable addon.

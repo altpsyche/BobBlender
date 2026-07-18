@@ -40,9 +40,9 @@ holds projects, the reusable library, in-house tools, and conventions.
    ```sh
    uv run --project tools bob-setup
    ```
-   This syncs the `tools/` venv, dev-installs the Bob Blender MCP extension, and
+   This syncs the `tools/` venv, dev-installs the BobBlenderTools extension, and
    prints a checklist. Then:
-   - In Blender, open Preferences > Add-ons and enable Bob Blender MCP (autostart
+   - In Blender, open Preferences > Add-ons and enable BobBlenderTools (autostart
      on).
    - Open a Claude Code session in this repo and approve the `bobblendermcp` MCP
      server (declared in `.mcp.json`).

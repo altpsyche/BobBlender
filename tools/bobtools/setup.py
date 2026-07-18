@@ -1,7 +1,7 @@
-"""bob-setup: dev-install the bob_blender_mcp extension into Blender, cross-OS.
+"""bob-setup: dev-install the bob_blender_tools extension into Blender, cross-OS.
 
 Symlinks (or copies, where symlinks are unavailable) the repo's
-blender/extensions/bob_blender_mcp into Blender's user extensions dir, so
+blender/extensions/bob_blender_tools into Blender's user extensions dir, so
 enabling it in Preferences picks up live repo edits. Prints a readiness list.
 
 Run from a fresh clone: uv run --project tools bob-setup
@@ -54,7 +54,7 @@ def _latest_extensions_dir() -> Path | None:
 
 
 def dev_install_extension() -> str:
-    src = config.repo_root() / "blender" / "extensions" / "bob_blender_mcp"
+    src = config.repo_root() / "blender" / "extensions" / "bob_blender_tools"
     if not src.is_dir():
         raise FileNotFoundError(f"extension source not found: {src}")
 
@@ -65,7 +65,15 @@ def dev_install_extension() -> str:
             "re-run, or symlink manually."
         )
     target_root.mkdir(parents=True, exist_ok=True)
-    dest = target_root / "bob_blender_mcp"
+
+    # Remove the pre-rename install so both do not load and clash.
+    old = target_root / "bob_blender_mcp"
+    if old.is_symlink() or old.is_file():
+        old.unlink()
+    elif old.is_dir():
+        shutil.rmtree(old)
+
+    dest = target_root / "bob_blender_tools"
 
     if dest.is_symlink() or dest.exists():
         if dest.is_symlink() and os.path.realpath(dest) == str(src.resolve()):
@@ -84,7 +92,7 @@ def dev_install_extension() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Set up the Bob MCP pipeline.")
+    parser = argparse.ArgumentParser(description="Set up the BobBlenderTools pipeline.")
     parser.add_argument(
         "--skip-extension", action="store_true", help="Don't dev-install the addon."
     )
@@ -106,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         "\nNext:\n"
-        "  1. Blender > Preferences > Add-ons: enable 'Bob Blender MCP' "
+        "  1. Blender > Preferences > Add-ons: enable 'BobBlenderTools' "
         "(autostart on).\n"
         "  2. Open a Claude Code session in this repo and approve the "
         "'bobblendermcp' MCP server.\n"
