@@ -443,11 +443,20 @@ model, live edits, path clearing, hide, duplicate, remove, and multi-emitter.
 - S3 path clearing (done): scene path pointer, per-layer `Path Width`/`Path Falloff`
   sockets shown when the path is set, Build All with clearing. Verified: setting the
   path lowers the instance count near the curve (8953 -> 4893).
-- S4 (roadmap, not committed, needs recipe work): advanced masks (altitude,
-  vertex-group/weight, texture-driven density), viewport-density reduction,
-  per-layer emitter override, in-panel Make Path, `hide_render` parity with the
-  viewport enable toggle, and repointing Collection Info for an assets change
-  without a full rebuild.
+- S4 masks + camera culling (done, 2026-07-19): the scatter recipe grew a slope
+  band (`Max Normal Z`), an altitude mask (world-Z band, strength-gated), a
+  noise/clumping mask (strength-gated), a vertex-group paint mask (emitter weight
+  read through Object Info), and camera culling (distance + view cone, live as the
+  camera moves). Masks multiply into the Density Factor; the slope band drives the
+  Selection. Panel: a scene camera picker + per-layer Mask Group field, and Masks /
+  Camera Cull sub-panels. Verified headless (each mask/cull gates density; panel
+  plumbing adds/drops the sockets on Build). Camera cull approximates the frustum
+  (distance + cone), not exact FOV; that plus texture-mask presets is where to go
+  next if wanted.
+- S4 remaining (roadmap, not committed): per-layer emitter override, in-panel Make
+  Path, `hide_render` parity with the viewport enable toggle, exact-FOV frustum
+  culling, and repointing Collection Info for an assets change without a full
+  rebuild.
 
 ### Resolved opens
 

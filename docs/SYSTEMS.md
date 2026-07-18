@@ -210,16 +210,46 @@ scale and Z rotation. Trees can stand upright; rocks can tilt to the surface.
 | `seed` | 0 | yes | Reshuffles positions, scale, rotation, and pick. |
 | `min_scale` | 0.8 | yes | Smallest per-instance scale. |
 | `max_scale` | 1.2 | yes | Largest per-instance scale. |
-| `min_normal_z` | 0.5 | yes | Slope cutoff. 1 = flat only, 0 = any slope. |
+| `min_normal_z` | 0.5 | yes | Lower slope cutoff. 1 = flat only, 0 = any slope. |
+| `max_normal_z` | 1.0 | yes | Upper slope cutoff. Below 1 excludes flats (scree on mid-slopes). |
+| `height_min` / `height_max` | -1000 / 1000 | yes | Altitude band on world Z the layer scatters within. |
+| `height_falloff` | 5.0 | yes | Metres the altitude band eases over at each edge. |
+| `height_strength` | 0.0 | yes | Altitude mask mix. 0 = off, 1 = full. |
+| `noise_scale` | 0.15 | yes | Frequency of the clumping noise. Lower = bigger patches. |
+| `noise_contrast` | 0.5 | yes | Patch sharpness. 0 = smooth, 1 = hard-edged patches. |
+| `noise_seed` | 0 | yes | Reshuffles the clumping pattern, independent of `seed`. |
+| `noise_strength` | 0.0 | yes | Noise mask mix. 0 = off, 1 = full. |
+| `vgroup` | none | no | Emitter vertex group whose weight paints where the layer scatters. |
+| `paint_strength` | 1.0 | yes | Paint mask mix (only when `vgroup` is set). |
 | `path` | none | no | Name of a curve object to clear the scatter along. |
 | `path_width` | 3.0 | yes | Half-width in metres cleared fully (density 0) along the trail. |
 | `path_falloff` | 3.0 | yes | Metres over which density eases back to full. |
+| `camera` | none | no | Name of a camera; the layer culls scatter outside its view. |
+| `camera_distance` | 80.0 | yes | Cull points beyond this distance from the camera. |
+| `camera_cone` | 60.0 | yes | Half-angle (degrees) of the kept view cone; 180 = all around. |
+| `cull_falloff` | 8.0 | yes | Metres the distance cull eases over. |
 
-Path clearing: with `path` set, a distance-from-curve mask drives the Poisson
-Density Factor, so density falls to zero within `path_width` of the curve and
-eases back over `path_falloff`. Give each layer its own width so trees pull back
-further than the rocks and plants that edge the trail. Use the same curve on the
+Masks: the slope band (`min_normal_z`/`max_normal_z`) drives the Poisson
+Selection; every other mask multiplies into the Density Factor (a 0..1 field), so
+they compose. Altitude and noise masks are always present and gated by their
+`*_strength` (0 = no effect), so they cost nothing until used. The noise mask is a
+cheap way to clump grass and plants into patches. The paint mask reads an emitter
+vertex group through Object Info, so weight-painting the emitter authors exactly
+where a layer grows; because it names a group it is a build-time param, so set the
+group and press Build.
+
+Path clearing: with `path` set, a distance-from-curve mask drives the Density
+Factor, so density falls to zero within `path_width` of the curve and eases back
+over `path_falloff`. Give each layer its own width so trees pull back further than
+the rocks and plants that edge the trail. Use the same curve on the
 `heightmap_terrain` `path` input to grade the ground flat under the clearing.
+
+Camera culling: with `camera` set, points beyond `camera_distance` or outside the
+`camera_cone` forward cone drop out, cutting instance count for viewport and render
+performance. It approximates the frustum (distance + cone, not exact FOV) and
+updates live as the camera moves, since it reads the camera through Object Info.
+The camera is scene-wide (one for all layers) but the distance and cone are
+per-layer, so grass can cull closer than trees.
 
 Replacing assets: point `assets` at your own collection, or edit the contents of
 the `BOB_Assets_<Kind>` collection the scatter already uses. Nothing in the graph
@@ -246,11 +276,17 @@ live on the layer modifier's inputs. Two homes, no drift.
   knobs and points `assets` at `BOB_Assets_<Kind>`, making the proxies if needed.
   Remove and Duplicate (a copy with its own node group) sit beside it.
 - Live knobs: the Active Layer sub-panel draws Density, Distance Min, Seed, scale
-  range, and Min Normal Z straight from the modifier inputs, so editing one updates
-  the scatter live with no rebuild. Path Width / Falloff appear when a path is set.
-  Randomize Seed reshuffles the active layer.
-- Structural edits (`assets`, `align`, path presence) apply on Build This Layer /
-  Build All, a non-destructive rebuild that preserves the tuned live knobs.
+  range, and the slope band straight from the modifier inputs, so editing one
+  updates the scatter live with no rebuild. Path Width / Falloff appear when a path
+  is set. Randomize Seed reshuffles the active layer.
+- Masks sub-panel: Altitude (a world-Z band) and Noise (procedural clumping) masks,
+  each gated by a strength slider (0 = off), plus Paint Strength when the layer has
+  a mask vertex group set. All are live.
+- Camera Cull sub-panel: with a camera picked on the Scatter panel, per-layer
+  Camera Distance / Cone / Falloff cull scatter outside the view for performance.
+- Structural edits (`assets`, `align`, mask group, path/camera presence) apply on
+  Build This Layer / Build All, a non-destructive rebuild that preserves the tuned
+  live knobs.
 - Make Proxies creates the block-out `BOB_Assets_*` collections so a scatter works
   before real assets are in.
 

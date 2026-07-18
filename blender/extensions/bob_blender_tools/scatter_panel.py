@@ -30,10 +30,14 @@ from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from . import server
 
-# The live knobs drawn per layer, in panel order. Path knobs are appended only
-# when the scene has a path curve set (the recipe adds those sockets then).
-_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale", "Min Normal Z"]
+# The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
+# socket exists (path/paint/camera sockets appear only when that feature is set).
+_CORE_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale",
+               "Min Normal Z", "Max Normal Z"]
 _PATH_KNOBS = ["Path Width", "Path Falloff"]
+_HEIGHT_KNOBS = ["Height Strength", "Height Min", "Height Max", "Height Falloff"]
+_NOISE_KNOBS = ["Noise Strength", "Noise Scale", "Noise Contrast", "Noise Seed"]
+_CAMERA_KNOBS = ["Camera Distance", "Camera Cone", "Cull Falloff"]
 
 # Layer type presets: a Blender-side dict (no codegen; no second interpreter reads
 # it, unlike the heightfield presets). Each seeds the structural config and the
@@ -56,16 +60,18 @@ LAYER_TYPES = {
     },
     "plants": {
         "label": "Plants", "icon": "MESH_CIRCLE", "align": "normal",
-        "desc": "Denser, tilted to the surface",
+        "desc": "Denser, tilted to the surface, lightly clumped",
         "knobs": {"density": 8.0, "distance_min": 0.35, "min_normal_z": 0.4,
-                  "min_scale": 0.6, "max_scale": 1.1},
+                  "min_scale": 0.6, "max_scale": 1.1,
+                  "noise_strength": 0.35, "noise_scale": 0.12, "noise_contrast": 0.5},
         "path_width": 2.5,
     },
     "grass": {
         "label": "Grass", "icon": "MESH_PLANE", "align": "normal",
-        "desc": "Dense and small, tilted to the surface",
+        "desc": "Dense and small, tilted to the surface, clumped",
         "knobs": {"density": 24.0, "distance_min": 0.12, "min_normal_z": 0.35,
-                  "min_scale": 0.5, "max_scale": 1.0},
+                  "min_scale": 0.5, "max_scale": 1.0,
+                  "noise_strength": 0.55, "noise_scale": 0.22, "noise_contrast": 0.6},
         "path_width": 2.0,
     },
     "empty": {
@@ -168,8 +174,12 @@ def _build_params(obj, scn):
     params = {"emitter": scn.emitter.name if scn.emitter else "", "align": lay.align}
     if lay.assets is not None:
         params["assets"] = lay.assets.name
+    if lay.vgroup:
+        params["vgroup"] = lay.vgroup
     if scn.path is not None:
         params["path"] = scn.path.name
+    if scn.camera is not None:
+        params["camera"] = scn.camera.name
     return params
 
 
@@ -195,6 +205,10 @@ class BBT_ScatterLayer(PropertyGroup):
         items=[("up", "Up", "Keep instances upright (trees)"),
                ("normal", "Normal", "Tilt instances to the surface (rocks, grass)")],
         default="up")
+    vgroup: StringProperty(
+        name="Mask Group",
+        description="Emitter vertex group that paints where this layer scatters "
+                    "(blank = off); applied on Build")
 
 
 def _emitter_poll(self, obj):
@@ -203,6 +217,10 @@ def _emitter_poll(self, obj):
 
 def _path_poll(self, obj):
     return obj.type == "CURVE"
+
+
+def _camera_poll(self, obj):
+    return obj.type == "CAMERA"
 
 
 class BBT_ScatterProps(PropertyGroup):
@@ -214,6 +232,9 @@ class BBT_ScatterProps(PropertyGroup):
     path: PointerProperty(
         name="Path", type=bpy.types.Object, poll=_path_poll,
         description="Optional curve; clears a trail through every layer")
+    camera: PointerProperty(
+        name="Camera", type=bpy.types.Object, poll=_camera_poll,
+        description="Optional camera; every layer culls scatter outside its view")
     active: IntProperty(default=0)
     summary: StringProperty(default="")
 
@@ -264,6 +285,8 @@ class BBT_OT_scatter_add(Operator):
         if scn.path is not None:
             params["path"] = scn.path.name
             params["path_width"] = spec["path_width"]
+        if scn.camera is not None:
+            params["camera"] = scn.camera.name
         _apply([{"op": "build_geonodes", "recipe": "scatter",
                  "name": name, "params": params}])
 
@@ -390,6 +413,25 @@ class BBT_OT_scatter_use_active(Operator):
 
 
 # UI
+def _draw_knobs(layout, obj, names, seed_btn=False):
+    """Draw each present socket's live value, by name. Skips absent sockets."""
+    mod = _nodes_mod(obj)
+    if mod is None or mod.node_group is None:
+        return
+    ids = _socket_ids(mod.node_group)
+    col = layout.column(align=True)
+    for nm in names:
+        ident = ids.get(nm)
+        inp = getattr(mod.properties.inputs, ident, None) if ident else None
+        if inp is None:
+            continue
+        row = col.row(align=True)
+        row.prop(inp, "value", text=nm)
+        if seed_btn and nm == "Seed":
+            row.operator("bob_blender_tools.scatter_random_seed", text="",
+                         icon="FILE_REFRESH")
+
+
 class BBT_UL_scatter_layers(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_prop, index):
@@ -417,6 +459,7 @@ class BBT_PT_scatter(Panel):
         row.prop(scn, "emitter")
         row.operator("bob_blender_tools.scatter_use_active", text="", icon="EYEDROPPER")
         layout.prop(scn, "path")
+        layout.prop(scn, "camera")
         layout.operator("bob_blender_tools.scatter_make_proxies", icon="OUTLINER_OB_GROUP_INSTANCE")
 
         coll = _active_coll(context)
@@ -465,30 +508,70 @@ class BBT_PT_scatter_layer(Panel):
         box = layout.box()
         box.prop(obj.bbt_scatter_layer, "assets")
         box.prop(obj.bbt_scatter_layer, "align", expand=True)
+        box.prop_search(obj.bbt_scatter_layer, "vgroup",
+                        scn.emitter, "vertex_groups", text="Mask Group")
         box.operator("bob_blender_tools.scatter_build_active", icon="FILE_REFRESH")
 
         # Live: the modifier's own inputs, edited in place, no rebuild.
-        mod = _nodes_mod(obj)
-        if mod is None or mod.node_group is None:
+        if _nodes_mod(obj) is None:
             layout.label(text="No scatter modifier", icon="ERROR")
             return
-        ids = _socket_ids(mod.node_group)
-        names = list(_KNOBS)
+        names = list(_CORE_KNOBS)
         if scn.path is not None:
             names += _PATH_KNOBS
-        col = layout.column(align=True)
-        for nm in names:
-            ident = ids.get(nm)
-            if ident is None:
-                continue
-            inp = getattr(mod.properties.inputs, ident, None)
-            if inp is None:
-                continue
-            r = col.row(align=True)
-            r.prop(inp, "value", text=nm)
-            if nm == "Seed":
-                r.operator("bob_blender_tools.scatter_random_seed", text="",
-                           icon="FILE_REFRESH")
+        _draw_knobs(layout, obj, names, seed_btn=True)
+
+
+class BBT_PT_scatter_masks(Panel):
+    bl_label = "Masks"
+    bl_idname = "BBT_PT_scatter_masks"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_scatter_layer"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = _active_layer(context)
+        if obj is None or _nodes_mod(obj) is None:
+            layout.label(text="No active layer", icon="INFO")
+            return
+        layout.label(text="Altitude")
+        _draw_knobs(layout, obj, _HEIGHT_KNOBS)
+        layout.label(text="Noise / clumping")
+        _draw_knobs(layout, obj, _NOISE_KNOBS)
+        # Paint Strength exists only when the layer has a mask group set + Built.
+        if _live_input(obj, "Paint Strength") is not None:
+            layout.label(text="Paint")
+            _draw_knobs(layout, obj, ["Paint Strength"])
+        elif obj.bbt_scatter_layer.vgroup:
+            layout.label(text="Mask group set, press Build to apply", icon="INFO")
+
+
+class BBT_PT_scatter_camera(Panel):
+    bl_label = "Camera Cull"
+    bl_idname = "BBT_PT_scatter_camera"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_scatter_layer"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        scn = context.scene.bbt_scatter
+        layout = self.layout
+        obj = _active_layer(context)
+        if obj is None or _nodes_mod(obj) is None:
+            layout.label(text="No active layer", icon="INFO")
+            return
+        if scn.camera is None:
+            layout.label(text="Set a Camera on the Scatter panel", icon="INFO")
+            return
+        if _live_input(obj, "Camera Distance") is None:
+            layout.label(text="Build this layer to cull", icon="INFO")
+            return
+        _draw_knobs(layout, obj, _CAMERA_KNOBS)
 
 
 CLASSES = (
@@ -505,6 +588,8 @@ CLASSES = (
     BBT_UL_scatter_layers,
     BBT_PT_scatter,
     BBT_PT_scatter_layer,
+    BBT_PT_scatter_masks,
+    BBT_PT_scatter_camera,
 )
 
 
