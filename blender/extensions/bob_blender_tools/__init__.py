@@ -25,7 +25,7 @@ from bpy.props import (
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
 
-from . import server
+from . import scatter_panel, server
 
 # A 2D top-down preview of the last baked heightfield, drawn in the panel. Loaded
 # by the bake operator, created in register() and freed in unregister().
@@ -495,6 +495,7 @@ def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
+    scatter_panel.register()
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
@@ -506,6 +507,7 @@ def unregister():
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
+    scatter_panel.unregister()
     del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

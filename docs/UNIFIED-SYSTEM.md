@@ -315,99 +315,148 @@ the recipe already models as one built object per layer.
   this panel, all `bpy`-only. The seam to the rest stays the op contract
   (`build_geonodes recipe=scatter`), consistent with the bus model.
 
-### Data model
+### Data model (object-native, decided 2026-07-19)
 
-- `Scene.bbt_scatter` (`BBT_ScatterProps`): `emitter` (PointerProperty ->
-  Object, usually the terrain), `path` (PointerProperty -> Object, optional curve),
-  `layers` (CollectionProperty of `BBT_ScatterLayer`), `active` (int index for the
-  UIList).
-- `BBT_ScatterLayer`: `name`, `enabled` (bool), `assets` (PointerProperty ->
-  Collection), `align` (enum up/normal), `object_name` (str, the built object,
-  cached at first build so renames do not orphan), and the live knobs `density`,
-  `distance_min`, `seed`, `min_scale`, `max_scale`, `min_normal_z`, plus
-  `path_width`, `path_falloff` (used when the scene path is set).
-- Per-scene for v1 (one scatter setup per scene). Per-emitter storage is a possible
-  later change if multiple terrains need independent setups; note the limitation.
+The layers are the scene objects, not a parallel list. This avoids the dual-source
+drift the terrain work fought (panel value vs modifier value) and is multi-emitter
+by construction. Each datum has exactly one home.
 
-### Structural vs live (drives build vs push)
+- Per emitter, a Blender collection holds that emitter's layer objects. The emitter
+  object points at it: `Object.bbt_scatter_coll` (PointerProperty -> Collection).
+  The collection is linked to the scene so instances render. Using a pointer, not a
+  name convention, so renaming the emitter does not orphan it.
+- Each layer is one object in that collection, with a GN scatter modifier and a
+  config group `Object.bbt_scatter_layer` (`BBT_ScatterLayer`): `kind`
+  (trees/rocks/plants/grass/empty, for the icon and preset origin), `assets`
+  (PointerProperty -> Collection), `align` (enum up/normal). These are the
+  structural, non-socket bits. The display name is the object's own `name` (no
+  separate display field, so there is one home for it); the list and layer editor
+  show `obj.name`.
+- `Scene.bbt_scatter` (`BBT_ScatterProps`) holds only UI state, not layer data:
+  `emitter` (Object ptr), `path` (Object ptr, optional curve), `active` (int index
+  into the active emitter's scatter collection). Small and drift-free.
 
-- Structural (change the graph, need a rebuild via `apply_op`): `align`, `assets`,
-  `emitter`, and path presence (path set/cleared). Gated behind the Build button so
-  they do not trigger surprise heavy rebuilds mid-edit.
-- Live knobs (modifier interface socket defaults, the 5.2 mechanism): `density`,
-  `distance_min`, `seed`, `min_scale`, `max_scale`, `min_normal_z`, `path_width`,
-  `path_falloff`. After a layer is built these push straight to the built object's
-  node-group interface socket by name (`Density`, `Distance Min`, `Seed`,
-  `Min Scale`, `Max Scale`, `Min Normal Z`, `Path Width`, `Path Falloff`) with no
-  rebuild. Implement as PropertyGroup update callbacks that find
-  `self.object_name`'s modifier and set the socket default; guard when the layer is
-  not built yet.
+Two homes, no overlap: structural config lives in `Object.bbt_scatter_layer`; the
+numeric knobs live on the layer's GN node-group interface socket defaults (the 5.2
+mechanism the terrain work established). Nothing is stored in two places.
+
+### Structural vs live
+
+- Live knobs are the layer modifier's own inputs, drawn directly in the panel with
+  `layout.prop(mod.properties.inputs.<identifier>, "value", text=<socket name>)`.
+  Editing one updates that object's modifier live: single source, zero sync code.
+  Sockets: `Density`, `Distance Min`, `Seed`, `Min Scale`, `Max Scale`, `Min Normal
+  Z`, and `Path Width` / `Path Falloff` when the scene path is set. Look the input
+  up by socket name -> identifier via `node_group.interface.items_tree`, then
+  `getattr(mod.properties.inputs, identifier)`.
+- Mechanism note (verified 5.2, corrects the earlier draft): a Nodes modifier has
+  no IDProperties, and the node-group interface socket `default_value` is NOT a live
+  surface, it only seeds a fresh bind, so editing it post-build does not re-evaluate.
+  The live per-object value is `mod.properties.inputs.<id>.value` (a
+  `GeometryNodesModifierInterface`); a panel `layout.prop` on it re-evaluates live.
+  This also fixed the shared `build_geonodes` snapshot/restore, which was reading
+  interface defaults and would have dropped a user's live edits on a structural
+  rebuild; it now snapshots and restores `mod.properties.inputs`.
+- Structural (`assets`, `align`, path presence) is applied on an explicit Build This
+  Layer / Build All press, not from a property update callback (calling a rebuild
+  from an update callback risks re-entrancy). `build_geonodes` is non-destructive and
+  restores knobs by socket name, so a structural rebuild preserves the live knob
+  values. (Later optimisation: repoint the Collection Info node for an `assets`
+  change without a full rebuild.)
 
 ### Object lifecycle
 
-Each enabled layer builds a `Scatter_<name>` object (name cached in `object_name`).
-Build/Build-All calls `apply_op {"op":"build_geonodes","recipe":"scatter",
-"name":<object_name>, "params":{emitter, assets, align, <knobs>, path?, path_width,
-path_falloff}}`; in-place rebuild keeps the object and tuned knobs. Removing a layer
-deletes its object (`bpy.data.objects.remove`, Blender-side in the operator, not an
-op).
+- Add: ensure the emitter has a scatter collection (create + link to scene), ensure
+  `BOB_Assets_<Kind>` (via `make_proxies`), build the layer object with
+  `apply_op {"op":"build_geonodes","recipe":"scatter","name":<unique>,
+  "params":{emitter, assets, align, path?, ...}}`, move the new object into the
+  scatter collection, set its `bbt_scatter_layer`, select it as active. Track the
+  object by pointer (via collection membership), so its name can be anything unique.
+- Build: `apply_op build_geonodes` for the layer(s), reading structural config from
+  `bbt_scatter_layer`; knobs survive (non-destructive rebuild).
+- Enable/disable: toggle `hide_viewport` / `hide_render` on the object, not delete,
+  so re-enabling is instant.
+- Remove: `bpy.data.objects.remove` the layer object; fix the active index.
+- Duplicate: copy the object with a fresh node group and its config into the
+  collection.
+- Rescan: recover the list if a layer object was deleted by hand (the collection is
+  the truth, so a rescan is just re-reading it).
 
 ### Layer type presets
 
-A Blender-side Python dict in the panel (no codegen needed, since no second
-interpreter reads it, unlike the heightfield presets): Trees (align up, sparse,
-upright, wider path pull-back), Rocks (align normal, tilt to surface), Plants
-(align normal, denser), Grass (align normal, dense, small). "Add Layer" takes a
-type, appends a layer with those defaults, ensures the matching `BOB_Assets_<Kind>`
-collection (via `make_proxies` for that kind), and points `assets` at it.
+A Blender-side Python dict in the panel (no codegen; no second interpreter reads it,
+unlike the heightfield presets): Trees (align up, sparse, upright, wider path
+pull-back), Rocks (align normal, tilt to surface), Plants (align normal, denser),
+Grass (align normal, dense, small), Empty (defaults, no assets). Add Layer is a
+dropdown of these types; each seeds the structural config + initial knob values,
+ensures and points `assets` at `BOB_Assets_<Kind>`.
 
 ### Panel layout
 
-- `BBT_PT_scatter` (parent): emitter picker + "Use Active" convenience, path
-  picker, the `BBT_UL_scatter_layers` list with add (type menu) / remove /
-  duplicate / move up-down, Build All, and a summary readout.
-- `BBT_PT_scatter_layer` (child sub-panel): the active layer's assets, align,
-  knobs, and (when the scene path is set) path width/falloff, plus Build This Layer
-  and a per-layer randomize-seed.
+- `BBT_PT_scatter` (parent, in the BobBlenderTools tab): emitter picker + "Use
+  Active", path picker, a `template_list` over the active emitter's
+  `bbt_scatter_coll.objects` (the `BBT_UL_scatter_layers` list, showing each layer's
+  name, kind icon, and an enable/hide toggle) with add (type dropdown) / remove /
+  duplicate buttons, Build All, Make Proxies, and a summary (layer count, instance
+  estimate).
+- `BBT_PT_scatter_layer` (child): the active layer object's editor: name, kind
+  (label), `assets` and `align` (structural) with Build This Layer, then the live
+  knobs read from the modifier interface sockets, and a Randomize Seed.
 
 ### Operators
 
-Make Proxies, Add Layer (by type), Remove Layer, Duplicate Layer, Move Layer,
-Build Active, Build All, Randomize Seed (active layer).
+Make Proxies, Add Layer (by type), Remove Layer, Duplicate Layer, Build Active,
+Build All, Randomize Seed (active layer). No Move Layer in v1 (collection order is
+not user-sortable the same way; revisit if needed).
 
 ### Verification (headless, each slice)
 
-Register the addon, build a grid emitter (`add_mesh` grid, which has faces with
-area and up normals), run make_proxies, add layers programmatically to
-`scene.bbt_scatter`, invoke Build All, then assert for each enabled layer: the
-`Scatter_<name>` object exists, has a NODES modifier, and evaluates to instances
-> 0. Count instances via the dependency graph: iterate
-`context.evaluated_depsgraph_get().object_instances` and count those whose
-`parent` is the scatter object (GN instances are not mesh data).
+Register the addon, build a grid emitter (`add_mesh` grid: faces with area and up
+normals), run make_proxies, add layers, Build All, then assert: the emitter's
+`bbt_scatter_coll` exists and is scene-linked; each layer object has a NODES modifier
+and a `bbt_scatter_layer` config; and each evaluates to instances > 0. Count
+instances via the dependency graph: iterate
+`context.evaluated_depsgraph_get().object_instances` and count those whose `parent`
+is the layer object (GN instances are not mesh data). Also verify: editing an
+interface socket default changes the instance count live (no rebuild); disable
+hides; remove deletes.
 
 ### Slices
 
-- S1 multi-layer core: data model + UIList, emitter picker, Make Proxies, add/
-  remove/duplicate/move layers, per-layer assets/align/knobs, Build All/Active,
-  object lifecycle. Verify: grid emitter + proxies, 3 layers (trees/rocks/plants),
-  build all, 3 Scatter objects with modifiers and instances > 0.
-- S2 type presets + UX: Add Layer by type (Trees/Rocks/Plants/Grass) ensuring and
-  pointing at `BOB_Assets_<Kind>`, active-layer sub-panel, enable toggles, seed
-  randomize, summary readout. Verify: each preset type builds with align/assets
-  wired correctly.
-- S3 path clearing + live tuning: scene path picker, per-layer width/falloff builds
-  with clearing, live-knob push via update callbacks (no rebuild). Verify: path set
-  clears the trail, tuning density updates the socket without a rebuild.
-- S4 (optional): tighter terrain integration (emitter defaults to the Heightfield
-  panel target), optional Make Path helper, per-emitter layer storage if needed.
+S1-S3 landed together (2026-07-19), all in `blender/extensions/bob_blender_tools/
+scatter_panel.py`, verified headless (30 checks green): register the addon, grid
+emitter + proxies, add trees/rocks/grass, Build All, then assert the object-native
+model, live edits, path clearing, hide, duplicate, remove, and multi-emitter.
 
-### Open decisions for implementation
+- S1 object-native core (done): `Scene.bbt_scatter` + `Object.bbt_scatter_coll` /
+  `bbt_scatter_layer`, the `template_list` over the scatter collection, Add (by
+  type) / Remove / Build Active / Build All, enable=hide (`hide_viewport`), live
+  knobs drawn from `mod.properties.inputs` (see the mechanism note above; the
+  interface-default approach in the earlier draft does not re-eval in 5.2).
+  Verified: 3 layer objects with modifiers and instances > 0, and a live Density
+  edit lowers the count with no rebuild (278 -> 160).
+- S2 presets + UX (done): the type dropdown (`operator_menu_enum`) with
+  proxy-ensure, Duplicate Layer (own node group), Randomize Seed, summary readout,
+  "Use Active" as emitter. Verified: each type builds with align/assets wired
+  (trees up, rocks normal, grass -> `BOB_Assets_Grass`). Assets repoint is via the
+  layer's `assets` pointer + Build. A grass proxy kind was added to `proxies.py`.
+- S3 path clearing (done): scene path pointer, per-layer `Path Width`/`Path Falloff`
+  sockets shown when the path is set, Build All with clearing. Verified: setting the
+  path lowers the instance count near the curve (8953 -> 4893).
+- S4 (roadmap, not committed, needs recipe work): advanced masks (altitude,
+  vertex-group/weight, texture-driven density), viewport-density reduction,
+  per-layer emitter override, in-panel Make Path, `hide_render` parity with the
+  viewport enable toggle, and repointing Collection Info for an assets change
+  without a full rebuild.
 
-- Per-scene vs per-emitter layer storage (start per-scene).
-- Whether Add Layer is a dropdown menu of types or a single button plus a type
-  enum on the new layer.
-- Make Path in-panel (needs point input UX) vs consume an existing curve only
-  (start with consume-only; path authoring stays with `make_path`/the agent).
+### Resolved opens
+
+- Layer state: object-native (layers = objects in a per-emitter scatter collection;
+  config on the object, knobs on the modifier). Chosen over a scene-level list to
+  avoid drift and get multi-emitter for free.
+- Add Layer: a dropdown of types.
+- Paths: v1 consumes an existing curve; authoring stays with `make_path`/the agent.
+- Masking: v1 is slope (`Min Normal Z`) + path clearing only; the rest is S4 roadmap.
 
 ## Extraction readiness (polyrepo)
 

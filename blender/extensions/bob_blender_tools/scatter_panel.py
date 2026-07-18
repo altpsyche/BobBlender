@@ -1,0 +1,524 @@
+"""Scatter: a GScatter-style multi-layer scatter panel, in-process over bbmcp.
+
+The Scatter counterpart to the Heightfield Terrain panel. Unlike terrain, scatter
+has no venv side: it is pure geometry nodes, so this drives the existing bbmcp
+`scatter` recipe in-process through apply_op (no subprocess, no bake).
+
+Data model is object-native, so each datum has one home and there is no
+panel-vs-modifier drift:
+
+- Each layer is one object in a per-emitter scatter collection. The emitter points
+  at that collection via Object.bbt_scatter_coll. Structural config (kind, assets,
+  align) lives on the layer object's Object.bbt_scatter_layer.
+- The live knobs (Density, Seed, scale, slope, path clearing) live on the layer
+  modifier's inputs (mod.properties.inputs.<id>.value in Blender 5.2, the surface
+  the modifier actually evaluates), drawn directly in the panel. Editing one is
+  live; no rebuild, no sync code.
+- Scene.bbt_scatter holds only UI state (active emitter, path, active index).
+
+Structural edits (assets/align/path presence) apply on an explicit Build press,
+not from a property callback (rebuilding from an update callback risks
+re-entrancy). build_geonodes is non-destructive and restores the live knobs by
+socket name, so a structural rebuild preserves tuned values.
+"""
+
+import random
+
+import bpy
+from bpy.props import EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.types import Operator, Panel, PropertyGroup, UIList
+
+from . import server
+
+# The live knobs drawn per layer, in panel order. Path knobs are appended only
+# when the scene has a path curve set (the recipe adds those sockets then).
+_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale", "Min Normal Z"]
+_PATH_KNOBS = ["Path Width", "Path Falloff"]
+
+# Layer type presets: a Blender-side dict (no codegen; no second interpreter reads
+# it, unlike the heightfield presets). Each seeds the structural config and the
+# initial live-knob values, and points assets at BOB_Assets_<Kind>. Icons are
+# standard mesh-add icons, so they are always present.
+LAYER_TYPES = {
+    "trees": {
+        "label": "Trees", "icon": "MESH_CONE", "align": "up",
+        "desc": "Upright, sparse; pulls back further from a path",
+        "knobs": {"density": 3.0, "distance_min": 1.1, "min_normal_z": 0.6,
+                  "min_scale": 0.8, "max_scale": 1.3},
+        "path_width": 4.0,
+    },
+    "rocks": {
+        "label": "Rocks", "icon": "MESH_ICOSPHERE", "align": "normal",
+        "desc": "Tilted to the surface, allows slopes",
+        "knobs": {"density": 2.0, "distance_min": 0.7, "min_normal_z": 0.25,
+                  "min_scale": 0.4, "max_scale": 1.2},
+        "path_width": 2.0,
+    },
+    "plants": {
+        "label": "Plants", "icon": "MESH_CIRCLE", "align": "normal",
+        "desc": "Denser, tilted to the surface",
+        "knobs": {"density": 8.0, "distance_min": 0.35, "min_normal_z": 0.4,
+                  "min_scale": 0.6, "max_scale": 1.1},
+        "path_width": 2.5,
+    },
+    "grass": {
+        "label": "Grass", "icon": "MESH_PLANE", "align": "normal",
+        "desc": "Dense and small, tilted to the surface",
+        "knobs": {"density": 24.0, "distance_min": 0.12, "min_normal_z": 0.35,
+                  "min_scale": 0.5, "max_scale": 1.0},
+        "path_width": 2.0,
+    },
+    "empty": {
+        "label": "Empty", "icon": "DOT", "align": "up",
+        "desc": "Recipe defaults, no assets (bring your own collection)",
+        "knobs": {},
+        "path_width": 3.0,
+    },
+}
+
+
+# Helpers
+def _apply(ops):
+    """Run bbmcp ops in-process, the path the terrain panel's build step uses."""
+    server._ensure_path()
+    from bbmcp.dispatch import apply_op
+
+    return [apply_op(op) for op in ops]
+
+
+def _assets_name(kind):
+    return f"BOB_Assets_{kind.capitalize()}"
+
+
+def _nodes_mod(obj):
+    if obj is None:
+        return None
+    return next((m for m in obj.modifiers if m.type == "NODES"), None)
+
+
+def _socket_ids(ng):
+    """Map input socket name -> identifier, for reaching the live modifier input."""
+    return {it.name: it.identifier for it in ng.interface.items_tree
+            if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
+
+
+def _live_input(obj, socket_name):
+    """The modifier input struct for a socket (has a live `.value`), or None."""
+    mod = _nodes_mod(obj)
+    if mod is None or mod.node_group is None:
+        return None
+    ident = _socket_ids(mod.node_group).get(socket_name)
+    if ident is None:
+        return None
+    return getattr(mod.properties.inputs, ident, None)
+
+
+def _coll_in_scene(parent, coll):
+    if coll.name in parent.children:
+        return True
+    return any(_coll_in_scene(child, coll) for child in parent.children)
+
+
+def _ensure_scatter_coll(emitter, scene):
+    """The emitter's scatter collection, created and scene-linked if needed."""
+    coll = emitter.bbt_scatter_coll
+    if coll is None:
+        coll = bpy.data.collections.new(f"{emitter.name} Scatter")
+        emitter.bbt_scatter_coll = coll
+    if not _coll_in_scene(scene.collection, coll):
+        scene.collection.children.link(coll)
+    return coll
+
+
+def _move_to_collection(obj, coll):
+    for c in list(obj.users_collection):
+        c.objects.unlink(obj)
+    coll.objects.link(obj)
+
+
+def _unique_object_name(base):
+    name, i = base, 1
+    while name in bpy.data.objects:
+        i += 1
+        name = f"{base}.{i:03d}"
+    return name
+
+
+def _active_coll(context):
+    scn = context.scene.bbt_scatter
+    return scn.emitter.bbt_scatter_coll if scn.emitter is not None else None
+
+
+def _active_layer(context):
+    coll = _active_coll(context)
+    scn = context.scene.bbt_scatter
+    if coll is None or not coll.objects:
+        return None
+    idx = max(0, min(scn.active, len(coll.objects) - 1))
+    return coll.objects[idx]
+
+
+def _build_params(obj, scn):
+    """Structural params for a layer rebuild, read from its object-native config.
+
+    The live knobs are intentionally omitted: build_geonodes restores them from the
+    old modifier by socket name, so a structural rebuild keeps the tuned values.
+    """
+    lay = obj.bbt_scatter_layer
+    params = {"emitter": scn.emitter.name if scn.emitter else "", "align": lay.align}
+    if lay.assets is not None:
+        params["assets"] = lay.assets.name
+    if scn.path is not None:
+        params["path"] = scn.path.name
+    return params
+
+
+def _count_instances(context, objs):
+    """Total GN instances parented to any of objs, via the dependency graph."""
+    names = {o.name for o in objs}
+    dg = context.evaluated_depsgraph_get()
+    return sum(1 for i in dg.object_instances
+               if i.is_instance and i.parent is not None
+               and i.parent.original.name in names)
+
+
+# Data model
+class BBT_ScatterLayer(PropertyGroup):
+    """Structural config, stored on the layer object. The name is the object's."""
+
+    kind: StringProperty(default="empty")
+    assets: PointerProperty(
+        name="Assets", type=bpy.types.Collection,
+        description="Collection whose objects are instanced")
+    align: EnumProperty(
+        name="Align",
+        items=[("up", "Up", "Keep instances upright (trees)"),
+               ("normal", "Normal", "Tilt instances to the surface (rocks, grass)")],
+        default="up")
+
+
+def _emitter_poll(self, obj):
+    return obj.type == "MESH"
+
+
+def _path_poll(self, obj):
+    return obj.type == "CURVE"
+
+
+class BBT_ScatterProps(PropertyGroup):
+    """Scene-level UI state only, not layer data."""
+
+    emitter: PointerProperty(
+        name="Emitter", type=bpy.types.Object, poll=_emitter_poll,
+        description="Object to scatter on (usually the terrain)")
+    path: PointerProperty(
+        name="Path", type=bpy.types.Object, poll=_path_poll,
+        description="Optional curve; clears a trail through every layer")
+    active: IntProperty(default=0)
+    summary: StringProperty(default="")
+
+
+# Operators
+class BBT_OT_scatter_make_proxies(Operator):
+    bl_idname = "bob_blender_tools.scatter_make_proxies"
+    bl_label = "Make Proxies"
+    bl_description = "Create block-out proxy assets (BOB_Assets_*) so a scatter works now"
+
+    def execute(self, context):
+        _apply([{"op": "make_proxies",
+                 "kinds": ["trees", "rocks", "plants", "grass"]}])
+        self.report({"INFO"}, "Proxy assets ready")
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_add(Operator):
+    bl_idname = "bob_blender_tools.scatter_add"
+    bl_label = "Add Layer"
+    bl_description = "Add a scatter layer of the chosen type"
+    bl_options = {"REGISTER", "UNDO"}
+
+    kind: EnumProperty(
+        name="Type",
+        items=[(k, v["label"], v["desc"], v["icon"], i)
+               for i, (k, v) in enumerate(LAYER_TYPES.items())])
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        emitter = scn.emitter
+        if emitter is None:
+            self.report({"ERROR"}, "Pick an emitter first")
+            return {"CANCELLED"}
+
+        spec = LAYER_TYPES[self.kind]
+        coll = _ensure_scatter_coll(emitter, context.scene)
+
+        assets = None
+        if self.kind != "empty":
+            _apply([{"op": "make_proxies", "kinds": [self.kind]}])
+            assets = bpy.data.collections.get(_assets_name(self.kind))
+
+        name = _unique_object_name(f"{emitter.name} {spec['label']}")
+        params = {"emitter": emitter.name, "align": spec["align"], **spec["knobs"]}
+        if assets is not None:
+            params["assets"] = assets.name
+        if scn.path is not None:
+            params["path"] = scn.path.name
+            params["path_width"] = spec["path_width"]
+        _apply([{"op": "build_geonodes", "recipe": "scatter",
+                 "name": name, "params": params}])
+
+        obj = bpy.data.objects[name]
+        _move_to_collection(obj, coll)
+        lay = obj.bbt_scatter_layer
+        lay.kind = self.kind
+        lay.assets = assets
+        lay.align = spec["align"]
+        scn.active = list(coll.objects).index(obj)
+        self.report({"INFO"}, f"Added {spec['label']} layer")
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_remove(Operator):
+    bl_idname = "bob_blender_tools.scatter_remove"
+    bl_label = "Remove Layer"
+    bl_description = "Delete the active scatter layer"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        obj = _active_layer(context)
+        if obj is None:
+            return {"CANCELLED"}
+        bpy.data.objects.remove(obj, do_unlink=True)
+        coll = _active_coll(context)
+        if coll is not None:
+            scn.active = max(0, min(scn.active, len(coll.objects) - 1))
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_duplicate(Operator):
+    bl_idname = "bob_blender_tools.scatter_duplicate"
+    bl_label = "Duplicate Layer"
+    bl_description = "Copy the active layer, with its own node group and config"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        src = _active_layer(context)
+        coll = _active_coll(context)
+        if src is None or coll is None:
+            return {"CANCELLED"}
+        dup = src.copy()
+        dup.data = src.data.copy()
+        mod = _nodes_mod(dup)
+        if mod is not None and mod.node_group is not None:
+            mod.node_group = mod.node_group.copy()  # own group, live knobs stay
+        dup.name = _unique_object_name(src.name.rsplit(".", 1)[0])
+        coll.objects.link(dup)
+        scn.active = list(coll.objects).index(dup)
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_build_active(Operator):
+    bl_idname = "bob_blender_tools.scatter_build_active"
+    bl_label = "Build This Layer"
+    bl_description = "Rebuild the active layer from its structural config (keeps tuned knobs)"
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        obj = _active_layer(context)
+        if obj is None or scn.emitter is None:
+            self.report({"ERROR"}, "No emitter or active layer")
+            return {"CANCELLED"}
+        _apply([{"op": "build_geonodes", "recipe": "scatter",
+                 "name": obj.name, "params": _build_params(obj, scn)}])
+        obj = _active_layer(context)
+        n = _count_instances(context, [obj]) if obj else 0
+        self.report({"INFO"}, f"Built {obj.name}: {n} instances")
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_build_all(Operator):
+    bl_idname = "bob_blender_tools.scatter_build_all"
+    bl_label = "Build All"
+    bl_description = "Rebuild every layer of the active emitter"
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        coll = _active_coll(context)
+        if coll is None or scn.emitter is None:
+            self.report({"ERROR"}, "Pick an emitter first")
+            return {"CANCELLED"}
+        objs = list(coll.objects)
+        for obj in objs:
+            _apply([{"op": "build_geonodes", "recipe": "scatter",
+                     "name": obj.name, "params": _build_params(obj, scn)}])
+        objs = list(coll.objects)
+        total = _count_instances(context, objs)
+        scn.summary = f"{len(objs)} layers, ~{total} instances"
+        self.report({"INFO"}, f"Built {len(objs)} layers, {total} instances")
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_random_seed(Operator):
+    bl_idname = "bob_blender_tools.scatter_random_seed"
+    bl_label = "Randomize Seed"
+    bl_description = "Reshuffle the active layer with a new seed"
+
+    def execute(self, context):
+        obj = _active_layer(context)
+        seed = _live_input(obj, "Seed") if obj else None
+        if seed is None:
+            return {"CANCELLED"}
+        seed.value = random.randint(0, 99999)
+        obj.update_tag()
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_use_active(Operator):
+    bl_idname = "bob_blender_tools.scatter_use_active"
+    bl_label = "Use Active"
+    bl_description = "Set the emitter to the active object in the viewport"
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != "MESH":
+            self.report({"ERROR"}, "Active object is not a mesh")
+            return {"CANCELLED"}
+        context.scene.bbt_scatter.emitter = obj
+        return {"FINISHED"}
+
+
+# UI
+class BBT_UL_scatter_layers(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_prop, index):
+        obj = item
+        spec = LAYER_TYPES.get(obj.bbt_scatter_layer.kind, LAYER_TYPES["empty"])
+        row = layout.row(align=True)
+        row.label(text=obj.name, icon=spec["icon"])
+        row.prop(obj, "hide_viewport", text="", emboss=False,
+                 icon="HIDE_ON" if obj.hide_viewport else "HIDE_OFF")
+
+
+class BBT_PT_scatter(Panel):
+    bl_label = "Scatter"
+    bl_idname = "BBT_PT_scatter"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        scn = context.scene.bbt_scatter
+        layout = self.layout
+
+        row = layout.row(align=True)
+        row.prop(scn, "emitter")
+        row.operator("bob_blender_tools.scatter_use_active", text="", icon="EYEDROPPER")
+        layout.prop(scn, "path")
+        layout.operator("bob_blender_tools.scatter_make_proxies", icon="OUTLINER_OB_GROUP_INSTANCE")
+
+        coll = _active_coll(context)
+        if scn.emitter is None:
+            layout.label(text="Pick an emitter to add layers", icon="INFO")
+            return
+
+        row = layout.row()
+        if coll is not None:
+            row.template_list("BBT_UL_scatter_layers", "", coll, "objects",
+                              scn, "active", rows=3)
+        else:
+            row.label(text="No layers yet", icon="INFO")
+
+        col = row.column(align=True)
+        col.operator_menu_enum("bob_blender_tools.scatter_add", "kind",
+                               text="", icon="ADD")
+        col.operator("bob_blender_tools.scatter_remove", text="", icon="REMOVE")
+        col.operator("bob_blender_tools.scatter_duplicate", text="", icon="DUPLICATE")
+
+        layout.operator("bob_blender_tools.scatter_build_all", icon="MOD_PARTICLE_INSTANCE")
+        if scn.summary:
+            layout.label(text=scn.summary, icon="INFO")
+
+
+class BBT_PT_scatter_layer(Panel):
+    bl_label = "Active Layer"
+    bl_idname = "BBT_PT_scatter_layer"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_scatter"
+
+    def draw(self, context):
+        scn = context.scene.bbt_scatter
+        layout = self.layout
+        obj = _active_layer(context)
+        if obj is None:
+            layout.label(text="No active layer", icon="INFO")
+            return
+
+        spec = LAYER_TYPES.get(obj.bbt_scatter_layer.kind, LAYER_TYPES["empty"])
+        layout.label(text=f"{obj.name}  ({spec['label']})", icon=spec["icon"])
+
+        # Structural: applied on Build (a rebuild), not from a callback.
+        box = layout.box()
+        box.prop(obj.bbt_scatter_layer, "assets")
+        box.prop(obj.bbt_scatter_layer, "align", expand=True)
+        box.operator("bob_blender_tools.scatter_build_active", icon="FILE_REFRESH")
+
+        # Live: the modifier's own inputs, edited in place, no rebuild.
+        mod = _nodes_mod(obj)
+        if mod is None or mod.node_group is None:
+            layout.label(text="No scatter modifier", icon="ERROR")
+            return
+        ids = _socket_ids(mod.node_group)
+        names = list(_KNOBS)
+        if scn.path is not None:
+            names += _PATH_KNOBS
+        col = layout.column(align=True)
+        for nm in names:
+            ident = ids.get(nm)
+            if ident is None:
+                continue
+            inp = getattr(mod.properties.inputs, ident, None)
+            if inp is None:
+                continue
+            r = col.row(align=True)
+            r.prop(inp, "value", text=nm)
+            if nm == "Seed":
+                r.operator("bob_blender_tools.scatter_random_seed", text="",
+                           icon="FILE_REFRESH")
+
+
+CLASSES = (
+    BBT_ScatterLayer,
+    BBT_ScatterProps,
+    BBT_OT_scatter_make_proxies,
+    BBT_OT_scatter_add,
+    BBT_OT_scatter_remove,
+    BBT_OT_scatter_duplicate,
+    BBT_OT_scatter_build_active,
+    BBT_OT_scatter_build_all,
+    BBT_OT_scatter_random_seed,
+    BBT_OT_scatter_use_active,
+    BBT_UL_scatter_layers,
+    BBT_PT_scatter,
+    BBT_PT_scatter_layer,
+)
+
+
+def register():
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
+    bpy.types.Object.bbt_scatter_coll = PointerProperty(type=bpy.types.Collection)
+    bpy.types.Object.bbt_scatter_layer = PointerProperty(type=BBT_ScatterLayer)
+    bpy.types.Scene.bbt_scatter = PointerProperty(type=BBT_ScatterProps)
+
+
+def unregister():
+    del bpy.types.Scene.bbt_scatter
+    del bpy.types.Object.bbt_scatter_layer
+    del bpy.types.Object.bbt_scatter_coll
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)

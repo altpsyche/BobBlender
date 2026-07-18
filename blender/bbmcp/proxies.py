@@ -64,6 +64,19 @@ def _blob(name, radius, squash, color, mat_name):
     return _new_object(name, mesh, [_material(mat_name, color)])
 
 
+def _blade(name, height, radius, color):
+    """A thin tapered blade standing on the ground, for grass block-out."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(
+        bm, cap_ends=True, segments=4, radius1=radius, radius2=0.0,
+        depth=height, matrix=Matrix.Translation((0, 0, height / 2)),
+    )
+    bm.to_mesh(mesh)
+    bm.free()
+    return _new_object(name, mesh, [_material("BOB_Grass", color)])
+
+
 _KINDS = {
     "trees": [
         ("Tree_A", lambda: _tree("Tree_A", 0.8, 0.75, 2.6)),
@@ -76,6 +89,10 @@ _KINDS = {
     "plants": [
         ("Plant_A", lambda: _blob("Plant_A", 0.3, 0.5, (0.16, 0.3, 0.12), "BOB_Shrub")),
         ("Plant_B", lambda: _blob("Plant_B", 0.22, 0.55, (0.2, 0.34, 0.14), "BOB_Shrub")),
+    ],
+    "grass": [
+        ("Grass_A", lambda: _blade("Grass_A", 0.5, 0.04, (0.22, 0.36, 0.12))),
+        ("Grass_B", lambda: _blade("Grass_B", 0.34, 0.035, (0.26, 0.4, 0.14))),
     ],
 }
 

@@ -225,6 +225,41 @@ Replacing assets: point `assets` at your own collection, or edit the contents of
 the `BOB_Assets_<Kind>` collection the scatter already uses. Nothing in the graph
 changes; the instances update.
 
+### From Blender: the Scatter panel
+
+The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Scatter" panel, a
+GScatter-style multi-layer scatter UI over the `scatter` recipe. Unlike the
+Heightfield panel it has no venv side: it drives `build_geonodes recipe=scatter`
+in-process (no subprocess, no bake), so a code change to it needs an addon
+re-enable, never an MCP reconnect.
+
+It is object-native: each layer is an object in a per-emitter scatter collection
+(`Object.bbt_scatter_coll`), so the layers are the scene objects, not a parallel
+list, and multi-emitter works by construction. Structural config (`kind`, `assets`,
+`align`) lives on the layer object (`Object.bbt_scatter_layer`); the numeric knobs
+live on the layer modifier's inputs. Two homes, no drift.
+
+- Emitter + path: pick the emitter mesh (or "Use Active"), optionally a curve to
+  clear a trail through every layer.
+- Layers: a list of the emitter's layers with a kind icon and a hide toggle. Add is
+  a dropdown of types (Trees, Rocks, Plants, Grass, Empty); each seeds the align and
+  knobs and points `assets` at `BOB_Assets_<Kind>`, making the proxies if needed.
+  Remove and Duplicate (a copy with its own node group) sit beside it.
+- Live knobs: the Active Layer sub-panel draws Density, Distance Min, Seed, scale
+  range, and Min Normal Z straight from the modifier inputs, so editing one updates
+  the scatter live with no rebuild. Path Width / Falloff appear when a path is set.
+  Randomize Seed reshuffles the active layer.
+- Structural edits (`assets`, `align`, path presence) apply on Build This Layer /
+  Build All, a non-destructive rebuild that preserves the tuned live knobs.
+- Make Proxies creates the block-out `BOB_Assets_*` collections so a scatter works
+  before real assets are in.
+
+Live-knob mechanism (Blender 5.2): a Nodes modifier's live input value is
+`mod.properties.inputs.<identifier>.value`, not the node-group interface
+`default_value` (which only seeds a fresh bind and does not re-evaluate when
+edited). The panel binds each knob to that input, and `build_geonodes` snapshots
+and restores the same surface across a rebuild.
+
 ## Path (op: `make_path`)
 
 Authors a NURBS curve object for the scatter and terrain `path` inputs, so a
