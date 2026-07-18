@@ -50,4 +50,16 @@ def build(ng, out, params: dict):
     # converts it to a scalar.
     above = math_node(ng, "SUBTRACT", tex.outputs["Color"], gi.outputs["Sea Level"], (320, -100))
     z = math_node(ng, "MULTIPLY", above, gi.outputs["Height"], (500, -100))
-    links.new(displace_z(ng, mesh, z, (720, 0)), out.inputs["Geometry"])
+    geometry = displace_z(ng, mesh, z, (720, 0))
+
+    # GN primitive output does not inherit the object's material slots reliably,
+    # so assign the material by name here when given.
+    mat = bpy.data.materials.get(params.get("material", ""))
+    if mat is not None:
+        set_mat = nodes.new("GeometryNodeSetMaterial")
+        set_mat.location = (920, 0)
+        links.new(geometry, set_mat.inputs["Geometry"])
+        set_mat.inputs["Material"].default_value = mat
+        geometry = set_mat.outputs["Geometry"]
+
+    links.new(geometry, out.inputs["Geometry"])

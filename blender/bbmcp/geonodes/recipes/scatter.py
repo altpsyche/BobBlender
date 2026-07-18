@@ -85,7 +85,10 @@ def build(ng, out, params: dict):
     links.new(coll.outputs["Instances"], instance.inputs["Instance"])
     instance.inputs["Pick Instance"].default_value = True
     links.new(index, instance.inputs["Instance Index"])
-    links.new(dist.outputs["Rotation"], instance.inputs["Rotation"])
+    # align "normal" tilts instances to the surface (rocks, grass); "up" leaves
+    # them standing (trees). Random Z spin is added below either way.
+    if params.get("align", "up") == "normal":
+        links.new(dist.outputs["Rotation"], instance.inputs["Rotation"])
     links.new(scale, instance.inputs["Scale"])
 
     # Random spin about Z, in the instance's local space.
