@@ -143,6 +143,16 @@ Real Cycles volumes, procedural, no assets. Clouds and domain fog share one GN
 with a thin volume material. GN owns structure so it scales and expands; the
 material owns fine detail and light scattering so quality holds.
 
+Revised at S2 (see the S2 slice record): a cloud layer ships as ONE bounded domain
+box, not a field of instanced cubes, because the instanced field showed box seams
+and clipped the cloud at each cube face. The material carves the clouds out of the
+single box with world-space noise and a Coverage threshold, and fades density to
+zero at the box faces so nothing cuts off. The instancing-a-field description below
+is the earlier forward-looking design; a bounded single domain is what a continuous
+layer wants, and it also avoids the overlap-depth cost. Fog (S3) is likewise a
+bounded domain. A field of many small instanced puffs remains an option for a later
+scattered-cumulus mode, but is not how the S2 layer is built.
+
 - The GN side places volume domains and shapes where they are: a coverage field
   decides which cells of a cloud layer are filled, instances the filled domains,
   culls them to the camera and fades by distance (LOD, reusing the scatter
@@ -277,11 +287,13 @@ into them:
   or the particle motion is computed in world space with only the spawn region tracking
   the camera, so motion blur reflects real particle velocity, not the domain jump. A
   Phase-0 check confirms this.
-- Volumetric shadows and light shafts. Clouds shadowing the ground and god-rays are a
-  large part of the look and a large part of the cost. This is an explicit fork: v1
-  ships clouds that receive light but cast cheap or no volumetric shadow by default,
-  with a quality switch to enable cloud shadows and shafts for hero frames. Decided per
-  slice, not left implicit.
+- Volumetric shadows and light shafts. Clouds self-shadowing and shadowing the ground
+  are a large part of the look. The plan expected this to be an expensive hero-only
+  fork; S2 measured it and found the cost tracks sun elevation, not shadows as such
+  (high sun, shadow rays cross only the layer thickness, cheap; low sun, they cross the
+  whole layer, expensive). So v1 ships self-shadow ON by default for real cloud form,
+  with a per-object Cloud Shadows toggle to switch it off for the one costly case, a
+  low sun at Final quality. See the S2 findings.
 
 Performance budget. This is the one system where a frame can cost minutes, so a target
 is set rather than discovered. The Final quality level aims for a 1080p frame in a
@@ -391,14 +403,42 @@ evidence, rather than on a guess made now.
   instance attribute (B), because GN can drive the per-instance offset with a computed,
   spatially coherent value (cell id, world position) rather than only random; Object
   Info Random (A) stays the free shortcut for pure variation.
-- Not yet tested, the remaining Phase-0 item before S2: cost at scale. The test used
-  four tiny domains and rendered sub-second; a cloud field is many larger overlapping
-  domains. A scale spike (dozens to hundreds of overlapping volume domains at render
-  resolution, timed) should set the real performance expectation and inform the S2
-  instance counts before they are committed. Decision (2026-07-19): run this spike as
-  the immediate precursor to S2, not before S1, since S1 does not touch instanced
-  volumes and the spike measures the real volumetrics recipe's domains better than
-  synthetic ones.
+- Cost at scale, RESOLVED (2026-07-19), timed headless on the dev RTX 5080 (OptiX,
+  denoised), a GN field of overlapping instanced volume-domain cubes each carrying the
+  thin per-instance-noise volume material. Headline: this is affordable, with the cost
+  driven by factors other than instance count. Findings:
+  - Instance count is cheap. A 540p Preview field went 16 puffs 18.6 s, 64 puffs 9.1 s,
+    144 puffs 9.4 s, 256 puffs 13.1 s. More puffs did not cost more; 64 to 256 barely
+    moved. So S2 can afford 100 to 250 puffs per layer.
+  - Domain SIZE dominates, not count. In that same sweep the 16-puff field was the
+    slowest because its puffs were the largest (150 m cubes); the 64-to-144 fields with
+    40 to 64 m puffs were fastest. A worst-case v1 run of 16 huge 208 m overlapping
+    domains at 128 spp took 174 s. Keep puffs small (about 30 to 70 m); avoid few large
+    domains.
+  - Cost is ray-marching the domain bounds (step count times overlapping domains a ray
+    crosses), largely independent of visible density and even of whether a domain is
+    full. An empty sky rendered 5.4 s at 1080p; the same view through a deep, dense
+    144-puff field rendered 39 s, and a near-empty thin field still rendered 14 s. So
+    the coverage field must NOT instance domains where the layer has no cloud (an empty
+    domain still costs), cap volume max steps and step rate, and minimise overlap depth.
+  - Budget headroom: a clouds-only 1080p Final frame lands in roughly 14 to 40 s on the
+    5080 depending on density and layer depth, well inside the low-minutes budget, so
+    there is room for one fog plus one particulate system. This does NOT include
+    volumetric self-shadows or god-rays (the explicit shadow fork), which stay untested
+    and expensive, deferred per the plan.
+  - Shadow cost is driven by sun elevation, not by shadows as such (found in S2, then
+    corrected). A first read of "cloud shadows on = over 15 minutes" came from a
+    pathological 720p frame: low sun (22 degrees), Final steps, grazing camera, dense
+    cloud, big ground. At a high sun (45 degrees), Preview steps, 540p, self-shadow ON
+    is 25.5 s versus 29.9 s OFF, i.e. cheaper. Reason: shadow rays travel toward the
+    sun, so a high sun crosses only the layer thickness (cheap) while a low sun crosses
+    the whole wide layer near-horizontally (expensive). So S2 defaults self-shadow ON
+    for real cloud form, with a toggle off for the low-sun Final case; volume_bounces is
+    kept low (0 preview / 2 final).
+  - S2 defaults set by this: Preview 32 spp, volume step rate 2.0, max steps 256; Final
+    96 spp, step rate 1.0, max steps 512; puffs 30 to 70 m; 100 to 250 per layer;
+    coverage culls empty cells; reuse the scatter camera-cull and add distance LOD.
+  Decision confirmed: this spike ran as the immediate precursor to S2, not before S1.
 
 Findings from S1 (2026-07-19, headless Cycles 5.2):
 
@@ -432,10 +472,54 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
   dusk) casts shadows east to west as the sun crosses. `solar.py` is bpy-free and
   unit-tested; the sun-lamp aim is derived (Euler (90-el, 0, 180-az) rotates +Z onto
   the sun), not guessed.
-- S2 Clouds: the `volumetrics` recipe (clouds mode), the volume material in
-  `materials.py`, the Clouds sub-panel. Verify: the GN cloud volume renders in
-  Cycles, coverage and density respond, an instanced field does not repeat, camera
-  cull drops off-view domains.
+- S2 Clouds (done, 2026-07-19): the `volumetrics` recipe (clouds mode) in
+  `geonodes/recipes/volumetrics.py`, the cloud volume material in `materials.py`, the
+  Clouds sub-panel and Build Clouds op. Design revised during the eyeball checkpoint,
+  on the user's call: the first cut instanced a field of small volume-domain cubes,
+  which showed their box seams and clipped the cloud at every cube face. It was
+  replaced by ONE domain box for the whole layer, with the clouds carved out of it by
+  the material: world-space fractal noise thresholded by Coverage (open sky where it
+  clears the threshold, no seams), and the density faded to zero toward every box face
+  (a Chebyshev envelope on the box's Generated coordinates) so the layer never cuts
+  off at the bound. The box is instanced once so the live knobs (Density, Detail,
+  Softness, Coverage, Cloud Scale, Cloud Seed) travel into the volume shader as
+  INSTANCER attributes. This also sidesteps the instanced field's overlap-depth cost
+  (a single crossing per ray, not many). Build Clouds sets the Cycles volume steps
+  from the quality level and applies the shadow fork. Verified headless in Cycles on
+  the 5080: one domain box; a Principled Volume driven by world position through
+  INSTANCER attributes; renders as a volume (empty 0.50 to clouds 0.88) with real
+  spatial variance (std 0.21); Coverage responds live (0.45 to 0.15 drops it back
+  toward empty); Density responds live. Full-extension register test green (panel, op,
+  shadow-fork default, non-destructive rebuild, clean re-register). The eyeball frame
+  reads as a continuous cloud layer, no seams, no cutoff, ~4 to 25 s at 540p depending
+  on how much cloud is in view.
+  - Self-shadow is ON by default (revised, on measurement). The plan assumed cloud
+    shadows were an expensive hero-only fork, from a 15-minute 720p frame. That frame
+    was a pathological combination (low sun at 22 degrees, Final steps, a grazing
+    camera, dense cloud). Measured properly, shadow cost is driven by sun elevation,
+    not by shadows as such: a high sun's shadow rays only cross the layer thickness, so
+    self-shadowing is cheap. At a 45-degree sun, 540p, Preview steps, shadow ON was
+    25.5 s versus 29.9 s OFF, actually faster, and it gives the clouds real form
+    (bright tops, dark undersides). So Build Clouds leaves the cloud object's
+    visible_shadow ON by default and gives real dimensional cloud; the Cloud Shadows
+    toggle turns it off for the one expensive case, a low sun with Final steps, where
+    near-horizontal shadow rays cross the whole layer. volume_bounces is set from the
+    quality level (0 preview, 2 final) so shadowed cloud reads bright, not muddy.
+  - Coverage was linearised: the raw noise clusters near 0.5, so a (1 - Coverage)
+    threshold crowded the useful range into a narrow band. The material now maps
+    Coverage across the band the noise occupies (threshold 0.66 down to 0.34), so the
+    knob reads roughly across 0..1 (measured 0.2 to 0.8 rising smoothly, saturating at
+    the top). A 960p Final frame with self-shadow reads as dimensional cumulus in ~52 s.
+  - Wind drift (added in S2): a Wind toggle advances a per-instance offset by Wind
+    Speed * scene time along Wind Direction; the material shifts its noise sample by it
+    so the cloud pattern drifts through the stationary box (verified: Wind on moves the
+    pattern frame to frame, off is bit-identical). Scene time drives it, so a Cycles
+    animation is reproducible. The Clouds panel groups the knobs (Shape, Layer, Wind),
+    has a Randomize Cloud Seed button, a Wind Drift toggle, and a Use Env Wind button
+    that copies the `bbt_env` wind onto the clouds. Full wiring of season and a
+    scene-wide wind live-feed is still S5.
+  - Known nonblocking polish: Coverage saturates at the high end. No world haze
+    (deferred per plan).
 - S3 Fog: the same `volumetrics` recipe in height_fog and noise_fog modes, the Fog
   sub-panel. Verify: each mode renders and changes luminance where expected; height
   fog varies with Z; terrain-aware fog pools in low ground.

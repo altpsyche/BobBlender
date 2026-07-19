@@ -23,4 +23,4 @@ def names():
 
 
 # Import recipe modules so their @recipe decorators run.
-from . import heightmap_terrain, scatter, terrain, wave_grid  # noqa: E402,F401
+from . import heightmap_terrain, scatter, terrain, volumetrics, wave_grid  # noqa: E402,F401

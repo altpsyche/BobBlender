@@ -14,7 +14,7 @@ state is bbt_firmament. Clouds, fog, and weather sub-panels arrive with S2 to S5
 """
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import server
@@ -23,6 +23,12 @@ from . import server
 # unregister uses the same object even after Reload Builders purges bbmcp.
 _env = None
 
+# Live cloud knobs, grouped for the panel (drawn from the modifier after a Build).
+_CLOUD_SHAPE = ["Coverage", "Cloud Scale"]
+_CLOUD_SHAPE2 = ["Detail", "Softness", "Density"]
+_CLOUD_LAYER = ["Layer Size", "Thickness", "Height"]
+_CLOUD_WIND = ["Wind Direction", "Wind Speed"]
+
 
 def _apply(ops):
     """Run bbmcp ops in-process, the path the Scatter and terrain panels use."""
@@ -30,6 +36,52 @@ def _apply(ops):
     from bbmcp.dispatch import apply_op
 
     return [apply_op(op) for op in ops]
+
+
+def _nodes_mod(obj):
+    if obj is None:
+        return None
+    return next((m for m in obj.modifiers if m.type == "NODES"), None)
+
+
+def _input(obj, socket_name):
+    """The live modifier input struct for a socket name, or None."""
+    mod = _nodes_mod(obj)
+    if mod is None or mod.node_group is None:
+        return None
+    ident = next((it.identifier for it in mod.node_group.interface.items_tree
+                  if getattr(it, "item_type", None) == "SOCKET"
+                  and it.in_out == "INPUT" and it.name == socket_name), None)
+    return getattr(mod.properties.inputs, ident, None) if ident else None
+
+
+def _draw_knobs(layout, obj, names):
+    """Draw each present modifier input by socket name (live, no rebuild)."""
+    mod = _nodes_mod(obj)
+    if mod is None or mod.node_group is None:
+        return
+    ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
+           if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
+    col = layout.column(align=True)
+    for nm in names:
+        ident = ids.get(nm)
+        inp = getattr(mod.properties.inputs, ident, None) if ident else None
+        if inp is not None:
+            col.prop(inp, "value", text=nm)
+
+
+def _set_volume_quality(scene, quality):
+    """Cycles volume settings from the quality level (cost-spike defaults). Volume
+    bounces (multiple scattering) are kept low: 0 for preview keeps self-shadowing
+    single-scatter and cheap, a couple for final let light re-scatter so shadowed
+    cloud reads bright instead of muddy."""
+    cy = getattr(scene, "cycles", None)
+    if cy is None:
+        return
+    if quality == "final":
+        cy.volume_step_rate, cy.volume_max_steps, cy.volume_bounces = 1.0, 512, 2
+    else:
+        cy.volume_step_rate, cy.volume_max_steps, cy.volume_bounces = 2.0, 256, 0
 
 
 class BBT_FirmamentProps(PropertyGroup):
@@ -74,6 +126,16 @@ class BBT_FirmamentProps(PropertyGroup):
                ("final", "Final", "Full quality for a render")],
         default="preview")
 
+    # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
+    cloud_object: StringProperty(name="Object", default="BOB_Clouds")
+    cloud_shadows: BoolProperty(
+        name="Cloud Shadows", default=True,
+        description="Clouds self-shadow (dimensional form) and cast shadows on the "
+                    "scene. On by default and cheap at normal sun angles, since a "
+                    "high sun's shadow rays only cross the layer thickness. Turn off "
+                    "for a flat, faster look when the sun is low and the frame is "
+                    "Final quality, where near-horizontal shadow rays get expensive")
+
 
 class BBT_OT_firmament_build_sky(Operator):
     bl_idname = "bob_blender_tools.firmament_build_sky"
@@ -101,6 +163,70 @@ class BBT_OT_firmament_build_sky(Operator):
         }
         res = _apply([{"op": "build_sky", "params": params}])
         self.report({"INFO"}, f"Sky: {res[0].get('info', '')}")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_build_clouds(Operator):
+    bl_idname = "bob_blender_tools.firmament_build_clouds"
+    bl_label = "Build Clouds"
+    bl_description = "Build the procedural volumetric cloud layer"
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        env = getattr(context.scene, "bbt_env", None)
+        params = {"mode": "clouds"}
+        if env is not None:  # seed the wind knobs from the shared world state
+            params["wind_direction"] = env.wind_direction
+            params["wind_speed"] = env.wind_strength
+        _apply([{"op": "build_geonodes", "recipe": "volumetrics",
+                 "name": fm.cloud_object, "params": params}])
+        _set_volume_quality(context.scene, fm.quality)
+        n = 0
+        obj = bpy.data.objects.get(fm.cloud_object)
+        if obj is not None:
+            # Shadow fork (Phase-0 / S2 cost): a cloud volume that casts shadows
+            # makes every lit point march a shadow ray through it, which is the
+            # expensive path. Default off (lit, no volumetric shadow); on for heroes.
+            obj.visible_shadow = fm.cloud_shadows
+            dg = context.evaluated_depsgraph_get()
+            n = sum(1 for i in dg.object_instances if i.is_instance
+                    and i.parent is not None and i.parent.original.name == obj.name)
+        self.report({"INFO"}, f"Clouds: {n} puffs")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_cloud_seed(Operator):
+    bl_idname = "bob_blender_tools.firmament_cloud_seed"
+    bl_label = "Randomize Cloud Seed"
+    bl_description = "Reshuffle the cloud pattern with a new seed"
+
+    def execute(self, context):
+        import random
+
+        obj = bpy.data.objects.get(context.scene.bbt_firmament.cloud_object)
+        seed = _input(obj, "Cloud Seed")
+        if seed is None:
+            return {"CANCELLED"}
+        seed.value = random.randint(0, 99999)
+        obj.update_tag()
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_cloud_wind_from_env(Operator):
+    bl_idname = "bob_blender_tools.firmament_cloud_wind_from_env"
+    bl_label = "Use Env Wind"
+    bl_description = "Copy the Environment wind direction and strength onto the clouds"
+
+    def execute(self, context):
+        env = getattr(context.scene, "bbt_env", None)
+        obj = bpy.data.objects.get(context.scene.bbt_firmament.cloud_object)
+        wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
+        if env is None or wdir is None or wspd is None:
+            return {"CANCELLED"}
+        wdir.value = env.wind_direction
+        wspd.value = env.wind_strength
+        obj.update_tag()
+        self.report({"INFO"}, "Cloud wind synced from Environment")
         return {"FINISHED"}
 
 
@@ -191,12 +317,65 @@ class BBT_PT_firmament_sky(Panel):
         layout.operator("bob_blender_tools.firmament_build_sky", icon="LIGHT_SUN")
 
 
+class BBT_PT_firmament_clouds(Panel):
+    bl_label = "Clouds"
+    bl_idname = "BBT_PT_firmament_clouds"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_firmament"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        fm = context.scene.bbt_firmament
+        layout = self.layout
+
+        box = layout.box()
+        box.prop(fm, "cloud_object")
+        box.prop(fm, "cloud_shadows")
+        box.operator("bob_blender_tools.firmament_build_clouds", icon="OUTLINER_OB_VOLUME")
+
+        # Live knobs from the modifier (present only after a Build), grouped.
+        obj = bpy.data.objects.get(fm.cloud_object)
+        if obj is None or _nodes_mod(obj) is None:
+            layout.label(text="Build to edit cloud knobs", icon="INFO")
+            return
+
+        col = layout.column(align=True)
+        col.label(text="Shape", icon="MOD_NOISE")
+        _draw_knobs(col, obj, _CLOUD_SHAPE)
+        seed = _input(obj, "Cloud Seed")
+        if seed is not None:
+            row = col.row(align=True)
+            row.prop(seed, "value", text="Cloud Seed")
+            row.operator("bob_blender_tools.firmament_cloud_seed", text="", icon="FILE_REFRESH")
+        _draw_knobs(col, obj, _CLOUD_SHAPE2)
+
+        col = layout.column(align=True)
+        col.label(text="Layer", icon="MESH_GRID")
+        _draw_knobs(col, obj, _CLOUD_LAYER)
+
+        col = layout.column(align=True)
+        col.label(text="Wind", icon="FORCE_WIND")
+        wind = _input(obj, "Wind")
+        if wind is not None:
+            col.prop(wind, "value", text="Wind Drift")
+            if wind.value:
+                _draw_knobs(col, obj, _CLOUD_WIND)
+                col.operator("bob_blender_tools.firmament_cloud_wind_from_env",
+                             icon="TRACKING_FORWARDS")
+
+
 CLASSES = (
     BBT_FirmamentProps,
     BBT_OT_firmament_build_sky,
+    BBT_OT_firmament_build_clouds,
+    BBT_OT_firmament_cloud_seed,
+    BBT_OT_firmament_cloud_wind_from_env,
     BBT_PT_firmament,
     BBT_PT_firmament_env,
     BBT_PT_firmament_sky,
+    BBT_PT_firmament_clouds,
 )
 
 

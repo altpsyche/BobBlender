@@ -296,6 +296,53 @@ Live-knob mechanism (Blender 5.2): a Nodes modifier's live input value is
 edited). The panel binds each knob to that input, and `build_geonodes` snapshots
 and restores the same surface across a rebuild.
 
+## volumetrics (recipe: `volumetrics`)
+
+Procedural Cycles volumes. S2 ships the `clouds` mode (S3 adds `height_fog` and
+`noise_fog`). How clouds work: ONE domain box spans the whole layer (built as a
+single instanced cube at `height`), and the material carves the clouds out of it.
+A cached thin Principled Volume (`materials.py`, `BOB_CloudVolume`) samples 3D
+fractal noise in world space and thresholds it by Coverage, so there is cloud where
+the noise clears the threshold and open sky elsewhere, with no box seams. The density
+fades to zero toward every face of the box (a soft envelope on the box's Generated
+coordinates), so the cloud never cuts off at the bound. The box is instanced once so
+the live knobs reach the volume shader as INSTANCER attributes. Driven from the
+Firmament panel's Clouds sub-panel.
+
+| Param | Default | Live | What it does |
+|-------|---------|------|--------------|
+| `size` | 400 | yes | Layer footprint in metres (the box XY). |
+| `thickness` | 40 | yes | Layer depth in metres (the box Z). |
+| `height` | 70 | yes | World Z of the layer centre. |
+| `coverage` | 0.5 | yes | How much of the sky fills with cloud (noise threshold). |
+| `cloud_scale` | 0.06 | yes | Noise frequency: lower = bigger cloud masses. |
+| `cloud_seed` | 0 | yes | Reshuffles the cloud pattern. |
+| `density` | 5.0 | yes | Volume density (opacity/brightness of the cloud). |
+| `detail` | 5.0 | yes | Noise octaves for the cloud interior. |
+| `softness` | 0.25 | yes | Widens the density threshold; softer, wispier edges. |
+| `wind` | off | yes | Toggle: drift the clouds through the box by scene time. |
+| `wind_direction` | 0 | yes | Compass direction (degrees) the clouds drift toward. |
+| `wind_speed` | 2.0 | yes | Drift rate in metres per second (seeded from env wind). |
+
+Self-shadowing gives the clouds their dimensional form (bright tops, dark
+undersides) and is ON by default: the Build Clouds op leaves the cloud object's
+`visible_shadow` on. It is cheap at a normal sun height (shadow rays only cross the
+layer thickness), so it costs little; turn the Cloud Shadows toggle off for a flat,
+faster look when the sun is low and the frame is Final quality, where near-horizontal
+shadow rays cross the whole layer. Build Clouds also sets the Cycles Volume Step
+Rate, Max Steps, and Volume Bounces from a Preview/Final quality level (bounces 0/2,
+so shadowed cloud reads bright on finals). `coverage` reads roughly linearly over
+0..1 but saturates at the high end; tune it against a render.
+
+Wind: with the Wind toggle on, the recipe advances an offset by `wind_speed` * scene
+time along `wind_direction` and stores it per instance; the material shifts its noise
+sample by that offset, so the cloud pattern drifts through the stationary box (clouds
+cross the sky, the box and its face envelope stay put). Scene time, not wall clock,
+drives it, so a Cycles animation renders the same every time. The Firmament Clouds
+panel has a Wind Drift toggle plus a Use Env Wind button that copies the Environment
+(`bbt_env`) wind onto the clouds. The panel also groups the knobs (Shape, Layer, Wind)
+and has a Randomize Cloud Seed button.
+
 ## Path (op: `make_path`)
 
 Authors a NURBS curve object for the scatter and terrain `path` inputs, so a
