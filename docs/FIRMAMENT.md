@@ -172,7 +172,10 @@ scattered-cumulus mode, but is not how the S2 layer is built.
   low, thin high) that doubles as the top-face fade. Forcing fog through the cloud
   material would fight that difference (its envelope fades the bottom face, exactly
   wrong for ground fog). `materials.BOB_CloudVolume` and `materials.BOB_FogVolume`;
-  both fog modes share BOB_FogVolume and differ only by knob defaults.
+  height_fog and noise_fog share BOB_FogVolume and differ only by knob defaults, while
+  ground_fog uses a per-heightmap material (BOB_GroundFog_<image>) whose height profile
+  is terrain-relative (samples the heightmap so the mist hugs the ground). Fog carries
+  Anisotropy, Fog Color, Warp, and a Falloff curve on top of the height profile.
 - Aerial perspective is not a world volume. A constant-density world Principled
   Volume was the plan, but Phase-0/S1 disproved it: an unbounded world volume has
   infinite optical depth and extinguishes the Sun lamp and skylight, blacking the
@@ -578,6 +581,41 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
     immersed camera deep inside a dense slab goes near-black (optical depth), so the
     fog is a viewed-from-outside effect; a very dense slab whites out (keep density
     modest, ~2-4, for wide vistas).
+  - S3 polish + ground fog (done, 2026-07-19, on the user's "do everything not scoped
+    for later"). The fog material was refactored into one builder shared by a box
+    variant and a terrain variant, and gained four look knobs plus a third mode:
+    - Anisotropy (forward scattering, default 0.4) drives the sun-side glow and makes
+      light shafts read; Fog Color tints the scattering albedo (cool shadow / warm
+      dawn); Warp domain-warps the noise so banks billow organically (lifted from the
+      cloud material); Falloff is a power on the height curve (>1 hugs the ground
+      tighter). All are live INSTANCER knobs; Fog Color is stored as a FLOAT_COLOR
+      instance attribute (the recipe's _finish grew an extra_stores hook for non-float
+      knobs).
+    - ground_fog mode: a terrain-draped mist. Because a volume shader cannot sample an
+      arbitrary mesh per march-point, the material samples the terrain HEIGHTMAP PNG
+      (the same ones heightmap_terrain bakes) by world XY, reconstructs terrain Z the
+      same way (`(sample - Sea Level) * Terrain Height`), and fades density with height
+      above that ground over Ground Thickness. So the mist follows hills up and over,
+      not a fixed-Z slab. This completes the plan's terrain-aware goal (the emitter
+      sampling flagged at S3) via the heightmap rather than emitter geometry. The
+      material carries the image (a node property, not a socket), so it is cached per
+      heightmap image (BOB_GroundFog_<image>), unlike the shared box BOB_FogVolume;
+      the terrain mapping (size/height/sea level/thickness) stays live. No heightmap
+      falls back to the box material.
+    - Panel: the Fog Mode enum gains Ground Fog with a heightmap picker; new knob
+      groups Look (Fog Color, Anisotropy) and Terrain (shown only for ground fog); the
+      presets set Warp/Falloff/Anisotropy too.
+    - Verified headless on the 5080: build/attr (26 checks: polish sockets, material
+      reads fog_warp/fog_aniso/fog_color, ground per-image material with the heightmap
+      image texture as Non-Color, terrain sockets, heightmap-absent fallback). Render:
+      a blue Fog Color tints the fog blue (dBlue 0.99 vs dRed -0.18); anisotropy
+      changes the look; ground fog changes the frame and responds to Ground Thickness
+      (more thickness = more mist, the draping mechanism). Eyeball: ground fog clings
+      to the terrain and follows its contour, the polished valley vista is unchanged.
+    - Still scoped for later (S5): camera-following aerial fog for whole-landscape
+      depth without the immersion whiteout, auto-driving fog from bbt_env weather/time,
+      multi-layer fog, vertical turbulence. Emitter-mesh-draped fog (vs heightmap) also
+      remains a possible alternative if a fog is wanted over non-heightmap terrain.
 - S4 Particulates and falling snow: the `particulates` recipe and Weather sub-panel,
   rain first, then dust and amber motes, then the snow mote preset; the `snow` GN
   coverage pass that writes the `snow_cover` attribute (env.snow gated by slope and

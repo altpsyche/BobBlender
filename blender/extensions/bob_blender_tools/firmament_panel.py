@@ -30,8 +30,10 @@ _CLOUD_LAYER = ["Layer Size", "Thickness", "Height"]
 _CLOUD_WIND = ["Wind Direction", "Wind Speed"]
 
 # Live fog knobs, grouped for the panel.
-_FOG_SHAPE = ["Density", "Fog Noise", "Fog Scale", "Softness"]
-_FOG_LAYER = ["Layer Size", "Thickness", "Height", "Fog Top"]
+_FOG_SHAPE = ["Density", "Fog Noise", "Fog Scale", "Softness", "Warp"]
+_FOG_LOOK = ["Fog Color", "Anisotropy"]
+_FOG_LAYER = ["Layer Size", "Thickness", "Height", "Fog Top", "Falloff"]
+_FOG_GROUND = ["Terrain Size", "Terrain Height", "Sea Level", "Ground Thickness"]
 _FOG_WIND = ["Wind Direction", "Wind Speed"]
 
 # Cloud-type presets: a Blender-side dict (no codegen; nothing else reads it). Each
@@ -57,21 +59,25 @@ CLOUD_PRESETS = {
 # Fog-type presets (live modifier knobs, set within whichever fog mode was built).
 FOG_PRESETS = {
     "ground_mist": {"label": "Ground Mist", "desc": "Thin, near-uniform low mist",
-                    "knobs": {"Density": 2.0, "Fog Noise": 0.10, "Fog Scale": 0.04,
+                    "knobs": {"Density": 1.0, "Fog Noise": 0.10, "Fog Scale": 0.04,
                               "Softness": 0.40, "Fog Top": 0.50, "Thickness": 25.0,
-                              "Height": 12.0}},
+                              "Height": 12.0, "Warp": 0.30, "Falloff": 2.0,
+                              "Anisotropy": 0.5}},
     "valley": {"label": "Valley Fog", "desc": "Denser fog that fills the low ground",
-               "knobs": {"Density": 4.0, "Fog Noise": 0.20, "Fog Scale": 0.03,
+               "knobs": {"Density": 2.5, "Fog Noise": 0.20, "Fog Scale": 0.03,
                          "Softness": 0.40, "Fog Top": 0.70, "Thickness": 50.0,
-                         "Height": 22.0}},
+                         "Height": 22.0, "Warp": 0.40, "Falloff": 1.6,
+                         "Anisotropy": 0.5}},
     "banks": {"label": "Fog Banks", "desc": "Patchy drifting banks",
-              "knobs": {"Density": 5.0, "Fog Noise": 0.85, "Fog Scale": 0.025,
+              "knobs": {"Density": 3.0, "Fog Noise": 0.85, "Fog Scale": 0.025,
                         "Softness": 0.30, "Fog Top": 0.60, "Thickness": 45.0,
-                        "Height": 25.0}},
+                        "Height": 25.0, "Warp": 0.50, "Falloff": 1.2,
+                        "Anisotropy": 0.4}},
     "thick": {"label": "Thick Fog", "desc": "Dense soup, low visibility",
-              "knobs": {"Density": 9.0, "Fog Noise": 0.50, "Fog Scale": 0.02,
+              "knobs": {"Density": 6.0, "Fog Noise": 0.50, "Fog Scale": 0.02,
                         "Softness": 0.45, "Fog Top": 0.85, "Thickness": 70.0,
-                        "Height": 30.0}},
+                        "Height": 30.0, "Warp": 0.35, "Falloff": 1.0,
+                        "Anisotropy": 0.3}},
 }
 
 
@@ -203,8 +209,15 @@ class BBT_FirmamentProps(PropertyGroup):
                 "A near-uniform slab, densest low, thinning with height. Aerial "
                 "perspective; valleys fill and hills poke out"),
                ("noise_fog", "Noise Fog",
-                "The slab broken into soft, patchy, drifting banks")],
+                "The slab broken into soft, patchy, drifting banks"),
+               ("ground_fog", "Ground Fog",
+                "Mist that hugs the terrain surface, sampled from a heightmap, so it "
+                "follows hills up and over instead of sitting at a fixed height")],
         default="height_fog")
+    fog_heightmap: StringProperty(
+        name="Heightmap", default="", subtype="FILE_PATH",
+        description="Terrain heightmap the ground fog drapes over. Match Terrain "
+                    "Size/Height/Sea Level to the heightmap_terrain build that used it")
 
 
 class BBT_OT_firmament_build_sky(Operator):
@@ -340,11 +353,14 @@ class BBT_OT_firmament_build_fog(Operator):
         if env is not None:  # seed the wind knobs from the shared world state
             params["wind_direction"] = env.wind_direction
             params["wind_speed"] = env.wind_strength
+        if fm.fog_mode == "ground_fog" and fm.fog_heightmap:
+            params["heightmap"] = bpy.path.abspath(fm.fog_heightmap)
         _apply([{"op": "build_geonodes", "recipe": "volumetrics",
                  "name": fm.fog_object, "params": params}])
         _set_volume_quality(context.scene, fm.quality)
         _show_domain_gizmo(bpy.data.objects.get(fm.fog_object))
-        label = "Height Fog" if fm.fog_mode == "height_fog" else "Noise Fog"
+        label = {"height_fog": "Height Fog", "noise_fog": "Noise Fog",
+                 "ground_fog": "Ground Fog"}[fm.fog_mode]
         self.report({"INFO"}, f"Fog: built {label}")
         return {"FINISHED"}
 
@@ -566,6 +582,8 @@ class BBT_PT_firmament_fog(Panel):
         box = layout.box()
         box.prop(fm, "fog_object")
         box.prop(fm, "fog_mode")
+        if fm.fog_mode == "ground_fog":
+            box.prop(fm, "fog_heightmap")
         row = box.row(align=True)
         row.operator("bob_blender_tools.firmament_build_fog", icon="OUTLINER_OB_VOLUME")
         row.operator_menu_enum("bob_blender_tools.firmament_fog_preset", "preset",
@@ -587,8 +605,18 @@ class BBT_PT_firmament_fog(Panel):
             row.operator("bob_blender_tools.firmament_fog_seed", text="", icon="FILE_REFRESH")
 
         col = layout.column(align=True)
+        col.label(text="Look", icon="COLOR")
+        _draw_knobs(col, obj, _FOG_LOOK)
+
+        col = layout.column(align=True)
         col.label(text="Layer", icon="MESH_GRID")
         _draw_knobs(col, obj, _FOG_LAYER)
+
+        # Terrain mapping, only for ground fog (the sockets exist only then).
+        if _input(obj, "Terrain Size") is not None:
+            col = layout.column(align=True)
+            col.label(text="Terrain", icon="RNDCURVE")
+            _draw_knobs(col, obj, _FOG_GROUND)
 
         col = layout.column(align=True)
         col.label(text="Wind", icon="FORCE_WIND")

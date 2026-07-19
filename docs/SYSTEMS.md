@@ -357,48 +357,80 @@ panel has a Wind Drift toggle plus a Use Env Wind button that copies the Environ
 (`bbt_env`) wind onto the clouds. The panel also groups the knobs (Shape, Layer, Wind)
 and has a Randomize Cloud Seed button.
 
-### Fog (`volumetrics` modes `height_fog` and `noise_fog`)
+### Fog (`volumetrics` modes `height_fog`, `noise_fog`, `ground_fog`)
 
 Bounded domain fog, the aerial-perspective path the S1 uniform world haze could not
 give (a world volume has infinite optical depth and blacks the frame; a bounded box
-does not). The same one-box pattern as clouds, but with its own cached material
-`BOB_FogVolume` (a Principled Volume). Density is a vertical height profile times a
-noise modulation times an XY-wall envelope, all scaled by Density. The height
-profile is densest at the box bottom and fades to zero at Fog Top (a fraction of the
-box height), read from the box's own Generated Z, so density falls with world height
-(aerial perspective) and the box top fades on its own; the envelope fades only the
-four side walls. Because the profile is anchored to the box at a fixed world Z,
-valleys below the fog top fill and hills poke out: crude terrain-aware pooling with
-no emitter sampling.
+does not). The same one-box pattern as clouds, but with its own material (a Principled
+Volume). Density is a height profile (raised to a Falloff power) times a noise
+modulation times an XY-wall envelope, all scaled by Density, with Fog Color tinting
+the scattering albedo and Anisotropy (forward scattering) driving the sun-side glow
+and light shafts. The noise gets a domain warp (Warp knob) so banks billow
+organically. The XY-wall envelope fades only the four side walls; the height profile
+handles the top fade.
 
-The two modes are the same graph and material; `mode` only picks fresh-build
-defaults. `height_fog` sets Fog Noise low (a near-uniform slab, densest low);
-`noise_fog` sets it high (the slab broken into soft patchy banks) with a lower,
-thicker default box. Because the rebuild is non-destructive, switching mode on an
-existing fog object keeps the tuned knobs; use the Fog Preset menu (Ground Mist,
-Valley Fog, Fog Banks, Thick Fog) to change the live look, as with clouds.
+Three modes:
+
+- `height_fog` (material `BOB_FogVolume`): the height profile is box-relative, read
+  from the box's own Generated Z, densest at the box bottom and fading to zero at Fog
+  Top (a fraction of the box height). Density falls with world height (aerial
+  perspective), and because the profile is anchored to the box at a fixed world Z,
+  valleys below the fog top fill and hills poke out: crude terrain-aware pooling with
+  no terrain sampling. Fog Noise defaults low (a near-uniform slab).
+- `noise_fog` (same `BOB_FogVolume`): identical graph, Fog Noise defaults high so the
+  slab breaks into soft patchy banks, with a lower, thicker default box.
+- `ground_fog` (per-image material `BOB_GroundFog_<image>`): the height profile is
+  terrain-relative. The material samples the heightmap by world XY (UV = xy / Terrain
+  Size + 0.5), reconstructs the terrain height `(sample - Sea Level) * Terrain Height`
+  the same way `heightmap_terrain` does, and fades density with height above that
+  ground over Ground Thickness metres. So the mist hugs the surface and follows hills
+  up and over, instead of sitting at a fixed Z. The material is cached per heightmap
+  image (an image is a node property, not a socket), so two fogs over the same terrain
+  share it while the terrain mapping stays live through knobs. Without a heightmap it
+  falls back to `BOB_FogVolume`.
+
+height_fog and noise_fog share `BOB_FogVolume` and differ only in default Fog Noise;
+`mode` picks fresh-build defaults. Because the rebuild is non-destructive, switching
+mode on an existing fog object keeps the tuned knobs; use the Fog Preset menu (Ground
+Mist, Valley Fog, Fog Banks, Thick Fog) to change the live look, as with clouds.
 
 | Param | Default | Live | What it does |
 |-------|---------|------|--------------|
 | `size` | 400 | yes | Layer footprint in metres (the box XY). |
-| `thickness` | 40 / 60 | yes | Layer depth in metres (the box Z). Higher default for noise_fog. |
-| `height` | 20 / 30 | yes | World Z of the layer centre. Higher default for noise_fog. |
-| `density` | 3.0 | yes | Volume density (how thick the fog reads). |
-| `fog_top` | 0.6 | yes | Fraction of the box height the fog rises to before fading out. |
-| `fog_noise` | 0.15 / 0.85 | yes | 0 = smooth slab, 1 = fully patchy banks. Low for height_fog, high for noise_fog. |
+| `thickness` | 40 / 60 / 60 | yes | Box depth in metres (height / noise / ground defaults). |
+| `height` | 20 / 30 / 15 | yes | World Z of the box centre (height / noise / ground defaults). |
+| `density` | 2.0 | yes | How thick the fog reads. An artist scale, not raw extinction: ~1 light, ~3 moderate, ~6 thick. |
+| `fog_top` | 0.6 | yes | Fraction of the box height the fog rises to (height/noise modes). |
+| `falloff` | 1.5 | yes | Power on the height curve: >1 hugs the ground tighter, <1 fills evenly. |
+| `fog_noise` | 0.15 / 0.85 / 0.25 | yes | 0 = smooth, 1 = patchy banks. Low height, high noise, low-mid ground. |
 | `fog_scale` | 0.03 | yes | Noise frequency: lower = bigger banks. |
 | `fog_detail` | 4.0 | yes | Noise octaves for the fog. |
 | `fog_seed` | 0 | yes | Reshuffles the fog pattern. |
 | `softness` | 0.3 | yes | Widens the bank edges (noise threshold width). |
+| `warp` | 0.3 | yes | Domain warp: banks billow organically instead of round patches. |
+| `color` | white | yes | Fog Color, the scattering tint (cool shadow / warm dawn). |
+| `anisotropy` | 0.4 | yes | Forward scattering (-0.9..0.9): the sun-side glow and light shafts. |
 | `wind` / `wind_direction` / `wind_speed` | off / 0 / 2 | yes | Drift the banks by scene time, seeded from env wind. |
+| `heightmap` | none | no | ground_fog only: terrain image path the mist drapes over (build-time). |
+| `terrain_size` / `terrain_height` / `sea_level` | 60 / 14 / 0.3 | yes | ground_fog only: match the `heightmap_terrain` build that used the image. |
+| `ground_thickness` | 8.0 | yes | ground_fog only: how high (metres) the mist clings above the terrain. |
 
 Build Fog sets the Cycles Volume Step Rate, Max Steps, and Volume Bounces from the
 Preview/Final quality level, the same as Build Clouds. The Firmament Fog sub-panel
-picks the mode, builds, applies a preset, and draws the live knobs grouped (Shape,
-Layer, Wind) with a Randomize Fog Seed button and a Use Env Wind button. Fog is a
-viewed-from-outside effect: a camera immersed deep in a dense slab sees only
-extinction (near-black), and a very dense slab whites out over a long path, so keep
-density modest (about 2 to 4) for wide vista shots.
+picks the mode (and a heightmap for ground fog), builds, applies a preset, and draws
+the live knobs grouped (Shape, Look, Layer, Terrain, Wind) with a Randomize Fog Seed
+button and a Use Env Wind button. Fog is a viewed-from-outside effect: a camera
+immersed deep in a dense slab sees only extinction (near-black), and a very dense
+slab whites out over a long path.
+
+Density note: fog fills the whole box (unlike clouds, which the Coverage threshold
+mostly empties), so a large box builds high optical depth from a small extinction:
+raw density around 0.05 already reads as a thick sea of fog. The Density knob is
+therefore an artist-friendly scale (internally multiplied by 0.02 to reach the raw
+extinction), so the usable range sits in friendly single digits: about 0.1 a faint
+haze, 1 light, 3 moderate, 6 a thick soup. It is still exponential and
+view-dependent (a grazing horizon path fogs out sooner than looking down), so tune
+against the actual shot.
 
 ## Path (op: `make_path`)
 

@@ -14,8 +14,12 @@ Modes:
 - height_fog: a bounded slab, densest at the bottom, fading to zero with height
   (aerial perspective / valley pooling). See materials.BOB_FogVolume.
 - noise_fog: the same slab broken into soft patchy banks by noise.
+- ground_fog: a terrain-draped mist that samples a heightmap so density hugs the
+  ground surface (follows hills up and over), not a fixed-Z slab. Uses a per-image
+  material (materials.ground_fog_volume_material) and adds the terrain-mapping knobs.
 
-All numeric params are live modifier knobs. The only build-time param is `mode`.
+All numeric params are live modifier knobs. Build-time params are `mode` and, for
+ground_fog, `heightmap` (the terrain image path).
 """
 
 import bpy
@@ -25,7 +29,11 @@ from ..scaffold import add_input
 from . import recipe
 
 # bbmcp/materials.py: the cached volume materials (shaders, not GN).
-from ...materials import cloud_volume_material, fog_volume_material
+from ...materials import (
+    cloud_volume_material,
+    fog_volume_material,
+    ground_fog_volume_material,
+)
 
 # Cloud instance attributes stored on the box <- the socket each reads from.
 _CLOUD_ATTRS = [("cloud_density", "Density"),
@@ -39,11 +47,20 @@ _CLOUD_ATTRS = [("cloud_density", "Density"),
 # Fog instance attributes stored on the box <- the socket each reads from.
 _FOG_ATTRS = [("fog_density", "Density"),
               ("fog_top", "Fog Top"),
+              ("fog_falloff", "Falloff"),
               ("fog_noise", "Fog Noise"),
               ("fog_scale", "Fog Scale"),
               ("fog_detail", "Fog Detail"),
               ("fog_seed", "Fog Seed"),
-              ("fog_softness", "Softness")]
+              ("fog_softness", "Softness"),
+              ("fog_warp", "Warp"),
+              ("fog_aniso", "Anisotropy")]
+
+# Extra attributes only ground_fog (terrain-draped) stores, for the terrain mapping.
+_FOG_GROUND_ATTRS = [("fog_terrain_size", "Terrain Size"),
+                     ("fog_terrain_height", "Terrain Height"),
+                     ("fog_sea_level", "Sea Level"),
+                     ("fog_ground_thickness", "Ground Thickness")]
 
 
 def _layer_and_wind_inputs(ng, params, size, thickness, height):
@@ -105,14 +122,20 @@ def _domain_geo(ng, gi):
     return iop.outputs["Instances"], drift.outputs["Vector"]
 
 
-def _finish(ng, out, gi, geo, drift, attrs, wind_attr, material):
+def _finish(ng, out, gi, geo, drift, attrs, wind_attr, material, extra_stores=()):
     """Store the live knobs and the wind offset as INSTANCE attributes, assign the
-    volume material, and output. Shared by every mode."""
+    volume material, and output. Shared by every mode.
+
+    attrs is a list of (attr_name, socket_name) stored as FLOAT. extra_stores is a
+    list of (attr_name, socket_name, data_type) for non-float knobs (e.g. the fog
+    colour as FLOAT_COLOR). The wind offset is stored last as FLOAT_VECTOR.
+    """
     nodes, links = ng.nodes, ng.links
 
-    for i, (attr, socket) in enumerate(attrs):
+    stores = [(a, s, "FLOAT") for (a, s) in attrs] + list(extra_stores)
+    for i, (attr, socket, dtype) in enumerate(stores):
         store = nodes.new("GeometryNodeStoreNamedAttribute")
-        store.data_type = "FLOAT"
+        store.data_type = dtype
         store.domain = "INSTANCE"
         store.location = (-80 + i * 190, 120)
         links.new(geo, store.inputs["Geometry"])
@@ -123,14 +146,14 @@ def _finish(ng, out, gi, geo, drift, attrs, wind_attr, material):
     wind_store = nodes.new("GeometryNodeStoreNamedAttribute")
     wind_store.data_type = "FLOAT_VECTOR"
     wind_store.domain = "INSTANCE"
-    wind_store.location = (-80 + len(attrs) * 190, 120)
+    wind_store.location = (-80 + len(stores) * 190, 120)
     links.new(geo, wind_store.inputs["Geometry"])
     wind_store.inputs["Name"].default_value = wind_attr
     links.new(drift, wind_store.inputs["Value"])
     geo = wind_store.outputs["Geometry"]
 
     setmat = nodes.new("GeometryNodeSetMaterial")
-    setmat.location = (-80 + (len(attrs) + 1) * 190, 120)
+    setmat.location = (-80 + (len(stores) + 1) * 190, 120)
     links.new(geo, setmat.inputs["Geometry"])
     setmat.inputs["Material"].default_value = material
     links.new(setmat.outputs["Geometry"], out.inputs["Geometry"])
@@ -151,24 +174,49 @@ def _build_clouds(ng, out, gi, params):
 
 
 def _build_fog(ng, out, gi, params, mode):
-    """height_fog and noise_fog. Same box and material; noise_fog just turns the
-    Fog Noise knob up so the slab breaks into soft banks. A lower, thicker default
-    box for noise_fog, a thin ground-anchored slab for height_fog."""
+    """height_fog, noise_fog, and ground_fog. All share the box, the wind drift, and
+    the polish knobs (Falloff, Warp, Fog Color, Anisotropy). height_fog and noise_fog
+    share the box-relative material and differ only in default Fog Noise; ground_fog
+    uses a terrain-draped material that samples a heightmap so the mist hugs the
+    ground, and adds the terrain-mapping knobs."""
     is_noise = mode == "noise_fog"
-    _layer_and_wind_inputs(ng, params, 400.0,
-                           thickness=60.0 if is_noise else 40.0,
-                           height=30.0 if is_noise else 20.0)
-    add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 3.0)), 0.0)
+    is_ground = mode == "ground_fog"
+    # Box defaults per mode: height_fog thin low slab, noise_fog lower/thicker banks,
+    # ground_fog a taller box that encloses the terrain plus the mist above it.
+    thickness = {"noise_fog": 60.0, "ground_fog": 60.0}.get(mode, 40.0)
+    height = {"noise_fog": 30.0, "ground_fog": 15.0}.get(mode, 20.0)
+    _layer_and_wind_inputs(ng, params, 400.0, thickness=thickness, height=height)
+
+    add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 2.0)), 0.0)
     add_input(ng, "Fog Top", "NodeSocketFloat", float(params.get("fog_top", 0.6)), 0.0, 1.0)
-    add_input(ng, "Fog Noise", "NodeSocketFloat",
-              float(params.get("fog_noise", 0.85 if is_noise else 0.15)), 0.0, 1.0)
+    add_input(ng, "Falloff", "NodeSocketFloat", float(params.get("falloff", 1.5)), 0.1, 8.0)
+    default_noise = 0.85 if is_noise else (0.25 if is_ground else 0.15)
+    add_input(ng, "Fog Noise", "NodeSocketFloat", float(params.get("fog_noise", default_noise)), 0.0, 1.0)
     add_input(ng, "Fog Scale", "NodeSocketFloat", float(params.get("fog_scale", 0.03)), 0.0)
     add_input(ng, "Fog Detail", "NodeSocketFloat", float(params.get("fog_detail", 4.0)), 0.0)
     add_input(ng, "Fog Seed", "NodeSocketInt", int(params.get("fog_seed", 0)))
     add_input(ng, "Softness", "NodeSocketFloat", float(params.get("softness", 0.3)), 0.0, 1.0)
+    add_input(ng, "Warp", "NodeSocketFloat", float(params.get("warp", 0.3)), 0.0, 1.0)
+    add_input(ng, "Fog Color", "NodeSocketColor", tuple(params.get("color", (1.0, 1.0, 1.0, 1.0))))
+    add_input(ng, "Anisotropy", "NodeSocketFloat", float(params.get("anisotropy", 0.4)), -0.9, 0.9)
+
+    attrs = list(_FOG_ATTRS)
+    material = fog_volume_material()
+    if is_ground:
+        add_input(ng, "Terrain Size", "NodeSocketFloat", float(params.get("terrain_size", 60.0)), 1.0)
+        add_input(ng, "Terrain Height", "NodeSocketFloat", float(params.get("terrain_height", 14.0)))
+        add_input(ng, "Sea Level", "NodeSocketFloat", float(params.get("sea_level", 0.3)), 0.0)
+        add_input(ng, "Ground Thickness", "NodeSocketFloat", float(params.get("ground_thickness", 8.0)), 0.0)
+        attrs = attrs + _FOG_GROUND_ATTRS
+        image = None
+        hm_path = params.get("heightmap")
+        if hm_path:
+            image = bpy.data.images.load(hm_path, check_existing=True)
+        material = ground_fog_volume_material(image)  # falls back to box fog if None
 
     geo, drift = _domain_geo(ng, gi)
-    _finish(ng, out, gi, geo, drift, _FOG_ATTRS, "fog_wind", fog_volume_material())
+    _finish(ng, out, gi, geo, drift, attrs, "fog_wind", material,
+            extra_stores=[("fog_color", "Fog Color", "FLOAT_COLOR")])
 
 
 @recipe("volumetrics")
@@ -178,7 +226,7 @@ def build(ng, out, params: dict):
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-1000, 0)
 
-    if mode in ("height_fog", "noise_fog"):
+    if mode in ("height_fog", "noise_fog", "ground_fog"):
         _build_fog(ng, out, gi, params, mode)
     else:
         _build_clouds(ng, out, gi, params)
