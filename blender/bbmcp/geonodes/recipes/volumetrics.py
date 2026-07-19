@@ -1,15 +1,21 @@
-"""volumetrics: procedural Cycles volumes. S2 is clouds; S3 adds fog modes.
+"""volumetrics: procedural Cycles volumes. Clouds (S2) and fog (S3).
 
-Clouds mode builds ONE domain box for the whole cloud layer and lets the material
-carve the clouds out of it with world-space noise. A single bounded domain (rather
-than a field of instanced cubes) has no box seams between puffs and does not clip
-the cloud at each cube face; the material fades the density to zero toward the box
-faces so the layer never cuts off at the bound, and open sky shows wherever the
-noise falls below the Coverage threshold. The box is instanced once so the live
-knobs travel into the volume shader as INSTANCER attributes (the linchpin path).
+Every mode builds ONE domain box for the whole layer and lets the material carve
+the volume out of it. A single bounded domain (rather than a field of instanced
+cubes) has no box seams between puffs and does not clip at each cube face; the
+material fades density to zero toward the box bounds so the layer never cuts off,
+and shows open sky (clouds) or clear air (fog) where the volume thins out. The box
+is instanced once so the live knobs travel into the volume shader as INSTANCER
+attributes (the linchpin path).
 
-Modifier inputs (all live): Layer Size, Thickness, Height, Coverage, Cloud Scale,
-Cloud Seed, Density, Detail, Softness. Params: mode.
+Modes:
+- clouds: world-space fractal noise thresholded by Coverage, faded at every box
+  face, self-shadowing for form. See materials.BOB_CloudVolume.
+- height_fog: a bounded slab, densest at the bottom, fading to zero with height
+  (aerial perspective / valley pooling). See materials.BOB_FogVolume.
+- noise_fog: the same slab broken into soft patchy banks by noise.
+
+All numeric params are live modifier knobs. The only build-time param is `mode`.
 """
 
 import bpy
@@ -18,43 +24,50 @@ from ..blocks import math_node
 from ..scaffold import add_input
 from . import recipe
 
-# bbmcp/materials.py: the cached volume material (a shader, not GN).
-from ...materials import cloud_volume_material
+# bbmcp/materials.py: the cached volume materials (shaders, not GN).
+from ...materials import cloud_volume_material, fog_volume_material
 
-# Attribute stored on the box <- the socket it reads from.
-_ATTRS = [("cloud_density", "Density"),
-          ("cloud_detail", "Detail"),
-          ("cloud_softness", "Softness"),
-          ("cloud_coverage", "Coverage"),
-          ("cloud_scale", "Cloud Scale"),
-          ("cloud_seed", "Cloud Seed"),
-          ("cloud_warp", "Warp")]
+# Cloud instance attributes stored on the box <- the socket each reads from.
+_CLOUD_ATTRS = [("cloud_density", "Density"),
+                ("cloud_detail", "Detail"),
+                ("cloud_softness", "Softness"),
+                ("cloud_coverage", "Coverage"),
+                ("cloud_scale", "Cloud Scale"),
+                ("cloud_seed", "Cloud Seed"),
+                ("cloud_warp", "Warp")]
+
+# Fog instance attributes stored on the box <- the socket each reads from.
+_FOG_ATTRS = [("fog_density", "Density"),
+              ("fog_top", "Fog Top"),
+              ("fog_noise", "Fog Noise"),
+              ("fog_scale", "Fog Scale"),
+              ("fog_detail", "Fog Detail"),
+              ("fog_seed", "Fog Seed"),
+              ("fog_softness", "Softness")]
 
 
-@recipe("volumetrics")
-def build(ng, out, params: dict):
-    params.get("mode", "clouds")  # S2 clouds only; S3 branches height_fog/noise_fog
-
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-1000, 0)
-
-    add_input(ng, "Layer Size", "NodeSocketFloat", float(params.get("size", 400.0)), 1.0)
-    add_input(ng, "Thickness", "NodeSocketFloat", float(params.get("thickness", 40.0)), 0.0)
-    add_input(ng, "Height", "NodeSocketFloat", float(params.get("height", 70.0)))
-    add_input(ng, "Coverage", "NodeSocketFloat", float(params.get("coverage", 0.5)), 0.0, 1.0)
-    add_input(ng, "Cloud Scale", "NodeSocketFloat", float(params.get("cloud_scale", 0.06)), 0.0)
-    add_input(ng, "Cloud Seed", "NodeSocketInt", int(params.get("cloud_seed", 0)))
-    add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 5.0)), 0.0)
-    add_input(ng, "Detail", "NodeSocketFloat", float(params.get("detail", 5.0)), 0.0)
-    add_input(ng, "Softness", "NodeSocketFloat", float(params.get("softness", 0.25)), 0.0, 1.0)
-    add_input(ng, "Warp", "NodeSocketFloat", float(params.get("warp", 0.4)), 0.0, 1.0)
+def _layer_and_wind_inputs(ng, params, size, thickness, height):
+    """The box and wind-drift inputs common to every volumetrics mode."""
+    add_input(ng, "Layer Size", "NodeSocketFloat", float(params.get("size", size)), 1.0)
+    add_input(ng, "Thickness", "NodeSocketFloat", float(params.get("thickness", thickness)), 0.0)
+    add_input(ng, "Height", "NodeSocketFloat", float(params.get("height", height)))
     add_input(ng, "Wind", "NodeSocketBool", bool(params.get("wind", False)))
     add_input(ng, "Wind Direction", "NodeSocketFloat", float(params.get("wind_direction", 0.0)), 0.0, 360.0)
     add_input(ng, "Wind Speed", "NodeSocketFloat", float(params.get("wind_speed", 2.0)), 0.0)
 
+
+def _domain_geo(ng, gi):
+    """One point at Height carrying the domain box as a single instance, plus the
+    wind-drift vector. Returns (instances_geometry_socket, drift_vector_socket).
+
+    The box is instanced once so the live knobs reach the volume shader as
+    INSTANCER attributes. Wind drift advances an offset by Wind Speed * scene time
+    along Wind Direction, gated by the Wind toggle; the material shifts its noise
+    sample by it so the pattern drifts through the stationary box. Scene time (not
+    wall clock) drives it, so a Cycles animation renders the same every time.
+    """
     nodes, links = ng.nodes, ng.links
 
-    # A single point at the layer height, carrying the domain box as one instance.
     point = nodes.new("GeometryNodePoints")
     point.location = (-700, 200)
     point.inputs["Count"].default_value = 1
@@ -63,7 +76,6 @@ def build(ng, out, params: dict):
     links.new(gi.outputs["Height"], height_vec.inputs["Z"])
     links.new(height_vec.outputs["Vector"], point.inputs["Position"])
 
-    # The domain box: Layer Size in XY, Thickness in Z.
     size_vec = nodes.new("ShaderNodeCombineXYZ")
     size_vec.location = (-700, -120)
     links.new(gi.outputs["Layer Size"], size_vec.inputs["X"])
@@ -78,10 +90,6 @@ def build(ng, out, params: dict):
     links.new(point.outputs["Geometry"], iop.inputs["Points"])
     links.new(cube.outputs["Mesh"], iop.inputs["Instance"])
 
-    # Wind drift: advance an offset by Wind Speed * scene time along Wind Direction,
-    # gated by the Wind toggle. Stored per instance so the material shifts its noise
-    # sample and the clouds drift through the stationary box. Scene time (not wall
-    # clock) drives it, so a Cycles animation renders the same every time.
     rad = math_node(ng, "MULTIPLY", gi.outputs["Wind Direction"], 0.0174532925, (-700, -320))
     dx = math_node(ng, "COSINE", rad, location=(-520, -280))
     dy = math_node(ng, "SINE", rad, location=(-520, -380))
@@ -94,9 +102,15 @@ def build(ng, out, params: dict):
     links.new(math_node(ng, "MULTIPLY", dx, mag, (-340, -300)), drift.inputs["X"])
     links.new(math_node(ng, "MULTIPLY", dy, mag, (-340, -400)), drift.inputs["Y"])
 
-    # Carry the live knobs onto the box as instance attributes the material reads.
-    geo = iop.outputs["Instances"]
-    for i, (attr, socket) in enumerate(_ATTRS):
+    return iop.outputs["Instances"], drift.outputs["Vector"]
+
+
+def _finish(ng, out, gi, geo, drift, attrs, wind_attr, material):
+    """Store the live knobs and the wind offset as INSTANCE attributes, assign the
+    volume material, and output. Shared by every mode."""
+    nodes, links = ng.nodes, ng.links
+
+    for i, (attr, socket) in enumerate(attrs):
         store = nodes.new("GeometryNodeStoreNamedAttribute")
         store.data_type = "FLOAT"
         store.domain = "INSTANCE"
@@ -109,14 +123,62 @@ def build(ng, out, params: dict):
     wind_store = nodes.new("GeometryNodeStoreNamedAttribute")
     wind_store.data_type = "FLOAT_VECTOR"
     wind_store.domain = "INSTANCE"
-    wind_store.location = (-80 + len(_ATTRS) * 190, 120)
+    wind_store.location = (-80 + len(attrs) * 190, 120)
     links.new(geo, wind_store.inputs["Geometry"])
-    wind_store.inputs["Name"].default_value = "cloud_wind"
-    links.new(drift.outputs["Vector"], wind_store.inputs["Value"])
+    wind_store.inputs["Name"].default_value = wind_attr
+    links.new(drift, wind_store.inputs["Value"])
     geo = wind_store.outputs["Geometry"]
 
     setmat = nodes.new("GeometryNodeSetMaterial")
-    setmat.location = (-80 + (len(_ATTRS) + 1) * 190, 120)
+    setmat.location = (-80 + (len(attrs) + 1) * 190, 120)
     links.new(geo, setmat.inputs["Geometry"])
-    setmat.inputs["Material"].default_value = cloud_volume_material()
+    setmat.inputs["Material"].default_value = material
     links.new(setmat.outputs["Geometry"], out.inputs["Geometry"])
+
+
+def _build_clouds(ng, out, gi, params):
+    _layer_and_wind_inputs(ng, params, 400.0, 40.0, 70.0)
+    add_input(ng, "Coverage", "NodeSocketFloat", float(params.get("coverage", 0.5)), 0.0, 1.0)
+    add_input(ng, "Cloud Scale", "NodeSocketFloat", float(params.get("cloud_scale", 0.06)), 0.0)
+    add_input(ng, "Cloud Seed", "NodeSocketInt", int(params.get("cloud_seed", 0)))
+    add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 5.0)), 0.0)
+    add_input(ng, "Detail", "NodeSocketFloat", float(params.get("detail", 5.0)), 0.0)
+    add_input(ng, "Softness", "NodeSocketFloat", float(params.get("softness", 0.25)), 0.0, 1.0)
+    add_input(ng, "Warp", "NodeSocketFloat", float(params.get("warp", 0.4)), 0.0, 1.0)
+
+    geo, drift = _domain_geo(ng, gi)
+    _finish(ng, out, gi, geo, drift, _CLOUD_ATTRS, "cloud_wind", cloud_volume_material())
+
+
+def _build_fog(ng, out, gi, params, mode):
+    """height_fog and noise_fog. Same box and material; noise_fog just turns the
+    Fog Noise knob up so the slab breaks into soft banks. A lower, thicker default
+    box for noise_fog, a thin ground-anchored slab for height_fog."""
+    is_noise = mode == "noise_fog"
+    _layer_and_wind_inputs(ng, params, 400.0,
+                           thickness=60.0 if is_noise else 40.0,
+                           height=30.0 if is_noise else 20.0)
+    add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 3.0)), 0.0)
+    add_input(ng, "Fog Top", "NodeSocketFloat", float(params.get("fog_top", 0.6)), 0.0, 1.0)
+    add_input(ng, "Fog Noise", "NodeSocketFloat",
+              float(params.get("fog_noise", 0.85 if is_noise else 0.15)), 0.0, 1.0)
+    add_input(ng, "Fog Scale", "NodeSocketFloat", float(params.get("fog_scale", 0.03)), 0.0)
+    add_input(ng, "Fog Detail", "NodeSocketFloat", float(params.get("fog_detail", 4.0)), 0.0)
+    add_input(ng, "Fog Seed", "NodeSocketInt", int(params.get("fog_seed", 0)))
+    add_input(ng, "Softness", "NodeSocketFloat", float(params.get("softness", 0.3)), 0.0, 1.0)
+
+    geo, drift = _domain_geo(ng, gi)
+    _finish(ng, out, gi, geo, drift, _FOG_ATTRS, "fog_wind", fog_volume_material())
+
+
+@recipe("volumetrics")
+def build(ng, out, params: dict):
+    mode = params.get("mode", "clouds")
+
+    gi = ng.nodes.new("NodeGroupInput")
+    gi.location = (-1000, 0)
+
+    if mode in ("height_fog", "noise_fog"):
+        _build_fog(ng, out, gi, params, mode)
+    else:
+        _build_clouds(ng, out, gi, params)

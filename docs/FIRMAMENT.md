@@ -165,6 +165,14 @@ scattered-cumulus mode, but is not how the S2 layer is built.
   is sampled per render step, so cloud interiors stay sharp and light instead of
   voxelizing the way a pure-GN volume grid (Volume Cube, Mesh to Volume) would. Per
   instance texture coordinates vary each puff so an instanced field does not repeat.
+- Cloud and fog use SEPARATE materials, not one shared material (decided at S3, see
+  the S3 record). Their core primitives are opposites: the cloud material carves
+  shapes out of the box with a Coverage threshold and a symmetric all-face envelope;
+  the fog material is a continuous medium with a vertical density gradient (dense
+  low, thin high) that doubles as the top-face fade. Forcing fog through the cloud
+  material would fight that difference (its envelope fades the bottom face, exactly
+  wrong for ground fog). `materials.BOB_CloudVolume` and `materials.BOB_FogVolume`;
+  both fog modes share BOB_FogVolume and differ only by knob defaults.
 - Aerial perspective is not a world volume. A constant-density world Principled
   Volume was the plan, but Phase-0/S1 disproved it: an unbounded world volume has
   infinite optical depth and extinguishes the Sun lamp and skylight, blacking the
@@ -527,9 +535,49 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
     knobs in one pick. Gate re-verified (10 checks) and register (18 checks) green.
   - Known nonblocking polish: the box top-face fade can show as a faint seam when the
     camera looks steeply up at the layer. No world haze (deferred per plan).
-- S3 Fog: the same `volumetrics` recipe in height_fog and noise_fog modes, the Fog
-  sub-panel. Verify: each mode renders and changes luminance where expected; height
-  fog varies with Z; terrain-aware fog pools in low ground.
+- S3 Fog (done, 2026-07-19): the `volumetrics` recipe in height_fog and noise_fog
+  modes, a new `BOB_FogVolume` material, the Fog sub-panel and Build Fog op, four fog
+  presets (Ground Mist, Valley Fog, Fog Banks, Thick Fog). Both fog modes are the
+  SAME node graph and material; the `mode` param only selects fresh-build knob
+  defaults (height_fog low Fog Noise for a near-uniform slab, noise_fog high Fog
+  Noise for patchy banks), and the non-destructive rebuild preserves tuned knobs, so
+  switching mode on an existing object keeps the knobs (the preset menu is the live
+  look control, as with clouds). Key design decisions:
+  - Fog gets its own material (see the Volumes subsystem note). `BOB_FogVolume` is a
+    Principled Volume whose density = fog_density * a vertical height profile * a
+    noise modulation * an XY-wall envelope. The height profile is built from the
+    box's own Generated Z (0 at the box bottom, 1 at the top; the box is not rotated
+    so this tracks world Z): dense at the bottom, fading to zero at Fog Top (a
+    fraction of the box height). That gradient IS the height-fog / aerial-perspective
+    look and doubles as the top-face fade, so no separate top envelope is needed; the
+    envelope only fades the four XY side walls. The noise modulation is
+    mix(1, banked_noise, Fog Noise), so Fog Noise 0 is a uniform slab and 1 is fully
+    patchy banks; Softness sets the bank edge width. The noise sample is drifted by a
+    per-instance fog_wind vector (wind * scene time), reusing the cloud wind path.
+  - Terrain-aware pooling is done CRUDE and needs no emitter sampling: because the
+    height gradient is anchored to the box at a fixed world Z, valleys below the fog
+    top fill and hills poke out (the sea-of-fog look). This is the aerial-perspective
+    path the S1 uniform world haze could not give, because it has position. An
+    emitter-draped ground-hugging mist (fog that follows the terrain over hills too)
+    is a possible richer follow-up, not committed.
+  - The recipe was refactored to share scaffolding: `_domain_geo` (one point ->
+    single instanced cube + the wind-drift vector) and `_finish` (store the knobs as
+    INSTANCE attributes, store the wind vector, set the material, output) are now used
+    by both `_build_clouds` and `_build_fog`. The clouds path is byte-for-byte
+    equivalent (regression-checked).
+  - Verified headless on the 5080 (OptiX). Register/build: clouds still build
+    (regression), the fog object is one instanced domain box with all fog sockets and
+    the BOB_FogVolume material reading its seven fog INSTANCER attributes plus
+    fog_wind, presets apply live, seed randomizes. Render smoke test (linear EXR
+    metrics, since the Standard transform clips bright volumes to white): clouds
+    change luminance vs empty (+0.22) and add variance; height fog is stronger low
+    than high (low 1.16 vs high ~0, i.e. varies with Z); fog pools low (a hill base in
+    the slab is more affected than its peak above the slab); noise fog is ~8x patchier
+    across X than height fog. Eyeball: valley and banks vistas read as a sea of fog
+    with conical hills poking out, bases dissolving into the fog. Nonblocking: an
+    immersed camera deep inside a dense slab goes near-black (optical depth), so the
+    fog is a viewed-from-outside effect; a very dense slab whites out (keep density
+    modest, ~2-4, for wide vistas).
 - S4 Particulates and falling snow: the `particulates` recipe and Weather sub-panel,
   rain first, then dust and amber motes, then the snow mote preset; the `snow` GN
   coverage pass that writes the `snow_cover` attribute (env.snow gated by slope and
