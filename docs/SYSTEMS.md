@@ -357,6 +357,15 @@ panel has a Wind Drift toggle plus a Use Env Wind button that copies the Environ
 (`bbt_env`) wind onto the clouds. The panel also groups the knobs (Shape, Layer, Wind)
 and has a Randomize Cloud Seed button.
 
+Live Environment (S5): the main Firmament panel has a Live Environment toggle (default
+on) that drives Wind Direction / Wind Speed of the clouds, fog, and particulates, the
+cloud layer's Coverage (from `env.cloud_cover`), and the snow-coverage Snow input (from
+`env.snow`) live from `bbt_env` with drivers, so moving an Environment slider moves every
+effect with no rebuild. The per-object Use Env Wind / Use Env Snow buttons are shown only
+when the toggle is OFF (when on, the driver owns the input and a one-time copy would be
+overwritten). The drivers are reinstalled on each build, since the non-destructive rebuild
+regenerates the node-group socket identifiers.
+
 ### Fog (`volumetrics` modes `height_fog`, `noise_fog`, `ground_fog`)
 
 Bounded domain fog, the aerial-perspective path the S1 uniform world haze could not
@@ -447,10 +456,12 @@ animation renders the same every frame. Because `rep` is anchored to the particl
 world position, its motion-blur velocity is the true particle velocity, not the camera's:
 the domain follows the camera with no domain-jump streak (do NOT snap the follow-centre to
 the box lattice; that concentrates the jump into occasional all-particle streak frames
-instead of removing it). Streaks are real geometry: a thin cylinder stretched along its
-length and aligned to the velocity vector, so wind leans the streak; motes are small ico
-spheres lit by the scene. The camera is a build-time param (set on the Object Info node);
-with no camera the domain sits at the origin.
+instead of removing it). Streaks are real geometry: a thin tapered cone (needle) aligned
+to the velocity vector, so wind leans the streak, with the rain material holding the streak
+core opaque and fading only the tips (a soft needle, not a hard-capped tube); motes are
+small ico spheres, scene-lit with a Translucent term mixed in so dust and amber motes glow
+when backlit by a low sun (the golden-hour catch). The camera is a build-time param (set on
+the Object Info node); with no camera the domain sits at the origin.
 
 | Param | Default | Live | What it does |
 |-------|---------|------|--------------|
@@ -461,21 +472,34 @@ with no camera the domain sits at the origin.
 | `domain_height` | 40 | yes | Domain depth in metres (Z). |
 | `fall_speed` | 9 / 0.4 | yes | Downward speed (m/s); streak / mote defaults. |
 | `drift` | 1.0 | yes | Horizontal wind multiplier. |
-| `size` | 0.02 / 0.03 | yes | Instance radius (streak / mote). |
+| `size` | 0.010 / 0.03 | yes | Instance radius (streak cone / mote). |
 | `size_variation` | 0.4 | yes | Per-particle random scale spread. |
-| `streak_length` | 0.4 | yes | streak only: length = Fall Speed * this. |
+| `streak_length` | 0.2 | yes | streak only: length = Fall Speed * this. |
 | `turbulence` | 1.0 | yes | mote only: swirl/flutter strength. |
 | `emission` | 0.0 | yes | mote only: emission strength (0 = scene-lit; raise for fireflies/embers). |
 | `color` | blue-grey / white | yes | Streak or mote colour (INSTANCER knob). |
 | `wind_direction` | 0 | yes | Compass direction (degrees) the wind blows toward. |
-| `wind_speed` | 2.0 | yes | Wind speed (seeded from env wind). |
+| `wind_speed` | 2.0 | yes | Wind speed (seeded from env wind, or driven live). |
+| `quality_scale` | 1.0 | yes | Multiplies Count from the Preview/Final level (preview 0.35, final 1.0); set by the panel quality toggle, not by hand. |
 | `seed` | 0 | yes | Reshuffles the particle pattern. |
 
-Motion blur: the Build ops set `scene.render.use_motion_blur` from a panel toggle so
-fast particles read as streaks in the render; rain streaks are also real geometry, so
-they read with or without it. The Weather panel groups the knobs, has Rain presets
-(Drizzle, Rain, Downpour) and Mote presets (Dust, Amber Motes, Falling Snow), a
-Randomize Seed button, and a Camera picker for the follow domain.
+Motion blur: the Build ops set `scene.render.use_motion_blur` from a panel toggle and
+also the object's `cycles.use_motion_blur`, so fast particles read as streaks in the
+render; rain streaks are also real geometry, so they read with or without it. The Weather
+panel groups the knobs, has Rain presets (Drizzle, Rain, Downpour) and Mote presets
+(Dust, Amber Motes, Falling Snow), a Randomize Seed button, a Use Env Wind button
+(live-syncs Wind Direction/Speed from the Environment), and a Camera picker for the
+follow domain. The Preview/Final quality toggle scales the particle Count through a
+Quality Scale input (preview 0.35, final 1.0) at every build and when the toggle flips,
+so the viewport stays light and a final render restores the full count.
+
+Main-panel controls (S5): the Firmament panel top carries the Preview/Final quality
+toggle, the Live Environment toggle, and a Scene Preset menu (Clear Day, Golden Hour,
+Overcast, Storm, Foggy Dawn, Dust Storm, Winter) that sets the `bbt_env` context and
+seeds each subsystem in one pick, building any that are missing. The Environment
+sub-panel has an Apply Season button that applies the current season's continuous state
+(snow, wetness, temperature) and, for Winter, builds the falling snow and the
+snow-coverage pass.
 
 ## snow (recipe: `snow`)
 
@@ -488,6 +512,27 @@ read that one attribute, so they never disagree. Attach it with
 Coverage button), which is non-destructive like `build_geonodes` and takes a `reset` flag.
 
     snow_cover = Snow * slope_mask(normal Z) * altitude_mask(world Z) * (1 - occlusion)
+
+### The coverage formula (the one documented spot)
+
+This is the single authoritative definition of the slope/altitude coverage. The GN pass
+(`snow.py`) is the authority; a later BobShaders shader-side fallback (for plain
+materials that carry no snow modifier) MUST match it exactly. Both masks are a MapRange
+in SMOOTHSTEP interpolation (`blocks.py` `smooth_falloff`), and the two ease in opposite
+directions, which is the easy thing to get wrong:
+
+- `slope_mask` = smoothstep of `normal.Z` from `From Min = Slope Threshold - Slope Falloff`
+  to `From Max = Slope Threshold`. So it is 0 below the low edge and reaches 1 AT the
+  threshold (eases on the LOW side): snow holds on up-facing ground.
+- `altitude_mask` = smoothstep of `world Z` from `From Min = Altitude` to
+  `From Max = Altitude + Altitude Falloff`. So it starts at the altitude and reaches 1
+  above it (eases on the HIGH side): snow holds on high ground.
+- `occlusion` = `Occlusion * (upward Raycast hit within Occlusion Distance ? 1 : 0)`;
+  `snow_cover` is multiplied by `(1 - occlusion)`. Every factor is clamped to 0..1, so
+  `snow_cover in [0, 1]`.
+
+Attribute contract for readers: a Store Named Attribute, name exactly `snow_cover`,
+FLOAT, on the POINT (vertex) domain. Read it with an Attribute node (Geometry type).
 
 | Param | Default | Live | What it does |
 |-------|---------|------|--------------|

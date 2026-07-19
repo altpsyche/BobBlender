@@ -103,12 +103,18 @@ def _common_inputs(ng, params, mode):
     fall = params.get("fall_speed", 9.0 if is_streak else 0.4)
     add_input(ng, "Fall Speed", "NodeSocketFloat", float(fall), 0.0)
     add_input(ng, "Drift", "NodeSocketFloat", float(params.get("drift", 1.0)), 0.0)
-    size = params.get("size", 0.008 if is_streak else 0.03)
+    size = params.get("size", 0.010 if is_streak else 0.03)
     add_input(ng, "Size", "NodeSocketFloat", float(size), 0.0)
     add_input(ng, "Size Variation", "NodeSocketFloat", float(params.get("size_variation", 0.4)), 0.0, 1.0)
     add_input(ng, "Wind Direction", "NodeSocketFloat", float(params.get("wind_direction", 0.0)), 0.0, 360.0)
     add_input(ng, "Wind Speed", "NodeSocketFloat", float(params.get("wind_speed", 2.0)), 0.0)
     add_input(ng, "Seed", "NodeSocketInt", int(params.get("seed", 0)))
+    if mode == "mote":  # motes swirl; streaks fall straight
+        add_input(ng, "Turbulence", "NodeSocketFloat", float(params.get("turbulence", 1.0)), 0.0)
+    # Quality Scale multiplies the live Count so the Preview/Final level thins the
+    # particle field for viewport speed without touching the authored Count (set by
+    # the panel's quality toggle, not tuned by hand). 1.0 = full count.
+    add_input(ng, "Quality Scale", "NodeSocketFloat", float(params.get("quality_scale", 1.0)), 0.0, 1.0)
 
 
 def _base_and_move(ng, gi, camera, mode):
@@ -148,9 +154,9 @@ def _base_and_move(ng, gi, camera, mode):
     stime.location = (-680, 360)
     moved = _vm(ng, "ADD", base, _vscale(ng, vel, stime.outputs["Seconds"], (-320, 40)), (-140, 200))
 
-    # Motes get a smooth, evolving turbulence offset so they flutter and swirl.
+    # Motes get a smooth, evolving turbulence offset so they flutter and swirl (the
+    # Turbulence input is added in _common_inputs, which has params in scope).
     if is_mote:
-        add_input(ng, "Turbulence", "NodeSocketFloat", 1.0, 0.0)
         turb = nodes.new("ShaderNodeTexNoise")
         turb.noise_dimensions = "4D"
         turb.location = (-500, 460)
@@ -171,7 +177,8 @@ def _base_and_move(ng, gi, camera, mode):
 
     points = nodes.new("GeometryNodePoints")
     points.location = (760, 300)
-    links.new(gi.outputs["Count"], points.inputs["Count"])
+    count = math_node(ng, "MULTIPLY", gi.outputs["Count"], gi.outputs["Quality Scale"], (580, 300))
+    links.new(count, points.inputs["Count"])
     setpos = nodes.new("GeometryNodeSetPosition")
     setpos.location = (940, 300)
     links.new(points.outputs["Points"], setpos.inputs["Geometry"])
@@ -193,18 +200,23 @@ def _instance_and_finish(ng, out, gi, points, vel, mode, params):
     pscale = random_value(ng, "FLOAT", lo, hi, scale_seed, (1180, -360))
 
     if is_streak:
-        # A thin cylinder stretched along its local Z, then aligned to velocity so the
-        # streak points the way the drop falls and leans with the wind.
+        # A thin tapered cone (needle) stretched along its local Z, then aligned to
+        # velocity so the streak points the way the drop falls and leans with the wind.
         add_input(ng, "Streak Length", "NodeSocketFloat", float(params.get("streak_length", 0.2)), 0.0)
         add_input(ng, "Color", "NodeSocketColor",
                   tuple(params.get("color", (0.7, 0.8, 0.9, 1.0))))
         depth = math_node(ng, "MULTIPLY", gi.outputs["Fall Speed"], gi.outputs["Streak Length"], (1000, 40))
-        cyl = nodes.new("GeometryNodeMeshCylinder")
-        cyl.location = (1180, 100)
-        cyl.inputs["Vertices"].default_value = 6
-        links.new(gi.outputs["Size"], cyl.inputs["Radius"])
-        links.new(depth, cyl.inputs["Depth"])
-        mesh = cyl.outputs["Mesh"]
+        # A tapered cone (needle), not a cylinder: the streak reads as a thin raindrop
+        # instead of a hard rod. The apex (Radius Top 0) is at +Z, which Align maps to
+        # the velocity direction, so the point leads the fall. The material tapers the
+        # opacity at both ends so neither the base cap nor the apex reads as an edge.
+        cone = nodes.new("GeometryNodeMeshCone")
+        cone.location = (1180, 100)
+        cone.inputs["Vertices"].default_value = 6
+        cone.inputs["Radius Top"].default_value = 0.0
+        links.new(gi.outputs["Size"], cone.inputs["Radius Bottom"])
+        links.new(depth, cone.inputs["Depth"])
+        mesh = cone.outputs["Mesh"]
         align = nodes.new("FunctionNodeAlignRotationToVector")
         align.axis = "Z"
         align.location = (1180, 300)

@@ -35,9 +35,18 @@ WEATHER = (
 
 
 class BBT_EnvProps(PropertyGroup):
-    """The canonical world state. Continuous values are live; kind changes
-    (season, weather) drive structural swaps applied by an explicit operator, not
-    a property callback, to avoid the re-entrancy the scatter rebuilds hit."""
+    """The canonical world state.
+
+    Continuous values (wind, snow, cloud_cover) feed live via drivers, so moving a
+    slider moves the built effect with no rebuild. A change of season drives structural
+    swaps applied by an explicit operator (Apply Season), not a property callback, to
+    avoid the re-entrancy the scatter rebuilds hit.
+
+    Some fields are authored here but read by consumers not yet built: weather,
+    temperature, and wetness are context BobShaders will read (wet ground, frost, dust);
+    until then they are set (by presets / Apply Season) but have no structural effect.
+    cloud_cover is live-driven onto the cloud layer's Coverage by BobFirmament itself.
+    """
 
     # Time and place: what the geographic sun is computed from.
     time_of_day: FloatProperty(

@@ -99,14 +99,14 @@ _SNOW_KNOBS = ["Snow", "Slope Threshold", "Slope Falloff", "Altitude",
 # Rain presets (streak mode): live knobs set by socket name.
 RAIN_PRESETS = {
     "drizzle": {"label": "Drizzle", "desc": "Light, fine rain",
-                "knobs": {"Count": 800, "Fall Speed": 6.0, "Streak Length": 0.13,
-                          "Size": 0.005, "Size Variation": 0.4}},
+                "knobs": {"Count": 1200, "Fall Speed": 6.0, "Streak Length": 0.14,
+                          "Size": 0.006, "Size Variation": 0.4}},
     "rain": {"label": "Rain", "desc": "Steady rainfall",
-             "knobs": {"Count": 2500, "Fall Speed": 9.0, "Streak Length": 0.2,
-                       "Size": 0.008, "Size Variation": 0.4}},
+             "knobs": {"Count": 3500, "Fall Speed": 9.0, "Streak Length": 0.22,
+                       "Size": 0.010, "Size Variation": 0.4}},
     "downpour": {"label": "Downpour", "desc": "Heavy, fast, long streaks",
-                 "knobs": {"Count": 5000, "Fall Speed": 13.0, "Streak Length": 0.3,
-                           "Size": 0.012, "Size Variation": 0.5}},
+                 "knobs": {"Count": 6000, "Fall Speed": 13.0, "Streak Length": 0.30,
+                           "Size": 0.014, "Size Variation": 0.5}},
 }
 
 # Mote presets (mote mode): dust, amber motes, and falling snow are the same mode,
@@ -117,13 +117,78 @@ MOTE_PRESETS = {
                        "Fall Speed": 0.3, "Drift": 1.5, "Turbulence": 1.2,
                        "Size": 0.03, "Emission": 0.0}},
     "amber": {"label": "Amber Motes", "desc": "Fine sun-lit golden-hour specks",
-              "knobs": {"Color": (0.90, 0.60, 0.25, 1.0), "Count": 700,
-                        "Fall Speed": 0.15, "Drift": 0.6, "Turbulence": 0.8,
-                        "Size": 0.02, "Emission": 0.0}},
+              "knobs": {"Color": (1.0, 0.65, 0.28, 1.0), "Count": 600,
+                        "Fall Speed": 0.12, "Drift": 0.5, "Turbulence": 0.7,
+                        "Size": 0.025, "Emission": 0.0}},
     "snow": {"label": "Falling Snow", "desc": "White, slow, fluttering flakes",
              "knobs": {"Color": (1.0, 1.0, 1.0, 1.0), "Count": 2000,
                        "Fall Speed": 0.6, "Drift": 1.0, "Turbulence": 1.5,
                        "Size": 0.035, "Emission": 0.0}},
+}
+
+# Per-season application: the continuous env values a season implies (fed live to the
+# readers) plus, for winter, the structural subsystems to build (falling snow + the
+# snow-coverage pass). Applied by an explicit operator, never a property callback, so
+# it does not hit the scatter re-entrancy. Season deliberately owns only the seasonal
+# state and its own subsystems; it leaves time, place, and wind (the shot setup) alone.
+SEASON_APPLY = {
+    "spring": {"snow": 0.0, "wetness": 0.20, "temperature": 12.0},
+    "summer": {"snow": 0.0, "wetness": 0.0, "temperature": 24.0},
+    "autumn": {"snow": 0.0, "wetness": 0.15, "temperature": 10.0},
+    "winter": {"snow": 0.7, "wetness": 0.05, "temperature": -4.0,
+               "build_snow": True},
+}
+
+# Whole-scene presets: one pick sets the shared world state (bbt_env) and seeds each
+# named subsystem, building any that are missing (at the current quality, so a Preview
+# pick stays cheap). A subsystem set to None is left alone, not deleted. `fog` is
+# (mode, preset); the others are a preset key.
+SCENE_PRESETS = {
+    "clear_day": {
+        "label": "Clear Day", "desc": "High midday sun, a few thin clouds",
+        "env": {"time_of_day": 13.0, "weather": "clear", "season": "summer",
+                "cloud_cover": 0.15, "snow": 0.0, "wetness": 0.0,
+                "temperature": 24.0, "wind_direction": 90.0, "wind_strength": 1.5},
+        "clouds": "clear", "fog": None, "rain": None, "motes": None},
+    "golden_hour": {
+        "label": "Golden Hour", "desc": "Low warm sun, scattered cloud, amber motes",
+        "env": {"time_of_day": 18.5, "weather": "clear", "season": "summer",
+                "cloud_cover": 0.30, "snow": 0.0, "wetness": 0.0,
+                "temperature": 20.0, "wind_direction": 120.0, "wind_strength": 1.0},
+        "clouds": "scattered", "fog": None, "rain": None, "motes": "amber"},
+    "overcast": {
+        "label": "Overcast", "desc": "Flat grey blanket, still air",
+        "env": {"time_of_day": 12.0, "weather": "overcast", "season": "autumn",
+                "cloud_cover": 0.85, "snow": 0.0, "wetness": 0.20,
+                "temperature": 12.0, "wind_direction": 200.0, "wind_strength": 2.0},
+        "clouds": "overcast", "fog": None, "rain": None, "motes": None},
+    "storm": {
+        "label": "Storm", "desc": "Dark deep cloud, heavy rain, strong wind",
+        "env": {"time_of_day": 16.0, "weather": "storm", "season": "autumn",
+                "cloud_cover": 0.95, "snow": 0.0, "wetness": 0.9,
+                "temperature": 9.0, "wind_direction": 210.0, "wind_strength": 7.0},
+        "clouds": "storm", "fog": ("height_fog", "valley"),
+        "rain": "downpour", "motes": None},
+    "foggy_dawn": {
+        "label": "Foggy Dawn", "desc": "Low sun through a valley of fog",
+        "env": {"time_of_day": 6.5, "weather": "fog", "season": "autumn",
+                "cloud_cover": 0.40, "snow": 0.0, "wetness": 0.30,
+                "temperature": 7.0, "wind_direction": 160.0, "wind_strength": 0.5},
+        "clouds": "scattered", "fog": ("height_fog", "valley"),
+        "rain": None, "motes": None},
+    "dust_storm": {
+        "label": "Dust Storm", "desc": "Hazy sky, dust driven on a hot wind",
+        "env": {"time_of_day": 15.0, "weather": "cloudy", "season": "summer",
+                "cloud_cover": 0.25, "snow": 0.0, "wetness": 0.0,
+                "temperature": 34.0, "wind_direction": 250.0, "wind_strength": 6.0},
+        "clouds": "scattered", "fog": ("noise_fog", "banks"),
+        "rain": None, "motes": "dust"},
+    "winter": {
+        "label": "Winter", "desc": "Cold overcast, falling snow, white ground",
+        "env": {"time_of_day": 11.0, "weather": "snow", "season": "winter",
+                "cloud_cover": 0.80, "snow": 0.7, "wetness": 0.05,
+                "temperature": -4.0, "wind_direction": 300.0, "wind_strength": 2.5},
+        "clouds": "overcast", "fog": None, "rain": None, "motes": "snow"},
 }
 
 
@@ -212,18 +277,152 @@ def _show_domain_gizmo(obj):
         obj.display_type = "WIRE"
 
 
-def _set_volume_quality(scene, quality):
-    """Cycles volume settings from the quality level (cost-spike defaults). Volume
-    bounces (multiple scattering) are kept low: 0 for preview keeps self-shadowing
-    single-scatter and cheap, a couple for final let light re-scatter so shadowed
-    cloud reads bright instead of muddy."""
-    cy = getattr(scene, "cycles", None)
-    if cy is None:
+# Quality levels: the Cycles volume settings (cost-spike defaults) plus the
+# particulate count scale. Volume bounces (multiple scattering) are kept low: 0 for
+# preview keeps self-shadowing single-scatter and cheap, a couple for final let light
+# re-scatter so shadowed cloud reads bright instead of muddy. The particulate scale
+# thins the field for the viewport and restores it for a final render.
+_QUALITY = {
+    "preview": {"step_rate": 2.0, "max_steps": 256, "bounces": 0, "particulate": 0.35},
+    "final": {"step_rate": 1.0, "max_steps": 512, "bounces": 2, "particulate": 1.0},
+}
+
+
+def _apply_quality(scene):
+    """Apply the Preview/Final level to every Firmament build: scale the particulate
+    counts live (a Quality Scale modifier input, no rebuild) and set the Cycles volume
+    step rate, max steps, and bounces. Called by every build op and by the quality
+    toggle, so switching quality re-applies without a rebuild."""
+    fm = getattr(scene, "bbt_firmament", None)
+    if fm is None:
         return
-    if quality == "final":
-        cy.volume_step_rate, cy.volume_max_steps, cy.volume_bounces = 1.0, 512, 2
-    else:
-        cy.volume_step_rate, cy.volume_max_steps, cy.volume_bounces = 2.0, 256, 0
+    q = _QUALITY.get(fm.quality, _QUALITY["preview"])
+    for name in (fm.rain_object, fm.mote_object):
+        inp = _input(bpy.data.objects.get(name), "Quality Scale")
+        if inp is not None:
+            inp.value = q["particulate"]
+    cy = getattr(scene, "cycles", None)
+    if cy is not None:
+        cy.volume_step_rate = q["step_rate"]
+        cy.volume_max_steps = q["max_steps"]
+        cy.volume_bounces = q["bounces"]
+
+
+def _drive_input(obj, inp, scene, env_path):
+    """Install a driver on a modifier input's value that reads a Scene bbt_env field
+    live, so moving the Environment slider moves the built effect with no rebuild and
+    no per-object press. The input struct owns its animation through the object, so
+    inp.driver_add('value') routes to obj.animation_data with the correct RNA path
+    (verified in 5.2). Any prior driver on the same input is cleared first so a rebuild
+    (which regenerates socket identifiers) never leaves a stale, dangling driver."""
+    if inp is None:
+        return
+    try:
+        obj.driver_remove(inp.path_from_id("value"), -1)
+    except (TypeError, RuntimeError):
+        pass
+    fc = inp.driver_add("value")
+    fc = fc[0] if isinstance(fc, list) else fc
+    drv = fc.driver
+    drv.type = "SCRIPTED"
+    var = drv.variables.new()
+    var.name = "v"
+    var.type = "SINGLE_PROP"
+    tgt = var.targets[0]
+    tgt.id_type = "SCENE"
+    tgt.id = scene
+    tgt.data_path = env_path
+    drv.expression = "v"
+
+
+def _undrive_input(obj, inp):
+    if obj is None or inp is None:
+        return
+    try:
+        obj.driver_remove(inp.path_from_id("value"), -1)
+    except (TypeError, RuntimeError):
+        pass
+
+
+# Per-object extra live-env inputs beyond wind: (socket name, bbt_env path). The cloud
+# layer's Coverage is driven from env.cloud_cover so the Environment cloud-cover slider
+# controls the clouds, the same live model as wind.
+_CLOUD_EXTRA = (("Coverage", "bbt_env.cloud_cover"),)
+
+
+def _install_wind_drivers(obj, scene, extra=()):
+    """Feed Wind Direction / Speed (and any extra (socket, env_path) pairs) from bbt_env
+    live, and enable the Wind toggle on a volume so its drift is active. Reinstalled by
+    every build (socket identifiers are regenerated on the non-destructive rebuild, so a
+    driver keyed by identifier must be re-added; our build ops are the only path that
+    rebuilds these objects)."""
+    if obj is None:
+        return
+    _drive_input(obj, _input(obj, "Wind Direction"), scene, "bbt_env.wind_direction")
+    _drive_input(obj, _input(obj, "Wind Speed"), scene, "bbt_env.wind_strength")
+    wind = _input(obj, "Wind")  # volumes carry a Wind toggle; particulates do not
+    if wind is not None:
+        wind.value = True
+    for socket, path in extra:
+        _drive_input(obj, _input(obj, socket), scene, path)
+    obj.update_tag()
+
+
+def _remove_wind_drivers(obj, extra=()):
+    if obj is None:
+        return
+    _undrive_input(obj, _input(obj, "Wind Direction"))
+    _undrive_input(obj, _input(obj, "Wind Speed"))
+    for socket, _path in extra:
+        _undrive_input(obj, _input(obj, socket))
+    obj.update_tag()
+
+
+def _snow_input(surface):
+    """The Snow input struct of the BOB_Snow coverage pass on a surface, or None."""
+    return _input_of(_named_mod(surface, "BOB_Snow"), "Snow")
+
+
+def _install_snow_driver(surface, scene):
+    """Feed the coverage pass's Snow amount from bbt_env.snow live, so raising the
+    Environment snow level (or an Apply Season -> Winter) drives coverage with no
+    rebuild. The terrain carries two Nodes modifiers, so this targets BOB_Snow by
+    name, not the first modifier."""
+    inp = _snow_input(surface)
+    if inp is not None:
+        _drive_input(surface, inp, scene, "bbt_env.snow")
+        surface.update_tag()
+
+
+def _firmament_wind_objects(fm):
+    """The built clouds, fog, rain, and mote objects (those that exist)."""
+    names = (fm.cloud_object, fm.fog_object, fm.rain_object, fm.mote_object)
+    return [o for o in (bpy.data.objects.get(n) for n in names) if o is not None]
+
+
+def _on_quality_change(self, context):
+    _apply_quality(context.scene)
+
+
+def _on_live_env_change(self, context):
+    """Install or remove the live env drivers across all built subsystems when the
+    Live Environment toggle flips. A non-structural driver edit, safe from the
+    rebuild re-entrancy the repo avoids for structural changes."""
+    scene = context.scene
+    live = self.live_env
+    clouds = bpy.data.objects.get(self.cloud_object)
+    for obj in _firmament_wind_objects(self):
+        extra = _CLOUD_EXTRA if obj is clouds else ()
+        if live:
+            _install_wind_drivers(obj, scene, extra)
+        else:
+            _remove_wind_drivers(obj, extra)
+    surface = self.snow_surface or context.active_object
+    if _named_mod(surface, "BOB_Snow") is not None:
+        if live:
+            _install_snow_driver(surface, scene)
+        else:
+            _undrive_input(surface, _snow_input(surface))
 
 
 class BBT_FirmamentProps(PropertyGroup):
@@ -250,7 +449,7 @@ class BBT_FirmamentProps(PropertyGroup):
         description="Draw the sky's sun disc. Off by default so the lamp lights "
                     "and the sun is not counted twice")
 
-    # Nishita sky.
+    # Physical sky (5.2 MULTIPLE_SCATTERING; the Nishita successor).
     world_strength: FloatProperty(name="Sky Strength", default=1.0, min=0.0)
     sky_altitude: FloatProperty(
         name="Altitude", default=200.0, min=0.0, max=60000.0,
@@ -266,7 +465,14 @@ class BBT_FirmamentProps(PropertyGroup):
         name="Quality",
         items=[("preview", "Preview", "Coarse, fast; for the viewport and checks"),
                ("final", "Final", "Full quality for a render")],
-        default="preview")
+        default="preview", update=_on_quality_change)
+
+    live_env: BoolProperty(
+        name="Live Environment", default=True, update=_on_live_env_change,
+        description="Drive wind (clouds, fog, particles) and snow coverage live from "
+                    "the Environment state, so moving a slider moves everything with "
+                    "no rebuild. Turn off to hand-tune each object; the per-object Use "
+                    "Env buttons then do a one-time copy")
 
     # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
     cloud_object: StringProperty(name="Object", default="BOB_Clouds")
@@ -320,16 +526,16 @@ class BBT_FirmamentProps(PropertyGroup):
 class BBT_OT_firmament_build_sky(Operator):
     bl_idname = "bob_blender_tools.firmament_build_sky"
     bl_label = "Build Sky"
-    bl_description = "Author the Nishita sky, Sun light, and world haze from the world state"
+    bl_description = "Author the physical sky and matched Sun light from the world state"
 
     def execute(self, context):
-        env = context.scene.bbt_env
+        env = _env.get_env(context.scene)
         fm = context.scene.bbt_firmament
         params = {
-            "time_of_day": env.time_of_day,
-            "year": env.year, "month": env.month, "day": env.day,
-            "utc_offset": env.utc_offset,
-            "latitude": env.latitude, "longitude": env.longitude,
+            # Geographic sun inputs come from the shared accessor (the same dict a
+            # build_sky caller would assemble), so the documented sun_params API is
+            # the one real path, not a hand-rebuilt duplicate.
+            **_env.sun_params(env),
             "use_override": fm.use_override,
             "sun_elevation": fm.override_elevation,
             "sun_azimuth": fm.override_azimuth,
@@ -353,21 +559,25 @@ class BBT_OT_firmament_build_clouds(Operator):
 
     def execute(self, context):
         fm = context.scene.bbt_firmament
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         params = {"mode": "clouds"}
-        if env is not None:  # seed the wind knobs from the shared world state
+        if env is not None:  # seed the wind + coverage knobs from the shared world state
             params["wind_direction"] = env.wind_direction
             params["wind_speed"] = env.wind_strength
+            params["coverage"] = env.cloud_cover
         _apply([{"op": "build_geonodes", "recipe": "volumetrics",
                  "name": fm.cloud_object, "params": params}])
-        _set_volume_quality(context.scene, fm.quality)
+        _apply_quality(context.scene)
         n = 0
         obj = bpy.data.objects.get(fm.cloud_object)
         _show_domain_gizmo(obj)
+        if fm.live_env:
+            _install_wind_drivers(obj, context.scene, _CLOUD_EXTRA)
         if obj is not None:
             # Shadow fork (Phase-0 / S2 cost): a cloud volume that casts shadows
             # makes every lit point march a shadow ray through it, which is the
-            # expensive path. Default off (lit, no volumetric shadow); on for heroes.
+            # expensive path. Default ON for dimensional form (cheap at a normal sun
+            # height); turn off for the low-sun Final case where it gets expensive.
             obj.visible_shadow = fm.cloud_shadows
             dg = context.evaluated_depsgraph_get()
             n = sum(1 for i in dg.object_instances if i.is_instance
@@ -411,10 +621,16 @@ class BBT_OT_firmament_cloud_preset(Operator):
             obj = bpy.data.objects.get(fm.cloud_object)
         if obj is None:
             return {"CANCELLED"}
-        for name, val in CLOUD_PRESETS[self.preset]["knobs"].items():
+        knobs = CLOUD_PRESETS[self.preset]["knobs"]
+        for name, val in knobs.items():
             inp = _input(obj, name)
             if inp is not None:
                 inp.value = val
+        # Keep env.cloud_cover in step with the preset's Coverage, so the preset reads
+        # right whether Coverage is live-driven from the Environment or set directly.
+        env = _env.get_env(context.scene)
+        if env is not None and "Coverage" in knobs:
+            env.cloud_cover = knobs["Coverage"]
         obj.update_tag()
         self.report({"INFO"}, f"Applied {CLOUD_PRESETS[self.preset]['label']} preset")
         return {"FINISHED"}
@@ -426,7 +642,7 @@ class BBT_OT_firmament_cloud_wind_from_env(Operator):
     bl_description = "Copy the Environment wind direction and strength onto the clouds"
 
     def execute(self, context):
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         obj = bpy.data.objects.get(context.scene.bbt_firmament.cloud_object)
         wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
         if env is None or wdir is None or wspd is None:
@@ -445,7 +661,7 @@ class BBT_OT_firmament_build_fog(Operator):
 
     def execute(self, context):
         fm = context.scene.bbt_firmament
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         params = {"mode": fm.fog_mode}
         if env is not None:  # seed the wind knobs from the shared world state
             params["wind_direction"] = env.wind_direction
@@ -454,8 +670,11 @@ class BBT_OT_firmament_build_fog(Operator):
             params["heightmap"] = bpy.path.abspath(fm.fog_heightmap)
         _apply([{"op": "build_geonodes", "recipe": "volumetrics",
                  "name": fm.fog_object, "params": params}])
-        _set_volume_quality(context.scene, fm.quality)
-        _show_domain_gizmo(bpy.data.objects.get(fm.fog_object))
+        _apply_quality(context.scene)
+        fog_obj = bpy.data.objects.get(fm.fog_object)
+        _show_domain_gizmo(fog_obj)
+        if fm.live_env:
+            _install_wind_drivers(fog_obj, context.scene)
         label = {"height_fog": "Height Fog", "noise_fog": "Noise Fog",
                  "ground_fog": "Ground Fog"}[fm.fog_mode]
         self.report({"INFO"}, f"Fog: built {label}")
@@ -512,7 +731,7 @@ class BBT_OT_firmament_fog_wind_from_env(Operator):
     bl_description = "Copy the Environment wind direction and strength onto the fog"
 
     def execute(self, context):
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         obj = bpy.data.objects.get(context.scene.bbt_firmament.fog_object)
         wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
         if env is None or wdir is None or wspd is None:
@@ -528,10 +747,13 @@ def _build_particulate(context, obj_name, mode, extra=None):
     """Build a particulates object (streak or mote), seeding wind and the follow
     camera from the panel and the shared world state, and turning on motion blur."""
     fm = context.scene.bbt_firmament
-    env = getattr(context.scene, "bbt_env", None)
+    env = _env.get_env(context.scene)
     params = {"mode": mode}
-    if fm.weather_camera is not None:
-        params["camera"] = fm.weather_camera.name
+    # Follow the panel camera, else the scene camera, so preset/season-built weather is
+    # around the shot rather than stuck at the world origin when none is picked.
+    camera = fm.weather_camera or context.scene.camera
+    if camera is not None:
+        params["camera"] = camera.name
     if env is not None:  # seed the wind knobs from the shared world state
         params["wind_direction"] = env.wind_direction
         params["wind_speed"] = env.wind_strength
@@ -539,9 +761,17 @@ def _build_particulate(context, obj_name, mode, extra=None):
         params.update(extra)
     _apply([{"op": "build_geonodes", "recipe": "particulates",
              "name": obj_name, "params": params}])
+    obj = bpy.data.objects.get(obj_name)
+    _apply_quality(context.scene)  # set Quality Scale from the level
+    if fm.live_env:
+        _install_wind_drivers(obj, context.scene)
     if fm.use_motion_blur:
         context.scene.render.use_motion_blur = True
-    return bpy.data.objects.get(obj_name)
+        # Also enable it on the object so fast particles are guaranteed included, not
+        # just the scene-level switch.
+        if obj is not None and hasattr(obj, "cycles"):
+            obj.cycles.use_motion_blur = True
+    return obj
 
 
 def _count_instances(context, obj):
@@ -592,6 +822,26 @@ class BBT_OT_firmament_particulate_seed(Operator):
             return {"CANCELLED"}
         seed.value = random.randint(0, 99999)
         obj.update_tag()
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_particulate_wind_from_env(Operator):
+    bl_idname = "bob_blender_tools.firmament_particulate_wind_from_env"
+    bl_label = "Use Env Wind"
+    bl_description = "Copy the Environment wind direction and strength onto the particles"
+
+    object_name: StringProperty()
+
+    def execute(self, context):
+        env = getattr(context.scene, "bbt_env", None)
+        obj = bpy.data.objects.get(self.object_name)
+        wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
+        if env is None or wdir is None or wspd is None:
+            return {"CANCELLED"}
+        wdir.value = env.wind_direction
+        wspd.value = env.wind_strength
+        obj.update_tag()
+        self.report({"INFO"}, "Particle wind synced from Environment")
         return {"FINISHED"}
 
 
@@ -661,7 +911,7 @@ class BBT_OT_firmament_build_snow_cover(Operator):
         if surface is None or surface.type != "MESH":
             self.report({"WARNING"}, "Pick a mesh surface for the snow coverage")
             return {"CANCELLED"}
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         params = {}
         if env is not None:  # seed the coverage amount from the shared world state
             params["snow"] = env.snow
@@ -669,6 +919,8 @@ class BBT_OT_firmament_build_snow_cover(Operator):
         from bbmcp.geonodes import build_geonodes_on_object
 
         build_geonodes_on_object(surface, "snow", "BOB_Snow", params)
+        if fm.live_env:
+            _install_snow_driver(surface, context.scene)
         self.report({"INFO"}, f"Snow coverage written on {surface.name}")
         return {"FINISHED"}
 
@@ -680,7 +932,7 @@ class BBT_OT_firmament_snow_from_env(Operator):
 
     def execute(self, context):
         fm = context.scene.bbt_firmament
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         surface = fm.snow_surface or context.active_object
         mod = _named_mod(surface, "BOB_Snow")
         snow = _input_of(mod, "Snow")
@@ -689,6 +941,75 @@ class BBT_OT_firmament_snow_from_env(Operator):
         snow.value = env.snow
         surface.update_tag()
         self.report({"INFO"}, "Snow coverage synced from Environment")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_apply_season(Operator):
+    bl_idname = "bob_blender_tools.firmament_apply_season"
+    bl_label = "Apply Season"
+    bl_description = ("Apply the current season: set its continuous state (snow, "
+                     "wetness, temperature, fed live to the readers) and, for winter, "
+                     "build the falling snow and snow-coverage pass. Explicit, not a "
+                     "property callback, so it does not hit the scatter re-entrancy")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        env = _env.get_env(context.scene)
+        fm = context.scene.bbt_firmament
+        spec = SEASON_APPLY.get(env.season)
+        if spec is None:
+            return {"CANCELLED"}
+        for key in ("snow", "wetness", "temperature"):
+            if key in spec:
+                setattr(env, key, spec[key])
+        built = []
+        if spec.get("build_snow"):
+            # Falling snow (the mote preset builds the object if missing) and the
+            # coverage pass on the surface, if one is available. Coverage's Snow input
+            # is driven from env.snow on build, so it tracks the level set above.
+            bpy.ops.bob_blender_tools.firmament_mote_preset(preset="snow")
+            built.append("falling snow")
+            surface = fm.snow_surface or context.active_object
+            if surface is not None and surface.type == "MESH":
+                bpy.ops.bob_blender_tools.firmament_build_snow_cover()
+                built.append("snow coverage")
+        note = f"Season: {env.season}"
+        if built:
+            note += " (built " + ", ".join(built) + ")"
+        self.report({"INFO"}, note)
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_scene_preset(Operator):
+    bl_idname = "bob_blender_tools.firmament_scene_preset"
+    bl_label = "Scene Preset"
+    bl_description = "Set the whole atmosphere in one pick (context plus each subsystem)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[(k, v["label"], v["desc"]) for k, v in SCENE_PRESETS.items()])
+
+    def execute(self, context):
+        p = SCENE_PRESETS[self.preset]
+        env = _env.get_env(context.scene)
+        fm = context.scene.bbt_firmament
+        for key, val in p["env"].items():
+            setattr(env, key, val)
+        # Sky reads the world state we just set, so rebuild it to move the sun.
+        bpy.ops.bob_blender_tools.firmament_build_sky()
+        # Each subsystem preset op builds the object if missing, then seeds its knobs.
+        if p.get("clouds"):
+            bpy.ops.bob_blender_tools.firmament_cloud_preset(preset=p["clouds"])
+        if p.get("fog"):
+            mode, fkey = p["fog"]
+            fm.fog_mode = mode
+            bpy.ops.bob_blender_tools.firmament_fog_preset(preset=fkey)
+        if p.get("rain"):
+            bpy.ops.bob_blender_tools.firmament_rain_preset(preset=p["rain"])
+        if p.get("motes"):
+            bpy.ops.bob_blender_tools.firmament_mote_preset(preset=p["motes"])
+        self.report({"INFO"}, f"Applied {p['label']} scene preset")
         return {"FINISHED"}
 
 
@@ -701,8 +1022,12 @@ class BBT_PT_firmament(Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        fm = context.scene.bbt_firmament
         layout = self.layout
-        layout.prop(context.scene.bbt_firmament, "quality", expand=True)
+        layout.prop(fm, "quality", expand=True)
+        layout.prop(fm, "live_env", icon="FORCE_WIND")
+        layout.operator_menu_enum("bob_blender_tools.firmament_scene_preset", "preset",
+                                  text="Scene Preset", icon="WORLD")
         layout.operator("bob_blender_tools.firmament_build_sky", icon="LIGHT_SUN")
 
 
@@ -733,6 +1058,7 @@ class BBT_PT_firmament_env(Panel):
         col = layout.column(align=True)
         col.prop(env, "season")
         col.prop(env, "weather")
+        col.operator("bob_blender_tools.firmament_apply_season", icon="MOD_TIME")
 
         col = layout.column(align=True)
         col.prop(env, "temperature")
@@ -827,8 +1153,11 @@ class BBT_PT_firmament_clouds(Panel):
             col.prop(wind, "value", text="Wind Drift")
             if wind.value:
                 _draw_knobs(col, obj, _CLOUD_WIND)
-                col.operator("bob_blender_tools.firmament_cloud_wind_from_env",
-                             icon="TRACKING_FORWARDS")
+                # Only meaningful when Live Environment is off; with it on a driver
+                # owns these inputs and would immediately overwrite the copied value.
+                if not fm.live_env:
+                    col.operator("bob_blender_tools.firmament_cloud_wind_from_env",
+                                 icon="TRACKING_FORWARDS")
 
 
 class BBT_PT_firmament_fog(Panel):
@@ -890,8 +1219,9 @@ class BBT_PT_firmament_fog(Panel):
             col.prop(wind, "value", text="Wind Drift")
             if wind.value:
                 _draw_knobs(col, obj, _FOG_WIND)
-                col.operator("bob_blender_tools.firmament_fog_wind_from_env",
-                             icon="TRACKING_FORWARDS")
+                if not fm.live_env:  # a live driver owns these inputs when on
+                    col.operator("bob_blender_tools.firmament_fog_wind_from_env",
+                                 icon="TRACKING_FORWARDS")
 
 
 class BBT_PT_firmament_weather(Panel):
@@ -930,6 +1260,10 @@ class BBT_PT_firmament_weather(Panel):
                                   text="", icon="FILE_REFRESH")
                 op.object_name = fm.rain_object
             _draw_knobs(box, rain, _RAIN_WIND)
+            if not fm.live_env:  # a live driver owns Wind when on
+                op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
+                                  icon="TRACKING_FORWARDS")
+                op.object_name = fm.rain_object
             _draw_knobs(box, rain, ["Color"])
             _draw_knobs(box, rain, _DOMAIN_KNOBS)
 
@@ -953,6 +1287,10 @@ class BBT_PT_firmament_weather(Panel):
                 op.object_name = fm.mote_object
             _draw_knobs(box, motes, _MOTE_LOOK)
             _draw_knobs(box, motes, _MOTE_WIND)
+            if not fm.live_env:  # a live driver owns Wind when on
+                op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
+                                  icon="TRACKING_FORWARDS")
+                op.object_name = fm.mote_object
             _draw_knobs(box, motes, _DOMAIN_KNOBS)
 
         # Snow coverage (the GN pass on the terrain surface, the single coverage source).
@@ -964,7 +1302,8 @@ class BBT_PT_firmament_weather(Panel):
         snow_mod = _named_mod(surface, "BOB_Snow")
         if snow_mod is not None:
             _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS)
-            box.operator("bob_blender_tools.firmament_snow_from_env", icon="TRACKING_FORWARDS")
+            if not fm.live_env:  # a live driver owns Snow when on
+                box.operator("bob_blender_tools.firmament_snow_from_env", icon="TRACKING_FORWARDS")
         else:
             box.label(text="Writes snow_cover for BobShaders to read", icon="INFO")
 
@@ -983,10 +1322,13 @@ CLASSES = (
     BBT_OT_firmament_build_rain,
     BBT_OT_firmament_build_motes,
     BBT_OT_firmament_particulate_seed,
+    BBT_OT_firmament_particulate_wind_from_env,
     BBT_OT_firmament_rain_preset,
     BBT_OT_firmament_mote_preset,
     BBT_OT_firmament_build_snow_cover,
     BBT_OT_firmament_snow_from_env,
+    BBT_OT_firmament_apply_season,
+    BBT_OT_firmament_scene_preset,
     BBT_PT_firmament,
     BBT_PT_firmament_env,
     BBT_PT_firmament_sky,

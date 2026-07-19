@@ -133,8 +133,10 @@ Op: `build_sky` (kind of world setup). Params: time_of_day, latitude, longitude,
 date, sun_elevation/azimuth override, plus sky knobs (altitude, air, ozone,
 turbidity, ground_albedo, the 5.2 sky's controls) and sun strength and angular
 size. No world haze (see the Phase-0 finding): aerial perspective for the sky comes
-from the sky model, scene fog is S3. Live knobs where cheap; the sun angle and
-strength are live, time of day recomputes the position on change.
+from the sky model, scene fog is S3. The sky, sun angle, strength, and geographic
+position are all (re)authored on a Build Sky press (the world/sun is a shader + light
+rebuild, not a live-knob surface like the GN volumes), so changing time of day or a sky
+knob takes effect on the next Build Sky.
 
 ### 2. Volumes: clouds and fog (GN structure + thin material)
 
@@ -219,9 +221,13 @@ emission. Presets seed rain, dust, and amber-mote looks.
 ### 4. Wind and Time (from the world state)
 
 Wind and Time of Day live in `bbt_env`, the world state BobFirmament owns. Wind (direction, strength) is consumed by the particulate
-velocity, the streak lean, and the cloud and noise-fog drift. Scene frame drives all
-animation through a Scene Time node, so nothing depends on wall-clock and every frame
-of a Cycles render is reproducible. Time of Day sets the sun for the shot (Scene Time
+velocity, the streak lean, and the cloud and noise-fog drift. As of S5 this is a live
+feed: the Live Environment toggle drives each subsystem's Wind Direction / Wind Speed
+inputs (and the snow-coverage Snow input) from `bbt_env` with drivers, so moving the
+Environment wind slider moves everything with no rebuild and no per-object press; the
+drivers are reinstalled on every build (socket identifiers regenerate on a rebuild). Scene
+frame drives all animation through a Scene Time node, so nothing depends on wall-clock and
+every frame of a Cycles render is reproducible. Time of Day sets the sun for the shot (Scene Time
 is separate) and can be keyed for a day-night sweep.
 
 ### 5. Snow (GN-authored coverage, one source)
@@ -318,7 +324,9 @@ low number of minutes on the dev GPU with denoising on, clouds plus one fog plus
 particulate system active. Levers when over budget: the Preview level (coarser volume
 steps, fewer particulates, cheaper shadows), render-layer and holdout separation of the
 heavy volumes, and adaptive sampling with the OptiX or OpenImageDenoise denoiser. The
-budget is checked at S5 on a real frame, not just the tiny verification renders.
+budget is checked at S5 on a real frame, not just the tiny verification renders. Measured
+at S5: a 1080p Final frame with clouds plus one fog plus rain, 96 spp adaptive, OptiX with
+denoising, landed at ~175 s (about 2.9 minutes) on the 5080, within the low-minutes budget.
 
 ## Ops and code layout (extract-ready)
 
@@ -643,18 +651,23 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
     the camera (0 domain jump); with the camera moving 6 m between two shutter samples,
     non-wrapping particles still displace by exactly world-velocity*dt (camera ignored);
     a stationary-camera time-wrap fraction of 0.53% matched the predicted 0.47%.
-  - Streaks are real geometry, not a blur artefact. A thin cylinder is stretched along
-    its local Z (Depth = Fall Speed * Streak Length) and aligned to the velocity vector
-    with Align Rotation to Vector, so wind leans the streak (verified: instance long
-    axis dot velocity = 1.000). The geometric streak is why the residual per-particle
-    wrap is invisible under motion blur. Rain uses a cheap Transparent-mixed Principled
-    (no glass/transmission, per the plan) whose opacity tapers to zero at both ends of
-    the streak (a triangular window on the cylinder's Generated Z), so a streak reads as
-    a soft dash that dissolves into the air rather than a hard-capped tube; the streak
-    geometry is also thin and short by default (Size 0.008, Streak Length 0.2, up-scaled
-    by motion blur) after the first eyeball read as thick rods. Motes are ico spheres, scene-lit, with live
-    Color and optional Emission (default 0) as INSTANCER knobs; dust, amber motes, and
-    falling snow are the same mote mode, a preset picks the look.
+  - Streaks are real geometry, not a blur artefact. A thin tapered cone (needle) is
+    stretched along its local Z (Depth = Fall Speed * Streak Length) and aligned to the
+    velocity vector with Align Rotation to Vector, so wind leans the streak (verified:
+    instance long axis dot velocity = 1.000). The geometric streak is why the residual
+    per-particle wrap is invisible under motion blur. Rain uses a cheap Transparent-mixed
+    Principled (no glass/transmission, per the plan) whose opacity holds solid across the
+    streak core and eases to zero at the tips (a smoothstep plateau on the cone's
+    Generated Z: full out to 60% of the half-length, fading by the end), so a streak
+    reads as a legible soft needle rather than a hard-capped tube; the geometry is thin
+    and short by default (Size 0.010, Streak Length 0.2, up-scaled by motion blur). (The
+    first cut was a solid cylinder that read as thick rods, then a triangular taper that
+    read too faint; the cone + plateau is the polished result.) Motes are ico spheres
+    with live Color and optional Emission (default 0) as INSTANCER knobs; a Translucent
+    BSDF is mixed into the diffuse base so motes forward-scatter and glow when backlit by
+    a low sun (the plan's sun-lit golden-hour look, verified: backlit amber motes render
+    as bright warm specks where a pure-diffuse mote would show its dark side). Dust,
+    amber motes, and falling snow are the same mote mode; a preset picks the look.
   - Particle count is a live knob and the depsgraph instance count is exact here
     (unlike volumes): Build Rain / Build Motes report the count. Motion blur is a panel
     toggle (default on) that sets `scene.render.use_motion_blur`.
@@ -678,12 +691,111 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
     wind-leaning streaks filling the camera domain; falling snow reads as white motes.
     Nonblocking: rain looks best against a darker/overcast sky (bright Nishita sky is low
     contrast for pale streaks); the terrain in the test frames carried no material.
-- S5 Wind, season, presets, and budget: wire Wind and season from `bbt_env` into
-  particulates, cloud, and fog drift; the Apply Season operator; the preset dict
-  (including Winter) and the Preview/Final quality toggle; check the performance budget
-  on a real 1080p frame; polish. Verify: presets build and render, wind moves the
-  drift, setting Winter raises snow and the readers respond, a Final frame is within
-  budget.
+  - S4 polish pass (done, 2026-07-19): rain readability (cone needle + opacity plateau +
+    retuned presets, above), sun-lit motes (Translucent BSDF mixed into the mote material,
+    above), and two consistency additions matching the Clouds/Fog panels: a "Use Env Wind"
+    button for rain and motes (`firmament_particulate_wind_from_env`, live-syncs Wind
+    Direction/Speed from `bbt_env`), and object-level `cycles.use_motion_blur` set on build
+    (not just the scene switch), so fast particles are guaranteed included. Re-verified
+    headless (14 polish checks green: cone geometry, alignment preserved, determinism,
+    opacity plateau, translucent mote, particulate Use-Env-Wind, object motion blur, icons,
+    full operator coverage, clean re-register) plus eyeball frames (rain reads as legible
+    needles not tubes; backlit amber motes glow warm). Snow-coverage preview and a better
+    occlusion term were considered and deferred (occlusion stays crude per the plan).
+- S5 Wind, season, presets, and budget (done, 2026-07-19): the live env feed (wind and
+  snow driven from `bbt_env`), the Apply Season operator, the whole-scene preset dict
+  (including Winter), the Preview/Final quality toggle extended to scale particulate
+  counts, and the performance budget checked on a real 1080p frame. All headless on the
+  5080 (OptiX). Key decisions:
+  - Live env feed is DRIVERS, not a callback or handler (the plan's "continuous values
+    feed via drivers"). A `frame_change` handler would not fire on a slider drag, and a
+    `depsgraph_update_post` handler that writes sockets risks the re-entrancy the repo
+    avoids; a driver reading `scene.bbt_env.wind_*` re-evaluates the instant the slider
+    moves. A scene-level Live Environment toggle (`bbt_firmament.live_env`, default on)
+    installs drivers on Wind Direction / Wind Speed of clouds, fog, rain, and motes (and
+    sets the volumes' Wind toggle on), plus the snow-coverage pass's Snow input from
+    `bbt_env.snow`; off removes them so the knobs are manual (the per-object Use Env
+    buttons then do a one-time copy). Verified: the drivers install, are valid, and their
+    variable reads the right `bbt_env` field; a render-delta test proved changing only
+    `env.wind_strength` (0 to 40) changes the rendered cloud (mean|delta| 0.039).
+  - Driver mechanism and the RNA path (verified 5.2): drive the GN modifier input via
+    the input struct itself, `mod.properties.inputs.<ident>.driver_add("value")`, which
+    routes to the object's animation data at
+    `modifiers["GeometryNodes"].properties.inputs.<ident>.value` (dot notation on the
+    input, NOT bracket `["Socket_N"]`, and NOT an IDProperty path, both of which fail).
+    The socket identifiers regenerate on the non-destructive rebuild, so a driver keyed
+    by identifier would dangle; every build op REINSTALLS the drivers (our build ops are
+    the only path that rebuilds these objects), clearing any prior driver on the input
+    first.
+  - Headless caveat (a real S5 landmine): a driver ADDED to the persistent background
+    depsgraph is not evaluated by a bare `view_layer.update()` or `frame_set` on that
+    same graph; the driven value trails or stays at the default. It IS evaluated after a
+    full depsgraph rebuild, which a real render and the interactive UI both do (Blender
+    guarantees driver eval in renders). So the live feed works in every real path;
+    only immediate headless value-readback is unreliable. Verify the WIRING
+    deterministically (driver valid + variable target) and prove EVALUATION with a
+    render-delta, not by reading the modifier input back in-session.
+  - Apply Season is an explicit operator (not a property callback, to dodge the scatter
+    re-entrancy). It reads `env.season` and sets the season's continuous state (snow,
+    wetness, temperature, fed live to the readers); for Winter it also builds the falling
+    snow (the snow mote preset) and the snow-coverage pass on the surface, whose Snow
+    input is driven from `env.snow` so it tracks the level. Season owns only the seasonal
+    state and its own subsystems; it leaves time, place, and wind (the shot setup) alone.
+  - Whole-scene presets (Clear Day, Golden Hour, Overcast, Storm, Foggy Dawn, Dust Storm,
+    Winter) set `bbt_env` in one pick and seed each named subsystem, building any that is
+    missing (at the current quality) then applying its per-subsystem preset. A subsystem
+    the preset names None is left alone, not deleted. `SCENE_PRESETS` on the main panel;
+    the sky is rebuilt so the sun moves to the preset's time.
+  - Quality scales counts: the particulates recipe gained a Quality Scale input
+    (Points Count = Count * Quality Scale). `_apply_quality` sets the Cycles volume step
+    rate / max steps / bounces AND the Quality Scale on every particulate object from the
+    level (preview 0.35, final 1.0), called by every build and by the quality toggle's
+    update callback so switching quality re-applies live without a rebuild and without
+    fighting the authored Count.
+  - Performance budget (the one real-frame check, measured on the 5080, OptiX, denoise
+    on): a 1080p Final frame with clouds (cumulus) + one height fog + rain, 96 spp
+    adaptive, over an untextured terrain, rendered in ~175 s (about 2.9 min), within the
+    plan's low-minutes budget. Levers if over: the Preview level (coarser volume steps,
+    0.35 particulate count), thinner/lower fog (a dense or camera-immersed slab whites
+    out, the S3 note, and dominated a first framing), and cloud shadow off for a low sun.
+  - Verified headless: 32 logic checks (icon/idname/prop audit; wind + snow drivers
+    install, are valid, and target the right `bbt_env` field; reinstall across a rebuild;
+    Live Environment off removes them, on reinstalls; quality sets Quality Scale and
+    thins the count; Apply Season Winter raises snow, drops temperature, builds falling
+    snow and the coverage pass; scene presets set env and build/seed subsystems; every
+    firmament operator executes), plus the wind render-delta and the budget frame. Eyeball:
+    the budget frame reads as dark cumulus over a hazy fogged terrain with rain streaks.
+
+- S5 pre-BobShaders hardening (done, 2026-07-19): a three-axis sweep (docs-vs-code,
+  dead/delinked code, integration/BobShaders-readiness) before building BobShaders on top.
+  Fixes:
+  - Modifier-reorder bug (silent-wrong): `build_geonodes`' in-place rebuild appended the
+    fresh modifier at the end of the stack, so re-baking a terrain that carried the
+    BOB_Snow pass flipped the order to [BOB_Snow, terrain] and computed `snow_cover` on
+    the undisplaced mesh. Now it records the old modifier index and moves the fresh one
+    back, so a later pass keeps running after the rebuilt one. Verified with a
+    terrain+snow rebuild test.
+  - `env.cloud_cover` was delinked; now driven live onto the cloud layer's Coverage under
+    Live Environment (the cloud preset keeps `env.cloud_cover` in step so presets read
+    right either way).
+  - Use Env Wind / Use Env Snow buttons were no-ops under the default (a driver owns the
+    input); they are now shown only when Live Environment is off.
+  - Scene presets / Apply Season built rain and motes with no follow camera (spawned at
+    the world origin); `_build_particulate` now falls back to `scene.camera`.
+  - `env.get_env()` / `sun_params()` (the documented shared-world API) had no callers;
+    Build Sky now assembles its geographic inputs via `sun_params`, and the Firmament
+    consumers read through `get_env`, so the pattern BobShaders is told to copy is
+    exercised in-tree.
+  - `weather` / `temperature` / `wetness` are authored but read by no one yet (BobShaders
+    will consume them); the `env.py` docstring was corrected so it no longer claims
+    `weather` drives structural swaps (only `season` does, via Apply Season).
+  - Docs/comment drift fixed: the Build Sky tooltip no longer says "Nishita"/"world haze",
+    the stale "shadow default off" comment, the SYSTEMS `streak_length` default (0.2),
+    stale "cylinder" comments (geometry is a cone), and the ignored `turbulence` build
+    param. The snow coverage formula's exact smoothstep endpoints are now pinned in one
+    SYSTEMS.md block (the dual-formula spot BobShaders must match), and the settled S1-S5
+    state was folded into ARCHITECTURE.md.
+  - Dead code removed: three unused attribute-name tuples in materials.py.
 
 Out of BobFirmament's core slices, landing with BobShaders: the surface snow material
 and the optional accumulation shell. Both read the `snow_cover` attribute the S4 pass

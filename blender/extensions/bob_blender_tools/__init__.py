@@ -25,7 +25,7 @@ from bpy.props import (
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
 
-from . import firmament_panel, scatter_panel, server
+from . import firmament_panel, scatter_panel, server, shaders_panel
 
 # A 2D top-down preview of the last baked heightfield, drawn in the panel. Loaded
 # by the bake operator, created in register() and freed in unregister().
@@ -496,7 +496,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
     scatter_panel.register()
-    firmament_panel.register()
+    firmament_panel.register()  # owns and registers the shared world (bbt_env)
+    shaders_panel.register()    # reads bbt_env; registers after Firmament owns it
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
@@ -508,6 +509,7 @@ def unregister():
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
+    shaders_panel.unregister()
     firmament_panel.unregister()
     scatter_panel.unregister()
     del bpy.types.Scene.bbt_hf

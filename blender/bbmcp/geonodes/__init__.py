@@ -128,9 +128,17 @@ def build_geonodes(op: dict) -> dict:
             # inputs after it binds, since that is where a live value lives.
             new_ng, out = new_group(old_name)
             build(new_ng, out, params)
+            # Preserve the modifier's position in the stack. modifiers.new appends to
+            # the end, so on an object that carries a later modifier (e.g. a terrain
+            # with the BOB_Snow coverage pass after it) a naive remove+new would reorder
+            # the stack and evaluate this modifier last, breaking downstream passes that
+            # depend on running after it. Move the fresh modifier back to the old index.
+            old_index = list(obj.modifiers).index(mod)
             obj.modifiers.remove(mod)
             new_mod = obj.modifiers.new(name="GeometryNodes", type="NODES")
             new_mod.node_group = new_ng
+            if new_mod != obj.modifiers[old_index]:
+                obj.modifiers.move(len(obj.modifiers) - 1, old_index)
             if snap:
                 _restore_knobs(new_mod, snap)
             if old.users == 0:
