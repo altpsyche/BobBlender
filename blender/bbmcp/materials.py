@@ -449,3 +449,107 @@ def ground_fog_volume_material(image):
     if mat is not None:
         return mat
     return _build_fog_material(bpy.data.materials.new(name), image)
+
+
+# Particulate surface materials (S4). Unlike the volume materials above these shade
+# real instanced geometry (rain streaks, dust/amber/snow motes), not a volume box.
+# They read the live Colour and Emission knobs the particulates recipe stores on the
+# instance domain, through Attribute nodes of type INSTANCER, the same per-instance
+# path clouds and fog use for their knobs. Both are cheap on purpose: rain never uses
+# a glass/transmission BSDF (Cycles refraction cost), and motes are scene-lit with
+# emission off by default.
+RAIN_MATERIAL = "BOB_Rain"
+MOTE_MATERIAL = "BOB_Mote"
+
+
+def _color_attr(nt, name, location):
+    node = nt.nodes.new("ShaderNodeAttribute")
+    node.attribute_type = "INSTANCER"
+    node.attribute_name = name
+    node.location = location
+    return node
+
+
+def rain_material():
+    """A cheap translucent streak material for rain. A Principled surface mixed with
+    a Transparent BSDF so the streaks read as lit, semi-transparent water without the
+    refraction cost of a glass/transmission shader. Base colour is the live rain_color
+    INSTANCER knob.
+
+    The opacity tapers to zero at both ends of the streak (a soft window along the
+    cylinder's Generated Z), so a streak dissolves into the air instead of reading as
+    a hard-capped tube. Generated is the per-instance mesh's own 0..1 local space, so
+    the taper follows the streak length whatever its world rotation."""
+    mat = bpy.data.materials.get(RAIN_MATERIAL)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(RAIN_MATERIAL)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    L = nt.links
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (600, 0)
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    mix.location = (400, 0)
+    transp = nt.nodes.new("ShaderNodeBsdfTransparent")
+    transp.location = (200, 120)
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (200, -160)
+    bsdf.inputs["Roughness"].default_value = 0.1
+    color = _color_attr(nt, "rain_color", (-60, -160))
+    L.new(color.outputs["Color"], bsdf.inputs["Base Color"])
+    L.new(transp.outputs["BSDF"], mix.inputs[1])
+    L.new(bsdf.outputs["BSDF"], mix.inputs[2])
+
+    # Lengthwise opacity window: 1 in the middle, 0 at both ends (soft dash, no caps).
+    texco = nt.nodes.new("ShaderNodeTexCoord")
+    texco.location = (-360, 240)
+    gsep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    gsep.location = (-180, 240)
+    L.new(texco.outputs["Generated"], gsep.inputs[0])
+    # tri = 1 - |2z - 1|
+    doubled = _mmath(nt, "MULTIPLY", gsep.outputs["Z"], 2.0, (0, 300))
+    centred = _mmath(nt, "SUBTRACT", doubled, 1.0, (160, 300))
+    tri = _mmath(nt, "SUBTRACT", 1.0, _mmath(nt, "ABSOLUTE", centred, loc=(320, 260)), (480, 320))
+    # peak opacity ~0.85, softened toward the ends
+    fac = _mmath(nt, "MULTIPLY", tri, 0.85, (640, 360))
+    L.new(fac, mix.inputs["Fac"])
+    L.new(mix.outputs["Shader"], out.inputs["Surface"])
+    return mat
+
+
+def mote_material():
+    """A scene-lit mote material for dust, amber motes, and falling snow. A diffuse
+    Principled base tinted by the live mote_color knob, plus an Emission term scaled
+    by mote_emission (default 0, so motes are lit by the scene, not glowing; a raised
+    value leaves room for fireflies or embers). Both are INSTANCER knobs."""
+    mat = bpy.data.materials.get(MOTE_MATERIAL)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(MOTE_MATERIAL)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    L = nt.links
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (600, 0)
+    add = nt.nodes.new("ShaderNodeAddShader")
+    add.location = (400, 0)
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (200, 120)
+    bsdf.inputs["Roughness"].default_value = 0.9
+    emit = nt.nodes.new("ShaderNodeEmission")
+    emit.location = (200, -220)
+
+    color = _color_attr(nt, "mote_color", (-260, 40))
+    emission_a = _attr(nt, "mote_emission", (-260, -260))
+    L.new(color.outputs["Color"], bsdf.inputs["Base Color"])
+    L.new(color.outputs["Color"], emit.inputs["Color"])
+    L.new(emission_a, emit.inputs["Strength"])
+    L.new(bsdf.outputs["BSDF"], add.inputs[0])
+    L.new(emit.outputs["Emission"], add.inputs[1])
+    L.new(add.outputs["Shader"], out.inputs["Surface"])
+    return mat

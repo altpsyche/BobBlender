@@ -292,12 +292,18 @@ into them:
   (see Phase 0 findings). Domain fog is bounded, so it does not have this failure;
   aerial perspective for the sky is the sky model's job. Do not put a Principled
   Volume on the World volume output.
-- Camera-following domain and motion blur. If the particulate domain teleports to
-  follow the camera each frame, instances can inherit a spurious motion-blur streak
-  from the jump, and world-anchored parallax is lost. The domain follows in whole steps
-  or the particle motion is computed in world space with only the spawn region tracking
-  the camera, so motion blur reflects real particle velocity, not the domain jump. A
-  Phase-0 check confirms this.
+- Camera-following domain and motion blur (RESOLVED at S4, 2026-07-19). If the
+  particulate domain teleports to follow the camera each frame, instances inherit a
+  spurious motion-blur streak from the jump, and world-anchored parallax is lost. The
+  fix that shipped: particle motion is computed in world space (`moved = base +
+  velocity * scene_time`) and each particle is re-tiled to the copy nearest the camera
+  (`rep = moved - box*round((moved - cam)/box)`), so `rep` is anchored to the true world
+  position and motion blur reads the real particle velocity, not the camera's. The
+  earlier "domain follows in whole steps" phrasing (snap the follow-centre to the box
+  lattice) is the WRONG reading: it concentrates the jump into occasional all-particle
+  streak frames rather than removing it. Continuous follow with round-based re-tiling is
+  what works, measured (0 domain jump on a whole-box camera move; blur = world velocity
+  with the camera moving 6 m between subframes). See the S4 slice record.
 - Volumetric shadows and light shafts. Clouds self-shadowing and shadowing the ground
   are a large part of the look. The plan expected this to be an expensive hero-only
   fork; S2 measured it and found the cost tracks sun elevation, not shadows as such
@@ -616,12 +622,62 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
       depth without the immersion whiteout, auto-driving fog from bbt_env weather/time,
       multi-layer fog, vertical turbulence. Emitter-mesh-draped fog (vs heightmap) also
       remains a possible alternative if a fog is wanted over non-heightmap terrain.
-- S4 Particulates and falling snow: the `particulates` recipe and Weather sub-panel,
-  rain first, then dust and amber motes, then the snow mote preset; the `snow` GN
-  coverage pass that writes the `snow_cover` attribute (env.snow gated by slope and
-  altitude, occlusion crude to start); camera-following domain, motion blur. Verify:
-  instances present, animation deterministic, no domain-jump streak, the snow preset
-  reads as snow, and `snow_cover` is written and sane.
+- S4 Particulates and falling snow (done, 2026-07-19): the `particulates` recipe
+  (`geonodes/recipes/particulates.py`, streak and mote modes), two cheap particulate
+  materials (`materials.rain_material` / `mote_material`), the `snow` coverage recipe
+  (`geonodes/recipes/snow.py`), a `build_geonodes_on_object` helper, and the Weather
+  sub-panel with Build Rain / Build Motes / Add Snow Coverage, rain and mote presets,
+  Randomize Seed, and Use Env Snow. Reuses `build_geonodes` (no new op, no MCP
+  reconnect; the snow pass attaches via the new helper, panel-side). Key decisions:
+  - Camera-follow WITHOUT a domain jump (the flagged motion-blur landmine, resolved on
+    measurement). Each particle has a continuous world position `moved = base +
+    velocity * scene_time` (+ turbulence for motes), then is re-tiled to the copy
+    nearest the camera: `rep = moved - box*round((moved - cam)/box)`. Because `rep` is
+    anchored to the particle's own world position, its motion-blur velocity is the true
+    world velocity for every particle except the small fraction crossing a window edge
+    within a shutter (~ speed*shutter/box). The camera's motion never enters the blur.
+    IMPORTANT: snapping the follow-centre to the box lattice ("whole steps", the naive
+    reading) is the WRONG move; it concentrates the jump into occasional all-particle
+    streak frames instead of removing it. Continuous follow + round-based re-tiling is
+    the fix. Verified: a whole-box camera move gives a bit-identical field relative to
+    the camera (0 domain jump); with the camera moving 6 m between two shutter samples,
+    non-wrapping particles still displace by exactly world-velocity*dt (camera ignored);
+    a stationary-camera time-wrap fraction of 0.53% matched the predicted 0.47%.
+  - Streaks are real geometry, not a blur artefact. A thin cylinder is stretched along
+    its local Z (Depth = Fall Speed * Streak Length) and aligned to the velocity vector
+    with Align Rotation to Vector, so wind leans the streak (verified: instance long
+    axis dot velocity = 1.000). The geometric streak is why the residual per-particle
+    wrap is invisible under motion blur. Rain uses a cheap Transparent-mixed Principled
+    (no glass/transmission, per the plan) whose opacity tapers to zero at both ends of
+    the streak (a triangular window on the cylinder's Generated Z), so a streak reads as
+    a soft dash that dissolves into the air rather than a hard-capped tube; the streak
+    geometry is also thin and short by default (Size 0.008, Streak Length 0.2, up-scaled
+    by motion blur) after the first eyeball read as thick rods. Motes are ico spheres, scene-lit, with live
+    Color and optional Emission (default 0) as INSTANCER knobs; dust, amber motes, and
+    falling snow are the same mote mode, a preset picks the look.
+  - Particle count is a live knob and the depsgraph instance count is exact here
+    (unlike volumes): Build Rain / Build Motes report the count. Motion blur is a panel
+    toggle (default on) that sets `scene.render.use_motion_blur`.
+  - Snow coverage is one GN pass on the terrain (the single coverage source): it runs
+    as a modifier AFTER the terrain modifier (so it sees the displaced surface), passes
+    geometry through, and writes `snow_cover = Snow * slope_mask(normal Z) *
+    altitude_mask(world Z) * (1 - occlusion)` on the points. Slope and altitude are
+    solid smoothsteps; occlusion is a crude-but-real short upward Raycast against the
+    same mesh (a heightfield has no overhangs to trigger it, so it is a structural path
+    for now, gated by the Occlusion knob, the term meant to improve later). The pass
+    attaches with `build_geonodes_on_object` (non-destructive, mirrors `build_geonodes`
+    with a `reset` flag), so re-pressing Add Snow keeps tuned knobs. Verified: snow_cover
+    in [0,1], correlates with up-facing slope (0.85) and altitude (0.87) each isolated,
+    scales with the Snow knob; seeded from `bbt_env.snow`. The surface snow material and
+    accumulation shell that read the attribute land later with BobShaders.
+  - Verified headless on the 5080 (OptiX): 15 recipe checks (count, determinism, re-tile
+    no-jump, subframe blur velocity, time-wrap fraction, streak alignment, mote knobs,
+    snow_cover sanity) and 16 register/panel-op checks (build ops, presets set knobs
+    live, Randomize Seed, snow pass stacks after terrain and seeds from env,
+    non-destructive re-press, clean re-register) all green. Eyeball: rain reads as
+    wind-leaning streaks filling the camera domain; falling snow reads as white motes.
+    Nonblocking: rain looks best against a darker/overcast sky (bright Nishita sky is low
+    contrast for pale streaks); the terrain in the test frames carried no material.
 - S5 Wind, season, presets, and budget: wire Wind and season from `bbt_env` into
   particulates, cloud, and fog drift; the Apply Season operator; the preset dict
   (including Winter) and the Preview/Final quality toggle; check the performance budget

@@ -14,7 +14,13 @@ state is bbt_firmament. Clouds, fog, and weather sub-panels arrive with S2 to S5
 """
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    FloatProperty,
+    PointerProperty,
+    StringProperty,
+)
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import server
@@ -80,6 +86,46 @@ FOG_PRESETS = {
                         "Anisotropy": 0.3}},
 }
 
+# Live weather knobs, grouped for the panel.
+_RAIN_KNOBS = ["Count", "Fall Speed", "Streak Length", "Size", "Size Variation"]
+_RAIN_WIND = ["Wind Direction", "Wind Speed", "Drift"]
+_MOTE_KNOBS = ["Count", "Fall Speed", "Drift", "Turbulence", "Size", "Size Variation"]
+_MOTE_LOOK = ["Color", "Emission"]
+_MOTE_WIND = ["Wind Direction", "Wind Speed"]
+_DOMAIN_KNOBS = ["Domain Size", "Domain Height"]
+_SNOW_KNOBS = ["Snow", "Slope Threshold", "Slope Falloff", "Altitude",
+               "Altitude Falloff", "Occlusion", "Occlusion Distance"]
+
+# Rain presets (streak mode): live knobs set by socket name.
+RAIN_PRESETS = {
+    "drizzle": {"label": "Drizzle", "desc": "Light, fine rain",
+                "knobs": {"Count": 800, "Fall Speed": 6.0, "Streak Length": 0.13,
+                          "Size": 0.005, "Size Variation": 0.4}},
+    "rain": {"label": "Rain", "desc": "Steady rainfall",
+             "knobs": {"Count": 2500, "Fall Speed": 9.0, "Streak Length": 0.2,
+                       "Size": 0.008, "Size Variation": 0.4}},
+    "downpour": {"label": "Downpour", "desc": "Heavy, fast, long streaks",
+                 "knobs": {"Count": 5000, "Fall Speed": 13.0, "Streak Length": 0.3,
+                           "Size": 0.012, "Size Variation": 0.5}},
+}
+
+# Mote presets (mote mode): dust, amber motes, and falling snow are the same mode,
+# a preset picks the look. Falling snow is the plan's snow mote preset.
+MOTE_PRESETS = {
+    "dust": {"label": "Dust", "desc": "Tan dust, denser and wind-driven",
+             "knobs": {"Color": (0.60, 0.50, 0.35, 1.0), "Count": 1500,
+                       "Fall Speed": 0.3, "Drift": 1.5, "Turbulence": 1.2,
+                       "Size": 0.03, "Emission": 0.0}},
+    "amber": {"label": "Amber Motes", "desc": "Fine sun-lit golden-hour specks",
+              "knobs": {"Color": (0.90, 0.60, 0.25, 1.0), "Count": 700,
+                        "Fall Speed": 0.15, "Drift": 0.6, "Turbulence": 0.8,
+                        "Size": 0.02, "Emission": 0.0}},
+    "snow": {"label": "Falling Snow", "desc": "White, slow, fluttering flakes",
+             "knobs": {"Color": (1.0, 1.0, 1.0, 1.0), "Count": 2000,
+                       "Fall Speed": 0.6, "Drift": 1.0, "Turbulence": 1.5,
+                       "Size": 0.035, "Emission": 0.0}},
+}
+
 
 def _apply(ops):
     """Run bbmcp ops in-process, the path the Scatter and terrain panels use."""
@@ -109,6 +155,37 @@ def _input(obj, socket_name):
 def _draw_knobs(layout, obj, names):
     """Draw each present modifier input by socket name (live, no rebuild)."""
     mod = _nodes_mod(obj)
+    if mod is None or mod.node_group is None:
+        return
+    ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
+           if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
+    col = layout.column(align=True)
+    for nm in names:
+        ident = ids.get(nm)
+        inp = getattr(mod.properties.inputs, ident, None) if ident else None
+        if inp is not None:
+            col.prop(inp, "value", text=nm)
+
+
+def _named_mod(obj, mod_name):
+    """A specific NODES modifier by name (an object may carry more than one, e.g. a
+    terrain with both its terrain modifier and the snow-coverage pass)."""
+    if obj is None:
+        return None
+    return next((m for m in obj.modifiers if m.type == "NODES" and m.name == mod_name), None)
+
+
+def _input_of(mod, socket_name):
+    if mod is None or mod.node_group is None:
+        return None
+    ident = next((it.identifier for it in mod.node_group.interface.items_tree
+                  if getattr(it, "item_type", None) == "SOCKET"
+                  and it.in_out == "INPUT" and it.name == socket_name), None)
+    return getattr(mod.properties.inputs, ident, None) if ident else None
+
+
+def _draw_knobs_mod(layout, mod, names):
+    """Draw each present input of a specific modifier by socket name (live)."""
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
@@ -218,6 +295,26 @@ class BBT_FirmamentProps(PropertyGroup):
         name="Heightmap", default="", subtype="FILE_PATH",
         description="Terrain heightmap the ground fog drapes over. Match Terrain "
                     "Size/Height/Sea Level to the heightmap_terrain build that used it")
+
+    # Weather (S4): rain streaks and dust/amber/snow motes in a camera-following
+    # domain, plus the snow-coverage pass that writes snow_cover on the terrain.
+    weather_camera: PointerProperty(
+        name="Camera", type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == "CAMERA",
+        description="The particle domain re-tiles around this camera so the weather "
+                    "is always around the shot. Leave empty to anchor it at the origin")
+    use_motion_blur: BoolProperty(
+        name="Motion Blur", default=True,
+        description="Enable scene motion blur so fast particles read as streaks in "
+                    "the render. Rain streaks are also real geometry, so they read "
+                    "with or without it")
+    rain_object: StringProperty(name="Object", default="BOB_Rain")
+    mote_object: StringProperty(name="Object", default="BOB_Motes")
+    snow_surface: PointerProperty(
+        name="Surface", type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == "MESH",
+        description="The terrain the snow-coverage pass writes snow_cover onto (BobShaders "
+                    "reads that attribute). Defaults to the active mesh")
 
 
 class BBT_OT_firmament_build_sky(Operator):
@@ -427,6 +524,174 @@ class BBT_OT_firmament_fog_wind_from_env(Operator):
         return {"FINISHED"}
 
 
+def _build_particulate(context, obj_name, mode, extra=None):
+    """Build a particulates object (streak or mote), seeding wind and the follow
+    camera from the panel and the shared world state, and turning on motion blur."""
+    fm = context.scene.bbt_firmament
+    env = getattr(context.scene, "bbt_env", None)
+    params = {"mode": mode}
+    if fm.weather_camera is not None:
+        params["camera"] = fm.weather_camera.name
+    if env is not None:  # seed the wind knobs from the shared world state
+        params["wind_direction"] = env.wind_direction
+        params["wind_speed"] = env.wind_strength
+    if extra:
+        params.update(extra)
+    _apply([{"op": "build_geonodes", "recipe": "particulates",
+             "name": obj_name, "params": params}])
+    if fm.use_motion_blur:
+        context.scene.render.use_motion_blur = True
+    return bpy.data.objects.get(obj_name)
+
+
+def _count_instances(context, obj):
+    dg = context.evaluated_depsgraph_get()
+    return sum(1 for i in dg.object_instances if i.is_instance
+               and i.parent is not None and i.parent.original.name == obj.name)
+
+
+class BBT_OT_firmament_build_rain(Operator):
+    bl_idname = "bob_blender_tools.firmament_build_rain"
+    bl_label = "Build Rain"
+    bl_description = "Build the rain streak particle system in a camera-following domain"
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        obj = _build_particulate(context, fm.rain_object, "streak")
+        n = _count_instances(context, obj) if obj is not None else 0
+        self.report({"INFO"}, f"Rain: {n} streaks")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_build_motes(Operator):
+    bl_idname = "bob_blender_tools.firmament_build_motes"
+    bl_label = "Build Motes"
+    bl_description = "Build the dust / amber / snow mote particle system (pick a preset)"
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        obj = _build_particulate(context, fm.mote_object, "mote")
+        n = _count_instances(context, obj) if obj is not None else 0
+        self.report({"INFO"}, f"Motes: {n} motes")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_particulate_seed(Operator):
+    bl_idname = "bob_blender_tools.firmament_particulate_seed"
+    bl_label = "Randomize Seed"
+    bl_description = "Reshuffle the particle pattern with a new seed"
+
+    object_name: StringProperty()
+
+    def execute(self, context):
+        import random
+
+        obj = bpy.data.objects.get(self.object_name)
+        seed = _input(obj, "Seed")
+        if seed is None:
+            return {"CANCELLED"}
+        seed.value = random.randint(0, 99999)
+        obj.update_tag()
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_rain_preset(Operator):
+    bl_idname = "bob_blender_tools.firmament_rain_preset"
+    bl_label = "Rain Preset"
+    bl_description = "Set the rain look from a named preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[(k, v["label"], v["desc"]) for k, v in RAIN_PRESETS.items()])
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        obj = bpy.data.objects.get(fm.rain_object)
+        if obj is None or _nodes_mod(obj) is None:
+            _build_particulate(context, fm.rain_object, "streak")
+            obj = bpy.data.objects.get(fm.rain_object)
+        if obj is None:
+            return {"CANCELLED"}
+        for name, val in RAIN_PRESETS[self.preset]["knobs"].items():
+            inp = _input(obj, name)
+            if inp is not None:
+                inp.value = val
+        obj.update_tag()
+        self.report({"INFO"}, f"Applied {RAIN_PRESETS[self.preset]['label']} preset")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_mote_preset(Operator):
+    bl_idname = "bob_blender_tools.firmament_mote_preset"
+    bl_label = "Mote Preset"
+    bl_description = "Set the mote look (dust, amber motes, or falling snow)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[(k, v["label"], v["desc"]) for k, v in MOTE_PRESETS.items()])
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        obj = bpy.data.objects.get(fm.mote_object)
+        if obj is None or _nodes_mod(obj) is None:
+            _build_particulate(context, fm.mote_object, "mote")
+            obj = bpy.data.objects.get(fm.mote_object)
+        if obj is None:
+            return {"CANCELLED"}
+        for name, val in MOTE_PRESETS[self.preset]["knobs"].items():
+            inp = _input(obj, name)
+            if inp is not None:
+                inp.value = val
+        obj.update_tag()
+        self.report({"INFO"}, f"Applied {MOTE_PRESETS[self.preset]['label']} preset")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_build_snow_cover(Operator):
+    bl_idname = "bob_blender_tools.firmament_build_snow_cover"
+    bl_label = "Add Snow Coverage"
+    bl_description = ("Write the snow_cover attribute onto the surface (slope + altitude, "
+                      "seeded from the Environment snow level). BobShaders reads it")
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        surface = fm.snow_surface or context.active_object
+        if surface is None or surface.type != "MESH":
+            self.report({"WARNING"}, "Pick a mesh surface for the snow coverage")
+            return {"CANCELLED"}
+        env = getattr(context.scene, "bbt_env", None)
+        params = {}
+        if env is not None:  # seed the coverage amount from the shared world state
+            params["snow"] = env.snow
+        server._ensure_path()
+        from bbmcp.geonodes import build_geonodes_on_object
+
+        build_geonodes_on_object(surface, "snow", "BOB_Snow", params)
+        self.report({"INFO"}, f"Snow coverage written on {surface.name}")
+        return {"FINISHED"}
+
+
+class BBT_OT_firmament_snow_from_env(Operator):
+    bl_idname = "bob_blender_tools.firmament_snow_from_env"
+    bl_label = "Use Env Snow"
+    bl_description = "Copy the Environment snow level onto the coverage pass"
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        env = getattr(context.scene, "bbt_env", None)
+        surface = fm.snow_surface or context.active_object
+        mod = _named_mod(surface, "BOB_Snow")
+        snow = _input_of(mod, "Snow")
+        if env is None or snow is None:
+            return {"CANCELLED"}
+        snow.value = env.snow
+        surface.update_tag()
+        self.report({"INFO"}, "Snow coverage synced from Environment")
+        return {"FINISHED"}
+
+
 class BBT_PT_firmament(Panel):
     bl_label = "Firmament"
     bl_idname = "BBT_PT_firmament"
@@ -629,6 +894,81 @@ class BBT_PT_firmament_fog(Panel):
                              icon="TRACKING_FORWARDS")
 
 
+class BBT_PT_firmament_weather(Panel):
+    bl_label = "Weather"
+    bl_idname = "BBT_PT_firmament_weather"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_firmament"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        fm = context.scene.bbt_firmament
+        layout = self.layout
+
+        col = layout.column(align=True)
+        col.prop(fm, "weather_camera")
+        col.prop(fm, "use_motion_blur")
+
+        # Rain (streak mode).
+        box = layout.box()
+        box.label(text="Rain", icon="OUTLINER_OB_FORCE_FIELD")
+        row = box.row(align=True)
+        row.operator("bob_blender_tools.firmament_build_rain", icon="MOD_FLUIDSIM")
+        row.operator_menu_enum("bob_blender_tools.firmament_rain_preset", "preset",
+                               text="Preset", icon="PRESET")
+        rain = bpy.data.objects.get(fm.rain_object)
+        if rain is not None and _nodes_mod(rain) is not None:
+            box.prop(rain, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
+            _draw_knobs(box, rain, _RAIN_KNOBS)
+            seed = _input(rain, "Seed")
+            if seed is not None:
+                row = box.row(align=True)
+                row.prop(seed, "value", text="Seed")
+                op = row.operator("bob_blender_tools.firmament_particulate_seed",
+                                  text="", icon="FILE_REFRESH")
+                op.object_name = fm.rain_object
+            _draw_knobs(box, rain, _RAIN_WIND)
+            _draw_knobs(box, rain, ["Color"])
+            _draw_knobs(box, rain, _DOMAIN_KNOBS)
+
+        # Motes (dust / amber / falling snow, all mote mode).
+        box = layout.box()
+        box.label(text="Motes (Dust / Amber / Snow)", icon="PARTICLES")
+        row = box.row(align=True)
+        row.operator("bob_blender_tools.firmament_build_motes", icon="OUTLINER_OB_POINTCLOUD")
+        row.operator_menu_enum("bob_blender_tools.firmament_mote_preset", "preset",
+                               text="Preset", icon="PRESET")
+        motes = bpy.data.objects.get(fm.mote_object)
+        if motes is not None and _nodes_mod(motes) is not None:
+            box.prop(motes, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
+            _draw_knobs(box, motes, _MOTE_KNOBS)
+            seed = _input(motes, "Seed")
+            if seed is not None:
+                row = box.row(align=True)
+                row.prop(seed, "value", text="Seed")
+                op = row.operator("bob_blender_tools.firmament_particulate_seed",
+                                  text="", icon="FILE_REFRESH")
+                op.object_name = fm.mote_object
+            _draw_knobs(box, motes, _MOTE_LOOK)
+            _draw_knobs(box, motes, _MOTE_WIND)
+            _draw_knobs(box, motes, _DOMAIN_KNOBS)
+
+        # Snow coverage (the GN pass on the terrain surface, the single coverage source).
+        box = layout.box()
+        box.label(text="Snow Coverage", icon="OUTLINER_DATA_SURFACE")
+        box.prop(fm, "snow_surface")
+        box.operator("bob_blender_tools.firmament_build_snow_cover", icon="FREEZE")
+        surface = fm.snow_surface or context.active_object
+        snow_mod = _named_mod(surface, "BOB_Snow")
+        if snow_mod is not None:
+            _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS)
+            box.operator("bob_blender_tools.firmament_snow_from_env", icon="TRACKING_FORWARDS")
+        else:
+            box.label(text="Writes snow_cover for BobShaders to read", icon="INFO")
+
+
 CLASSES = (
     BBT_FirmamentProps,
     BBT_OT_firmament_build_sky,
@@ -640,11 +980,19 @@ CLASSES = (
     BBT_OT_firmament_fog_seed,
     BBT_OT_firmament_fog_preset,
     BBT_OT_firmament_fog_wind_from_env,
+    BBT_OT_firmament_build_rain,
+    BBT_OT_firmament_build_motes,
+    BBT_OT_firmament_particulate_seed,
+    BBT_OT_firmament_rain_preset,
+    BBT_OT_firmament_mote_preset,
+    BBT_OT_firmament_build_snow_cover,
+    BBT_OT_firmament_snow_from_env,
     BBT_PT_firmament,
     BBT_PT_firmament_env,
     BBT_PT_firmament_sky,
     BBT_PT_firmament_clouds,
     BBT_PT_firmament_fog,
+    BBT_PT_firmament_weather,
 )
 
 

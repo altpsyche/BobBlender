@@ -145,3 +145,46 @@ def build_geonodes(op: dict) -> dict:
     build(ng, out, params)
     created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False))
     return {"op": "build_geonodes", "created": created, "info": recipe_name}
+
+
+def build_geonodes_on_object(obj, recipe_name, mod_name, params, reset=False):
+    """Attach a recipe as a Nodes modifier on an existing object, non-destructively.
+
+    Unlike build_geonodes (which spawns its own object), this augments an object that
+    already exists: the snow-coverage pass runs as a modifier on the terrain so its
+    snow_cover attribute lands on the shaded mesh. A recipe that adds a Geometry INPUT
+    socket (like `snow`) receives the object's own geometry from the modifier stack.
+
+    Rebuild in place: if the named modifier already exists its tuned live knobs are
+    preserved by socket name (a fresh group and modifier force a clean re-eval, the
+    same reason build_geonodes does), so re-pressing Add Snow keeps a tuned slope or
+    altitude. Pass reset=True to discard the tuned knobs and reapply the params fresh.
+    """
+    build = recipes.get(recipe_name)
+    if build is None:
+        raise ValueError(
+            f"unknown geonodes recipe: {recipe_name!r} (have: {recipes.names()})"
+        )
+
+    old_mod = next((m for m in obj.modifiers
+                    if m.type == "NODES" and m.name == mod_name), None)
+    snap = ({} if reset else _snapshot_knobs(old_mod)) \
+        if (old_mod is not None and old_mod.node_group) else {}
+    group_name = mod_name + "_" + obj.name
+    old_group = old_mod.node_group if old_mod is not None else None
+
+    new_ng, out = new_group(group_name)
+    build(new_ng, out, params)
+    if old_mod is not None:
+        obj.modifiers.remove(old_mod)
+    if old_group is not None and old_group.users == 0:
+        bpy.data.node_groups.remove(old_group)
+    new_ng.name = group_name
+
+    mod = obj.modifiers.new(name=mod_name, type="NODES")
+    mod.node_group = new_ng
+    if snap:
+        _restore_knobs(mod, snap)
+    obj.update_tag()
+    return {"op": "build_geonodes_on_object", "created": [new_ng.name],
+            "object": obj.name, "modifier": mod_name, "info": recipe_name}

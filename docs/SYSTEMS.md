@@ -432,6 +432,79 @@ haze, 1 light, 3 moderate, 6 a thick soup. It is still exponential and
 view-dependent (a grazing horizon path fogs out sooner than looking down), so tune
 against the actual shot.
 
+## particulates (recipe: `particulates`)
+
+Wind-driven weather particles in a camera-following domain, with two shape modes
+selected by the `mode` param: `streak` (rain) and `mote` (dust, amber motes, falling
+snow). Real instanced geometry, so the depsgraph instance count is exact (unlike the
+volumes). Driven from the Firmament panel's Weather sub-panel.
+
+How the motion works. Each particle has a stable random base position in a box, a
+continuous world position `moved = base + velocity * scene time` (motes add a smooth
+turbulence offset), and is then re-tiled to the copy nearest the camera:
+`rep = moved - box * round((moved - camera) / box)`. Scene Time drives it, so a Cycles
+animation renders the same every frame. Because `rep` is anchored to the particle's own
+world position, its motion-blur velocity is the true particle velocity, not the camera's:
+the domain follows the camera with no domain-jump streak (do NOT snap the follow-centre to
+the box lattice; that concentrates the jump into occasional all-particle streak frames
+instead of removing it). Streaks are real geometry: a thin cylinder stretched along its
+length and aligned to the velocity vector, so wind leans the streak; motes are small ico
+spheres lit by the scene. The camera is a build-time param (set on the Object Info node);
+with no camera the domain sits at the origin.
+
+| Param | Default | Live | What it does |
+|-------|---------|------|--------------|
+| `mode` | `streak` | no | `streak` (rain) or `mote` (dust/amber/snow). Build-time. |
+| `camera` | none | no | Object name the domain re-tiles around. Build-time. |
+| `count` | 2000 | yes | Number of particles. |
+| `domain_size` | 40 | yes | Domain footprint in metres (XY). |
+| `domain_height` | 40 | yes | Domain depth in metres (Z). |
+| `fall_speed` | 9 / 0.4 | yes | Downward speed (m/s); streak / mote defaults. |
+| `drift` | 1.0 | yes | Horizontal wind multiplier. |
+| `size` | 0.02 / 0.03 | yes | Instance radius (streak / mote). |
+| `size_variation` | 0.4 | yes | Per-particle random scale spread. |
+| `streak_length` | 0.4 | yes | streak only: length = Fall Speed * this. |
+| `turbulence` | 1.0 | yes | mote only: swirl/flutter strength. |
+| `emission` | 0.0 | yes | mote only: emission strength (0 = scene-lit; raise for fireflies/embers). |
+| `color` | blue-grey / white | yes | Streak or mote colour (INSTANCER knob). |
+| `wind_direction` | 0 | yes | Compass direction (degrees) the wind blows toward. |
+| `wind_speed` | 2.0 | yes | Wind speed (seeded from env wind). |
+| `seed` | 0 | yes | Reshuffles the particle pattern. |
+
+Motion blur: the Build ops set `scene.render.use_motion_blur` from a panel toggle so
+fast particles read as streaks in the render; rain streaks are also real geometry, so
+they read with or without it. The Weather panel groups the knobs, has Rain presets
+(Drizzle, Rain, Downpour) and Mote presets (Dust, Amber Motes, Falling Snow), a
+Randomize Seed button, and a Camera picker for the follow domain.
+
+## snow (recipe: `snow`)
+
+The GN-authored snow-coverage pass, the single source of snow coverage. It runs as a
+modifier ON the terrain (after the terrain modifier, so it sees the displaced surface),
+passes the geometry through unchanged, and writes a 0..1 `snow_cover` float attribute on
+the points. Later the BobShaders surface snow material and the accumulation shell both
+read that one attribute, so they never disagree. Attach it with
+`build_geonodes_on_object(obj, "snow", "BOB_Snow", params)` (the Weather panel's Add Snow
+Coverage button), which is non-destructive like `build_geonodes` and takes a `reset` flag.
+
+    snow_cover = Snow * slope_mask(normal Z) * altitude_mask(world Z) * (1 - occlusion)
+
+| Param | Default | Live | What it does |
+|-------|---------|------|--------------|
+| `snow` | 0.5 | yes | Overall coverage amount (seeded from `bbt_env.snow`). |
+| `slope_threshold` | 0.5 | yes | Normal Z above which snow sticks (1 = flat only). |
+| `slope_falloff` | 0.2 | yes | Normal-Z range the slope mask eases over. |
+| `altitude` | 0.0 | yes | World Z above which snow starts. |
+| `altitude_falloff` | 5.0 | yes | Metres the altitude mask eases over. |
+| `occlusion` | 0.0 | yes | Shelter term strength (crude upward raycast; 0 = off). |
+| `occlusion_distance` | 2.0 | yes | Metres the upward occlusion ray travels. |
+
+Slope and altitude are solid smoothsteps (snow holds on up-facing, high ground);
+occlusion is a crude-but-real short upward Raycast against the same mesh (a hit means
+something is directly above, so less snow), gated by the Occlusion knob and meant to
+improve later. A heightfield has no overhangs, so occlusion has no effect there. The
+falling-snow look is the `particulates` Falling Snow mote preset.
+
 ## Path (op: `make_path`)
 
 Authors a NURBS curve object for the scatter and terrain `path` inputs, so a
