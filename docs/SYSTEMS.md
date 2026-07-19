@@ -320,6 +320,7 @@ Firmament panel's Clouds sub-panel.
 | `density` | 5.0 | yes | Volume density (opacity/brightness of the cloud). |
 | `detail` | 5.0 | yes | Noise octaves for the cloud interior. |
 | `softness` | 0.25 | yes | Widens the density threshold; softer, wispier edges. |
+| `warp` | 0.4 | yes | Domain warp: billowy organic shapes instead of round blobs. |
 | `wind` | off | yes | Toggle: drift the clouds through the box by scene time. |
 | `wind_direction` | 0 | yes | Compass direction (degrees) the clouds drift toward. |
 | `wind_speed` | 2.0 | yes | Drift rate in metres per second (seeded from env wind). |
@@ -331,8 +332,10 @@ layer thickness), so it costs little; turn the Cloud Shadows toggle off for a fl
 faster look when the sun is low and the frame is Final quality, where near-horizontal
 shadow rays cross the whole layer. Build Clouds also sets the Cycles Volume Step
 Rate, Max Steps, and Volume Bounces from a Preview/Final quality level (bounces 0/2,
-so shadowed cloud reads bright on finals). `coverage` reads roughly linearly over
-0..1 but saturates at the high end; tune it against a render.
+so shadowed cloud reads bright on finals). `coverage` runs from sparse wisps near 0
+to a full overcast near 0.85. `warp` domain-warps the noise so the clouds billow
+organically instead of reading as round blobs. The panel has a Preset menu (Clear,
+Scattered, Cumulus, Overcast, Storm) that sets the look knobs in one pick.
 
 Wind: with the Wind toggle on, the recipe advances an offset by `wind_speed` * scene
 time along `wind_direction` and stores it per instance; the material shifts its noise

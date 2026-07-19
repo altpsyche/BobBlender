@@ -60,6 +60,7 @@ def cloud_volume_material():
     cov_a = _attr(nt, "cloud_coverage", (-1200, -260))
     scale_a = _attr(nt, "cloud_scale", (-1200, -360))
     seed_a = _attr(nt, "cloud_seed", (-1200, -460))
+    warp_a = _attr(nt, "cloud_warp", (-1200, -560))
 
     # Cloud shapes: world-space fractal noise, thresholded by Coverage. The sample
     # position is offset by cloud_wind (a per-instance vector the GN recipe advances
@@ -77,11 +78,47 @@ def cloud_volume_material():
     L.new(geo.outputs["Position"], drifted.inputs[0])
     L.new(wind_node.outputs["Vector"], drifted.inputs[1])
 
+    # Domain warp: push the sample position around by a lower-frequency noise so the
+    # clouds billow organically instead of reading as round blobs. Warp scales the
+    # displacement (0 = off). A separate W keeps the warp pattern off the main noise.
+    warp_scale = nt.nodes.new("ShaderNodeMath")
+    warp_scale.operation = "MULTIPLY"
+    warp_scale.location = (-940, -20)
+    warp_scale.inputs[1].default_value = 0.45  # warp noise is lower frequency
+    L.new(scale_a, warp_scale.inputs[0])
+    warp_noise = nt.nodes.new("ShaderNodeTexNoise")
+    warp_noise.noise_dimensions = "4D"
+    warp_noise.location = (-760, -40)
+    warp_noise.inputs["Detail"].default_value = 2.0
+    warp_noise.inputs["W"].default_value = 11.0
+    L.new(drifted.outputs["Vector"], warp_noise.inputs["Vector"])
+    L.new(warp_scale.outputs["Value"], warp_noise.inputs["Scale"])
+    warp_centre = nt.nodes.new("ShaderNodeVectorMath")
+    warp_centre.operation = "SUBTRACT"
+    warp_centre.location = (-560, -40)
+    warp_centre.inputs[1].default_value = (0.5, 0.5, 0.5)
+    L.new(warp_noise.outputs["Color"], warp_centre.inputs[0])
+    warp_amt = nt.nodes.new("ShaderNodeMath")
+    warp_amt.operation = "MULTIPLY"
+    warp_amt.location = (-560, -200)
+    warp_amt.inputs[1].default_value = 90.0  # metres of displacement at Warp 1
+    L.new(warp_a, warp_amt.inputs[0])
+    warp_off = nt.nodes.new("ShaderNodeVectorMath")
+    warp_off.operation = "SCALE"
+    warp_off.location = (-380, -40)
+    L.new(warp_centre.outputs["Vector"], warp_off.inputs[0])
+    L.new(warp_amt.outputs["Value"], warp_off.inputs["Scale"])
+    warped = nt.nodes.new("ShaderNodeVectorMath")
+    warped.operation = "ADD"
+    warped.location = (-380, 220)
+    L.new(drifted.outputs["Vector"], warped.inputs[0])
+    L.new(warp_off.outputs["Vector"], warped.inputs[1])
+
     noise = nt.nodes.new("ShaderNodeTexNoise")
     noise.noise_dimensions = "4D"
-    noise.location = (-900, 220)
+    noise.location = (-200, 300)
     noise.inputs["Roughness"].default_value = 0.6
-    L.new(drifted.outputs["Vector"], noise.inputs["Vector"])
+    L.new(warped.outputs["Vector"], noise.inputs["Vector"])
     L.new(scale_a, noise.inputs["Scale"])
     L.new(detail_a, noise.inputs["Detail"])
     L.new(seed_a, noise.inputs["W"])
@@ -94,8 +131,8 @@ def cloud_volume_material():
     from_min = nt.nodes.new("ShaderNodeMath")
     from_min.operation = "MULTIPLY_ADD"
     from_min.location = (-620, -180)
-    from_min.inputs[1].default_value = -0.32  # slope
-    from_min.inputs[2].default_value = 0.66    # threshold at Coverage 0
+    from_min.inputs[1].default_value = -0.36  # slope: overcast near Coverage 0.85
+    from_min.inputs[2].default_value = 0.74    # threshold at Coverage 0 (sparse)
     L.new(cov_a, from_min.inputs[0])
     soft_span = nt.nodes.new("ShaderNodeMath")
     soft_span.operation = "ADD"

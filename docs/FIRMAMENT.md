@@ -518,8 +518,15 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
     has a Randomize Cloud Seed button, a Wind Drift toggle, and a Use Env Wind button
     that copies the `bbt_env` wind onto the clouds. Full wiring of season and a
     scene-wide wind live-feed is still S5.
-  - Known nonblocking polish: Coverage saturates at the high end. No world haze
-    (deferred per plan).
+  - Polish pass (done): a domain warp in the material (Warp knob) pushes the noise
+    sample around by a lower-frequency noise, so the clouds billow organically instead
+    of reading as round blobs; verified as a clear quality lift on a cumulus frame.
+    Coverage was retuned (threshold 0.74 to 0.38) so it runs from sparse wisps near 0
+    to full overcast near 0.85, checked by a render sweep (0.2 sparse, 0.8 overcast).
+    A Cloud Preset menu (Clear, Scattered, Cumulus, Overcast, Storm) sets the look
+    knobs in one pick. Gate re-verified (10 checks) and register (18 checks) green.
+  - Known nonblocking polish: the box top-face fade can show as a faint seam when the
+    camera looks steeply up at the layer. No world haze (deferred per plan).
 - S3 Fog: the same `volumetrics` recipe in height_fog and noise_fog modes, the Fog
   sub-panel. Verify: each mode renders and changes luminance where expected; height
   fog varies with Z; terrain-aware fog pools in low ground.

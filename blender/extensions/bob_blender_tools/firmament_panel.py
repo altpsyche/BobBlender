@@ -24,10 +24,30 @@ from . import server
 _env = None
 
 # Live cloud knobs, grouped for the panel (drawn from the modifier after a Build).
-_CLOUD_SHAPE = ["Coverage", "Cloud Scale"]
+_CLOUD_SHAPE = ["Coverage", "Cloud Scale", "Warp"]
 _CLOUD_SHAPE2 = ["Detail", "Softness", "Density"]
 _CLOUD_LAYER = ["Layer Size", "Thickness", "Height"]
 _CLOUD_WIND = ["Wind Direction", "Wind Speed"]
+
+# Cloud-type presets: a Blender-side dict (no codegen; nothing else reads it). Each
+# sets the live modifier knobs by socket name for a named sky look.
+CLOUD_PRESETS = {
+    "clear": {"label": "Clear", "desc": "A few thin wisps",
+              "knobs": {"Coverage": 0.12, "Cloud Scale": 0.022, "Density": 7.0,
+                        "Detail": 5.0, "Softness": 0.30, "Warp": 0.4, "Thickness": 35.0}},
+    "scattered": {"label": "Scattered", "desc": "Fair-weather clouds with gaps",
+                  "knobs": {"Coverage": 0.30, "Cloud Scale": 0.020, "Density": 9.0,
+                            "Detail": 6.0, "Softness": 0.20, "Warp": 0.5, "Thickness": 42.0}},
+    "cumulus": {"label": "Cumulus", "desc": "Big billowing clouds",
+                "knobs": {"Coverage": 0.42, "Cloud Scale": 0.014, "Density": 11.0,
+                          "Detail": 7.0, "Softness": 0.16, "Warp": 0.6, "Thickness": 60.0}},
+    "overcast": {"label": "Overcast", "desc": "Full grey blanket",
+                 "knobs": {"Coverage": 0.80, "Cloud Scale": 0.030, "Density": 8.0,
+                           "Detail": 5.0, "Softness": 0.32, "Warp": 0.35, "Thickness": 45.0}},
+    "storm": {"label": "Storm", "desc": "Dark, heavy, deep",
+              "knobs": {"Coverage": 0.90, "Cloud Scale": 0.012, "Density": 15.0,
+                        "Detail": 7.0, "Softness": 0.22, "Warp": 0.55, "Thickness": 90.0}},
+}
 
 
 def _apply(ops):
@@ -212,6 +232,33 @@ class BBT_OT_firmament_cloud_seed(Operator):
         return {"FINISHED"}
 
 
+class BBT_OT_firmament_cloud_preset(Operator):
+    bl_idname = "bob_blender_tools.firmament_cloud_preset"
+    bl_label = "Cloud Preset"
+    bl_description = "Set the cloud look from a named preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[(k, v["label"], v["desc"]) for k, v in CLOUD_PRESETS.items()])
+
+    def execute(self, context):
+        fm = context.scene.bbt_firmament
+        obj = bpy.data.objects.get(fm.cloud_object)
+        if obj is None or _nodes_mod(obj) is None:
+            bpy.ops.bob_blender_tools.firmament_build_clouds()
+            obj = bpy.data.objects.get(fm.cloud_object)
+        if obj is None:
+            return {"CANCELLED"}
+        for name, val in CLOUD_PRESETS[self.preset]["knobs"].items():
+            inp = _input(obj, name)
+            if inp is not None:
+                inp.value = val
+        obj.update_tag()
+        self.report({"INFO"}, f"Applied {CLOUD_PRESETS[self.preset]['label']} preset")
+        return {"FINISHED"}
+
+
 class BBT_OT_firmament_cloud_wind_from_env(Operator):
     bl_idname = "bob_blender_tools.firmament_cloud_wind_from_env"
     bl_label = "Use Env Wind"
@@ -333,7 +380,10 @@ class BBT_PT_firmament_clouds(Panel):
         box = layout.box()
         box.prop(fm, "cloud_object")
         box.prop(fm, "cloud_shadows")
-        box.operator("bob_blender_tools.firmament_build_clouds", icon="OUTLINER_OB_VOLUME")
+        row = box.row(align=True)
+        row.operator("bob_blender_tools.firmament_build_clouds", icon="OUTLINER_OB_VOLUME")
+        row.operator_menu_enum("bob_blender_tools.firmament_cloud_preset", "preset",
+                               text="Preset", icon="PRESET")
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.cloud_object)
@@ -371,6 +421,7 @@ CLASSES = (
     BBT_OT_firmament_build_sky,
     BBT_OT_firmament_build_clouds,
     BBT_OT_firmament_cloud_seed,
+    BBT_OT_firmament_cloud_preset,
     BBT_OT_firmament_cloud_wind_from_env,
     BBT_PT_firmament,
     BBT_PT_firmament_env,

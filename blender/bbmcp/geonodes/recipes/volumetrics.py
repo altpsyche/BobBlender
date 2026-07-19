@@ -27,7 +27,8 @@ _ATTRS = [("cloud_density", "Density"),
           ("cloud_softness", "Softness"),
           ("cloud_coverage", "Coverage"),
           ("cloud_scale", "Cloud Scale"),
-          ("cloud_seed", "Cloud Seed")]
+          ("cloud_seed", "Cloud Seed"),
+          ("cloud_warp", "Warp")]
 
 
 @recipe("volumetrics")
@@ -46,6 +47,7 @@ def build(ng, out, params: dict):
     add_input(ng, "Density", "NodeSocketFloat", float(params.get("density", 5.0)), 0.0)
     add_input(ng, "Detail", "NodeSocketFloat", float(params.get("detail", 5.0)), 0.0)
     add_input(ng, "Softness", "NodeSocketFloat", float(params.get("softness", 0.25)), 0.0, 1.0)
+    add_input(ng, "Warp", "NodeSocketFloat", float(params.get("warp", 0.4)), 0.0, 1.0)
     add_input(ng, "Wind", "NodeSocketBool", bool(params.get("wind", False)))
     add_input(ng, "Wind Direction", "NodeSocketFloat", float(params.get("wind_direction", 0.0)), 0.0, 360.0)
     add_input(ng, "Wind Speed", "NodeSocketFloat", float(params.get("wind_speed", 2.0)), 0.0)
