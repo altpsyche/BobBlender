@@ -1640,6 +1640,7 @@ _TRIPLANAR_BLEND = 0.3  # BOX projection_blend: 0 sharp seams, 1 soft (build-tim
 # stops reading as one flat tiled sheet. Both are live knobs, default on but gentle.
 _DETAIL_SCALE = 0.28  # the detail sample's relative frequency (lower = bigger, slower-repeating)
 _MACRO_SCALE = 0.08   # the macro brightness noise frequency (low = large patches)
+_FAR_SCALE = 0.008    # the distant sample's relative frequency (very low: ~no repeat far off)
 
 # role -> filename suffix aliases (matched case-insensitively against the file stem).
 _ROLE_SUFFIX = {
@@ -1692,6 +1693,10 @@ def texture_set_group(name, directory=None):
     _gin(g, "Bump Strength", "NodeSocketFloat", 0.3, 0.0, 10.0)
     _gin(g, "Detail Blend", "NodeSocketFloat", 0.4, 0.0, 1.0)  # anti-tiling detail-scale mix
     _gin(g, "Macro Amount", "NodeSocketFloat", 0.3, 0.0, 1.0)  # anti-tiling macro brightness
+    # Near-far anti-tiling: ramp the de-tile with camera distance (0 = off).
+    _gin(g, "Distance Fade", "NodeSocketFloat", 0.7, 0.0, 1.0)
+    _gin(g, "Fade Near", "NodeSocketFloat", 15.0, 0.0)
+    _gin(g, "Fade Far", "NodeSocketFloat", 120.0, 0.0)
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
@@ -1725,6 +1730,31 @@ def texture_set_group(name, directory=None):
     g.links.new(geo.outputs["Position"], detail_mapping.inputs["Vector"])
     g.links.new(dcs.outputs["Vector"], detail_mapping.inputs["Scale"])
 
+    # A third, very-low-frequency mapping for the distant sample (Scale * _FAR_SCALE). Its repeat
+    # period is so large it does not read as a tile across the far field; the near/mid de-tile
+    # still tiles, so we blend TO this only with distance.
+    fscale = _mmath(g, "MULTIPLY", I["Scale"], _FAR_SCALE, (-800, -420))
+    fcs = g.nodes.new("ShaderNodeCombineXYZ")
+    fcs.location = (-800, -460)
+    for ax in ("X", "Y", "Z"):
+        g.links.new(fscale, fcs.inputs[ax])
+    far_mapping = g.nodes.new("ShaderNodeMapping")
+    far_mapping.location = (-620, -460)
+    g.links.new(geo.outputs["Position"], far_mapping.inputs["Vector"])
+    g.links.new(fcs.outputs["Vector"], far_mapping.inputs["Scale"])
+
+    # Near-far de-tiling: a triplanar repeat reads fine up close but betrays itself as an obvious
+    # tiled sheet in the distance. df ramps 0 (near) -> 1 (far) over Fade Near..Fade Far by camera
+    # View Distance; box2 blends the near/mid de-tile toward the very-low-frequency far sample by
+    # df, so the repeat washes out with distance. df = 0 near, so the near field is unchanged.
+    cam = g.nodes.new("ShaderNodeCameraData")
+    cam.location = (-1000, -560)
+    df = _mmath(g, "MULTIPLY",
+                _mrange(g, cam.outputs["View Distance"], I["Fade Near"], I["Fade Far"],
+                        0.0, 1.0, (-800, -560)),
+                I["Distance Fade"], (-620, -560))
+    eff_macro = _lerp(g, I["Macro Amount"], 0.85, df, (-440, -640))
+
     def _sample(path, role, loc, map_node):
         img = bpy.data.images.load(path, check_existing=True)
         if role in _DATA_ROLES:
@@ -1744,10 +1774,13 @@ def texture_set_group(name, directory=None):
 
     def box2(path, role, loc):
         """A de-tiled sample (socket): the base-scale sample blended with a lower-frequency
-        detail-scale sample by Detail Blend, so the repeat does not read near or mid-range."""
+        detail-scale sample by Detail Blend (near/mid de-tile), then blended toward a very-low-
+        frequency far sample by the camera-distance factor df (so the far field stops tiling)."""
         base = _sample(path, role, loc, mapping).outputs["Color"]
         detail = _sample(path, role, (loc[0], loc[1] + 150), detail_mapping).outputs["Color"]
-        return _mixcol(g, I["Detail Blend"], base, detail, (loc[0] + 200, loc[1] + 40))
+        near = _mixcol(g, I["Detail Blend"], base, detail, (loc[0] + 200, loc[1] + 40))
+        far = _sample(path, role, (loc[0], loc[1] + 300), far_mapping).outputs["Color"]
+        return _mixcol(g, df, near, far, (loc[0] + 380, loc[1] + 20))
 
     def const_col(rgb, loc):
         n = g.nodes.new("ShaderNodeRGB")
@@ -1767,7 +1800,7 @@ def texture_set_group(name, directory=None):
         if "ao" in maps:
             ao = box(maps["ao"], "ao", (-300, 200)).outputs["Color"]
             albedo = _vmul(g, albedo, ao, (-60, 380))
-        albedo = _macro_break(g, albedo, I["Macro Amount"], _MACRO_SCALE, (140, 400))
+        albedo = _macro_break(g, albedo, eff_macro, _MACRO_SCALE, (140, 400))
     else:
         albedo = const_col((1.0, 1.0, 1.0), (-60, 400))
     g.links.new(albedo, O["Base Color"])
