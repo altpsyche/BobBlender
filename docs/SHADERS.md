@@ -203,13 +203,19 @@ exposed as live knobs (`Detail Blend`, `Macro Amount`, both default on but gentl
   base `Scale` and at a lower-frequency detail scale (`_DETAIL_SCALE`, bigger features) - and
   mixed by `Detail Blend`, so no one repeat period dominates. De-tiling the height also de-tiles
   the bump normal, so the relief stops repeating in step with the colour.
-- Macro brightness break-up (far). A low-frequency world noise (`_MACRO_SCALE`) modulates the
-  albedo brightness by `Macro Amount`, so the far field stops reading as one flat tiled sheet.
-- `Detail Blend = 0` and `Macro Amount = 0` reproduce the old single-scale look exactly (the mix
-  returns the base sample and the macro factor is 1), so the change is opt-out and verifiable.
-  Solid-colour materials never build a texture set, so this leaves the block-out look untouched.
-  Very strongly periodic textures would still benefit from stochastic (hex-tile) sampling; that
-  is a possible follow-on.
+- Macro brightness break-up. A low-frequency world noise (`_MACRO_SCALE`) modulates the albedo
+  brightness by `Macro Amount`, so the far field stops reading as one flat tiled sheet.
+- Near-far distance fade (the far field specifically). The detail-scale blend still repeats at a
+  distance; this ramps a third, very-low-frequency sample (`_FAR_SCALE`) in by camera distance.
+  A `ShaderNodeCameraData` "View Distance" feeds a `Fade Near`..`Fade Far` map-range, scaled by
+  `Distance Fade`, giving `df` (0 near, 1 far); each de-tiled map blends toward its far sample by
+  `df`, so the repeat washes out with distance while the near field stays put. Works in Cycles,
+  EEVEE, and the viewport (distance from the viewer). `Fade Near`/`Fade Far` are in metres and
+  scale with the shot -- a close ground wants ~5/40, a landscape hero ~15/120 (the defaults).
+- `Detail Blend = 0`, `Macro Amount = 0`, `Distance Fade = 0` reproduce the old single-scale look
+  exactly, so the change is opt-out and verifiable. Solid-colour materials never build a texture
+  set, so this leaves the block-out look untouched. Very strongly periodic textures would still
+  benefit from stochastic (hex-tile) sampling; that is a possible follow-on.
 
 Model AO (biome track F3, 2026-07-20). `S_SurfaceMaster` gains an `AO Map` input (scalar,
 identity `1.0`). Poly Haven glTF assets pack occlusion in the arm map's R channel but drop the
