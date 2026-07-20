@@ -57,6 +57,11 @@ _env_owned = False
 # Live knobs drawn per sub-panel, by socket name on the wrapper's Master group node.
 _SURFACE_KNOBS = ["Base Color", "Roughness", "Metallic", "Variation"]
 _MACRO_KNOBS = ["Macro Amount", "Macro Scale"]
+# Texture-set knobs (on the TexSet group node): scale/bump, the two anti-tiling blends, and the
+# near-far distance fade (Fade Near/Far are metres and scale with the shot: close ground ~5/40,
+# a landscape hero ~15/120).
+_TEXSET_KNOBS = ["Scale", "Bump Strength", "Detail Blend", "Macro Amount",
+                 "Distance Fade", "Fade Near", "Fade Far"]
 _WEATHER_SNOW = ["Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
                  "Altitude", "Altitude Falloff"]
 _WEATHER_WET = ["Wetness Strength", "Wet Pooling"]
@@ -1091,7 +1096,7 @@ class BBT_PT_shaders_surface(Panel):
         ts = _texset_node(mat, "TexSet")
         if ts is not None:
             layout.label(text="Triplanar / anti-tiling", icon="TEXTURE")
-            _draw_inputs(layout, ts, ["Scale", "Bump Strength", "Detail Blend", "Macro Amount"])
+            _draw_inputs(layout, ts, _TEXSET_KNOBS)
             _draw_inputs(layout, node, _MACRO_KNOBS)
 
 
@@ -1161,7 +1166,7 @@ class BBT_PT_shaders_terrain(Panel):
         row.operator("bob_blender_tools.shaders_terrain_set_texture", text="Assign")
         ts = _texset_node(mat, f"TexSet{i}")
         if ts is not None:
-            _draw_inputs(layout, ts, ["Scale", "Bump Strength", "Detail Blend", "Macro Amount"])
+            _draw_inputs(layout, ts, _TEXSET_KNOBS)
 
 
 class BBT_PT_shaders_terrain_masks(Panel):
