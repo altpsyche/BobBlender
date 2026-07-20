@@ -323,6 +323,10 @@ class BBT_HeightfieldProps(PropertyGroup):
     backend_hint: StringProperty(name="Backends", default="")
     preview: BoolProperty(name="Preview (256)", default=True,
                           description="Bake at 256 for a fast look; off for full resolution")
+    emit_maps: BoolProperty(
+        name="Flow + wetness maps", default=False,
+        description="Also bake <name>_flow.png and <name>_wetness.png beside the height, "
+                    "for shading and scatter to key off the terrain's own drainage")
     resolution: IntProperty(name="Resolution", default=768, min=64, max=4096)
     mesh_res: IntProperty(
         name="Mesh Density", default=384, min=8, soft_max=1024, max=4096,
@@ -459,6 +463,8 @@ class BBT_OT_bake_terrain(Operator):
         extra = ["--out", out_abs, "--knobs-file", tmp.name, "--force"]
         if hf.preview:
             extra.append("--preview")
+        if hf.emit_maps:
+            extra.append("--maps")
         argv = _host_argv(repo, extra)
         # Blocking bake with feedback: a wait cursor and the progress spinner, so
         # the UI shows work instead of looking hung. (A window only exists when
@@ -691,6 +697,7 @@ class BBT_PT_heightfield(Panel):
         row = layout.row(align=True)
         row.prop(hf, "preview")
         row.prop(hf, "resolution")
+        layout.prop(hf, "emit_maps")
 
         # P3: Bake + Build is STRUCTURAL (bakes a heightfield, then builds the mesh); the
         # Shape/Erosion/Displace knobs below are its inputs. Shade the result in Shaders.
