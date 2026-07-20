@@ -17,13 +17,14 @@ import bpy
 import bpy.utils.previews
 from bpy.props import (
     BoolProperty,
+    CollectionProperty,
     EnumProperty,
     FloatProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
 )
-from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
+from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
 from . import (  # noqa: F401
     firmament_panel,
@@ -136,6 +137,175 @@ class BBT_OT_reload(Operator):
         return {"FINISHED"}
 
 
+# Filter-stack editor (P4). The venv terrain engine evaluates an ordered op stack
+# (generators write a base, filters and erosion shape it, selectors mask where a
+# filter acts). This exposes that stack in the panel: a preset is a starting point
+# the artist loads and then edits op by op. Each op kind draws only its own params;
+# a hidden `raw` string carries any params the panel does not surface (fill_iters,
+# stream-power exponents, ...) so loading a preset and re-baking is faithful.
+#
+# Field names on BBT_TerrainOp match the engine's op-param keys, so building the
+# stack dict is a direct read (see _op_to_dict). One field is shared across kinds
+# when the meaning is compatible (iterations, amount, frequency, sharpness).
+_OP_META = {
+    "noise": ("Noise (base)", "RNDCURVE"),
+    "dunes": ("Dunes", "FORCE_WIND"),
+    "voronoi": ("Voronoi (cells)", "MESH_ICOSPHERE"),
+    "fluvial": ("Fluvial erosion", "MOD_FLUIDSIM"),
+    "pipe_hydraulic": ("Hydraulic erosion", "MOD_OCEAN"),
+    "thermal": ("Thermal slump", "MOD_SMOOTH"),
+    "terrace": ("Terrace", "ALIGN_FLUSH"),
+    "warp": ("Domain warp", "MOD_WARP"),
+    "curve": ("Curve remap", "FCURVE"),
+    "sharpen": ("Sharpen", "SHARPCURVE"),
+    "smooth": ("Smooth", "MOD_SMOOTH"),
+    "falloff": ("Falloff (coast)", "MOD_EDGESPLIT"),
+}
+
+# Fields each kind exposes in the UI (and writes into the stack dict).
+_OP_PARAMS = {
+    "noise": ["ridged", "detail_strength", "octaves", "warp", "mix", "amount"],
+    "dunes": ["wind", "frequency", "sharpness", "variation", "mix", "amount"],
+    "voronoi": ["cells", "pattern", "mix", "amount"],
+    "fluvial": ["iterations", "k", "diffusion"],
+    "pipe_hydraulic": ["iterations", "rain", "incision"],
+    "thermal": ["talus", "iterations"],
+    "terrace": ["steps", "sharpness"],
+    "warp": ["frequency", "amount"],
+    "curve": ["gamma", "contrast"],
+    "sharpen": ["amount", "radius"],
+    "smooth": ["sigma"],
+    "falloff": ["shape", "margin", "power"],
+}
+
+# Values a freshly ADDED op starts with (fields, plus "_raw" for the params the panel
+# does not surface but the engine op needs to behave well).
+_OP_ADD_DEFAULTS = {
+    "noise": {"ridged": 0.4, "detail_strength": 0.5, "octaves": 5, "warp": 70.0,
+              "mix": "replace", "amount": 1.0},
+    "dunes": {"wind": 35.0, "frequency": 12.0, "sharpness": 2.2, "variation": 0.5,
+              "mix": "replace", "amount": 0.5},
+    "voronoi": {"cells": 6.0, "pattern": "mesa", "mix": "multiply", "amount": 0.8},
+    "fluvial": {"iterations": 60, "k": 0.015, "diffusion": 0.08,
+                "_raw": {"sp_m": 0.5, "sp_n": 1.0, "recompute": 20, "fill_iters": 700,
+                         "acc_iters": 700, "thermal_iters": 1, "max_delta": 0.03,
+                         "talus": 0.004}},
+    "pipe_hydraulic": {"iterations": 120, "rain": 0.012, "incision": 0.4,
+                       "_raw": {"dt": 0.1, "capacity": 0.3, "dissolve": 0.25,
+                                "deposit": 0.3, "evaporate": 0.02, "min_slope": 0.03,
+                                "sp_m": 1.0, "sp_n": 1.2}},
+    "thermal": {"talus": 0.01, "iterations": 4, "_raw": {"factor": 0.5}},
+    "terrace": {"steps": 6, "sharpness": 0.8},
+    "warp": {"frequency": 3.0, "amount": 0.04},
+    "curve": {"gamma": 1.0, "contrast": 0.0},
+    "sharpen": {"amount": 0.4, "radius": 1.5},
+    "smooth": {"sigma": 1.0},
+    "falloff": {"shape": "edge", "margin": 0.2, "power": 2.0},
+}
+
+_MASK_ITEMS = [
+    ("none", "No mask", "The op acts everywhere"),
+    ("height", "Height band", "Only within a height band"),
+    ("slope", "Slope band", "Only within a slope band"),
+    ("curvature", "Curvature", "Ridges/rims vs valleys/hollows"),
+    ("flow", "Flow", "Only in channels that collect drainage"),
+    ("noise", "Noise", "A noise-broken region"),
+]
+
+
+class BBT_TerrainOp(PropertyGroup):
+    kind: EnumProperty(
+        name="Op", items=[(k, v[0], v[0], v[1], i) for i, (k, v) in enumerate(_OP_META.items())])
+    enabled: BoolProperty(name="Enabled", default=True,
+                          description="Uncheck to skip this op in the bake")
+    raw: StringProperty(default="{}", options={"HIDDEN"})  # non-surfaced params, verbatim
+    # shape / generators
+    ridged: FloatProperty(name="Ridged", default=0.4, min=0.0, max=1.0)
+    detail_strength: FloatProperty(name="Detail", default=0.5, min=0.0, max=2.0)
+    octaves: IntProperty(name="Octaves", default=5, min=1, max=10)
+    warp: FloatProperty(name="Warp", default=70.0, min=0.0, max=200.0)
+    mix: EnumProperty(name="Mix", default="replace",
+                      items=[("replace", "Replace", "Overwrite the field"),
+                             ("add", "Add", "Add onto the field"),
+                             ("multiply", "Multiply", "Modulate the field"),
+                             ("max", "Max", "Keep the higher of the two")])
+    amount: FloatProperty(name="Amount", default=0.5, min=0.0, max=2.0)
+    wind: FloatProperty(name="Wind", default=35.0, min=0.0, max=180.0)
+    frequency: FloatProperty(name="Frequency", default=12.0, min=0.5, max=40.0)
+    sharpness: FloatProperty(name="Sharpness", default=2.0, min=0.0, max=6.0)
+    variation: FloatProperty(name="Variation", default=0.5, min=0.0, max=1.0)
+    cells: FloatProperty(name="Cells", default=6.0, min=2.0, max=24.0)
+    pattern: EnumProperty(name="Pattern", default="mesa",
+                          items=[("mesa", "Mesa", "Flat-topped cells"),
+                                 ("crack", "Crack", "Ridged cell borders")])
+    # erosion
+    iterations: IntProperty(name="Iterations", default=60, min=0, max=400)
+    k: FloatProperty(name="Strength (k)", default=0.015, min=0.0, max=0.06, precision=4)
+    diffusion: FloatProperty(name="Diffusion", default=0.08, min=0.0, max=0.4, precision=3)
+    rain: FloatProperty(name="Rain", default=0.012, min=0.0, max=0.2, precision=4)
+    incision: FloatProperty(name="Incision", default=0.4, min=0.0, max=2.0)
+    talus: FloatProperty(name="Talus", default=0.01, min=0.0, max=0.06, precision=4)
+    # filters
+    steps: IntProperty(name="Steps", default=6, min=1, max=24)
+    gamma: FloatProperty(name="Gamma", default=1.0, min=0.2, max=3.0)
+    contrast: FloatProperty(name="Contrast", default=0.0, min=-1.0, max=1.0)
+    radius: FloatProperty(name="Radius", default=1.5, min=0.3, max=6.0)
+    sigma: FloatProperty(name="Sigma", default=1.0, min=0.0, max=6.0)
+    shape: EnumProperty(name="Shape", default="edge",
+                        items=[("edge", "Edge", "Sink all four borders"),
+                               ("radial", "Radial", "A round island"),
+                               ("gradient", "Gradient", "A shoreline across the scene")])
+    margin: FloatProperty(name="Margin", default=0.2, min=0.02, max=1.0)
+    power: FloatProperty(name="Power", default=2.0, min=0.2, max=6.0)
+    # per-op mask (a selector that gates where the op applies)
+    mask_kind: EnumProperty(name="Mask", items=_MASK_ITEMS, default="none")
+    mask_low: FloatProperty(name="Low", default=0.0, min=0.0, max=1.0)
+    mask_high: FloatProperty(name="High", default=1.0, min=0.0, max=1.0)
+    mask_falloff: FloatProperty(name="Falloff", default=0.1, min=0.0, max=1.0)
+
+
+def _op_to_dict(op):
+    """A BBT_TerrainOp -> the engine op dict, merging surfaced fields over `raw`."""
+    try:
+        d = json.loads(op.raw) if op.raw else {}
+    except ValueError:
+        d = {}
+    d["kind"] = op.kind
+    for key in _OP_PARAMS.get(op.kind, []):
+        d[key] = getattr(op, key)
+    if op.mask_kind and op.mask_kind != "none":
+        d["mask"] = {"kind": op.mask_kind, "low": op.mask_low,
+                     "high": op.mask_high, "falloff": op.mask_falloff}
+    else:
+        d.pop("mask", None)
+    return d
+
+
+def _load_op(op, d):
+    """Populate a BBT_TerrainOp from an engine op dict (from a preset stack)."""
+    op.kind = d.get("kind", "noise")
+    exposed = set(_OP_PARAMS.get(op.kind, []))
+    for key in exposed:
+        if key in d:
+            setattr(op, key, d[key])
+    mask = d.get("mask")
+    if mask:
+        op.mask_kind = mask.get("kind", "none")
+        op.mask_low = mask.get("low", 0.0)
+        op.mask_high = mask.get("high", 1.0)
+        op.mask_falloff = mask.get("falloff", 0.1)
+    else:
+        op.mask_kind = "none"
+    op.raw = json.dumps({k: v for k, v in d.items()
+                         if k not in exposed and k not in ("kind", "mask")})
+    op.enabled = True
+
+
+def _stack_from_ops(hf):
+    """The enabled ops as an engine stack list."""
+    return [_op_to_dict(op) for op in hf.ops if op.enabled]
+
+
 # Heightfield terrain: bake in the venv, build in place here.
 class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
@@ -176,6 +346,13 @@ class BBT_HeightfieldProps(PropertyGroup):
     height: FloatProperty(name="Height", default=22.0)
     sea_level: FloatProperty(name="Sea Level", default=0.22, min=0.0, max=1.0)
     last_bake: StringProperty(name="Last bake", default="")
+    # P4 filter-stack editor: an editable op stack. When use_custom_stack is on and
+    # the stack is non-empty, the bake runs it instead of the preset + global knobs.
+    use_custom_stack: BoolProperty(
+        name="Use custom stack", default=False,
+        description="Bake the editable op stack below instead of the preset + knobs")
+    ops: CollectionProperty(type=BBT_TerrainOp)
+    active_op: IntProperty(name="Active op", default=0)
 
 
 class BBT_OT_random_seed(Operator):
@@ -262,14 +439,18 @@ class BBT_OT_bake_terrain(Operator):
         # basename the free-text target so a value like "../../x" cannot escape _generated
         target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
         out_abs = os.path.join(repo, "library", "_generated", f"{target}_hf.png")
-        # Send the preset plus the five global knobs; the venv (build_params ->
-        # resolve_stack) turns them into the op stack and applies the preview size,
-        # so the panel does not duplicate that logic.
-        knobs = {
-            "size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
-            "preset": hf.preset, "relief": hf.relief, "detail": hf.detail,
-            "erosion": hf.erosion, "warp": hf.warp,
-        }
+        # Either send the edited op stack verbatim (P4 custom mode), or the preset
+        # plus the five global knobs; the venv turns knobs into a stack and applies
+        # the preview size, so the panel does not duplicate that logic.
+        if hf.use_custom_stack and len(hf.ops):
+            knobs = {"size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
+                     "stack": _stack_from_ops(hf)}
+        else:
+            knobs = {
+                "size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
+                "preset": hf.preset, "relief": hf.relief, "detail": hf.detail,
+                "erosion": hf.erosion, "warp": hf.warp,
+            }
 
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump(knobs, tmp)
@@ -346,6 +527,107 @@ class BBT_OT_bake_terrain(Operator):
             self.report({"INFO"},
                         f"Baked {actual} {bake_size}px in {dt:.1f}s -> {hf.target}")
         return {"FINISHED"}
+
+
+# Filter-stack editor operators (P4): add / remove / reorder ops, and load a
+# preset's stack in to edit. The stack lives on bbt_hf.ops (a CollectionProperty).
+class BBT_OT_terrain_op_add(Operator):
+    bl_idname = "bob_blender_tools.terrain_op_add"
+    bl_label = "Add Op"
+    bl_description = "Add a terrain op to the stack"
+    bl_options = {"REGISTER", "UNDO"}
+
+    kind: EnumProperty(name="Op",
+                       items=[(k, v[0], v[0], v[1], i) for i, (k, v) in enumerate(_OP_META.items())])
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        op = hf.ops.add()
+        op.kind = self.kind
+        defaults = _OP_ADD_DEFAULTS.get(self.kind, {})
+        for key, val in defaults.items():
+            if key == "_raw":
+                op.raw = json.dumps(val)
+            else:
+                setattr(op, key, val)
+        if "_raw" not in defaults:
+            op.raw = "{}"
+        hf.active_op = len(hf.ops) - 1
+        hf.use_custom_stack = True  # adding an op means you want to bake the stack
+        return {"FINISHED"}
+
+
+class BBT_OT_terrain_op_remove(Operator):
+    bl_idname = "bob_blender_tools.terrain_op_remove"
+    bl_label = "Remove Op"
+    bl_description = "Remove the active op from the stack"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        if not hf.ops:
+            return {"CANCELLED"}
+        hf.ops.remove(hf.active_op)
+        hf.active_op = max(0, min(hf.active_op, len(hf.ops) - 1))
+        return {"FINISHED"}
+
+
+class BBT_OT_terrain_op_move(Operator):
+    bl_idname = "bob_blender_tools.terrain_op_move"
+    bl_label = "Move Op"
+    bl_description = "Reorder the active op (order matters: the stack runs top to bottom)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    direction: EnumProperty(items=[("UP", "Up", ""), ("DOWN", "Down", "")])
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        i = hf.active_op
+        j = i - 1 if self.direction == "UP" else i + 1
+        if 0 <= j < len(hf.ops):
+            hf.ops.move(i, j)
+            hf.active_op = j
+        return {"FINISHED"}
+
+
+class BBT_OT_terrain_load_preset_stack(Operator):
+    bl_idname = "bob_blender_tools.terrain_load_preset_stack"
+    bl_label = "Load Preset Stack"
+    bl_description = "Replace the stack with the current landscape preset's ops, to edit"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        path = os.path.join(os.path.dirname(__file__), "presets.json")
+        try:
+            with open(path) as fh:
+                stacks = json.load(fh).get("stacks", {})
+        except (OSError, ValueError) as exc:
+            self.report({"ERROR"}, f"presets.json not readable: {exc}")
+            return {"CANCELLED"}
+        ops = stacks.get(hf.preset)
+        if not ops:
+            self.report({"ERROR"}, f"no stack for preset {hf.preset!r}")
+            return {"CANCELLED"}
+        hf.ops.clear()
+        for d in ops:
+            _load_op(hf.ops.add(), d)
+        hf.active_op = 0
+        hf.use_custom_stack = True
+        self.report({"INFO"}, f"Loaded {hf.preset} stack ({len(ops)} ops) to edit")
+        return {"FINISHED"}
+
+
+class BBT_UL_terrain_ops(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_prop, index):
+        label, ic = _OP_META.get(item.kind, (item.kind, "DOT"))
+        row = layout.row(align=True)
+        row.label(text=label, icon=ic)
+        mask = item.mask_kind if item.mask_kind != "none" else ""
+        if mask:
+            row.label(text="", icon="MOD_MASK")
+        row.prop(item, "enabled", text="", emboss=False,
+                 icon="CHECKBOX_HLT" if item.enabled else "CHECKBOX_DEHLT")
 
 
 # Panel
@@ -461,7 +743,53 @@ class BBT_PT_hf_displace(Panel):
         layout.prop(hf, "mesh_res")
 
 
+class BBT_PT_hf_stack(Panel):
+    bl_label = "Filter Stack (advanced)"
+    bl_idname = "BBT_PT_hf_stack"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_heightfield"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        hf = context.scene.bbt_hf
+        layout = self.layout
+
+        # Custom mode toggle + load the current preset's ops to edit.
+        row = layout.row(align=True)
+        row.prop(hf, "use_custom_stack")
+        row.operator("bob_blender_tools.terrain_load_preset_stack",
+                     text=f"Load {hf.preset.replace('_', ' ').title()}", icon="IMPORT")
+        if not hf.use_custom_stack:
+            layout.label(text="Off: the bake uses the preset + Sculpt knobs", icon="INFO")
+
+        # The op list plus add/remove/reorder controls. Order matters: top to bottom.
+        row = layout.row()
+        row.template_list("BBT_UL_terrain_ops", "", hf, "ops", hf, "active_op", rows=4)
+        col = row.column(align=True)
+        col.operator_menu_enum("bob_blender_tools.terrain_op_add", "kind", text="", icon="ADD")
+        col.operator("bob_blender_tools.terrain_op_remove", text="", icon="REMOVE")
+        col.separator()
+        col.operator("bob_blender_tools.terrain_op_move", text="", icon="TRIA_UP").direction = "UP"
+        col.operator("bob_blender_tools.terrain_op_move", text="", icon="TRIA_DOWN").direction = "DOWN"
+
+        # Params for the active op, then its optional mask.
+        if 0 <= hf.active_op < len(hf.ops):
+            op = hf.ops[hf.active_op]
+            box = layout.box()
+            label = _OP_META.get(op.kind, (op.kind,))[0]
+            box.label(text=label, icon=_OP_META.get(op.kind, ("", "DOT"))[1])
+            for key in _OP_PARAMS.get(op.kind, []):
+                box.prop(op, key)
+            box.prop(op, "mask_kind")
+            if op.mask_kind in ("height", "slope"):
+                sub = box.row(align=True)
+                sub.prop(op, "mask_low"); sub.prop(op, "mask_high"); sub.prop(op, "mask_falloff")
+
+
 _CLASSES = (
+    BBT_TerrainOp,
     BBT_AddonPreferences,
     BBT_HeightfieldProps,
     BBT_OT_start,
@@ -470,10 +798,16 @@ _CLASSES = (
     BBT_OT_random_seed,
     BBT_OT_detect_backends,
     BBT_OT_bake_terrain,
+    BBT_OT_terrain_op_add,
+    BBT_OT_terrain_op_remove,
+    BBT_OT_terrain_op_move,
+    BBT_OT_terrain_load_preset_stack,
+    BBT_UL_terrain_ops,
     BBT_PT_panel,
     BBT_PT_heightfield,
     BBT_PT_hf_shape,
     BBT_PT_hf_displace,
+    BBT_PT_hf_stack,
 )
 
 

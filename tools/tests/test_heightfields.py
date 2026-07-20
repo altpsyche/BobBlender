@@ -198,8 +198,9 @@ def test_panel_presets_json_in_sync():
     spec = importlib.util.spec_from_file_location("gen_panel_presets", gen_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    committed = json.loads(mod.OUT.read_text())["presets"]
-    assert committed == mod.build_panel_presets()
+    committed = json.loads(mod.OUT.read_text())
+    assert committed["presets"] == mod.build_panel_presets()
+    assert committed["stacks"] == mod.build_panel_stacks()  # P4 stack editor source
 
 
 # Resolution independence and canyon structure (the two headline behaviours).
