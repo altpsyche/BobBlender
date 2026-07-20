@@ -20,7 +20,7 @@ from scipy.ndimage import uniform_filter, zoom
 
 from bobtools import heightfields as hf
 from bobtools.heightfields import (
-    backend, engine, erode, generate, io, params, pipeline, presets,
+    backend, engine, erode, generate, io, maps, params, pipeline, presets,
 )
 
 DATA = pathlib.Path(__file__).parent / "data"
@@ -250,6 +250,35 @@ def test_no_border_rim(tmp_path):
     ring = np.concatenate([h[:3].ravel(), h[-3:].ravel(), h[:, :3].ravel(), h[:, -3:].ravel()])
     interior = h[16:-16, 16:-16]
     assert np.percentile(ring, 99) <= np.percentile(interior, 99) + 1e-6
+
+
+# Auxiliary flow/wetness maps (P5).
+
+def test_flow_map_concentrates():
+    # Flow accumulation must concentrate into channels: the top percentile far above
+    # the median, and the map bounded to [0, 1] and finite.
+    bk = backend.select("auto")
+    h = engine.run_stack(np.zeros((160, 160)), params.resolve_stack("canyon", seed=5),
+                         bk, seed=5)
+    m = maps.derive_maps(h, bk)
+    flow, wet = m["flow"], m["wetness"]
+    for a in (flow, wet):
+        assert np.isfinite(a).all() and a.min() >= 0.0 and a.max() <= 1.0
+    assert np.percentile(flow, 99) > np.percentile(flow, 50) + 0.2  # channels stand out
+
+
+def test_bake_emits_maps(tmp_path):
+    p = _small_params("cpu")
+    p["maps"] = True
+    out = str(tmp_path / "m.png")
+    meta = hf.bake(out, p, force=True)
+    assert set(meta["maps"]) == {"flow", "wetness"}
+    for path in meta["maps"].values():
+        assert pathlib.Path(path).exists()
+        assert io.read_png16(path).shape == io.read_png16(out).shape
+    # default bake writes no maps
+    meta2 = hf.bake(str(tmp_path / "n.png"), _small_params("cpu"), force=True)
+    assert meta2["maps"] == {}
 
 
 def test_golden_small(tmp_path):

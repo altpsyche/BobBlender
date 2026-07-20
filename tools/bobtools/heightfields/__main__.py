@@ -34,6 +34,8 @@ def main():
     ap.add_argument("--knobs-file", help="JSON flat-knobs file (expanded via build_params)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--preview", action="store_true", help="bake at preview resolution")
+    ap.add_argument("--maps", action="store_true",
+                    help="also emit flow/wetness sidecar PNGs beside the height PNG")
     ap.add_argument("--backends", action="store_true",
                     help="print available backends as JSON and exit")
     args = ap.parse_args()
@@ -63,6 +65,8 @@ def main():
             base.update(params)
             params = base
 
+    if args.maps:
+        params["maps"] = True
     result = bake(args.out, params, force=args.force, preview=args.preview)
     print(json.dumps(result))
 

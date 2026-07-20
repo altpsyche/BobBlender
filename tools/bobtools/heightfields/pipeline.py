@@ -12,12 +12,13 @@ so a preview at PREVIEW_SIZE and a full bake are the same landform at two sampli
 densities.
 """
 
+import os
 import time
 
 import numpy as np
 
 from . import backend as backend_mod
-from . import cache, engine, io
+from . import cache, engine, io, maps
 from . import params as params_mod
 from .params import PREVIEW_SIZE
 
@@ -27,6 +28,22 @@ def _stack_for(params: dict) -> list:
     if params.get("stack"):
         return params["stack"]
     return params_mod.build_params(params)["stack"]
+
+
+def _map_path(out_path: str, kind: str) -> str:
+    base, ext = os.path.splitext(out_path)
+    return f"{base}_{kind}{ext or '.png'}"
+
+
+def _emit_maps(out_path: str, h, backend) -> dict:
+    """Write flow/wetness sidecar PNGs beside the height PNG; return {kind: path}."""
+    derived = maps.derive_maps(h, backend)
+    paths = {}
+    for kind, arr in derived.items():
+        p = _map_path(out_path, kind)
+        io.to_png16(arr, p)
+        paths[kind] = p
+    return paths
 
 
 def bake(out_path: str, params: dict, force: bool = False, preview: bool = False) -> dict:
@@ -41,6 +58,7 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
 
     size = int(params.get("size", 768))
     seed = int(params.get("seed", 0))
+    want_maps = bool(params.get("maps", False))
     stack = _stack_for(params)
     backend = backend_mod.select(params.get("backend", "auto"))
 
@@ -49,11 +67,15 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     # (backend.name, not "auto"), so a GPU-baked sidecar is not served to a CPU-only
     # machine that would resolve "auto" differently. The source fingerprint in
     # cache.py invalidates it when the op math changes.
-    resolved = {"size": size, "seed": seed, "backend": backend.name, "stack": stack}
+    resolved = {"size": size, "seed": seed, "backend": backend.name, "stack": stack,
+                "maps": want_maps}
     key = cache.params_hash(resolved)
     if not force:
         side = io.read_sidecar(out_path)
         if side is not None and side.get("hash") == key:
+            # Re-emit maps if they were requested but a sidecar file went missing.
+            if want_maps and not all(os.path.exists(p) for p in side.get("maps", {}).values()):
+                _emit_maps(out_path, io.read_png16(out_path), backend)
             return {**side, "cached": True}
 
     t0 = time.perf_counter()
@@ -62,6 +84,9 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     # reflected margin is needed and no border rim forms.
     base = np.zeros((size, size), dtype=np.float64)
     eroded = engine.run_stack(base, stack, backend, seed=seed)
+    # Optional flow/wetness maps (a drainage solve on the final field) for shading and
+    # scatter to key off the terrain's own hydrology; opt-in since they add cost.
+    map_paths = _emit_maps(out_path, eroded, backend) if want_maps else {}
     elapsed = time.perf_counter() - t0
 
     io.to_png16(eroded, out_path)
@@ -74,6 +99,7 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
         "deterministic": True,  # pure stencils on CPU and GPU are both reproducible
         "size": size,
         "seconds": round(elapsed, 3),
+        "maps": map_paths,
         "stats": {
             "min": float(eroded.min()),
             "max": float(eroded.max()),
