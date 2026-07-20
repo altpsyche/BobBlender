@@ -84,6 +84,7 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
         "params": params,
         "backend": backend.name,
         "platform": backend.platform,
+        "deterministic": True,  # both CPU and (batched fixed-point) GPU are reproducible
         "size": size,
         "seconds": round(elapsed, 3),
         "stats": {

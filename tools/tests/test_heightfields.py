@@ -205,4 +205,15 @@ def test_gpu_bake_finite_and_similar(tmp_path):
     b = io.read_png16(str(tmp_path / "gpu.png"))
     assert np.isfinite(b).all()
     corr = float(np.corrcoef(a.ravel(), b.ravel())[0, 1])
-    assert corr > 0.6  # same structure, not bit-identical
+    assert corr > 0.9  # batched fixed-point GPU tracks the sequential CPU reference closely
+
+
+@pytest.mark.skipif(backend.select("auto").name != "gpu", reason="no GPU")
+def test_gpu_bake_deterministic(tmp_path):
+    # A2 regression: the fixed-point batched kernel makes a seeded GPU bake
+    # bit-reproducible run-to-run (float atomicAdd on the surface was not).
+    hf.bake(str(tmp_path / "g1.png"), _small_params("gpu"), force=True)
+    hf.bake(str(tmp_path / "g2.png"), _small_params("gpu"), force=True)
+    a = io.read_png16(str(tmp_path / "g1.png"))
+    b = io.read_png16(str(tmp_path / "g2.png"))
+    assert np.array_equal(a, b)
