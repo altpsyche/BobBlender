@@ -218,6 +218,14 @@ the arm map's Separate Color Red into `AO Map` so converted rocks and props read
 depth. The texture-set path still folds AO into its own albedo, so it leaves `AO Map` at `1.0`
 (no double-darkening), and a solid surface keeps `1.0` (identity), so the block-out is unchanged.
 
+Known limitation (deliberate, audit finding C2). The Convert AO route assumes the metallicRoughness
+R channel is occlusion. That holds for ORM/"arm" packs (Poly Haven, every model the library ships)
+but is **undefined per the glTF spec** for a plain metallicRoughness texture: a non-ORM asset whose R
+is 0 would darken albedo to black, and an asset with AO already baked into albedo would double-darken.
+It is kept as-is because all shipped assets are ORM; if a non-ORM asset is ever imported, gate the
+route on importer-aware occlusion detection (route AO only when the arm image is also the material's
+`occlusionTexture`) rather than assuming it. See the note in `bobshade_material` (`materials.py`).
+
 ## The shared weather layer
 
 `S_Weather` takes the master's base albedo, roughness, normal, and optional height and
