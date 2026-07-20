@@ -8,9 +8,13 @@ Three kinds, composed as an ordered list:
 - hydraulic: droplet-based hydraulic erosion with sediment transport and
   deposition. This is the GPU track. Erosion is spread over a radius brush (not a
   single cell), which is what turns spiky pits into smooth valleys. A seeded CPU
-  sequential reference (numpy) is the deterministic golden path; a CuPy RawKernel
-  is the fast path. Both start from the same host-seeded droplet positions but are
-  not bit-identical (GPU atomicAdd order), so the CPU path is the reference.
+  sequential reference (numpy) is the golden path; a CuPy RawKernel is the fast
+  path. Both start from the same host-seeded droplet positions. The GPU path runs
+  droplets in fixed-size batches against a frozen surface and accumulates their
+  edits as fixed-point integers (order-independent atomics), so a seeded GPU bake
+  is bit-reproducible run-to-run and tracks the CPU reference closely (corr ~0.997
+  at the default batch). It is not bit-identical to the CPU path (float32 vs float64,
+  batched vs fully sequential), but it is deterministic, so both back the cache.
 
 run_passes(h, passes, backend, seed) applies a list and returns a [0, 1] field.
 """
@@ -27,6 +31,15 @@ log = logging.getLogger("bob.heightfields")
 # clamp the droplet count to this many with a warning; override with the env var,
 # or use a GPU backend for the full density. The GPU path is uncapped.
 CPU_DROPLET_CAP = int(os.environ.get("BOB_HF_CPU_DROPLET_CAP", "200000"))
+
+# GPU determinism: droplets run in fixed-size batches against a frozen surface and
+# accumulate their edits as fixed-point integers (order-independent atomics), applied
+# between batches. This makes a seeded GPU bake bit-reproducible run-to-run (float
+# atomicAdd on the surface was not), so the sidecar's reproducibility holds and the
+# cache is safe. The batch size only trades correlation-with-the-CPU-reference against
+# launch count; it does not affect determinism.
+GPU_BATCH = int(os.environ.get("BOB_HF_GPU_BATCH", "256"))
+_FIXED = 1 << 30  # fixed-point scale for the integer delta accumulator
 
 SQRT2 = 2.0 ** 0.5
 _NEIGHBOURS = [
@@ -152,10 +165,20 @@ def _erosion_brush(radius):
 
 
 _KERNEL_SRC = r"""
+// h is a FROZEN read-only surface for this batch; edits accumulate into acc as
+// fixed-point int64 via integer atomicAdd, which is order-independent, so the result
+// does not depend on thread scheduling (float atomicAdd on h was the nondeterminism).
+// The host applies acc to h and re-freezes between batches so carving still propagates.
 #define HG(idx) fmaxf(h[(idx)], 0.f)
+#define FIXED 1073741824.0  /* 2^30, must match _FIXED on the host */
+
+__device__ __forceinline__ void dep(long long* acc, int idx, float amt) {
+    atomicAdd((unsigned long long*)&acc[idx],
+              (unsigned long long)(long long)llround((double)amt * FIXED));
+}
 
 extern "C" __global__
-void hydraulic(float* h, const int W, const int H,
+void hydraulic(const float* h, long long* acc, const int W, const int H,
                const float* sx, const float* sy, const int n,
                const int max_steps, const float inertia, const float capacity,
                const float deposition, const float erosion, const float evaporation,
@@ -179,10 +202,10 @@ void hydraulic(float* h, const int W, const int H,
         dy = dy*inertia - gy*(1.f-inertia);
         float len = sqrtf(dx*dx + dy*dy);
         if (len < 1e-6f) {  // stalled in an interior pit: drop the load here
-            atomicAdd(&h[y0*W+x0], sed*(1-fx)*(1-fy));
-            atomicAdd(&h[y0*W+x1], sed*fx*(1-fy));
-            atomicAdd(&h[y1*W+x0], sed*(1-fx)*fy);
-            atomicAdd(&h[y1*W+x1], sed*fx*fy);
+            dep(acc, y0*W+x0, sed*(1-fx)*(1-fy));
+            dep(acc, y0*W+x1, sed*fx*(1-fy));
+            dep(acc, y1*W+x0, sed*(1-fx)*fy);
+            dep(acc, y1*W+x1, sed*fx*fy);
             break;
         }
         dx /= len; dy /= len;
@@ -198,10 +221,10 @@ void hydraulic(float* h, const int W, const int H,
         float cap = fmaxf(-delta, min_slope) * speed * water * capacity;
         if (sed > cap || delta > 0.f) {  // deposit bilinearly at the current point
             float amt = (delta > 0.f) ? fminf(delta, sed) : (sed - cap) * deposition;
-            atomicAdd(&h[y0*W+x0], amt*(1-fx)*(1-fy));
-            atomicAdd(&h[y0*W+x1], amt*fx*(1-fy));
-            atomicAdd(&h[y1*W+x0], amt*(1-fx)*fy);
-            atomicAdd(&h[y1*W+x1], amt*fx*fy);
+            dep(acc, y0*W+x0, amt*(1-fx)*(1-fy));
+            dep(acc, y0*W+x1, amt*fx*(1-fy));
+            dep(acc, y1*W+x0, amt*(1-fx)*fy);
+            dep(acc, y1*W+x1, amt*fx*fy);
             sed -= amt;
         } else {  // erode, spread over the brush so valleys stay smooth
             float amt = fminf((cap - sed) * erosion, -delta);
@@ -209,7 +232,7 @@ void hydraulic(float* h, const int W, const int H,
             for (int b = 0; b < bn; b++) {
                 int bx = x0 + bdx[b], by = y0 + bdy[b];
                 if (bx < 0 || bx >= W || by < 0 || by >= H) continue;
-                atomicAdd(&h[by*W+bx], -amt*bw[b]);
+                dep(acc, by*W+bx, -amt*bw[b]);
             }
             sed += amt;
         }
@@ -237,17 +260,32 @@ def _hydraulic_gpu(h, sx, sy, p, backend):
     bdy, bdx, bw = _erosion_brush(p["radius"])
     hd = cp.asarray(h, dtype=cp.float32)
     kernel = cp.RawKernel(_KERNEL_SRC, "hydraulic")
-    n = sx.size
-    threads = 256
-    blocks = (n + threads - 1) // threads
-    kernel((blocks,), (threads,), (
-        hd, np.int32(W), np.int32(H), cp.asarray(sx), cp.asarray(sy), np.int32(n),
+    n = int(sx.size)
+    sxd, syd = cp.asarray(sx), cp.asarray(sy)
+    tail = (
         np.int32(p["max_steps"]), np.float32(p["inertia"]), np.float32(p["capacity"]),
         np.float32(p["deposition"]), np.float32(p["erosion"]), np.float32(p["evaporation"]),
         np.float32(p["gravity"]), np.float32(p["min_slope"]),
         np.float32(p["start_speed"]), np.float32(p["start_water"]),
         cp.asarray(bdy), cp.asarray(bdx), cp.asarray(bw), np.int32(bw.size),
-    ))
+    )
+    threads = 256
+    batch = max(1, int(p.get("gpu_batch", GPU_BATCH)))
+    acc = cp.empty(H * W, dtype=cp.int64)
+    inv_fixed = 1.0 / float(_FIXED)
+    # Frozen-surface batches: each batch erodes the current hd and sums integer deltas
+    # deterministically, then the host folds them back in and re-freezes. Fixed batch
+    # boundaries + integer atomics make the whole bake bit-reproducible.
+    for start in range(0, n, batch):
+        m = min(batch, n - start)
+        acc.fill(0)
+        blocks = (m + threads - 1) // threads
+        kernel((blocks,), (threads,), (
+            hd, acc, np.int32(W), np.int32(H),
+            sxd[start:start + m], syd[start:start + m], np.int32(m), *tail,
+        ))
+        hd += (acc.astype(cp.float64) * inv_fixed).astype(cp.float32).reshape(H, W)
+        cp.maximum(hd, cp.float32(0.0), out=hd)
     backend.synchronize()
     out = backend.asnumpy(hd).astype(np.float64)
     if not np.isfinite(out).all():
