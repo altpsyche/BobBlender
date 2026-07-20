@@ -40,51 +40,35 @@ _preview_coll = None
 _PREVIEW_KEY = "hf"
 
 
-# Panel presets: the slider values the dropdown loads, so a good starting look is
-# one pick instead of tuning every knob. The generation knobs come from
-# presets.json, generated from the venv PRESET_KNOBS by
-# tools/scripts/gen_panel_presets.py (the single source of truth; a drift test
-# guards it). The display knobs below (height, sea level) are Blender-side
-# displacement params, not heightfield-generation params, so they live here.
-_HF_DISPLAY = {
-    "foothills": {"height": 14.0, "sea_level": 0.30},
-    "alpine": {"height": 20.0, "sea_level": 0.26},
-    "badlands": {"height": 16.0, "sea_level": 0.30},
-    "rolling": {"height": 9.0, "sea_level": 0.32},
-    "canyon": {"height": 18.0, "sea_level": 0.28},
-    "mesa": {"height": 14.0, "sea_level": 0.30},
-    "islands": {"height": 16.0, "sea_level": 0.34},
-}
-_HF_DISPLAY_DEFAULT = {"height": 14.0, "sea_level": 0.30}
-
-
+# Panel presets: picking a landscape family loads a good starting look -- the four
+# global knobs reset to neutral (0.5, the preset as authored) and the Blender-side
+# display knobs (height, sea level) that suit the family. The table is committed in
+# presets.json, generated from the venv presets by tools/scripts/gen_panel_presets.py
+# (the single source of truth; a drift test guards it). You then sculpt with the
+# knobs; there is no separate "custom" entry -- your knob tweaks ARE the custom look.
 def _load_hf_presets():
-    """Merge the generated generation knobs with the panel-side display knobs."""
+    """The per-preset slider table (global knobs + display) from the committed JSON."""
     path = os.path.join(os.path.dirname(__file__), "presets.json")
     try:
         with open(path) as fh:
-            gen = json.load(fh).get("presets", {})
+            return json.load(fh).get("presets", {})
     except (OSError, ValueError) as exc:
         print(f"[bob_blender_tools] presets.json not loaded: {exc}")
         return {}
-    return {name: {**knobs, **_HF_DISPLAY.get(name, _HF_DISPLAY_DEFAULT)}
-            for name, knobs in gen.items()}
 
 
 _HF_PRESETS = _load_hf_presets()
 
 
 def _preset_items(self, context):
-    items = [("custom", "Custom", "Your own slider values")]
-    items += [(k, k.title(), f"Load the {k} preset") for k in _HF_PRESETS]
-    return items
+    return [(k, k.replace("_", " ").title(), f"Load the {k} landscape") for k in _HF_PRESETS]
 
 
 def _apply_preset(self, context):
-    """Populate the sliders from the chosen preset (update callback)."""
+    """Reset the sliders to the chosen preset's neutral look (update callback)."""
     values = _HF_PRESETS.get(self.preset)
     if not values:
-        return  # "custom": leave the sliders alone
+        return
     for key, val in values.items():
         setattr(self, key, val)
 
@@ -176,22 +160,21 @@ class BBT_HeightfieldProps(PropertyGroup):
                     "bake resolution. The heightmap keeps its full detail for shading; the mesh "
                     "needs only enough vertices for the silhouette. Matching it to a 2048 bake "
                     "would build ~4M vertices and stall the viewport")
-    seed: IntProperty(name="Seed", default=7)
-    octaves: IntProperty(name="Octaves", default=5, min=1, max=10)
-    ridged: FloatProperty(name="Ridged", default=0.4, min=0.0, max=1.0)
-    detail_strength: FloatProperty(name="Detail", default=0.45, min=0.0, max=2.0)
-    droplets: IntProperty(name="Droplet Density", default=1_500_000, min=1000, max=8_000_000,
-                          description="Droplet count at 768px; the pipeline scales it to the bake resolution")
-    erosion: FloatProperty(name="Erosion", default=0.4, min=0.0, max=2.0)
-    deposition: FloatProperty(name="Deposition", default=0.4, min=0.0, max=1.0)
-    radius: IntProperty(name="Brush", default=4, min=1, max=8)
-    max_steps: IntProperty(name="Steps", default=96, min=8, max=256)
-    thermal_iters: IntProperty(name="Thermal", default=6, min=0, max=40)
-    edge_falloff: FloatProperty(name="Edge Falloff", default=0.0, min=0.0, max=0.5,
-                                description="Sink the borders toward sea before erosion; 0 = off (islands, plateaus)")
+    seed: IntProperty(name="Seed", default=7,
+                      description="Random variation; the same seed always gives the same terrain")
+    # The five curated global knobs. Each is 0..1 with 0.5 meaning "the preset as
+    # authored"; the venv (params.resolve_stack) turns them into the op stack.
+    relief: FloatProperty(name="Relief", default=0.5, min=0.0, max=1.0,
+                          description="Ruggedness: higher is rockier, more dramatic ridgelines")
+    detail: FloatProperty(name="Detail", default=0.5, min=0.0, max=1.0,
+                          description="Feature size: higher adds finer octaves and crisper edges")
+    erosion: FloatProperty(name="Erosion", default=0.5, min=0.0, max=1.0,
+                           description="Incision: higher carves deeper valleys and channels")
+    warp: FloatProperty(name="Warp", default=0.5, min=0.0, max=1.0,
+                        description="Meander: higher distorts the domain for a more organic look")
     terrain_size: FloatProperty(name="Size m", default=90.0, min=1.0)
-    height: FloatProperty(name="Height", default=17.0)
-    sea_level: FloatProperty(name="Sea Level", default=0.28, min=0.0, max=1.0)
+    height: FloatProperty(name="Height", default=22.0)
+    sea_level: FloatProperty(name="Sea Level", default=0.22, min=0.0, max=1.0)
     last_bake: StringProperty(name="Last bake", default="")
 
 
@@ -279,16 +262,13 @@ class BBT_OT_bake_terrain(Operator):
         # basename the free-text target so a value like "../../x" cannot escape _generated
         target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
         out_abs = os.path.join(repo, "library", "_generated", f"{target}_hf.png")
-        # Send flat knobs; the pipeline (build_params + preview) expands the pass
-        # list and scales droplet density to the bake resolution, so the panel does
-        # not duplicate that logic. Droplets is a density at 768px.
+        # Send the preset plus the five global knobs; the venv (build_params ->
+        # resolve_stack) turns them into the op stack and applies the preview size,
+        # so the panel does not duplicate that logic.
         knobs = {
             "size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
-            "octaves": hf.octaves, "roughness": 0.5, "ridged": hf.ridged,
-            "detail_strength": hf.detail_strength, "warp": 90,
-            "droplets": hf.droplets, "erosion": hf.erosion, "deposition": hf.deposition,
-            "radius": hf.radius, "max_steps": hf.max_steps, "thermal_iters": hf.thermal_iters,
-            "edge_falloff": hf.edge_falloff,
+            "preset": hf.preset, "relief": hf.relief, "detail": hf.detail,
+            "erosion": hf.erosion, "warp": hf.warp,
         }
 
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
@@ -441,7 +421,7 @@ class BBT_PT_heightfield(Panel):
 
 
 class BBT_PT_hf_shape(Panel):
-    bl_label = "Shape"
+    bl_label = "Sculpt"
     bl_idname = "BBT_PT_hf_shape"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -455,30 +435,12 @@ class BBT_PT_hf_shape(Panel):
         row = layout.row(align=True)
         row.prop(hf, "seed")
         row.operator("bob_blender_tools.random_seed", text="", icon="FILE_REFRESH")
-        layout.prop(hf, "octaves")
-        layout.prop(hf, "ridged")
-        layout.prop(hf, "detail_strength")
-
-
-class BBT_PT_hf_erosion(Panel):
-    bl_label = "Erosion"
-    bl_idname = "BBT_PT_hf_erosion"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "BobBlenderTools"
-    bl_parent_id = "BBT_PT_heightfield"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        hf = context.scene.bbt_hf
-        layout = self.layout
-        layout.prop(hf, "droplets")
-        layout.prop(hf, "erosion")
-        layout.prop(hf, "deposition")
-        layout.prop(hf, "radius")
-        layout.prop(hf, "max_steps")
-        layout.prop(hf, "thermal_iters")
-        layout.prop(hf, "edge_falloff")
+        # The five curated global knobs modulate the chosen landscape preset.
+        col = layout.column(align=True)
+        col.prop(hf, "relief")
+        col.prop(hf, "detail")
+        col.prop(hf, "erosion")
+        col.prop(hf, "warp")
 
 
 class BBT_PT_hf_displace(Panel):
@@ -511,7 +473,6 @@ _CLASSES = (
     BBT_PT_panel,
     BBT_PT_heightfield,
     BBT_PT_hf_shape,
-    BBT_PT_hf_erosion,
     BBT_PT_hf_displace,
 )
 

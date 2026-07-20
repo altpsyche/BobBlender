@@ -7,9 +7,11 @@ exposes; this script is the one place those values come from
 commit the updated presets.json. A drift test (tools/tests) fails if the committed
 file is stale.
 
-The panel adds its own display knobs (height, sea level) on top; those are
-Blender-side displacement params, not heightfield-generation params, so they live
-in the panel, not here.
+Each preset is a filter stack in the venv; the panel does not need the stack, only
+the slider values to load when a preset is picked: the four global knobs (reset to
+their neutral 0.5, so the preset shows its authored look) plus the Blender-side
+display knobs (height, sea level) that suit each family. seed is left to the user
+(the randomize button), so presets do not pin it.
 
 Run: uv run --extra terrain --project tools python tools/scripts/gen_panel_presets.py
 """
@@ -19,22 +21,21 @@ import pathlib
 
 from bobtools.heightfields import params, presets
 
-# The generation knobs the panel exposes as sliders. seed is left to the user (the
-# randomize button), so presets do not pin it.
-PANEL_KNOBS = ("octaves", "ridged", "detail_strength", "droplets", "erosion",
-               "deposition", "radius", "max_steps", "thermal_iters", "edge_falloff")
+# The global knobs the panel resets to neutral when a preset is chosen.
+PANEL_KNOBS = ("relief", "detail", "erosion", "warp")
 
 OUT = (pathlib.Path(__file__).resolve().parents[2]
        / "blender" / "extensions" / "bob_blender_tools" / "presets.json")
 
 
 def build_panel_presets() -> dict:
-    """The panel-exposed generation knobs for each preset, defaults filled in."""
+    """The slider values the panel loads per preset: neutral global knobs + display."""
     defaults = params.default_knobs()
     out = {}
     for name in presets.PRESETS:
-        resolved = {**defaults, **presets.knobs(name)}
-        out[name] = {k: resolved[k] for k in PANEL_KNOBS}
+        row = {k: defaults[k] for k in PANEL_KNOBS}
+        row.update(presets.display(name))  # height, sea_level
+        out[name] = row
     return out
 
 

@@ -1,89 +1,109 @@
 {
   "_note": "Generated from bobtools.heightfields.presets by tools/scripts/gen_panel_presets.py. Do not edit by hand.",
   "presets": {
-    "foothills": {
-      "octaves": 5,
-      "ridged": 0.4,
-      "detail_strength": 0.45,
-      "droplets": 1500000,
-      "erosion": 0.4,
-      "deposition": 0.4,
-      "radius": 4,
-      "max_steps": 96,
-      "thermal_iters": 6,
-      "edge_falloff": 0.0
-    },
     "alpine": {
-      "octaves": 6,
-      "ridged": 0.6,
-      "detail_strength": 0.6,
-      "droplets": 2000000,
+      "relief": 0.5,
+      "detail": 0.5,
       "erosion": 0.5,
-      "deposition": 0.3,
-      "radius": 4,
-      "max_steps": 110,
-      "thermal_iters": 8,
-      "edge_falloff": 0.0
+      "warp": 0.5,
+      "height": 22.0,
+      "sea_level": 0.22
     },
-    "badlands": {
-      "octaves": 6,
-      "ridged": 0.35,
-      "detail_strength": 0.5,
-      "droplets": 2500000,
-      "erosion": 0.7,
-      "deposition": 0.2,
-      "radius": 3,
-      "max_steps": 120,
-      "thermal_iters": 4,
-      "edge_falloff": 0.0
+    "glacial": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 18.0,
+      "sea_level": 0.24
     },
-    "rolling": {
-      "octaves": 5,
-      "ridged": 0.15,
-      "detail_strength": 0.35,
-      "droplets": 1200000,
-      "erosion": 0.25,
-      "deposition": 0.5,
-      "radius": 5,
-      "max_steps": 90,
-      "thermal_iters": 10,
-      "edge_falloff": 0.0
+    "foothills": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 13.0,
+      "sea_level": 0.3
     },
     "canyon": {
-      "octaves": 6,
-      "ridged": 0.5,
-      "detail_strength": 0.55,
-      "droplets": 2600000,
-      "erosion": 0.85,
-      "deposition": 0.15,
-      "radius": 2,
-      "max_steps": 150,
-      "thermal_iters": 3,
-      "edge_falloff": 0.0
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 20.0,
+      "sea_level": 0.14
     },
     "mesa": {
-      "octaves": 5,
-      "ridged": 0.25,
-      "detail_strength": 0.4,
-      "droplets": 1800000,
-      "erosion": 0.35,
-      "deposition": 0.45,
-      "radius": 4,
-      "max_steps": 100,
-      "thermal_iters": 14,
-      "edge_falloff": 0.0
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 15.0,
+      "sea_level": 0.2
+    },
+    "badlands": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 15.0,
+      "sea_level": 0.25
+    },
+    "plateau": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 16.0,
+      "sea_level": 0.22
+    },
+    "hills": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 9.0,
+      "sea_level": 0.3
+    },
+    "plains": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 5.0,
+      "sea_level": 0.32
+    },
+    "coastal": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 12.0,
+      "sea_level": 0.34
     },
     "islands": {
-      "octaves": 5,
-      "ridged": 0.4,
-      "detail_strength": 0.5,
-      "droplets": 1600000,
-      "erosion": 0.45,
-      "deposition": 0.35,
-      "radius": 4,
-      "max_steps": 100,
-      "thermal_iters": 6,
-      "edge_falloff": 0.22
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 14.0,
+      "sea_level": 0.34
+    },
+    "dunes": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 7.0,
+      "sea_level": 0.0
+    },
+    "sand_sea": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "height": 9.0,
+      "sea_level": 0.0
     }
   }
 }
