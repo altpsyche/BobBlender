@@ -51,6 +51,22 @@ Progress (see section 9 for the phase plan):
   control reframed to "Import Real" under an "Assets" group and made a pure populate of the shared
   BOB_Assets_* (no silent active-layer re-point/rebuild; layers already instancing a collection
   update live because populate reuses it), matching Make Proxies' scope.
+- Bug fix (2026-07-20, "applying bob shaders removed the textures"): New BobShader used on a
+  scatter layer object (no own material, textured via instances) ran assign_material, which adds a
+  Set-Material modifier that OVERRODE every instance's textures with the fresh solid material.
+  Fixed so New never destroys an existing look: if the active slot already holds a material it is
+  Converted in place (textures kept); on a scatter object New refuses and points to Convert
+  (Collection) - and the panel shows scatter objects a one-click "Convert <BOB_Assets_*>" button
+  instead of New. Verified: New on a scatter object leaves the render unchanged (delta 0.0);
+  Convert still preserves the asset textures.
+- Feature (2026-07-20, "terrain should come with the right texture for the biome"): a biome
+  manifest can now carry a `terrain` section (layer stack + a library texture set per layer). The
+  Shaders "Biome Terrain" action (offered next to New for a fresh mesh, and by the Stack Preset in
+  the Terrain sub-panel) builds a terrain material with that stack + textures in one pick.
+  verdant_trail terrain = soil/grass/rock with the matching Poly Haven CC0 sets in
+  library/textures/{soil,grass,rock}. Verified: builds 3 textured layers and renders textured;
+  scatter Import still works (populate skips the non-list terrain section); render baseline
+  unchanged.
 - Phase 6 DONE (docs + verify): ARCHITECTURE.md (panel-UX section + reconciled statements),
   CONVENTIONS.md (Panel UX conventions), SYSTEMS.md (Terrain/quality/live_env references), and
   redesign pointers in SHADERS.md/FIRMAMENT.md. Full UX walkthrough (section 6) drives World ->

@@ -163,7 +163,12 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   per-set group that triplanar-samples a `library/textures/<name>/` set (Blender's BOX
   projection, no UVs) and derives the normal from the height via a Bump node; the masters gained
   Albedo/Roughness/Metallic map inputs (identity defaults) so colour tints the map, and the
-  wrapper rebuilds with an input snapshot when a set is assigned (keyed off a `bbt_sig`).
+  wrapper rebuilds with an input snapshot when a set is assigned (keyed off a `bbt_sig`). The
+  biome track (F1/F3, 2026-07-20) added: near/far anti-tiling in `texture_set_group` (a
+  detail-scale sample blend + a low-frequency macro brightness break-up, live `Detail Blend` /
+  `Macro Amount`, both `0` = the old single-scale look), and an `AO Map` input on `S_SurfaceMaster`
+  (identity `1.0`) that Convert fills from the arm map's otherwise-unused AO (R) channel. Both are
+  scoped so solid-colour materials render byte-identically (verified: 0.0 pixel delta).
 - Coverage has one authority: `S_Weather` reads the `snow_cover` attribute where the
   Firmament GN pass ran (the terrain) and computes a shader-side fallback with the exact
   SYSTEMS.md formula everywhere else (scattered assets, plain meshes). A per-material Use
@@ -204,6 +209,26 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   moves terrain, scatter, and props together with no rebuild. Measured budget: a 1080p Final
   full-stack frame (layered terrain + weathered scatter + clouds/fog/rain) is ~190s on the dev
   5080. BobShaders core is S1-S5 complete.
+- Biome system (manifest v2, 2026-07-20): a biome folder (`library/models/<biome>/manifest.json`)
+  is a self-describing scene, read through one normalizing reader `assets.biome_manifest()` that
+  returns `{meta, models, terrain, scatter, world}` and maps a v1 flat manifest ({kind:[files]})
+  onto it (reserved keys meta/models/terrain/scatter/world; any other top-level list is a legacy
+  model kind). `meta` carries attribution (also a per-biome `CREDITS.md` + per-model `SOURCE.txt`);
+  `models` entries are a file string or `{file, scale?, rotation?, max_polys?}` honoured by
+  `import_gltf` (rotation/scale bake after the glTF transform; `max_polys` collapse-decimates via
+  the evaluated depsgraph, e.g. verdant_trail's tree 2.06M -> 180k; assets without `max_polys` are
+  never decimated); `scatter` is a per-kind recipe; `world` a `bbt_env` preset. `validate_biome()`
+  flags the common authoring mistakes (missing file, bad layer key, missing texture set, scatter
+  kind with no models, unknown world field). Four panel actions compose existing builders: Import
+  Biome + **Biome Terrain** (Shaders), **Biome Scatter** (Scatter, a layer per kind from
+  `scatter{}`), **Biome World** (World, sets `bbt_env` + Build Sky), and **Apply Biome** (World's
+  "Set up a look": import -> terrain -> scatter -> world on the Scatter emitter / active mesh, one
+  coherent scene). Apply Biome also weathers the scattered assets by default (a `weather_assets`
+  toggle), converting each `BOB_Assets_<kind>` to BobShaders. Because those asset sources live in an
+  unlinked, unselectable collection, their surface materials are edited through the selectable
+  scatter LAYER object: selecting a layer lists its instanced assets' materials and the Surface /
+  Weather sub-panels tune the chosen one, reaching every instance (docs/SCATTER-SHADING-UX.md).
+  Names and conventions follow the UX redesign (ui_helpers, native context).
 - `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the texture-set
   pickers, and the Convert scope + collection). Identity is native: the material on the active
   object's active slot (no `material_name`/`target`/`master` enum). The panel (`shaders_panel.py`)

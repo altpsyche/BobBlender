@@ -194,6 +194,30 @@ and layers on top:
   a set, with no graph change and no lost parameters. UDIM and per-project overrides
   (`projects/<name>/textures/`) are later; v1 is the shared library plus the solid tint.
 
+Anti-tiling in the texture set (biome track F1, 2026-07-20). A single-scale triplanar repeat
+betrays itself two ways over a large terrain: the pattern repeats at a distance (far), and the
+exact same tile reads up close (near). `S_TextureSet` fixes both with two build-time frequencies,
+exposed as live knobs (`Detail Blend`, `Macro Amount`, both default on but gentle):
+
+- Detail-scale blend (near/mid). Albedo, roughness, and height are each sampled twice - at the
+  base `Scale` and at a lower-frequency detail scale (`_DETAIL_SCALE`, bigger features) - and
+  mixed by `Detail Blend`, so no one repeat period dominates. De-tiling the height also de-tiles
+  the bump normal, so the relief stops repeating in step with the colour.
+- Macro brightness break-up (far). A low-frequency world noise (`_MACRO_SCALE`) modulates the
+  albedo brightness by `Macro Amount`, so the far field stops reading as one flat tiled sheet.
+- `Detail Blend = 0` and `Macro Amount = 0` reproduce the old single-scale look exactly (the mix
+  returns the base sample and the macro factor is 1), so the change is opt-out and verifiable.
+  Solid-colour materials never build a texture set, so this leaves the block-out look untouched.
+  Very strongly periodic textures would still benefit from stochastic (hex-tile) sampling; that
+  is a possible follow-on.
+
+Model AO (biome track F3, 2026-07-20). `S_SurfaceMaster` gains an `AO Map` input (scalar,
+identity `1.0`). Poly Haven glTF assets pack occlusion in the arm map's R channel but drop the
+glTF `occlusionTexture`, so that AO went unused; the Convert (`bobshade_material`) path now routes
+the arm map's Separate Color Red into `AO Map` so converted rocks and props read their crevice
+depth. The texture-set path still folds AO into its own albedo, so it leaves `AO Map` at `1.0`
+(no double-darkening), and a solid surface keeps `1.0` (identity), so the block-out is unchanged.
+
 ## The shared weather layer
 
 `S_Weather` takes the master's base albedo, roughness, normal, and optional height and

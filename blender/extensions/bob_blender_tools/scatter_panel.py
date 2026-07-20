@@ -127,6 +127,37 @@ def _biome_items(self, context):
     return _BIOME_ITEMS
 
 
+# Biome-scatter enum: biomes whose manifest carries a scatter recipe, so a whole layer stack can
+# be built from one pick (parallel to the Shaders Biome Terrain enum). Cached module-side with a
+# stable id per biome (the same enum-GC / reindex guard the asset-set enum uses).
+_BIOME_SCATTER_ITEMS = [("NONE", "None", "No biome scatter recipe", "", 0)]
+_BIOME_SCATTER_IDS = {"NONE": 0}
+
+
+def _biome_scatter_items(self, context):
+    global _BIOME_SCATTER_ITEMS
+    server._ensure_path()
+    from bbmcp import assets
+
+    items = []
+    for n in assets.list_biomes():
+        if not assets.biome_scatter(n):
+            continue
+        if n not in _BIOME_SCATTER_IDS:
+            _BIOME_SCATTER_IDS[n] = len(_BIOME_SCATTER_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(),
+                      f"Scatter the {n} recipe (a layer per kind)", "", _BIOME_SCATTER_IDS[n]))
+    _BIOME_SCATTER_ITEMS = items or [("NONE", "None", "No biome carries a scatter recipe", "", 0)]
+    return _BIOME_SCATTER_ITEMS
+
+
+def _has_biome_scatter():
+    server._ensure_path()
+    from bbmcp import assets
+
+    return any(assets.biome_scatter(n) for n in assets.list_biomes())
+
+
 def _nodes_mod(obj):
     if obj is None:
         return None
@@ -310,6 +341,93 @@ class BBT_OT_scatter_import_biome(Operator):
         counts = assets.populate_scatter_assets(self.biome)
         summary = ", ".join(f"{k}:{n}" for k, n in counts.items())
         self.report({"INFO"}, f"Imported {self.biome} -> {summary}")
+        return {"FINISHED"}
+
+
+def _biome_layer_params(kind, cfg):
+    """Merge a biome scatter cfg onto the recipe's knob params over the LAYER_TYPES defaults.
+
+    Returns (knobs, align). The biome cfg speaks the manifest vocabulary (density, scale [min,max],
+    min_normal_z, max_normal_z, align); LAYER_TYPES fills anything it omits, so a partial recipe
+    still builds a sensible layer."""
+    spec = LAYER_TYPES[kind]
+    knobs = dict(spec["knobs"])
+    if "density" in cfg:
+        knobs["density"] = cfg["density"]
+    sc = cfg.get("scale")
+    if isinstance(sc, (list, tuple)) and len(sc) == 2:
+        knobs["min_scale"], knobs["max_scale"] = sc[0], sc[1]
+    for k in ("min_normal_z", "max_normal_z", "distance_min"):
+        if k in cfg:
+            knobs[k] = cfg[k]
+    return knobs, cfg.get("align", spec["align"])
+
+
+class BBT_OT_scatter_biome_scatter(Operator):
+    bl_idname = "bob_blender_tools.scatter_biome_scatter"
+    bl_label = "Biome Scatter"
+    bl_description = ("Scatter a whole biome on the active emitter: build one layer per scatter "
+                      "kind from the biome's recipe (density, scale, slope, align), point each at "
+                      "its BOB_Assets_<kind> collection, and build them. Import the biome's assets "
+                      "first (or use Apply Biome) so the layers instance real meshes, not proxies")
+    bl_options = {"REGISTER", "UNDO"}
+
+    biome: EnumProperty(name="Biome", items=_biome_scatter_items)
+
+    def execute(self, context):
+        scn = context.scene.bbt_scatter
+        emitter = scn.emitter
+        if emitter is None:
+            self.report({"ERROR"}, "Pick an emitter first")
+            return {"CANCELLED"}
+        if not self.biome or self.biome == "NONE":
+            self.report({"ERROR"}, "No biome carries a scatter recipe")
+            return {"CANCELLED"}
+        server._ensure_path()
+        from bbmcp import assets
+
+        recipe = assets.biome_scatter(self.biome)
+        if not recipe:
+            self.report({"ERROR"}, f"Biome '{self.biome}' has no scatter recipe")
+            return {"CANCELLED"}
+        warn = assets.validate_biome(self.biome)
+        coll = _ensure_scatter_coll(emitter, context.scene)
+        built = []
+        for kind, cfg in recipe.items():
+            if kind not in LAYER_TYPES or kind == "empty":
+                continue
+            spec = LAYER_TYPES[kind]
+            # Ensure the shared asset collection exists: make_proxies only fills an EMPTY
+            # collection, so a prior Import Biome's real meshes are kept, not clobbered.
+            _apply([{"op": "make_proxies", "kinds": [kind]}])
+            asset_coll = bpy.data.collections.get(_assets_name(kind))
+            knobs, align = _biome_layer_params(kind, cfg)
+            name = _unique_object_name(f"{emitter.name} {spec['label']}")
+            params = {"emitter": emitter.name, "align": align, **knobs}
+            if asset_coll is not None:
+                params["assets"] = asset_coll.name
+            if scn.path is not None:
+                params["path"] = scn.path.name
+                params["path_width"] = spec["path_width"]
+            if scn.camera is not None:
+                params["camera"] = scn.camera.name
+            _apply([{"op": "build_geonodes", "recipe": "scatter", "name": name, "params": params}])
+            obj = bpy.data.objects[name]
+            _move_to_collection(obj, coll)
+            lay = obj.bbt_scatter_layer
+            lay.kind = kind
+            lay.assets = asset_coll
+            lay.align = align
+            built.append(kind)
+        if built:
+            scn.active = len(list(coll.objects)) - 1
+        total = _count_instances(context, list(coll.objects))
+        scn.summary = f"{len(built)} biome layers, ~{total} instances"
+        msg = f"Scattered {self.biome}: {', '.join(built) or '(no kinds)'}"
+        if warn:
+            msg += f" ({len(warn)} manifest warnings, see console)"
+            print("[bob_blender_tools] biome warnings:", warn)
+        self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 
@@ -559,6 +677,13 @@ class BBT_PT_scatter(Panel):
         col.operator("bob_blender_tools.scatter_remove", text="", icon="REMOVE")
         col.operator("bob_blender_tools.scatter_duplicate", text="", icon="DUPLICATE")
 
+        # Biome Scatter: build the whole layer stack from a biome's recipe in one pick (parallel
+        # to the Shaders Biome Terrain). Needs the emitter, so it sits here once one is set.
+        if _has_biome_scatter():
+            row = layout.row(align=True)
+            row.operator_menu_enum("bob_blender_tools.scatter_biome_scatter", "biome",
+                                   text="Biome Scatter", icon="WORLD")
+
         ui_helpers.structural_action(layout, "bob_blender_tools.scatter_build_all",
                                      note="rebuilds every layer of this emitter")
         if scn.summary:
@@ -663,6 +788,7 @@ CLASSES = (
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
     BBT_OT_scatter_import_biome,
+    BBT_OT_scatter_biome_scatter,
     BBT_OT_scatter_add,
     BBT_OT_scatter_remove,
     BBT_OT_scatter_duplicate,

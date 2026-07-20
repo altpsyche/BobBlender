@@ -24,7 +24,7 @@ registry is addon-level (not bbmcp), so it survives a Reload Builders like the o
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty
-from bpy.types import Panel, PropertyGroup
+from bpy.types import Operator, Panel, PropertyGroup
 
 from . import server, ui_helpers
 
@@ -61,6 +61,62 @@ def _on_world_change(self, context):
     apply_all(context.scene)
 
 
+# Biome enums for the World panel: biomes carrying a world block (Biome World) and biomes with any
+# applicable section (Apply Biome). Cached module-side with a stable id per biome (the enum-GC /
+# reindex guard the other panels' dynamic enums use).
+_BIOME_WORLD_ITEMS = [("NONE", "None", "No biome world", "", 0)]
+_BIOME_WORLD_IDS = {"NONE": 0}
+_BIOME_APPLY_ITEMS = [("NONE", "None", "No biome", "", 0)]
+_BIOME_APPLY_IDS = {"NONE": 0}
+
+
+def _assets():
+    server._ensure_path()
+    from bbmcp import assets
+
+    return assets
+
+
+def _biome_world_items(self, context):
+    global _BIOME_WORLD_ITEMS
+    a = _assets()
+    items = []
+    for n in a.list_biomes():
+        if not a.biome_world(n):
+            continue
+        if n not in _BIOME_WORLD_IDS:
+            _BIOME_WORLD_IDS[n] = len(_BIOME_WORLD_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(), f"Set the world to the {n} biome", "",
+                      _BIOME_WORLD_IDS[n]))
+    _BIOME_WORLD_ITEMS = items or [("NONE", "None", "No biome carries a world block", "", 0)]
+    return _BIOME_WORLD_ITEMS
+
+
+def _biome_apply_items(self, context):
+    global _BIOME_APPLY_ITEMS
+    a = _assets()
+    items = []
+    for n in a.list_biomes():
+        man = a.biome_manifest(n)
+        if not (man["models"] or man["terrain"] or man["scatter"] or man["world"]):
+            continue
+        if n not in _BIOME_APPLY_IDS:
+            _BIOME_APPLY_IDS[n] = len(_BIOME_APPLY_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(), f"Stand up the {n} biome (all sections)", "",
+                      _BIOME_APPLY_IDS[n]))
+    _BIOME_APPLY_ITEMS = items or [("NONE", "None", "No biome in library/models", "", 0)]
+    return _BIOME_APPLY_ITEMS
+
+
+def _has_biome_world():
+    a = _assets()
+    return any(a.biome_world(n) for n in a.list_biomes())
+
+
+def _has_any_biome():
+    return bool(_assets().list_biomes())
+
+
 class BBT_WorldProps(PropertyGroup):
     """World-level UI state: the scene-wide controls that drive every consumer. The world
     DATA is Scene.bbt_env (bbmcp/env.py); this is only the master toggles that sit above it."""
@@ -79,6 +135,133 @@ class BBT_WorldProps(PropertyGroup):
         description="Scene-wide render quality. Preview thins the particulates and lowers the "
                     "volume step/bounce counts for a fast viewport; Final restores them. "
                     "Applied live to every built subsystem, no rebuild")
+
+
+class BBT_OT_world_biome_world(Operator):
+    bl_idname = "bob_blender_tools.world_biome_world"
+    bl_label = "Biome World"
+    bl_description = ("Set the world to a biome's defaults: season, weather, time of day, cloud "
+                      "cover, temperature, and wind from the biome's world block, then re-apply "
+                      "every live consumer. Builds the sky so the sun moves to the set time")
+    bl_options = {"REGISTER", "UNDO"}
+
+    biome: EnumProperty(name="Biome", items=_biome_world_items)
+    build_sky: BoolProperty(
+        name="Build Sky", default=True,
+        description="Rebuild the sky after setting the world, so the sun moves to the biome time")
+
+    def execute(self, context):
+        if not self.biome or self.biome == "NONE":
+            self.report({"ERROR"}, "No biome carries a world block")
+            return {"CANCELLED"}
+        world = _assets().biome_world(self.biome)
+        if not world:
+            self.report({"ERROR"}, f"Biome '{self.biome}' has no world block")
+            return {"CANCELLED"}
+        env = context.scene.bbt_env
+        applied = []
+        for field, val in world.items():
+            if not hasattr(env, field):
+                continue
+            try:
+                setattr(env, field, val)
+                applied.append(field)
+            except (TypeError, ValueError):
+                print(f"[bob_blender_tools] biome world: bad value for {field!r}: {val!r}")
+        apply_all(context.scene)  # re-apply drivers/quality to the new world state
+        built = ""
+        if self.build_sky:
+            try:
+                bpy.ops.bob_blender_tools.firmament_build_sky()
+                built = " + sky"
+            except RuntimeError as exc:
+                print(f"[bob_blender_tools] biome world: build sky skipped ({exc})")
+        self.report({"INFO"}, f"Biome world {self.biome}: set {len(applied)} fields{built}")
+        return {"FINISHED"}
+
+
+def _apply_target(context):
+    """The mesh a biome is applied to: the Scatter emitter if set, else the active mesh."""
+    scn_scatter = getattr(context.scene, "bbt_scatter", None)
+    emitter = getattr(scn_scatter, "emitter", None) if scn_scatter is not None else None
+    if emitter is not None and emitter.type == "MESH":
+        return emitter
+    obj = context.active_object
+    return obj if obj is not None and obj.type == "MESH" else None
+
+
+class BBT_OT_world_apply_biome(Operator):
+    bl_idname = "bob_blender_tools.world_apply_biome"
+    bl_label = "Apply Biome"
+    bl_description = ("Stand up a whole biome on one terrain mesh: import its assets, build its "
+                      "terrain material, scatter its layers, and set the world - each section that "
+                      "the manifest carries, in order. Uses the Scatter emitter as the terrain, or "
+                      "the active mesh. One coherent scene from one pick")
+    bl_options = {"REGISTER", "UNDO"}
+
+    biome: EnumProperty(name="Biome", items=_biome_apply_items)
+    weather_assets: BoolProperty(
+        name="Weather scattered assets", default=True,
+        description="Convert the scattered assets to BobShaders so they weather with the world and "
+                    "their surface look is editable (select the scatter layer, then edit in "
+                    "Shaders). Uncheck to keep the assets' native materials")
+
+    def execute(self, context):
+        if not self.biome or self.biome == "NONE":
+            self.report({"ERROR"}, "No biome to apply")
+            return {"CANCELLED"}
+        target = _apply_target(context)
+        if target is None:
+            self.report({"ERROR"}, "Set a Scatter emitter or select a terrain mesh first")
+            return {"CANCELLED"}
+        a = _assets()
+        man = a.biome_manifest(self.biome)
+        warn = a.validate_biome(self.biome)
+        # Scatter reads bbt_scatter.emitter; Biome Terrain shades the ACTIVE object.
+        if getattr(context.scene, "bbt_scatter", None) is not None:
+            context.scene.bbt_scatter.emitter = target
+
+        def make_target_active():
+            context.view_layer.objects.active = target
+            try:
+                target.select_set(True)
+            except RuntimeError:
+                pass
+
+        steps = []
+        if man["models"]:
+            # Import first so the scatter instances real meshes. glTF import re-points the active
+            # object, so re-assert the target as active before the terrain step below.
+            bpy.ops.bob_blender_tools.scatter_import_biome(biome=self.biome)
+            steps.append("assets")
+        if man["terrain"]:
+            make_target_active()
+            bpy.ops.bob_blender_tools.shaders_biome_terrain(biome=self.biome)
+            steps.append("terrain")
+        if man["scatter"]:
+            bpy.ops.bob_blender_tools.scatter_biome_scatter(biome=self.biome)
+            steps.append("scatter")
+            # Weather the scattered assets: convert each kind's BOB_Assets_<kind> to BobShaders
+            # (shaders_convert Collection scope; idempotent, installs the env feed). Off skips it.
+            if self.weather_assets:
+                for kind in man["scatter"]:
+                    coll = f"BOB_Assets_{kind.capitalize()}"
+                    if bpy.data.collections.get(coll) is None:
+                        continue
+                    try:
+                        bpy.ops.bob_blender_tools.shaders_convert(scope="collection", coll_name=coll)
+                    except RuntimeError as exc:
+                        print(f"[bob_blender_tools] apply biome: convert {coll} skipped ({exc})")
+                steps.append("weathered assets")
+        if man["world"]:
+            bpy.ops.bob_blender_tools.world_biome_world(biome=self.biome)
+            steps.append("world")
+        msg = f"Applied {self.biome} on {target.name}: {', '.join(steps) or '(nothing to apply)'}"
+        if warn:
+            msg += f" ({len(warn)} manifest warnings, see console)"
+            print("[bob_blender_tools] biome warnings:", warn)
+        self.report({"INFO"}, msg)
+        return {"FINISHED"}
 
 
 class BBT_PT_world(Panel):
@@ -144,9 +327,24 @@ class BBT_PT_world(Panel):
         cap.enabled = False
         cap.label(text="a Scene Preset rebuilds the atmosphere subsystems")
 
+        # Biome: set the world to a biome's defaults, or stand up the whole biome (terrain +
+        # scatter + world) on the Scatter emitter / active mesh in one action (docs D5).
+        if _has_any_biome():
+            row = box.row(align=True)
+            if _has_biome_world():
+                row.operator_menu_enum("bob_blender_tools.world_biome_world", "biome",
+                                       text="Biome World", icon="WORLD")
+            row.operator_menu_enum("bob_blender_tools.world_apply_biome", "biome",
+                                   text="Apply Biome", icon=ui_helpers.STRUCTURAL_ICON)
+            cap = box.row()
+            cap.enabled = False
+            cap.label(text="Apply Biome imports assets, builds terrain + scatter, sets the world")
+
 
 CLASSES = (
     BBT_WorldProps,
+    BBT_OT_world_biome_world,
+    BBT_OT_world_apply_biome,
     BBT_PT_world,
 )
 

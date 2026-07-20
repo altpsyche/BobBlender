@@ -870,6 +870,11 @@ def surface_master_group():
     _gin(g, "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gin(g, "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Metallic Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    # AO Map (S4/F3): a scalar occlusion map multiplied into the albedo, identity 1.0 = off. The
+    # convert path feeds this with the arm map's AO (R) channel (glTF drops occlusionTexture, so
+    # the packed AO would otherwise go unused); the texture-set path folds AO into its albedo
+    # instead, so it leaves this at 1.0 (no double-darkening). A solid-colour surface keeps 1.0.
+    _gin(g, "AO Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
     # Macro break-up (anti-tiling): a low-frequency world noise modulating albedo brightness
     # so a repeating texture stops reading as a tile at distance. Amount 0 = off.
     _gin(g, "Macro Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -917,6 +922,7 @@ def surface_master_group():
     g.links.new(hsv.outputs["Color"], tinted.inputs[0])
     g.links.new(I["Albedo Map"], tinted.inputs[1])
     albedo = _macro_break(g, tinted.outputs["Vector"], I["Macro Amount"], I["Macro Scale"], (200, 120))
+    albedo = _vscale(g, albedo, I["AO Map"], (390, 120))  # fold occlusion (1.0 = off)
     rough = _mmath(g, "MULTIPLY", I["Roughness"], I["Roughness Map"], (0, -60))
     metal = _mmath(g, "MULTIPLY", I["Metallic"], I["Metallic Map"], (0, -140))
 
@@ -1010,6 +1016,14 @@ def bobshade_material(mat, variation=0.15):
     rgh_src, rgh_val = capture("Roughness")
     met_src, met_val = capture("Metallic")
 
+    # AO from the packed arm map: glTF splits metallicRoughness through a Separate Color (G ->
+    # roughness, B -> metallic) and drops the R (AO) channel. When Roughness comes from that
+    # Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so
+    # the crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
+    ao_src = None
+    if rgh_src is not None and rgh_src.node.bl_idname in ("ShaderNodeSeparateColor", "ShaderNodeSeparateRGB"):
+        ao_src = rgh_src.node.outputs.get("Red")
+
     grp = nt.nodes.new("ShaderNodeGroup")
     grp.name = "Master"
     grp.node_tree = surface_master_group()
@@ -1035,6 +1049,7 @@ def bobshade_material(mat, variation=0.15):
     feed("Albedo Map", alb_src, alb_val)
     feed("Roughness Map", rgh_src, rgh_val)
     feed("Metallic Map", met_src, met_val)
+    feed("AO Map", ao_src, None)  # only when the arm map exposed an AO (R) channel
     nt.links.new(grp.outputs["Base Color"], bsdf.inputs["Base Color"])
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
@@ -1439,6 +1454,14 @@ def assign_material(obj, mat):
 # multiplies Base Color into the albedo map, so white leaves the texture unchanged.
 TEXTURE_SET_PREFIX = "S_TextureSet_"
 _TRIPLANAR_BLEND = 0.3  # BOX projection_blend: 0 sharp seams, 1 soft (build-time property)
+# Anti-tiling (F1): a triplanar repeat betrays itself two ways over a big terrain - the pattern
+# repeats at a distance (far), and the exact same tile reads up close (near). Two build-time
+# frequencies fix both: a DETAIL sample of every map at a lower frequency (bigger features) is
+# blended with the base sample (Detail Blend), so no single repeat dominates near or mid; and a
+# low-frequency world MACRO noise modulates the albedo brightness (Macro Amount) so the far field
+# stops reading as one flat tiled sheet. Both are live knobs, default on but gentle.
+_DETAIL_SCALE = 0.28  # the detail sample's relative frequency (lower = bigger, slower-repeating)
+_MACRO_SCALE = 0.08   # the macro brightness noise frequency (low = large patches)
 
 # role -> filename suffix aliases (matched case-insensitively against the file stem).
 _ROLE_SUFFIX = {
@@ -1490,6 +1513,8 @@ def texture_set_group(name, directory=None):
     g = bpy.data.node_groups.new(gname, "ShaderNodeTree")
     _gin(g, "Scale", "NodeSocketFloat", 1.0, 0.0)
     _gin(g, "Bump Strength", "NodeSocketFloat", 0.3, 0.0, 10.0)
+    _gin(g, "Detail Blend", "NodeSocketFloat", 0.4, 0.0, 1.0)  # anti-tiling detail-scale mix
+    _gin(g, "Macro Amount", "NodeSocketFloat", 0.3, 0.0, 1.0)  # anti-tiling macro brightness
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
@@ -1512,7 +1537,18 @@ def texture_set_group(name, directory=None):
     g.links.new(geo.outputs["Position"], mapping.inputs["Vector"])
     g.links.new(cs.outputs["Vector"], mapping.inputs["Scale"])
 
-    def box(path, role, loc):
+    # A second, lower-frequency mapping for the anti-tiling detail sample (Scale * _DETAIL_SCALE).
+    dscale = _mmath(g, "MULTIPLY", I["Scale"], _DETAIL_SCALE, (-800, -220))
+    dcs = g.nodes.new("ShaderNodeCombineXYZ")
+    dcs.location = (-800, -320)
+    for ax in ("X", "Y", "Z"):
+        g.links.new(dscale, dcs.inputs[ax])
+    detail_mapping = g.nodes.new("ShaderNodeMapping")
+    detail_mapping.location = (-620, -320)
+    g.links.new(geo.outputs["Position"], detail_mapping.inputs["Vector"])
+    g.links.new(dcs.outputs["Vector"], detail_mapping.inputs["Scale"])
+
+    def _sample(path, role, loc, map_node):
         img = bpy.data.images.load(path, check_existing=True)
         if role in _DATA_ROLES:
             img.colorspace_settings.name = "Non-Color"
@@ -1522,8 +1558,19 @@ def texture_set_group(name, directory=None):
         t.projection_blend = _TRIPLANAR_BLEND
         t.extension = "REPEAT"
         t.location = loc
-        g.links.new(mapping.outputs["Vector"], t.inputs["Vector"])
+        g.links.new(map_node.outputs["Vector"], t.inputs["Vector"])
         return t
+
+    def box(path, role, loc):
+        """A single base-scale triplanar sample (node)."""
+        return _sample(path, role, loc, mapping)
+
+    def box2(path, role, loc):
+        """A de-tiled sample (socket): the base-scale sample blended with a lower-frequency
+        detail-scale sample by Detail Blend, so the repeat does not read near or mid-range."""
+        base = _sample(path, role, loc, mapping).outputs["Color"]
+        detail = _sample(path, role, (loc[0], loc[1] + 150), detail_mapping).outputs["Color"]
+        return _mixcol(g, I["Detail Blend"], base, detail, (loc[0] + 200, loc[1] + 40))
 
     def const_col(rgb, loc):
         n = g.nodes.new("ShaderNodeRGB")
@@ -1537,27 +1584,30 @@ def texture_set_group(name, directory=None):
         n.location = loc
         return n.outputs[0]
 
-    # Albedo * AO (AO folded in here so the wrapper stays simple).
+    # Albedo * AO, de-tiled, then macro brightness break-up (AO folded in here; anti-tiling F1).
     if "basecolor" in maps:
-        albedo = box(maps["basecolor"], "basecolor", (-300, 400)).outputs["Color"]
+        albedo = box2(maps["basecolor"], "basecolor", (-300, 400))
         if "ao" in maps:
             ao = box(maps["ao"], "ao", (-300, 200)).outputs["Color"]
             albedo = _vmul(g, albedo, ao, (-60, 380))
+        albedo = _macro_break(g, albedo, I["Macro Amount"], _MACRO_SCALE, (140, 400))
     else:
         albedo = const_col((1.0, 1.0, 1.0), (-60, 400))
     g.links.new(albedo, O["Base Color"])
 
-    # Roughness / Metallic: a Color->Float link auto-converts (the maps are greyscale).
-    rough = box(maps["roughness"], "roughness", (-300, 40)).outputs["Color"] \
+    # Roughness / Metallic: a Color->Float link auto-converts (the maps are greyscale). Roughness
+    # is de-tiled like the albedo; metallic is usually flat, so a single sample is enough.
+    rough = box2(maps["roughness"], "roughness", (-300, 40)) \
         if "roughness" in maps else const_val(1.0, (-60, 40))
     g.links.new(rough, O["Roughness"])
     metal = box(maps["metallic"], "metallic", (-300, -140)).outputs["Color"] \
         if "metallic" in maps else const_val(1.0, (-60, -140))
     g.links.new(metal, O["Metallic"])
 
-    # Height and the bump-derived normal (works without UVs/tangents).
+    # Height and the bump-derived normal (works without UVs/tangents). De-tiling the height also
+    # de-tiles the bump normal, so the surface relief stops repeating in step with the albedo.
     if "height" in maps:
-        h = box(maps["height"], "height", (-300, -320)).outputs["Color"]
+        h = box2(maps["height"], "height", (-300, -320))
         g.links.new(h, O["Height"])
         bump = g.nodes.new("ShaderNodeBump")
         bump.location = (300, -260)

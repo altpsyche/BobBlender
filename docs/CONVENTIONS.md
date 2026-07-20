@@ -23,6 +23,14 @@ Small rules that keep the repo navigable as it grows.
 | Deliverables | `projects/<name>/exports/` |
 | Textures used by one project | `projects/<name>/textures/` |
 | Textures used everywhere | `library/textures/` |
+| A CC0 asset biome (models + recipe) | `library/models/<biome>/` (a `manifest.json`) |
+
+## Attribution
+
+Record provenance for downloaded assets even when the licence (e.g. CC0) does not require it.
+A texture set carries a one-line `SOURCE.txt` (`<role>: Poly Haven '<slug>' (CC0, public domain).
+<url>`); a model biome carries the same per-model `SOURCE.txt` plus a `CREDITS.md` listing every
+asset's source, and a `meta` block in its `manifest.json` (`source`, `license`).
 
 ## Render output
 

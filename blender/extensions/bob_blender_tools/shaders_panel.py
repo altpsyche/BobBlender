@@ -34,6 +34,7 @@ from bpy.props import (
     EnumProperty,
     IntProperty,
     PointerProperty,
+    StringProperty,
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
@@ -210,6 +211,53 @@ def _active_material(context):
     return obj.active_material if obj is not None else None
 
 
+def _is_scatter_object(obj):
+    """A scatter layer object: its shaded look comes from an instanced asset collection, not its
+    own material slots. New BobShader must not assign a solid material to it - assign_material
+    would add a Set-Material modifier that overrides every instance's textures. Its assets are
+    converted with Convert (Collection scope) instead."""
+    lay = getattr(obj, "bbt_scatter_layer", None)
+    return lay is not None and lay.assets is not None
+
+
+def _asset_materials(obj):
+    """Unique materials across a scatter layer's instanced assets collection, in a stable order.
+    Empty when obj is not a scatter layer or its assets have no materials. Deduped by datablock:
+    editing one material reaches every instance that uses it."""
+    lay = getattr(obj, "bbt_scatter_layer", None)
+    coll = lay.assets if lay is not None else None
+    if coll is None:
+        return []
+    seen, out = set(), []
+    for o in coll.all_objects:
+        if o.type != "MESH":
+            continue
+        for slot in o.material_slots:
+            m = slot.material
+            if m is not None and m.name not in seen:
+                seen.add(m.name)
+                out.append(m)
+    return out
+
+
+def _editing_material(context):
+    """The material the Surface / Weather sub-panels edit. For a normal mesh this is its active
+    material (native identity). For a scatter layer object - whose asset sources live in an
+    unlinked, unselectable collection - it is the chosen material from that asset pool
+    (bbt_shaders.asset_material, defaulting to the first), so scattered assets are editable through
+    the selectable layer without scene-linking their sources (docs/SCATTER-SHADING-UX.md)."""
+    obj = _active_object(context)
+    if obj is None:
+        return None
+    if _is_scatter_object(obj):
+        mats = _asset_materials(obj)
+        if not mats:
+            return None
+        want = context.scene.bbt_shaders.asset_material
+        return next((m for m in mats if m.name == want), mats[0])
+    return obj.active_material
+
+
 def _master_node(mat):
     """The master group node inside a wrapper material (surface or terrain), or None."""
     if mat is None or not mat.use_nodes or mat.node_tree is None:
@@ -348,6 +396,36 @@ def _feed_env(scene):
         _install_env_drivers(scene)
 
 
+# Biome-terrain enum: biomes (library/models/<name>) whose manifest carries a terrain spec, so a
+# terrain can be built with the biome's matching texture sets. Cached module-side (enum GC pitfall).
+_BIOME_TERRAIN_ITEMS = [("NONE", "None", "No biome terrain", "", 0)]
+_BIOME_TERRAIN_IDS = {"NONE": 0}
+
+
+def _biome_terrain_items(self, context):
+    global _BIOME_TERRAIN_ITEMS
+    server._ensure_path()
+    from bbmcp import assets
+
+    items = []
+    for n in assets.list_biomes():
+        if assets.biome_terrain(n) is None:
+            continue
+        if n not in _BIOME_TERRAIN_IDS:
+            _BIOME_TERRAIN_IDS[n] = len(_BIOME_TERRAIN_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(), f"Build the {n} terrain (stack + textures)",
+                      "", _BIOME_TERRAIN_IDS[n]))
+    _BIOME_TERRAIN_ITEMS = items or [("NONE", "None", "No biome carries a terrain spec", "", 0)]
+    return _BIOME_TERRAIN_ITEMS
+
+
+def _has_biome_terrain():
+    server._ensure_path()
+    from bbmcp import assets
+
+    return any(assets.biome_terrain(n) is not None for n in assets.list_biomes())
+
+
 class BBT_ShadersProps(PropertyGroup):
     """BobShaders' own UI state (not the shared world, which is bbt_env; not the material
     identity, which is the active object's active slot)."""
@@ -374,6 +452,10 @@ class BBT_ShadersProps(PropertyGroup):
     layer_texture: EnumProperty(
         name="Layer Texture", items=_set_items,
         description="Texture set to assign to the active terrain layer")
+    asset_material: StringProperty(
+        name="Asset Material",
+        description="Which material of the active scatter layer's instanced assets the Surface / "
+                    "Weather sub-panels edit (the assets' sources are not viewport-selectable)")
     # The Live Environment toggle folded into the one World-panel master (bbt_world.live_env);
     # Shaders subscribes _apply_world to drive its S_EnvState feed (docs/UX-REDESIGN.md 5.4/7).
 
@@ -399,7 +481,25 @@ class BBT_OT_shaders_new(Operator):
         if obj is None:
             self.report({"ERROR"}, "Select a mesh first")
             return {"CANCELLED"}
-        mat = _materials().new_bobshader(obj, self.master)
+        mats = _materials()
+        # Never destroy an existing look. If the active slot already holds a material, convert it
+        # in place (keeps its textures) rather than replacing it with a fresh solid material.
+        existing = obj.active_material
+        if existing is not None:
+            if mats.master_type(existing) is not None:
+                self.report({"INFO"}, f"{existing.name} is already a BobShader")
+                return {"CANCELLED"}
+            mats.bobshade_material(existing)
+            _feed_env(context.scene)
+            self.report({"INFO"}, f"Converted {existing.name} to a BobShader (kept its textures)")
+            return {"FINISHED"}
+        # A scatter object shows its assets' materials through instances; a New solid material
+        # would override them all (via the Set-Material modifier). Convert the assets instead.
+        if _is_scatter_object(obj):
+            self.report({"ERROR"}, "Scatter object: convert its assets with Convert (Collection), "
+                                   "not New - a solid material would hide their textures")
+            return {"CANCELLED"}
+        mat = mats.new_bobshader(obj, self.master)
         _feed_env(context.scene)
         self.report({"INFO"}, f"New {self.master} BobShader {mat.name} on {obj.name}")
         return {"FINISHED"}
@@ -421,6 +521,7 @@ class BBT_OT_shaders_convert(Operator):
         items=[("active", "Active material", ""), ("selected", "Selected objects", ""),
                ("collection", "Collection", "")],
         default="active")
+    coll_name: StringProperty(default="")   # collection scope: this named collection, else the picker
 
     def _targets(self, context):
         obj = _active_object(context)
@@ -446,7 +547,8 @@ class BBT_OT_shaders_convert(Operator):
                     for s in o.material_slots:
                         add(s.material)
         elif self.scope == "collection":
-            coll = context.scene.bbt_shaders.convert_collection
+            coll = bpy.data.collections.get(self.coll_name) if self.coll_name \
+                else context.scene.bbt_shaders.convert_collection
             if coll is not None:
                 for o in coll.all_objects:
                     if o.type == "MESH":
@@ -481,6 +583,18 @@ class BBT_OT_shaders_select_slot(Operator):
         return {"FINISHED"}
 
 
+class BBT_OT_shaders_select_asset_material(Operator):
+    bl_idname = "bob_blender_tools.shaders_select_asset_material"
+    bl_label = "Select Asset Material"
+    bl_description = "Edit this material of the scattered assets in the Surface / Weather sub-panels"
+
+    name: StringProperty(default="")
+
+    def execute(self, context):
+        context.scene.bbt_shaders.asset_material = self.name
+        return {"FINISHED"}
+
+
 class BBT_OT_shaders_preset(Operator):
     bl_idname = "bob_blender_tools.shaders_preset"
     bl_label = "Surface Preset"
@@ -492,7 +606,7 @@ class BBT_OT_shaders_preset(Operator):
         items=[(k, v["label"], v["desc"]) for k, v in SURFACE_PRESETS.items()])
 
     def execute(self, context):
-        node = _master_node(_active_material(context))
+        node = _master_node(_editing_material(context))
         if node is None:
             self.report({"ERROR"}, "Active material is not a BobShader")
             return {"CANCELLED"}
@@ -670,6 +784,63 @@ class BBT_OT_shaders_terrain_stack_preset(Operator):
         return {"FINISHED"}
 
 
+class BBT_OT_shaders_biome_terrain(Operator):
+    bl_idname = "bob_blender_tools.shaders_biome_terrain"
+    bl_label = "Biome Terrain"
+    bl_description = ("Build a terrain material for a biome on the active mesh: the biome's layer "
+                      "stack (placement masks) plus its matching library texture sets, so the "
+                      "ground comes with the right look. Get-or-create, keeps tuned inputs")
+    bl_options = {"REGISTER", "UNDO"}
+
+    biome: EnumProperty(name="Biome", items=_biome_terrain_items)
+
+    def execute(self, context):
+        obj = _active_object(context)
+        if obj is None:
+            self.report({"ERROR"}, "Select a mesh first")
+            return {"CANCELLED"}
+        server._ensure_path()
+        from bbmcp import assets
+
+        spec = assets.biome_terrain(self.biome) if self.biome and self.biome != "NONE" else None
+        if not spec:
+            self.report({"ERROR"}, f"No terrain spec for biome '{self.biome}'")
+            return {"CANCELLED"}
+        mats = _materials()
+        layers = spec["layers"]
+        # Texture set per layer index (only layers that name one).
+        mapping = {i: L["texture"] for i, L in enumerate(layers) if L.get("texture")}
+        # Update the active terrain material in place if there is one, else a per-object M_<obj>.
+        active = _active_material(context)
+        name = active.name if mats.master_type(active) == "terrain" else obj.name
+        mat = mats.terrain_material(name, layer_sets=mapping)
+        _save_layer_sets(mat, mapping)
+        node = _terrain_node(mat)
+        if node is None:
+            self.report({"ERROR"}, "Could not build the terrain material")
+            return {"CANCELLED"}
+        for i in range(mats.MAX_TERRAIN_LAYERS):
+            en = node.inputs.get(f"L{i} Enable")
+            if en is None:
+                continue
+            if i < len(layers):
+                en.default_value = 1.0
+                key = layers[i].get("layer")
+                if key in TERRAIN_LAYER_PRESETS:
+                    _set_layer(node, i, TERRAIN_LAYER_PRESETS[key]["knobs"])
+                if layers[i].get("texture"):  # let the texture read at face value (white tint)
+                    _set_layer(node, i, {"Base Color": (1.0, 1.0, 1.0, 1.0), "Roughness": 1.0})
+            else:
+                en.default_value = 0.0
+        _assign(obj, mat)
+        _feed_env(context.scene)
+        context.scene.bbt_shaders.terrain_active = 0
+        textured = sum(1 for L in layers if L.get("texture"))
+        self.report({"INFO"}, f"Built {self.biome} terrain on {obj.name} "
+                              f"({len(layers)} layers, {textured} textured)")
+        return {"FINISHED"}
+
+
 class BBT_OT_shaders_snow_shell_add(Operator):
     bl_idname = "bob_blender_tools.shaders_snow_shell_add"
     bl_label = "Add Snow Shell"
@@ -755,12 +926,24 @@ class BBT_PT_shaders(Panel):
                                          empty="Select a mesh to shade its materials."):
             return
 
+        # Scatter layer object: its look is the instanced assets, whose sources are unlinked and
+        # not viewport-selectable. Edit those materials here, through the (selectable) layer.
+        if _is_scatter_object(obj):
+            self._draw_scatter_assets(context, layout, obj)
+            self._env_note(context, layout)
+            return
+
         slots = obj.material_slots
         if len(slots) == 0:
             layout.label(text="Materials: (none)")
-            layout.operator_menu_enum("bob_blender_tools.shaders_new", "master",
-                                      text="New BobShader", icon="ADD")
+            row = layout.row(align=True)
+            row.operator_menu_enum("bob_blender_tools.shaders_new", "master",
+                                   text="New BobShader", icon="ADD")
+            if _has_biome_terrain():
+                row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
+                                       text="Biome Terrain", icon="WORLD")
             self._env_note(context, layout)
+            self._batch_convert(context, layout)
             return
 
         # Contextual list: EVERY material slot of this mesh and nothing else (decision 2).
@@ -796,17 +979,25 @@ class BBT_PT_shaders(Panel):
         active_mat = slots[active_idx].material if active_idx < len(slots) else None
         active_type = mats.master_type(active_mat)
         if active_mat is None:
-            layout.operator_menu_enum("bob_blender_tools.shaders_new", "master",
-                                      text="New BobShader", icon="ADD")
+            row = layout.row(align=True)
+            row.operator_menu_enum("bob_blender_tools.shaders_new", "master",
+                                   text="New BobShader", icon="ADD")
+            if _has_biome_terrain():
+                row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
+                                       text="Biome Terrain", icon="WORLD")
         elif active_type is not None:
             layout.label(text=f"editing: {active_mat.name} ({active_type})", icon="GREASEPENCIL")
         else:
             layout.label(text=f"{active_mat.name}: plain, Convert above", icon="INFO")
 
         self._env_note(context, layout)
+        self._batch_convert(context, layout)
 
+    @staticmethod
+    def _batch_convert(context, layout):
         # Batch convert (selected objects or an unlinked collection): the scatter-asset case,
         # the only place a collection picker remains in Shaders (docs/UX-REDESIGN.md 5.4).
+        scn = context.scene.bbt_shaders
         box = layout.box()
         box.label(text="Batch convert to BobShader")
         box.prop(scn, "convert_scope", text="")
@@ -814,6 +1005,46 @@ class BBT_PT_shaders(Panel):
             box.prop(scn, "convert_collection", text="")
         op = box.operator("bob_blender_tools.shaders_convert", text="Convert", icon="NODE_MATERIAL")
         op.scope = scn.convert_scope
+
+    @staticmethod
+    def _draw_scatter_assets(context, layout, obj):
+        # A scatter layer's look is its instanced assets. List their (deduped) materials with a
+        # select and a status; a single Convert turns the whole asset collection into BobShaders.
+        # The selected material drives the Surface / Weather sub-panels (via _editing_material).
+        mats = _materials()
+        scn = context.scene.bbt_shaders
+        coll = obj.bbt_scatter_layer.assets
+        asset_mats = _asset_materials(obj)
+        box = layout.box()
+        box.label(text=f"Scattered assets: {coll.name if coll else '(none)'}",
+                  icon="OUTLINER_OB_GROUP_INSTANCE")
+        if not asset_mats:
+            box.label(text="No materials to edit in the asset collection", icon="INFO")
+            return
+        names = {m.name for m in asset_mats}
+        sel = scn.asset_material if scn.asset_material in names else asset_mats[0].name
+        any_plain = False
+        for m in asset_mats:
+            mt = mats.master_type(m)
+            row = box.row(align=True)
+            b = row.operator("bob_blender_tools.shaders_select_asset_material",
+                             text=m.name, depress=(m.name == sel),
+                             icon="RADIOBUT_ON" if m.name == sel else "RADIOBUT_OFF")
+            b.name = m.name
+            if mt in _MASTER_TAG:
+                ic, lbl = _MASTER_TAG[mt]
+                row.label(text=lbl, icon=ic)
+            else:
+                any_plain = True
+                row.label(text="plain", icon="DOT")
+        if any_plain and coll is not None:
+            op = box.operator("bob_blender_tools.shaders_convert",
+                              text="Convert assets to BobShader", icon="NODE_MATERIAL")
+            op.scope = "collection"
+            op.coll_name = coll.name
+        cap = box.row()
+        cap.enabled = False
+        cap.label(text="pick a material, then tune it in Surface / Weather below")
 
     @staticmethod
     def _env_note(context, layout):
@@ -831,25 +1062,35 @@ class BBT_PT_shaders_surface(Panel):
 
     @classmethod
     def poll(cls, context):
-        return _materials().master_type(_active_material(context)) == "surface"
+        return _materials().master_type(_editing_material(context)) == "surface"
 
     def draw(self, context):
         scn = context.scene.bbt_shaders
         layout = self.layout
-        mat = _active_material(context)
+        mat = _editing_material(context)
         node = _master_node(mat)
         if node is None:
             return
+        if _is_scatter_object(_active_object(context)):
+            layout.label(text=f"asset material: {mat.name}", icon="GREASEPENCIL")
         layout.operator_menu_enum("bob_blender_tools.shaders_preset", "preset",
                                   text="Preset", icon="PRESET")
         _draw_inputs(layout, node, _SURFACE_KNOBS)
+        # The library texture-set assign is for wrapper materials; a scattered asset already
+        # carries its own maps (they feed the master's map inputs), so the tint/rough/variation
+        # above modulate them and the assign row is hidden.
+        if _is_scatter_object(_active_object(context)):
+            cap = layout.row()
+            cap.enabled = False
+            cap.label(text="asset brings its own textures; above tints/modulates them")
+            return
         row = layout.row(align=True)
         row.prop(scn, "surface_texture", text="Texture")
         row.operator("bob_blender_tools.shaders_surface_set_texture", text="Assign")
         ts = _texset_node(mat, "TexSet")
         if ts is not None:
             layout.label(text="Triplanar / anti-tiling", icon="TEXTURE")
-            _draw_inputs(layout, ts, ["Scale", "Bump Strength"])
+            _draw_inputs(layout, ts, ["Scale", "Bump Strength", "Detail Blend", "Macro Amount"])
             _draw_inputs(layout, node, _MACRO_KNOBS)
 
 
@@ -873,8 +1114,12 @@ class BBT_PT_shaders_terrain(Panel):
         if node is None:
             return
 
-        layout.operator_menu_enum("bob_blender_tools.shaders_terrain_stack_preset", "preset",
-                                  text="Stack Preset", icon="PRESET")
+        row = layout.row(align=True)
+        row.operator_menu_enum("bob_blender_tools.shaders_terrain_stack_preset", "preset",
+                               text="Stack Preset", icon="PRESET")
+        if _has_biome_terrain():
+            row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
+                                   text="Biome", icon="WORLD")
         _draw_inputs(layout, node, _TERRAIN_GLOBAL)
 
         # Layer slots: one row each, an enable toggle plus a select button showing the base
@@ -915,7 +1160,7 @@ class BBT_PT_shaders_terrain(Panel):
         row.operator("bob_blender_tools.shaders_terrain_set_texture", text="Assign")
         ts = _texset_node(mat, f"TexSet{i}")
         if ts is not None:
-            _draw_inputs(layout, ts, ["Scale", "Bump Strength"])
+            _draw_inputs(layout, ts, ["Scale", "Bump Strength", "Detail Blend", "Macro Amount"])
 
 
 class BBT_PT_shaders_terrain_masks(Panel):
@@ -956,11 +1201,11 @@ class BBT_PT_shaders_weather(Panel):
 
     @classmethod
     def poll(cls, context):
-        return _materials().master_type(_active_material(context)) is not None
+        return _materials().master_type(_editing_material(context)) is not None
 
     def draw(self, context):
         layout = self.layout
-        mat = _active_material(context)
+        mat = _editing_material(context)
         node = _master_node(mat)
         if node is None:
             return
@@ -974,7 +1219,11 @@ class BBT_PT_shaders_weather(Panel):
         layout.label(text="Season aging (dust up / moss down)", icon="OUTLINER_DATA_SURFACE")
         _draw_inputs(layout, node, _WEATHER_SEASON)
 
-        # Snow accumulation shell (a GN modifier on the active surface, reads snow_cover).
+        # Snow accumulation shell: a GN modifier on the active surface object. It shells one mesh,
+        # so it is not offered when editing a scatter layer's shared asset material (the shell
+        # would attach to the instancer, not the assets).
+        if _is_scatter_object(_active_object(context)):
+            return
         box = layout.box()
         box.label(text="Snow Accumulation Shell", icon="MOD_SMOOTH")
         surface = _active_object(context)
@@ -992,6 +1241,7 @@ CLASSES = (
     BBT_OT_shaders_new,
     BBT_OT_shaders_convert,
     BBT_OT_shaders_select_slot,
+    BBT_OT_shaders_select_asset_material,
     BBT_OT_shaders_preset,
     BBT_OT_shaders_surface_set_texture,
     BBT_OT_shaders_terrain_set_texture,
@@ -1001,6 +1251,7 @@ CLASSES = (
     BBT_OT_shaders_terrain_toggle,
     BBT_OT_shaders_terrain_layer_preset,
     BBT_OT_shaders_terrain_stack_preset,
+    BBT_OT_shaders_biome_terrain,
     BBT_OT_shaders_snow_shell_add,
     BBT_OT_shaders_snow_shell_remove,
     BBT_PT_shaders,
