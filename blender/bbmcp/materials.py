@@ -762,6 +762,11 @@ def weather_group():
     # S4 weather terms, each gated by a strength/amount (0 = off).
     _gin(g, "Wetness Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Wet Pooling", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    # Terrain-driven wetness (a baked flow/wetness map, fed only by the terrain master; 0 for
+    # surfaces and legacy terrains). Lets channels and low ground read damp independent of the
+    # weather, in EEVEE too (the map is baked, unlike the Cycles-only Wet Pooling cavity term).
+    _gin(g, "Wetness Map", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Terrain Wetness", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Frost Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Dust Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Moss Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -836,16 +841,19 @@ def weather_group():
     moss = _mmath(g, "MULTIPLY", I["Moss Amount"], downface, (660, 200))
     col = _mixcol(g, moss, col, _MOSS_COLOR, (1000, 300))
 
-    # Wetness: darken albedo and drop roughness for a wet sheen. Uniform by effective wetness;
-    # Wet Pooling adds cavity pooling (Pointiness, Cycles) so hollows read wet even when dry.
+    # Wetness: darken albedo and drop roughness for a wet sheen. The wet factor is the MAX of
+    # three sources: uniform weather wetness, Cycles cavity pooling (Wet Pooling), and the baked
+    # terrain map (Wetness Map * Terrain Wetness) so drainage channels read damp on their own.
     wet = _mmath(g, "MULTIPLY", env_wet, I["Wetness Strength"], (660, 60))
     pool = _mmath(g, "MULTIPLY", cavity, I["Wet Pooling"], (660, -60))
+    terr = _mmath(g, "MULTIPLY", I["Wetness Map"], I["Terrain Wetness"], (660, -160))
+    wp = _mmath(g, "MAXIMUM", wet, pool, (840, 0))
     wetf = g.nodes.new("ShaderNodeMath")
     wetf.operation = "MAXIMUM"
     wetf.use_clamp = True
-    wetf.location = (840, 0)
-    g.links.new(wet, wetf.inputs[0])
-    g.links.new(pool, wetf.inputs[1])
+    wetf.location = (1010, 0)
+    g.links.new(wp, wetf.inputs[0])
+    g.links.new(terr, wetf.inputs[1])
     wf = wetf.outputs["Value"]
     darkf = _mmath(g, "SUBTRACT", 1.0, _mmath(g, "MULTIPLY", wf, 0.45, (1000, -80)), (1180, -40))
     col = _vscale(g, col, darkf, (1180, 220))
@@ -1117,9 +1125,78 @@ def new_bobshader(obj, master="surface"):
     """Create (or get) a per-object BobShader wrapper auto-named M_<object>, wire the chosen
     master, assign it GN-aware, and return the material. Identity is the datablock on the object's
     slot, not a stored name; get-or-create keeps a re-New from wiping tuned inputs."""
-    mat = terrain_material(obj.name) if master == "terrain" else surface_material(obj.name)
+    if master == "terrain":
+        fresh = SURFACE_WRAPPER_PREFIX + obj.name not in bpy.data.materials
+        flow, wet, size = _terrain_maps(obj)
+        mat = terrain_material(obj.name, flow_image=flow, wetness_image=wet, terrain_size=size)
+        # Only auto-configure a riverbed on a genuinely fresh material (never clobber a re-New's
+        # tuned inputs), and only when the drainage maps are present to key off.
+        if fresh and (flow is not None or wet is not None):
+            _autoconfig_riverbed(mat)
+    else:
+        mat = surface_material(obj.name)
     assign_material(obj, mat)
     return mat
+
+
+def _terrain_maps(obj):
+    """(flow_image, wetness_image, size) for a built terrain. Loads the baked drainage maps
+    (siblings of the heightmap: <base>_flow.png / <base>_wetness.png) when their files exist.
+    The heightmap path is the object's bbt_heightmap prop (set by the bake), else the image
+    datablock on the terrain's GN modifier; size is the bbt_terrain_size prop (fallback 90)."""
+    hm = obj.get("bbt_heightmap")
+    if not hm:
+        for mod in obj.modifiers:
+            ng = getattr(mod, "node_group", None)
+            if ng is None:
+                continue
+            for node in ng.nodes:
+                if node.bl_idname == "GeometryNodeImageTexture":
+                    img = node.inputs["Image"].default_value
+                    if img is not None and img.filepath:
+                        hm = img.filepath
+                        break
+            if hm:
+                break
+    size = float(obj.get("bbt_terrain_size", 90.0))
+    flow = wet = None
+    if hm:
+        base, ext = os.path.splitext(bpy.path.abspath(hm))
+        ext = ext or ".png"
+        fp, wp = base + "_flow" + ext, base + "_wetness" + ext
+        if os.path.exists(fp):
+            flow = bpy.data.images.load(fp, check_existing=True)
+        if os.path.exists(wp):
+            wet = bpy.data.images.load(wp, check_existing=True)
+    return flow, wet, size
+
+
+def terrain_material_for(obj, layer_sets=None, mat_name=None):
+    """terrain_material for a built terrain OBJECT: gathers its baked flow/wetness maps and size
+    so a rebuild (assigning a texture set, adding a layer) keeps the drainage wiring instead of
+    dropping it. mat_name preserves the existing material's identity when rebuilding in place."""
+    flow, wet, size = _terrain_maps(obj)
+    return terrain_material(mat_name or obj.name, layer_sets=layer_sets,
+                            flow_image=flow, wetness_image=wet, terrain_size=size)
+
+
+def _autoconfig_riverbed(mat):
+    """On a fresh terrain BobShader with drainage maps, wire a sensible riverbed look: enable a
+    wet-gravel layer keyed to high flow, and a baseline terrain wetness in the channels. Editable
+    and disablable afterward."""
+    grp = mat.node_tree.nodes.get("Master")
+    if grp is None:
+        return
+    def setv(name, val):
+        sock = grp.inputs.get(name)
+        if sock is not None:
+            sock.default_value = val
+    setv("L1 Enable", 1.0)
+    setv("L1 Base Color", (0.20, 0.17, 0.14, 1.0))  # damp gravel / silt
+    setv("L1 Roughness", 0.7)
+    setv("L1 Flow Strength", 1.0)
+    setv("L1 Flow Threshold", 0.55)
+    setv("Terrain Wetness", 0.6)
 
 
 def surface_material(mat_name, texture_set=None):
@@ -1257,11 +1334,20 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     curv_mask = _mrange(g, pointiness, 0.5, 0.75, 0.0, 1.0, (x0, y - 1060))
     curv = _gated(g, curv_mask, I[p + "Curvature Strength"], (x0 + 200, y - 1060))
 
+    # Flow: rising smoothstep on the shared Flow Map around Flow Threshold (high flow -> 1, so
+    # the layer keeps to channels/riverbeds), gated by strength. A fixed soft width keeps it to
+    # two knobs. With no map wired (Flow Map = 0) a Flow-Strength layer correctly vanishes -- it
+    # lives only in channels, which read as absent here.
+    f_lo = _mmath(g, "SUBTRACT", I[p + "Flow Threshold"], _SLOPE_SOFT, (x0, y - 1200))
+    flow_band = _mrange(g, I["Flow Map"], f_lo, I[p + "Flow Threshold"], 0.0, 1.0, (x0 + 200, y - 1200))
+    flow = _gated(g, flow_band, I[p + "Flow Strength"], (x0 + 380, y - 1200))
+
     # Weight = all masks, then Enable gates the layer out entirely.
     w = _mmath(g, "MULTIPLY", slope, alt, (x0 + 1040, y))
     w = _mmath(g, "MULTIPLY", w, noise, (x0 + 1210, y))
     w = _mmath(g, "MULTIPLY", w, paint, (x0 + 1380, y))
     w = _mmath(g, "MULTIPLY", w, curv, (x0 + 1550, y))
+    w = _mmath(g, "MULTIPLY", w, flow, (x0 + 1720, y))
 
     # Height field for the height-lerp: presence (weight) + a per-layer macro noise + bias.
     mtex = g.nodes.new("ShaderNodeTexNoise")
@@ -1291,6 +1377,9 @@ def terrain_master_group():
     _gin(g, "Blend Softness", "NodeSocketFloat", 0.15, 0.001, 1.0)
     _gin(g, "Macro Amount", "NodeSocketFloat", 0.15, 0.0, 1.0)
     _gin(g, "Macro Scale", "NodeSocketFloat", 0.3, 0.0)
+    # The baked drainage-flow map, sampled per-terrain in the wrapper and fed here (0 = none).
+    # A layer's Flow mask keys off this, so a sediment/gravel layer can live in the channels.
+    _gin(g, "Flow Map", "NodeSocketFloat", 0.0, 0.0, 1.0)
     for i in range(MAX_TERRAIN_LAYERS):
         p = f"L{i} "
         _gin(g, p + "Enable", "NodeSocketFloat", 1.0 if i == 0 else 0.0, 0.0, 1.0)
@@ -1311,6 +1400,10 @@ def terrain_master_group():
         _gin(g, p + "Noise Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Paint Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Curvature Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
+        # Flow band: keep this layer where the drainage-flow map is above Flow Threshold
+        # (channels/riverbeds). Gated by Flow Strength (0 = off, the default).
+        _gin(g, p + "Flow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
+        _gin(g, p + "Flow Threshold", "NodeSocketFloat", 0.6, 0.0, 1.0)
         # Texture-set maps (S3), identity defaults so an untextured layer is unchanged.
         _gin(g, p + "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
         _gin(g, p + "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
@@ -1324,6 +1417,10 @@ def terrain_master_group():
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
     for _wn, _wd in _WEATHER_EXTRA:
         _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
+    # Terrain-only wetness passthrough (fed from the wrapper's wetness-map sample). Declared
+    # here rather than in _WEATHER_EXTRA so surface materials do not carry these unused inputs.
+    _gin(g, "Wetness Map", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Terrain Wetness", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
@@ -1386,7 +1483,8 @@ def terrain_master_group():
     g.links.new(acc_rough, weather.inputs["Roughness"])
     g.links.new(acc_metal, weather.inputs["Metallic"])
     for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
+                 "Altitude", "Altitude Falloff", "Wetness Map", "Terrain Wetness",
+                 *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):
         g.links.new(weather.outputs[name], go.inputs[name])
@@ -1394,17 +1492,44 @@ def terrain_master_group():
     return g
 
 
-def terrain_material(mat_name, layer_sets=None):
-    """A multi-layer terrain wrapper (S_TerrainMaster), optionally with per-layer texture sets.
+def terrain_material(mat_name, layer_sets=None, flow_image=None, wetness_image=None,
+                     terrain_size=None):
+    """A multi-layer terrain wrapper (S_TerrainMaster), optionally with per-layer texture sets
+    and the baked flow/wetness maps.
 
     layer_sets maps a layer index to a texture-set name. Each set's triplanar maps feed that
     layer's Albedo/Roughness map inputs and its detail height; the blended detail height across
     all layers drives one Bump node into the Principled normal (a single terrain normal, no
     per-layer tangent problem). Colour still tints; a newly textured layer defaults to a white
-    tint and Roughness 1 so its map reads at face value."""
+    tint and Roughness 1 so its map reads at face value.
+
+    flow_image / wetness_image are the baked drainage maps (siblings of the heightmap). When
+    given, they are sampled per-terrain by object-space XY (UV = pos.xy/size + 0.5, matching the
+    heightmap_terrain displacement) and fed into the master's Flow Map / Wetness Map inputs, so a
+    layer's Flow mask and the terrain wetness key off the terrain's own drainage."""
     master = terrain_master_group()
     ls = layer_sets or {}
-    sig = "terrain|" + ",".join(f"{i}:{ls[i]}" for i in sorted(ls))
+    size = float(terrain_size or 90.0)
+    sig = ("terrain|" + ",".join(f"{i}:{ls[i]}" for i in sorted(ls))
+           + ("|flow" if flow_image is not None else "")
+           + ("|wet" if wetness_image is not None else ""))
+
+    def _map_uv(nt):
+        """Object-space XY -> heightmap UV, shared by the flow/wetness samples. Object coords
+        match the grid's local space (where the heightmap was sampled), so the maps line up even
+        if the terrain object is moved."""
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        tc.location = (-1000, -520)
+        sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+        sep.location = (-820, -520)
+        nt.links.new(tc.outputs["Object"], sep.inputs[0])
+        u = _mmath(nt, "ADD", _mmath(nt, "DIVIDE", sep.outputs["X"], size, (-640, -480)), 0.5, (-460, -480))
+        v = _mmath(nt, "ADD", _mmath(nt, "DIVIDE", sep.outputs["Y"], size, (-640, -620)), 0.5, (-460, -620))
+        uvw = nt.nodes.new("ShaderNodeCombineXYZ")
+        uvw.location = (-300, -540)
+        nt.links.new(u, uvw.inputs["X"])
+        nt.links.new(v, uvw.inputs["Y"])
+        return uvw.outputs["Vector"]
 
     def wire(nt, grp, bsdf, old_sig):
         prev = old_sig or ""
@@ -1425,6 +1550,21 @@ def terrain_material(mat_name, layer_sets=None):
             bump.inputs["Strength"].default_value = 0.3
             nt.links.new(grp.outputs["Height"], bump.inputs["Height"])
             nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+        # Baked drainage maps: sample by the shared object-space UV and feed the master.
+        if flow_image is not None or wetness_image is not None:
+            uv = _map_uv(nt)
+            for img, socket, yy in ((flow_image, "Flow Map", -520),
+                                    (wetness_image, "Wetness Map", -760)):
+                if img is None:
+                    continue
+                img.colorspace_settings.name = "Non-Color"
+                tex = nt.nodes.new("ShaderNodeTexImage")
+                tex.image = img
+                tex.interpolation = "Linear"
+                tex.extension = "EXTEND"
+                tex.location = (-120, yy)
+                nt.links.new(uv, tex.inputs["Vector"])
+                nt.links.new(tex.outputs["Color"], grp.inputs[socket])
 
     return _build_wrapper(mat_name, master, sig, wire)
 

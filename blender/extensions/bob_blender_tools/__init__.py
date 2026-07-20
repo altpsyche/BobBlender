@@ -324,9 +324,10 @@ class BBT_HeightfieldProps(PropertyGroup):
     preview: BoolProperty(name="Preview (256)", default=True,
                           description="Bake at 256 for a fast look; off for full resolution")
     emit_maps: BoolProperty(
-        name="Flow + wetness maps", default=False,
+        name="Flow + wetness maps", default=True,
         description="Also bake <name>_flow.png and <name>_wetness.png beside the height, "
-                    "for shading and scatter to key off the terrain's own drainage")
+                    "so a Terrain BobShader can read the terrain's own drainage (wet channels, "
+                    "riverbed layers). Adds a short drainage solve to the bake")
     resolution: IntProperty(name="Resolution", default=768, min=64, max=4096)
     mesh_res: IntProperty(
         name="Mesh Density", default=384, min=8, soft_max=1024, max=4096,
@@ -520,6 +521,20 @@ class BBT_OT_bake_terrain(Operator):
         # No material here (decision D): the terrain is shaded from the Shaders panel.
         apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain",
                   "name": hf.target, "params": tparams})
+
+        # Record the heightmap + size on the object so a Terrain BobShader can locate the sibling
+        # flow/wetness maps and sample them at the right scale. Reload the maps too (a re-bake
+        # overwrites them in place) so an existing terrain material's samples refresh.
+        obj = bpy.data.objects.get(hf.target)
+        if obj is not None:
+            obj["bbt_heightmap"] = out_abs
+            obj["bbt_terrain_size"] = float(hf.terrain_size)
+        if hf.emit_maps:
+            base, ext = os.path.splitext(out_abs)
+            for kind in ("flow", "wetness"):
+                mp = f"{base}_{kind}{ext}"
+                if os.path.exists(mp):
+                    apply_op({"op": "reload_image", "path": mp})
 
         _load_preview(out_abs)
 

@@ -657,7 +657,8 @@ class BBT_OT_shaders_terrain_set_texture(Operator):
             mapping.pop(i, None)
         else:
             mapping[i] = scn.layer_texture
-        mat = mats.terrain_material(mat.name, layer_sets=mapping)
+        mat = mats.terrain_material_for(_active_object(context), layer_sets=mapping,
+                                        mat_name=mat.name)
         _save_layer_sets(mat, mapping)
         _assign(_active_object(context), mat)
         _feed_env(context.scene)
@@ -813,7 +814,7 @@ class BBT_OT_shaders_biome_terrain(Operator):
         # Update the active terrain material in place if there is one, else a per-object M_<obj>.
         active = _active_material(context)
         name = active.name if mats.master_type(active) == "terrain" else obj.name
-        mat = mats.terrain_material(name, layer_sets=mapping)
+        mat = mats.terrain_material_for(obj, layer_sets=mapping, mat_name=name)
         _save_layer_sets(mat, mapping)
         node = _terrain_node(mat)
         if node is None:
