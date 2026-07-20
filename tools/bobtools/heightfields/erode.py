@@ -15,7 +15,18 @@ Three kinds, composed as an ordered list:
 run_passes(h, passes, backend, seed) applies a list and returns a [0, 1] field.
 """
 
+import logging
+import os
+
 import numpy as np
+
+log = logging.getLogger("bob.heightfields")
+
+# The CPU droplet loop is scalar Python (~2.4k droplets/s), so an uncapped preset
+# density (1.5M+) is a multi-minute-to-multi-hour hang with no feedback. On CPU,
+# clamp the droplet count to this many with a warning; override with the env var,
+# or use a GPU backend for the full density. The GPU path is uncapped.
+CPU_DROPLET_CAP = int(os.environ.get("BOB_HF_CPU_DROPLET_CAP", "200000"))
 
 SQRT2 = 2.0 ** 0.5
 _NEIGHBOURS = [
@@ -320,8 +331,17 @@ def _hydraulic_cpu(h, sx, sy, p):
 def hydraulic(h, backend, seed=0, **params):
     """Droplet-hydraulic erosion. GPU when the backend is a GPU, else CPU."""
     p = {**_HYDRAULIC_DEFAULTS, **params}
-    sx, sy = _start_positions(h.shape, int(p["droplets"]), seed)
-    if backend is not None and backend.is_gpu:
+    is_gpu = backend is not None and backend.is_gpu
+    n = int(p["droplets"])
+    if not is_gpu and n > CPU_DROPLET_CAP:
+        log.warning(
+            "CPU erosion: capping droplets %d -> %d to avoid a multi-minute hang "
+            "(use a GPU backend or raise BOB_HF_CPU_DROPLET_CAP for the full density)",
+            n, CPU_DROPLET_CAP,
+        )
+        n = CPU_DROPLET_CAP
+    sx, sy = _start_positions(h.shape, n, seed)
+    if is_gpu:
         return _hydraulic_gpu(h, sx, sy, p, backend)
     return _hydraulic_cpu(h, sx, sy, p)
 

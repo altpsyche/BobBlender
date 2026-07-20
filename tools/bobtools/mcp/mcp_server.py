@@ -109,7 +109,10 @@ def bake_heightfield(
         base.update(p)
         p = base
 
-    out_abs = str((config.repo_root() / out_file).resolve())
+    try:
+        out_abs = str(config.resolve_under_repo(out_file))
+    except ValueError as exc:
+        return {"error": str(exc), "out_file": out_file}
     result = bake(out_abs, p, force=force, preview=preview)
     result["out_file"] = out_file
     return result

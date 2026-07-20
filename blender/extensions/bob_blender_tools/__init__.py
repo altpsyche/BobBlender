@@ -270,7 +270,9 @@ class BBT_OT_bake_terrain(Operator):
     def execute(self, context):
         hf = context.scene.bbt_hf
         repo = os.path.dirname(server._repo_blender_dir())
-        out_abs = os.path.join(repo, "library", "_generated", f"{hf.target}_hf.png")
+        # basename the free-text target so a value like "../../x" cannot escape _generated
+        target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
+        out_abs = os.path.join(repo, "library", "_generated", f"{target}_hf.png")
         # Send flat knobs; the pipeline (build_params + preview) expands the pass
         # list and scales droplet density to the bake resolution, so the panel does
         # not duplicate that logic. Droplets is a density at 768px.
