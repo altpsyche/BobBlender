@@ -112,20 +112,31 @@ lever per op kind so the response is predictable on any preset:
 
 ## Flow and wetness maps
 
-An opt-in bake output ("Flow + wetness maps", or `--maps` on the CLI): beside
-`<name>_hf.png` it writes `<name>_hf_flow.png` and `<name>_hf_wetness.png`
+On by default for a terrain bake ("Flow + wetness maps", or `--maps` on the CLI):
+beside `<name>_hf.png` it writes `<name>_hf_flow.png` and `<name>_hf_wetness.png`
 (`maps.derive_maps`). Flow is log-scaled drainage accumulation (bright in channels);
 wetness blends flow with low, flat ground. They are computed from the same
 flow-accumulation the erosion uses, so their channels line up with the carved canyons.
-
-These let shading and scatter key off the terrain's OWN hydrology (damp riverbeds,
-sediment, riparian planting) rather than only weather-driven wetness. A shader or the
-scatter recipe samples them by world XY, the same convention the fog material uses for
-the heightmap (`materials.py`): image set Non-Color, Linear, EXTEND, and
-
-    UV = Position.xy / terrain_size + 0.5
-
 The map path is recorded in the bake sidecar under `"maps"`.
+
+These let shading key off the terrain's OWN hydrology rather than only weather-driven
+wetness. The terrain BobShader samples them (in `bbmcp/materials.py`): the bake stores
+the heightmap path + size on the object (`bbt_heightmap`, `bbt_terrain_size`),
+`new_bobshader(obj, "terrain")` loads the sibling maps, and `terrain_material` samples
+them by object-space XY (`UV = Position.xy / size + 0.5`, image Non-Color / Linear /
+EXTEND) into two master inputs:
+
+- `Flow Map` drives a per-layer Flow mask (`L{i} Flow Strength` / `Flow Threshold`),
+  alongside slope/altitude/noise/paint/curvature, so a sediment/gravel layer can be kept
+  to the channels.
+- `Wetness Map` + `Terrain Wetness` fold into the weather wet factor
+  (`wf = MAX(weather wet, cavity pool, terrain wet)`), so channels read damp independent
+  of the weather -- and in EEVEE too, since the map is baked (the Cycles Pointiness cavity
+  term is not).
+
+Creating a Terrain BobShader on a terrain with maps auto-wires a riverbed layer keyed to
+flow plus a baseline `Terrain Wetness`, for a one-pick channel look (editable afterward).
+Scatter does not yet sample the maps (a riparian flow mask is future work).
 
 ## Guarantees
 
