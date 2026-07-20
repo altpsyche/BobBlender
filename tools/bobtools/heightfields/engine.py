@@ -53,6 +53,7 @@ _OPS = {
     "warp": _wrap(ops_filter.warp),
     "curve": _wrap(ops_filter.curve),
     "sharpen": _wrap(ops_filter.sharpen),
+    "falloff": _wrap(ops_filter.falloff),
     "smooth": lambda h, xp, p, seed: ops_erode._ndimage(xp).gaussian_filter(
         h, max(float(p.get("sigma", 1.0)), 1e-3), mode="nearest"),
 }

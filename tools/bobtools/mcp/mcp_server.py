@@ -92,8 +92,9 @@ def bake_heightfield(
 
     out_file: repo-relative PNG path (e.g. "library/_generated/forest_height.png").
     params: {size, seed, backend: "auto"|"cpu"|"gpu", preset: name?,
-             generate: {octaves, roughness, ridged, warp, detail_strength},
-             passes: [{"kind": "hydraulic"|"thermal"|"stream_power", ...}]}.
+             relief, detail, erosion, warp: 0..1 global knobs (0.5 = preset as
+             authored)}. A preset expands to an op stack; pass an explicit
+             "stack": [{"kind": ..., ...}] to run one directly (advanced).
     preview: bake at 256 for a fast look, commit full-res without it.
     force: ignore the params-hash cache and re-bake.
 
