@@ -18,6 +18,8 @@ read here through Attribute nodes of type INSTANCER, the mechanism the Phase-0
 linchpin confirmed carries a GN value into a volume shader.
 """
 
+import os
+
 import bpy
 
 CLOUD_MATERIAL = "BOB_CloudVolume"
@@ -584,12 +586,24 @@ ENV_STATE_DRIVERS = (
     ("env_snow", "snow", 0.0),
     ("env_wetness", "wetness", 0.0),
     ("env_temperature", "temperature", 15.0),
+    ("env_weather", "weather", 0.0),  # enum index; mapped to effective wetness in S_EnvState
 )
 
 # Snow shading constants (the surface-snow look): a slightly cool near-white albedo and a
 # soft, high roughness. Kept here so the shader and any future accumulation-shell tint agree.
 _SNOW_ALBEDO = (0.90, 0.93, 0.97, 1.0)
 _SNOW_ROUGHNESS = 0.6
+# S4 weather-term tints: warm dust, dark moss, cool frost.
+_DUST_COLOR = (0.55, 0.47, 0.33, 1.0)
+_MOSS_COLOR = (0.12, 0.22, 0.06, 1.0)
+_FROST_COLOR = (0.82, 0.87, 0.96, 1.0)
+# The extra S_Weather inputs the masters must expose and pass through (name, default).
+_WEATHER_EXTRA = (
+    ("Wetness Strength", 1.0), ("Wet Pooling", 0.0), ("Frost Strength", 1.0),
+    ("Dust Amount", 0.0), ("Moss Amount", 0.0),
+)
+# env.weather enum indices (must match env.py WEATHER order): rain and storm wet the ground.
+_WEATHER_RAIN, _WEATHER_STORM = 3, 4
 
 
 def _gin(g, name, stype, default=None, mn=None, mx=None):
@@ -632,6 +646,16 @@ def _mixcol(g, fac, col_a, col_b, loc):
     return n.outputs[2]
 
 
+def _vscale(g, vec, scalar, loc):
+    """Scale a colour/vector by a scalar (VectorMath SCALE)."""
+    n = g.nodes.new("ShaderNodeVectorMath")
+    n.operation = "SCALE"
+    n.location = loc
+    _cplug(g, n.inputs[0], vec)
+    _mplug(g, n.inputs["Scale"], scalar)
+    return n.outputs["Vector"]
+
+
 def env_state_group():
     """The world-to-shader bridge: one shared group whose internal Value nodes hold the
     live env fields, driven once from scene.bbt_env by the panel. Because a node group is
@@ -647,13 +671,34 @@ def env_state_group():
     _gout(g, "Wetness", "NodeSocketFloat")
     _gout(g, "Temperature", "NodeSocketFloat")
     go = g.nodes.new("NodeGroupOutput")
-    go.location = (300, 0)
+    go.location = (600, 0)
+    O = go.inputs
+
+    # The driven raw fields (one driver each on these Value nodes, installed by the panel).
+    val = {}
     for i, (node_name, _field, default) in enumerate(ENV_STATE_DRIVERS):
         v = g.nodes.new("ShaderNodeValue")
         v.name = v.label = node_name
-        v.location = (0, -i * 160)
+        v.location = (-500, -i * 160)
         v.outputs[0].default_value = default
-        g.links.new(v.outputs[0], go.inputs[i])
+        val[node_name] = v.outputs[0]
+
+    g.links.new(val["env_snow"], O["Snow"])
+    g.links.new(val["env_temperature"], O["Temperature"])
+
+    # The weather -> wetness mapping (the one convergence spot, documented in SHADERS.md):
+    # effective wetness = max(env.wetness, weather contribution), where weather in {rain,
+    # storm} raises it (rain 0.6, storm 1.0) and clear/cloud/fog do not wet the ground.
+    w = val["env_weather"]
+    ge = _mmath(g, "GREATER_THAN", w, _WEATHER_RAIN - 0.5, (-260, -420))
+    le = _mmath(g, "LESS_THAN", w, _WEATHER_STORM + 0.5, (-260, -560))
+    band = _mmath(g, "MULTIPLY", ge, le, (-90, -480))       # 1 for weather in {rain, storm}
+    lvl = _mmath(g, "MULTIPLY", _mmath(g, "SUBTRACT", w, float(_WEATHER_RAIN), (-90, -620)),
+                 0.4, (80, -620))                            # rain 0.0, storm 0.4
+    lvl = _mmath(g, "ADD", 0.6, lvl, (250, -620))            # rain 0.6, storm 1.0
+    wwet = _mmath(g, "MULTIPLY", band, lvl, (250, -480))
+    eff = _mmath(g, "MAXIMUM", val["env_wetness"], wwet, (420, -360))
+    g.links.new(eff, O["Wetness"])
     return g
 
 
@@ -690,6 +735,12 @@ def weather_group():
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
     _gin(g, "Altitude", "NodeSocketFloat", 0.0)
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    # S4 weather terms, each gated by a strength/amount (0 = off).
+    _gin(g, "Wetness Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    _gin(g, "Wet Pooling", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Frost Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    _gin(g, "Dust Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Moss Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
@@ -697,13 +748,15 @@ def weather_group():
     gi = g.nodes.new("NodeGroupInput")
     gi.location = (-1200, 200)
     go = g.nodes.new("NodeGroupOutput")
-    go.location = (900, 0)
+    go.location = (2100, 0)
     I, O = gi.outputs, go.inputs
 
     env = g.nodes.new("ShaderNodeGroup")
     env.node_tree = env_state_group()
     env.location = (-1200, -520)
     snow_amount = env.outputs["Snow"]
+    env_wet = env.outputs["Wetness"]
+    env_temp = env.outputs["Temperature"]
 
     # Shader Geometry: world-space normal Z (slope) and position Z (altitude), the same
     # quantities the GN pass reads, so the fallback reproduces it.
@@ -743,17 +796,52 @@ def weather_group():
     g.links.new(I["Snow Strength"], snow_factor.inputs[1])
     sf = snow_factor.outputs["Value"]
 
-    # Shade: whiten albedo, soften roughness toward the snow value, drop metallic.
-    out_color = _mixcol(g, sf, I["Base Color"], _SNOW_ALBEDO, (520, 120))
-    inv_sf = _mmath(g, "SUBTRACT", 1.0, sf, (300, 20))
-    r_base = _mmath(g, "MULTIPLY", I["Roughness"], inv_sf, (480, 40))
-    r_snow = _mmath(g, "MULTIPLY", _SNOW_ROUGHNESS, sf, (480, -100))
-    out_rough = _mmath(g, "ADD", r_base, r_snow, (660, -20))
-    out_metal = _mmath(g, "MULTIPLY", I["Metallic"], inv_sf, (660, -180))
+    # Up/down-facing and cavity terms, from the shader Geometry: dust/frost hold on up-facing
+    # faces, moss on shaded down-facing ones, and wetness pools in concave cavities.
+    upface = _mrange(g, nsep.outputs["Z"], 0.2, 0.8, 0.0, 1.0, (300, 260))
+    downface = _mmath(g, "SUBTRACT", 1.0, upface, (480, 300))
+    cavity = _mrange(g, geo.outputs["Pointiness"], 0.5, 0.35, 0.0, 1.0, (300, 420))
 
-    g.links.new(out_color, O["Base Color"])
-    g.links.new(out_rough, O["Roughness"])
-    g.links.new(out_metal, O["Metallic"])
+    # The weather stack, applied in order on (albedo, roughness, metallic):
+    #   dust/moss (aging) -> wetness (darken + gloss) -> snow (whiten) -> frost (cool sheen).
+    col, rough, metal = I["Base Color"], I["Roughness"], I["Metallic"]
+
+    # Dust on up-facing, moss on down-facing (continuous amounts, set by season on Apply).
+    dust = _mmath(g, "MULTIPLY", I["Dust Amount"], upface, (660, 320))
+    col = _mixcol(g, dust, col, _DUST_COLOR, (840, 360))
+    moss = _mmath(g, "MULTIPLY", I["Moss Amount"], downface, (660, 200))
+    col = _mixcol(g, moss, col, _MOSS_COLOR, (1000, 300))
+
+    # Wetness: darken albedo and drop roughness for a wet sheen. Uniform by effective wetness;
+    # Wet Pooling adds cavity pooling (Pointiness, Cycles) so hollows read wet even when dry.
+    wet = _mmath(g, "MULTIPLY", env_wet, I["Wetness Strength"], (660, 60))
+    pool = _mmath(g, "MULTIPLY", cavity, I["Wet Pooling"], (660, -60))
+    wetf = g.nodes.new("ShaderNodeMath")
+    wetf.operation = "MAXIMUM"
+    wetf.use_clamp = True
+    wetf.location = (840, 0)
+    g.links.new(wet, wetf.inputs[0])
+    g.links.new(pool, wetf.inputs[1])
+    wf = wetf.outputs["Value"]
+    darkf = _mmath(g, "SUBTRACT", 1.0, _mmath(g, "MULTIPLY", wf, 0.45, (1000, -80)), (1180, -40))
+    col = _vscale(g, col, darkf, (1180, 220))
+    rough = _lerp(g, rough, 0.08, wf, (1180, -220))
+
+    # Snow on top: whiten albedo, soften roughness, drop metallic by the coverage factor.
+    col = _mixcol(g, sf, col, _SNOW_ALBEDO, (1360, 240))
+    rough = _lerp(g, rough, _SNOW_ROUGHNESS, sf, (1360, -220))
+    metal = _mmath(g, "MULTIPLY", metal, _mmath(g, "SUBTRACT", 1.0, sf, (1360, -360)), (1540, -320))
+
+    # Frost: below freezing, on up-facing exposed faces, a cool blue-white sheen.
+    cold = _mrange(g, env_temp, 0.0, -6.0, 0.0, 1.0, (1360, 460))
+    frost = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", cold, I["Frost Strength"], (1540, 460)),
+                   upface, (1720, 460))
+    col = _mixcol(g, _mmath(g, "MULTIPLY", frost, 0.6, (1720, 300)), col, _FROST_COLOR, (1900, 340))
+    rough = _lerp(g, rough, 0.25, _mmath(g, "MULTIPLY", frost, 0.5, (1720, -160)), (1900, -160))
+
+    g.links.new(col, O["Base Color"])
+    g.links.new(rough, O["Roughness"])
+    g.links.new(metal, O["Metallic"])
     return g
 
 
@@ -776,12 +864,24 @@ def surface_master_group():
     _gin(g, "Roughness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Metallic", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Variation", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    # Texture-set maps (S3). Default to the multiplicative identity so a solid-colour surface
+    # is unchanged: white albedo (tint * white = tint) and 1.0 scalars. The wrapper links a
+    # texture set into these when one is assigned; the same colour drives both looks.
+    _gin(g, "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gin(g, "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    _gin(g, "Metallic Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    # Macro break-up (anti-tiling): a low-frequency world noise modulating albedo brightness
+    # so a repeating texture stops reading as a tile at distance. Amount 0 = off.
+    _gin(g, "Macro Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Macro Scale", "NodeSocketFloat", 0.2, 0.0)
     _gin(g, "Snow Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Use Attribute", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
     _gin(g, "Altitude", "NodeSocketFloat", 0.0)
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    for _wn, _wd in _WEATHER_EXTRA:
+        _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
@@ -810,39 +910,56 @@ def surface_master_group():
     g.links.new(I["Base Color"], hsv.inputs["Color"])
     g.links.new(vfac.outputs["Value"], hsv.inputs["Value"])
 
+    # Colour as tint: albedo = (varied base colour) * Albedo Map, then macro break-up.
+    tinted = g.nodes.new("ShaderNodeVectorMath")
+    tinted.operation = "MULTIPLY"
+    tinted.location = (0, 60)
+    g.links.new(hsv.outputs["Color"], tinted.inputs[0])
+    g.links.new(I["Albedo Map"], tinted.inputs[1])
+    albedo = _macro_break(g, tinted.outputs["Vector"], I["Macro Amount"], I["Macro Scale"], (200, 120))
+    rough = _mmath(g, "MULTIPLY", I["Roughness"], I["Roughness Map"], (0, -60))
+    metal = _mmath(g, "MULTIPLY", I["Metallic"], I["Metallic Map"], (0, -140))
+
     weather = g.nodes.new("ShaderNodeGroup")
     weather.node_tree = weather_group()
-    weather.location = (100, 0)
-    g.links.new(hsv.outputs["Color"], weather.inputs["Base Color"])
-    for name in ("Roughness", "Metallic", "Snow Strength", "Use Attribute",
-                 "Slope Threshold", "Slope Falloff", "Altitude", "Altitude Falloff"):
+    weather.location = (400, 0)
+    g.links.new(albedo, weather.inputs["Base Color"])
+    g.links.new(rough, weather.inputs["Roughness"])
+    g.links.new(metal, weather.inputs["Metallic"])
+    for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
+                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):
         g.links.new(weather.outputs[name], go.inputs[name])
     return g
 
 
-def _wrapper_material(mat_name, master):
-    """Get-or-create a thin wrapper material: one master group node ("Master") feeding one
-    Principled BSDF and the Output. The wrapper's group-node input values are the instance
-    parameters, drawn live in the panel. Get-or-create (not rebuild) so a re-Build never
-    wipes tuned inputs; iterate the master graph itself by deleting the S_ group or
-    re-enabling the addon. Shared by the surface and terrain masters."""
+def _build_wrapper(mat_name, master, sig, wire):
+    """Build (or rebuild) a thin wrapper material: one master group node ("Master") feeding
+    one Principled BSDF and the Output. `sig` is a structure signature stored on the material;
+    if it is unchanged and the Master is wired, the wrapper is returned untouched so tuned
+    inputs survive. On a structural change (a texture set assigned or changed) it rebuilds,
+    snapshotting and restoring the Master's tuned inputs by socket name (the shader analogue
+    of the GN modifier snapshot). `wire(nt, grp, bsdf, old_sig)` adds any texture-set nodes."""
     name = mat_name if mat_name.startswith(SURFACE_WRAPPER_PREFIX) else SURFACE_WRAPPER_PREFIX + mat_name
     mat = bpy.data.materials.get(name)
-    if mat is not None:
-        node = mat.node_tree.nodes.get("Master") if mat.use_nodes and mat.node_tree else None
-        if node is not None and node.type == "GROUP" and node.node_tree is master:
-            return mat  # already wired to the current master; keep tuned inputs
+    old_node = None
+    if mat is not None and mat.use_nodes and mat.node_tree is not None:
+        old_node = mat.node_tree.nodes.get("Master")
+        if old_node is not None and old_node.type == "GROUP" \
+                and old_node.node_tree is master and mat.get("bbt_sig") == sig:
+            return mat  # unchanged; keep tuned inputs
+    old_sig = mat.get("bbt_sig") if mat is not None else None
+    snap = _snapshot_group_inputs(old_node)
     if mat is None:
         mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
     nt.nodes.clear()
     out = nt.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (500, 0)
+    out.location = (600, 0)
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (200, 0)
+    bsdf.location = (300, 0)
     grp = nt.nodes.new("ShaderNodeGroup")
     grp.name = "Master"
     grp.node_tree = master
@@ -851,12 +968,140 @@ def _wrapper_material(mat_name, master):
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    _restore_group_inputs(grp, snap)
+    if wire is not None:
+        wire(nt, grp, bsdf, old_sig)
+    mat["bbt_sig"] = sig
     return mat
 
 
-def surface_material(mat_name):
-    """A single-surface wrapper (S_SurfaceMaster). See _wrapper_material."""
-    return _wrapper_material(mat_name, surface_master_group())
+def bobshade_material(mat, variation=0.15):
+    """Convert an existing (imported) material into a BobShader in place: route its Principled
+    Base Color / Roughness / Metallic through S_SurfaceMaster so the asset's OWN textures gain
+    per-instance variation, macro break-up, and the full weather layer (snow / wet / frost /
+    dust / moss), while its Alpha, Normal, and Emission stay untouched.
+
+    The asset keeps its native UV-mapped maps (triplanar and the texture-set loader are for
+    un-UV'd/solid surfaces and are left off here): the captured albedo/roughness/metallic feed
+    the master's *map* inputs, the tint is white and the scalars 1 so the maps read at face
+    value, and coverage is computed (Use Attribute 0, since scattered assets carry no snow_cover
+    pass). Idempotent (skips a material that already has a Master node). Returns True if shaded."""
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return False
+    nt = mat.node_tree
+    if nt.nodes.get("Master") is not None:
+        return False  # already a BobShader
+    bsdf = next((n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"), None)
+    if bsdf is None:
+        return False
+
+    def capture(sock_name):
+        s = bsdf.inputs.get(sock_name)
+        if s is None:
+            return None, None
+        if s.links:
+            return s.links[0].from_socket, None
+        v = s.default_value
+        if hasattr(v, "__len__") and not isinstance(v, str):
+            v = tuple(v)
+        return None, v
+
+    alb_src, alb_val = capture("Base Color")
+    rgh_src, rgh_val = capture("Roughness")
+    met_src, met_val = capture("Metallic")
+
+    grp = nt.nodes.new("ShaderNodeGroup")
+    grp.name = "Master"
+    grp.node_tree = surface_master_group()
+    grp.location = (bsdf.location.x - 360, bsdf.location.y + 260)
+    grp.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # white tint: maps at face value
+    grp.inputs["Roughness"].default_value = 1.0
+    grp.inputs["Metallic"].default_value = 0.0
+    grp.inputs["Use Attribute"].default_value = 0.0  # computed coverage (no pass on assets)
+    grp.inputs["Variation"].default_value = variation
+
+    def feed(map_name, src, val):
+        inp = grp.inputs.get(map_name)
+        if inp is None:
+            return
+        if src is not None:
+            nt.links.new(src, inp)
+        elif val is not None:
+            try:
+                inp.default_value = val
+            except (TypeError, ValueError):
+                pass
+
+    feed("Albedo Map", alb_src, alb_val)
+    feed("Roughness Map", rgh_src, rgh_val)
+    feed("Metallic Map", met_src, met_val)
+    nt.links.new(grp.outputs["Base Color"], bsdf.inputs["Base Color"])
+    nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
+    nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
+    mat["bbt_shaded"] = True
+    return True
+
+
+def master_type(mat):
+    """The BobShader master kind of a material: 'surface', 'terrain', or None when it is not a
+    BobShader. A BobShader is any material whose node tree carries a "Master" group node whose
+    tree is S_SurfaceMaster or S_TerrainMaster (the identity the redesign keys off, replacing the
+    old stored material_name). Covers wrapper materials (surface_material/terrain_material) and
+    converted asset materials (bobshade_material), which all add that Master node."""
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return None
+    node = mat.node_tree.nodes.get("Master")
+    if node is None or node.type != "GROUP" or node.node_tree is None:
+        return None
+    if node.node_tree.name == SURFACE_MASTER:
+        return "surface"
+    if node.node_tree.name == TERRAIN_MASTER:
+        return "terrain"
+    return None
+
+
+def is_bobshader(mat):
+    """True when the material is a BobShader (has a surface or terrain Master group node)."""
+    return master_type(mat) is not None
+
+
+def new_bobshader(obj, master="surface"):
+    """Create (or get) a per-object BobShader wrapper auto-named M_<object>, wire the chosen
+    master, assign it GN-aware, and return the material. Identity is the datablock on the object's
+    slot, not a stored name; get-or-create keeps a re-New from wiping tuned inputs."""
+    mat = terrain_material(obj.name) if master == "terrain" else surface_material(obj.name)
+    assign_material(obj, mat)
+    return mat
+
+
+def surface_material(mat_name, texture_set=None):
+    """A single-surface wrapper (S_SurfaceMaster), optionally with a texture set assigned.
+
+    Solid colour by default; when a set is given the wrapper links its triplanar maps into the
+    master's Albedo/Roughness/Metallic map inputs (colour still tints: albedo = Base Color *
+    map) and the bump normal into the Principled. On the transition solid->textured the tint
+    defaults to white and Roughness to 1 so the map reads at face value; a retexture keeps the
+    tuned values."""
+    master = surface_master_group()
+    sig = "surface|" + (texture_set or "")
+
+    def wire(nt, grp, bsdf, old_sig):
+        if not texture_set:
+            return
+        ts = nt.nodes.new("ShaderNodeGroup")
+        ts.name = "TexSet"
+        ts.node_tree = texture_set_group(texture_set)
+        ts.location = (-500, -260)
+        nt.links.new(ts.outputs["Base Color"], grp.inputs["Albedo Map"])
+        nt.links.new(ts.outputs["Roughness"], grp.inputs["Roughness Map"])
+        nt.links.new(ts.outputs["Metallic"], grp.inputs["Metallic Map"])
+        nt.links.new(ts.outputs["Normal"], bsdf.inputs["Normal"])
+        if old_sig is None or old_sig.endswith("|"):  # was solid -> show the map at face value
+            grp.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            grp.inputs["Roughness"].default_value = 1.0
+            grp.inputs["Metallic"].default_value = 0.0
+
+    return _build_wrapper(mat_name, master, sig, wire)
 
 
 # BobShaders terrain master (S2). S_TerrainMaster blends an ordered stack of surface layers
@@ -982,7 +1227,10 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     m_a = _mmath(g, "MULTIPLY", m_c, I["Macro Amount"], (x0 + 1390, y - 300))
     H = _mmath(g, "ADD", w, I[p + "Height Bias"], (x0 + 1560, y - 200))
     H = _mmath(g, "ADD", H, m_a, (x0 + 1730, y - 200))
-    return I[p + "Base Color"], I[p + "Roughness"], I[p + "Metallic"], H, I[p + "Enable"]
+    # Colour as tint and scalar-multiply the maps (identity when no texture set: white / 1).
+    col = _vmul(g, I[p + "Base Color"], I[p + "Albedo Map"], (x0 + 1560, y - 380))
+    rough = _mmath(g, "MULTIPLY", I[p + "Roughness"], I[p + "Roughness Map"], (x0 + 1560, y - 500))
+    return col, rough, I[p + "Metallic"], H, I[p + "Enable"], I[p + "Detail Height"]
 
 
 def terrain_master_group():
@@ -1016,6 +1264,10 @@ def terrain_master_group():
         _gin(g, p + "Noise Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Paint Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Curvature Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
+        # Texture-set maps (S3), identity defaults so an untextured layer is unchanged.
+        _gin(g, p + "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+        _gin(g, p + "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
+        _gin(g, p + "Detail Height", "NodeSocketFloat", 0.0)
     # Weather passthrough (identical to S_Weather's inputs).
     _gin(g, "Snow Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Use Attribute", "NodeSocketFloat", 1.0, 0.0, 1.0)  # terrain carries the pass
@@ -1023,9 +1275,12 @@ def terrain_master_group():
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
     _gin(g, "Altitude", "NodeSocketFloat", 0.0)
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    for _wn, _wd in _WEATHER_EXTRA:
+        _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
     _gout(g, "Roughness", "NodeSocketFloat")
     _gout(g, "Metallic", "NodeSocketFloat")
+    _gout(g, "Height", "NodeSocketFloat")  # blended detail height, the wrapper bumps it
 
     gi = g.nodes.new("NodeGroupInput")
     gi.location = (-3000, 0)
@@ -1051,10 +1306,10 @@ def terrain_master_group():
     # by fac = enable * b2/(b1+b2), where b1/b2 are the heights above (max(H) - Blend Softness),
     # so the higher-H layer wins per texel within the soft band. Enable gates a layer out.
     soft = I["Blend Softness"]
-    acc_col, acc_rough, acc_metal, acc_H, _e0 = layers[0]
+    acc_col, acc_rough, acc_metal, acc_H, _e0, acc_dh = layers[0]
     fx = 700
     for i in range(1, MAX_TERRAIN_LAYERS):
-        col, rough, metal, H, enable = layers[i]
+        col, rough, metal, H, enable, dh = layers[i]
         fy = -i * 300
         hmax = _mmath(g, "MAXIMUM", acc_H, H, (fx, fy))
         ma = _mmath(g, "SUBTRACT", hmax, soft, (fx + 170, fy))
@@ -1066,6 +1321,7 @@ def terrain_master_group():
         acc_col = _mixcol(g, fac, acc_col, col, (fx + 1360, fy + 200))
         acc_rough = _lerp(g, acc_rough, rough, fac, (fx + 1360, fy))
         acc_metal = _lerp(g, acc_metal, metal, fac, (fx + 1360, fy - 220))
+        acc_dh = _lerp(g, acc_dh, dh, fac, (fx + 1360, fy - 560))
         acc_H = _mmath(g, "MAXIMUM", acc_H, H, (fx + 1360, fy - 400))
         fx += 1600
 
@@ -1077,16 +1333,47 @@ def terrain_master_group():
     g.links.new(acc_rough, weather.inputs["Roughness"])
     g.links.new(acc_metal, weather.inputs["Metallic"])
     for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff"):
+                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):
         g.links.new(weather.outputs[name], go.inputs[name])
+    g.links.new(acc_dh, go.inputs["Height"])
     return g
 
 
-def terrain_material(mat_name):
-    """A multi-layer terrain wrapper (S_TerrainMaster). See _wrapper_material."""
-    return _wrapper_material(mat_name, terrain_master_group())
+def terrain_material(mat_name, layer_sets=None):
+    """A multi-layer terrain wrapper (S_TerrainMaster), optionally with per-layer texture sets.
+
+    layer_sets maps a layer index to a texture-set name. Each set's triplanar maps feed that
+    layer's Albedo/Roughness map inputs and its detail height; the blended detail height across
+    all layers drives one Bump node into the Principled normal (a single terrain normal, no
+    per-layer tangent problem). Colour still tints; a newly textured layer defaults to a white
+    tint and Roughness 1 so its map reads at face value."""
+    master = terrain_master_group()
+    ls = layer_sets or {}
+    sig = "terrain|" + ",".join(f"{i}:{ls[i]}" for i in sorted(ls))
+
+    def wire(nt, grp, bsdf, old_sig):
+        prev = old_sig or ""
+        for i in sorted(ls):
+            ts = nt.nodes.new("ShaderNodeGroup")
+            ts.name = f"TexSet{i}"
+            ts.node_tree = texture_set_group(ls[i])
+            ts.location = (-520, -180 - i * 240)
+            nt.links.new(ts.outputs["Base Color"], grp.inputs[f"L{i} Albedo Map"])
+            nt.links.new(ts.outputs["Roughness"], grp.inputs[f"L{i} Roughness Map"])
+            nt.links.new(ts.outputs["Height"], grp.inputs[f"L{i} Detail Height"])
+            if f"{i}:{ls[i]}" not in prev:  # newly textured -> show the map at face value
+                grp.inputs[f"L{i} Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+                grp.inputs[f"L{i} Roughness"].default_value = 1.0
+        if ls:  # one bump from the blended detail height drives the terrain normal
+            bump = nt.nodes.new("ShaderNodeBump")
+            bump.location = (80, -260)
+            bump.inputs["Strength"].default_value = 0.3
+            nt.links.new(grp.outputs["Height"], bump.inputs["Height"])
+            nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+
+    return _build_wrapper(mat_name, master, sig, wire)
 
 
 # Assigning a material to a GEOMETRY-NODES-generated mesh (the terrain, heightmap_terrain)
@@ -1141,3 +1428,204 @@ def assign_material(obj, mat):
         # leaves snow_cover and the geometry untouched, it only tags the faces.
         obj.modifiers.move(list(obj.modifiers).index(mod), len(obj.modifiers) - 1)
     return True
+
+
+# BobShaders texture sets (S3). A texture set is a folder under library/textures/<name>/ with
+# conventionally named maps (*_basecolor, *_roughness, *_normal, *_height, *_ao, *_metallic).
+# The default surface is still a solid tint; a set is optional and layers on top. Triplanar
+# is Blender's built-in BOX projection on the Image Texture node (world-projected, no UVs, so
+# it works on terrain), and the surface normal comes from a Bump node fed by the height map
+# (robust on un-UV'd meshes, unlike a tangent-space normal map). Colour is a tint: the master
+# multiplies Base Color into the albedo map, so white leaves the texture unchanged.
+TEXTURE_SET_PREFIX = "S_TextureSet_"
+_TRIPLANAR_BLEND = 0.3  # BOX projection_blend: 0 sharp seams, 1 soft (build-time property)
+
+# role -> filename suffix aliases (matched case-insensitively against the file stem).
+_ROLE_SUFFIX = {
+    "basecolor": ("basecolor", "albedo", "diffuse", "diff", "color", "col"),
+    "roughness": ("roughness", "rough"),
+    "metallic": ("metallic", "metalness", "metal"),
+    "normal": ("normal", "nor_gl", "nor"),
+    "height": ("height", "displacement", "disp"),
+    "ao": ("ao", "ambientocclusion", "occlusion"),
+}
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff")
+_DATA_ROLES = ("roughness", "metallic", "normal", "height")  # Non-Color
+
+
+def _find_maps(directory):
+    """Map role -> absolute file path for the maps present in a texture-set folder."""
+    found = {}
+    if not directory or not os.path.isdir(directory):
+        return found
+    files = [f for f in os.listdir(directory)
+             if os.path.splitext(f)[1].lower() in _IMG_EXT]
+    for role, suffixes in _ROLE_SUFFIX.items():
+        for f in files:
+            stem = os.path.splitext(f)[0].lower()
+            # Require the documented `<name>_<map>` separator (or the bare map name), so a short
+            # alias like "col"/"nor"/"ao" can't mid-match an unrelated filename.
+            if any(stem.endswith("_" + s) or stem == s for s in suffixes):
+                found[role] = os.path.join(directory, f)
+                break
+    return found
+
+
+def texture_set_dir(name):
+    """The library/textures/<name> folder, resolved from this file's repo location."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(repo, "library", "textures", name)
+
+
+def texture_set_group(name, directory=None):
+    """A cached per-set group that triplanar-samples the set's maps and outputs Base Color
+    (albedo * AO), Roughness, Metallic, Normal (bump from height), and Height. Cached by name
+    (the images are node properties, not sockets, so the group is per set, like the ground-fog
+    material). Scale is a live knob (Mapping scale); the triplanar blend is a build property."""
+    gname = TEXTURE_SET_PREFIX + name
+    g = bpy.data.node_groups.get(gname)
+    if g is not None:
+        return g
+    maps = _find_maps(directory if directory is not None else texture_set_dir(name))
+    g = bpy.data.node_groups.new(gname, "ShaderNodeTree")
+    _gin(g, "Scale", "NodeSocketFloat", 1.0, 0.0)
+    _gin(g, "Bump Strength", "NodeSocketFloat", 0.3, 0.0, 10.0)
+    _gout(g, "Base Color", "NodeSocketColor")
+    _gout(g, "Roughness", "NodeSocketFloat")
+    _gout(g, "Metallic", "NodeSocketFloat")
+    _gout(g, "Normal", "NodeSocketVector")
+    _gout(g, "Height", "NodeSocketFloat")
+    gi = g.nodes.new("NodeGroupInput")
+    gi.location = (-1000, 0)
+    go = g.nodes.new("NodeGroupOutput")
+    go.location = (700, 0)
+    I, O = gi.outputs, go.inputs
+
+    geo = g.nodes.new("ShaderNodeNewGeometry")
+    geo.location = (-1000, 300)
+    cs = g.nodes.new("ShaderNodeCombineXYZ")
+    cs.location = (-800, 120)
+    for ax in ("X", "Y", "Z"):
+        g.links.new(I["Scale"], cs.inputs[ax])
+    mapping = g.nodes.new("ShaderNodeMapping")
+    mapping.location = (-620, 260)
+    g.links.new(geo.outputs["Position"], mapping.inputs["Vector"])
+    g.links.new(cs.outputs["Vector"], mapping.inputs["Scale"])
+
+    def box(path, role, loc):
+        img = bpy.data.images.load(path, check_existing=True)
+        if role in _DATA_ROLES:
+            img.colorspace_settings.name = "Non-Color"
+        t = g.nodes.new("ShaderNodeTexImage")
+        t.image = img
+        t.projection = "BOX"
+        t.projection_blend = _TRIPLANAR_BLEND
+        t.extension = "REPEAT"
+        t.location = loc
+        g.links.new(mapping.outputs["Vector"], t.inputs["Vector"])
+        return t
+
+    def const_col(rgb, loc):
+        n = g.nodes.new("ShaderNodeRGB")
+        n.outputs[0].default_value = (*rgb, 1.0)
+        n.location = loc
+        return n.outputs[0]
+
+    def const_val(v, loc):
+        n = g.nodes.new("ShaderNodeValue")
+        n.outputs[0].default_value = v
+        n.location = loc
+        return n.outputs[0]
+
+    # Albedo * AO (AO folded in here so the wrapper stays simple).
+    if "basecolor" in maps:
+        albedo = box(maps["basecolor"], "basecolor", (-300, 400)).outputs["Color"]
+        if "ao" in maps:
+            ao = box(maps["ao"], "ao", (-300, 200)).outputs["Color"]
+            albedo = _vmul(g, albedo, ao, (-60, 380))
+    else:
+        albedo = const_col((1.0, 1.0, 1.0), (-60, 400))
+    g.links.new(albedo, O["Base Color"])
+
+    # Roughness / Metallic: a Color->Float link auto-converts (the maps are greyscale).
+    rough = box(maps["roughness"], "roughness", (-300, 40)).outputs["Color"] \
+        if "roughness" in maps else const_val(1.0, (-60, 40))
+    g.links.new(rough, O["Roughness"])
+    metal = box(maps["metallic"], "metallic", (-300, -140)).outputs["Color"] \
+        if "metallic" in maps else const_val(1.0, (-60, -140))
+    g.links.new(metal, O["Metallic"])
+
+    # Height and the bump-derived normal (works without UVs/tangents).
+    if "height" in maps:
+        h = box(maps["height"], "height", (-300, -320)).outputs["Color"]
+        g.links.new(h, O["Height"])
+        bump = g.nodes.new("ShaderNodeBump")
+        bump.location = (300, -260)
+        g.links.new(I["Bump Strength"], bump.inputs["Strength"])
+        g.links.new(h, bump.inputs["Height"])
+        g.links.new(bump.outputs["Normal"], O["Normal"])
+    else:
+        g.links.new(const_val(0.0, (-60, -320)), O["Height"])
+        g.links.new(geo.outputs["Normal"], O["Normal"])
+    return g
+
+
+def _vmul(g, a, b, loc):
+    """Component-wise colour/vector multiply (RGB; alpha dropped)."""
+    n = g.nodes.new("ShaderNodeVectorMath")
+    n.operation = "MULTIPLY"
+    n.location = loc
+    g.links.new(a, n.inputs[0])
+    g.links.new(b, n.inputs[1])
+    return n.outputs["Vector"]
+
+
+def _macro_break(g, color_vec, amount, scale, loc):
+    """Modulate an albedo vector by a low-frequency world noise (anti-tiling). Amount 0 = off:
+    factor = 1 + (noise - 0.5) * Amount, applied as a scale on the colour."""
+    ng = g.nodes.new("ShaderNodeNewGeometry")
+    ng.location = (loc[0] - 400, loc[1] + 220)
+    noise = g.nodes.new("ShaderNodeTexNoise")
+    noise.location = (loc[0] - 220, loc[1] + 140)
+    noise.inputs["Detail"].default_value = 2.0
+    g.links.new(ng.outputs["Position"], noise.inputs["Vector"])
+    _mplug(g, noise.inputs["Scale"], scale)
+    d = _mmath(g, "SUBTRACT", noise.outputs["Fac"], 0.5, (loc[0] - 40, loc[1]))
+    da = _mmath(g, "MULTIPLY", d, amount, (loc[0] + 120, loc[1]))
+    fac = g.nodes.new("ShaderNodeMath")
+    fac.operation = "ADD"
+    fac.location = (loc[0] + 280, loc[1])
+    fac.inputs[1].default_value = 1.0
+    g.links.new(da, fac.inputs[0])
+    out = g.nodes.new("ShaderNodeVectorMath")
+    out.operation = "SCALE"
+    out.location = (loc[0] + 460, loc[1] + 60)
+    g.links.new(color_vec, out.inputs[0])
+    g.links.new(fac.outputs["Value"], out.inputs["Scale"])
+    return out.outputs["Vector"]
+
+
+def _snapshot_group_inputs(node):
+    """Snapshot a wrapper's Master node input default_values by socket name (to survive a
+    structural rebuild, the shader analogue of the GN modifier snapshot)."""
+    snap = {}
+    if node is None:
+        return snap
+    for s in node.inputs:
+        try:
+            v = s.default_value
+        except (AttributeError, TypeError):
+            continue
+        if hasattr(v, "__len__") and not isinstance(v, str):
+            v = tuple(v)
+        snap[s.name] = v
+    return snap
+
+
+def _restore_group_inputs(node, snap):
+    for s in node.inputs:
+        if s.name in snap:
+            try:
+                s.default_value = snap[s.name]
+            except (AttributeError, TypeError, ValueError):
+                pass

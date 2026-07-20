@@ -1,16 +1,18 @@
-"""Firmament: the atmosphere panel, peer to Heightfield Terrain and Scatter.
+"""Firmament: the Atmosphere panel, peer to Terrain, Scatter, and Shaders.
 
-S1 is Context and Sky. Two sub-panels:
+Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/UX-REDESIGN.md). It
+authors the built subsystems: Sky, Clouds, Fog, and Weather (rain/motes/snow coverage). The
+shared world state (Scene.bbt_env) is still owned and registered here, but its UI (the
+Environment sliders), the Preview/Final Quality level, the Live Environment master, and the
+Scene Presets / Apply Season now live in the World panel (world_panel.py). This module keeps
+the firmament_* operators; the World panel drives them.
 
-- Environment: the shared world state (Scene.bbt_env), owned and registered by
-  bbmcp/env.py. This is the UI other capabilities read the world from, so it lives
-  here but the data does not: the panel just draws context.scene.bbt_env.
-- Sky: Firmament's own sky knobs (Scene.bbt_firmament) and a Build Sky button that
-  authors a physical sky and a matched Sun light from the world state, over the
-  build_sky op in-process (no venv side, like Scatter).
+The Live Environment master (bbt_world.live_env) and Quality reach this panel's subsystems
+through the world applier registry: register() subscribes _apply_world, which (re)installs or
+removes the wind/snow drivers and re-applies quality when a world control changes.
 
-Two homes, no drift: the shared world is bbt_env; Firmament's own UI/subsystem
-state is bbt_firmament. Clouds, fog, and weather sub-panels arrive with S2 to S5.
+Two homes, no drift: the shared world is bbt_env (World panel); Firmament's own subsystem
+state is bbt_firmament.
 """
 
 import bpy
@@ -23,7 +25,13 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import server
+from . import server, world_panel
+
+
+def _live_env_on(scene):
+    """The one master Live Environment toggle now lives on the World panel (bbt_world);
+    default on when World is absent (standalone verify)."""
+    return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 # The bbmcp.env module, imported and registered at addon register time and held so
 # unregister uses the same object even after Reload Builders purges bbmcp.
@@ -291,12 +299,15 @@ _QUALITY = {
 def _apply_quality(scene):
     """Apply the Preview/Final level to every Firmament build: scale the particulate
     counts live (a Quality Scale modifier input, no rebuild) and set the Cycles volume
-    step rate, max steps, and bounces. Called by every build op and by the quality
-    toggle, so switching quality re-applies without a rebuild."""
+    step rate, max steps, and bounces. Called by every build op and by the World quality
+    control (via the world applier), so switching quality re-applies without a rebuild.
+    The level lives on the World panel (bbt_world) since it is scene-wide, not atmosphere-
+    specific; default Preview when World is absent (standalone verify)."""
     fm = getattr(scene, "bbt_firmament", None)
     if fm is None:
         return
-    q = _QUALITY.get(fm.quality, _QUALITY["preview"])
+    level = getattr(getattr(scene, "bbt_world", None), "quality", "preview")
+    q = _QUALITY.get(level, _QUALITY["preview"])
     for name in (fm.rain_object, fm.mote_object):
         inp = _input(bpy.data.objects.get(name), "Quality Scale")
         if inp is not None:
@@ -400,29 +411,30 @@ def _firmament_wind_objects(fm):
     return [o for o in (bpy.data.objects.get(n) for n in names) if o is not None]
 
 
-def _on_quality_change(self, context):
-    _apply_quality(context.scene)
-
-
-def _on_live_env_change(self, context):
-    """Install or remove the live env drivers across all built subsystems when the
-    Live Environment toggle flips. A non-structural driver edit, safe from the
-    rebuild re-entrancy the repo avoids for structural changes."""
-    scene = context.scene
-    live = self.live_env
-    clouds = bpy.data.objects.get(self.cloud_object)
-    for obj in _firmament_wind_objects(self):
+def _apply_world(scene):
+    """Atmosphere's world applier (subscribed with world_panel): re-apply the atmosphere
+    subsystems to the current world state. Installs or removes the live wind/snow drivers per
+    the master Live Environment toggle, and re-applies the Quality level. A non-structural
+    driver edit, safe from the rebuild re-entrancy the repo avoids for structural changes.
+    Adding a new atmosphere subsystem needs no new toggle wiring: it just gets driven here."""
+    fm = getattr(scene, "bbt_firmament", None)
+    if fm is None:
+        return
+    live = _live_env_on(scene)
+    clouds = bpy.data.objects.get(fm.cloud_object)
+    for obj in _firmament_wind_objects(fm):
         extra = _CLOUD_EXTRA if obj is clouds else ()
         if live:
             _install_wind_drivers(obj, scene, extra)
         else:
             _remove_wind_drivers(obj, extra)
-    surface = self.snow_surface or context.active_object
+    surface = fm.snow_surface or getattr(bpy.context, "active_object", None)
     if _named_mod(surface, "BOB_Snow") is not None:
         if live:
             _install_snow_driver(surface, scene)
         else:
             _undrive_input(surface, _snow_input(surface))
+    _apply_quality(scene)
 
 
 class BBT_FirmamentProps(PropertyGroup):
@@ -461,18 +473,8 @@ class BBT_FirmamentProps(PropertyGroup):
         description="Atmospheric haziness (the 5.2 sky's dust replacement)")
     ground_albedo: FloatProperty(name="Ground Albedo", default=0.3, min=0.0, max=1.0)
 
-    quality: EnumProperty(
-        name="Quality",
-        items=[("preview", "Preview", "Coarse, fast; for the viewport and checks"),
-               ("final", "Final", "Full quality for a render")],
-        default="preview", update=_on_quality_change)
-
-    live_env: BoolProperty(
-        name="Live Environment", default=True, update=_on_live_env_change,
-        description="Drive wind (clouds, fog, particles) and snow coverage live from "
-                    "the Environment state, so moving a slider moves everything with "
-                    "no rebuild. Turn off to hand-tune each object; the per-object Use "
-                    "Env buttons then do a one-time copy")
+    # Quality (Preview/Final) and the Live Environment master toggle moved to the World panel
+    # (bbt_world); they are scene-wide, not atmosphere-specific (docs/UX-REDESIGN.md 5.1, C).
 
     # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
     cloud_object: StringProperty(name="Object", default="BOB_Clouds")
@@ -571,7 +573,7 @@ class BBT_OT_firmament_build_clouds(Operator):
         n = 0
         obj = bpy.data.objects.get(fm.cloud_object)
         _show_domain_gizmo(obj)
-        if fm.live_env:
+        if _live_env_on(context.scene):
             _install_wind_drivers(obj, context.scene, _CLOUD_EXTRA)
         if obj is not None:
             # Shadow fork (Phase-0 / S2 cost): a cloud volume that casts shadows
@@ -673,7 +675,7 @@ class BBT_OT_firmament_build_fog(Operator):
         _apply_quality(context.scene)
         fog_obj = bpy.data.objects.get(fm.fog_object)
         _show_domain_gizmo(fog_obj)
-        if fm.live_env:
+        if _live_env_on(context.scene):
             _install_wind_drivers(fog_obj, context.scene)
         label = {"height_fog": "Height Fog", "noise_fog": "Noise Fog",
                  "ground_fog": "Ground Fog"}[fm.fog_mode]
@@ -763,7 +765,7 @@ def _build_particulate(context, obj_name, mode, extra=None):
              "name": obj_name, "params": params}])
     obj = bpy.data.objects.get(obj_name)
     _apply_quality(context.scene)  # set Quality Scale from the level
-    if fm.live_env:
+    if _live_env_on(context.scene):
         _install_wind_drivers(obj, context.scene)
     if fm.use_motion_blur:
         context.scene.render.use_motion_blur = True
@@ -919,7 +921,7 @@ class BBT_OT_firmament_build_snow_cover(Operator):
         from bbmcp.geonodes import build_geonodes_on_object
 
         build_geonodes_on_object(surface, "snow", "BOB_Snow", params)
-        if fm.live_env:
+        if _live_env_on(context.scene):
             _install_snow_driver(surface, context.scene)
         self.report({"INFO"}, f"Snow coverage written on {surface.name}")
         return {"FINISHED"}
@@ -1013,62 +1015,24 @@ class BBT_OT_firmament_scene_preset(Operator):
         return {"FINISHED"}
 
 
+# Firmament is now "Atmosphere": the built sky/clouds/fog/weather subsystems. The world state
+# (bbt_env), the Quality level, the Live Environment master, and Scene Presets moved to the
+# World panel (docs/UX-REDESIGN.md 5.1/5.5). Class/operator names keep the firmament_* / BBT_*
+# spelling per decision F.
 class BBT_PT_firmament(Panel):
-    bl_label = "Firmament"
+    bl_label = "Atmosphere"
     bl_idname = "BBT_PT_firmament"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
+    bl_order = 4  # after the pipeline stages (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        fm = context.scene.bbt_firmament
         layout = self.layout
-        layout.prop(fm, "quality", expand=True)
-        layout.prop(fm, "live_env", icon="FORCE_WIND")
-        layout.operator_menu_enum("bob_blender_tools.firmament_scene_preset", "preset",
-                                  text="Scene Preset", icon="WORLD")
+        layout.label(text="Sky, clouds, fog, and weather. Drive the world from the World panel.",
+                     icon="INFO")
         layout.operator("bob_blender_tools.firmament_build_sky", icon="LIGHT_SUN")
-
-
-class BBT_PT_firmament_env(Panel):
-    bl_label = "Environment"
-    bl_idname = "BBT_PT_firmament_env"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "BobBlenderTools"
-    bl_parent_id = "BBT_PT_firmament"
-
-    def draw(self, context):
-        env = context.scene.bbt_env
-        layout = self.layout
-
-        col = layout.column(align=True)
-        col.prop(env, "time_of_day")
-        row = col.row(align=True)
-        row.prop(env, "year")
-        row.prop(env, "month")
-        row.prop(env, "day")
-        col.prop(env, "utc_offset")
-
-        col = layout.column(align=True)
-        col.prop(env, "latitude")
-        col.prop(env, "longitude")
-
-        col = layout.column(align=True)
-        col.prop(env, "season")
-        col.prop(env, "weather")
-        col.operator("bob_blender_tools.firmament_apply_season", icon="MOD_TIME")
-
-        col = layout.column(align=True)
-        col.prop(env, "temperature")
-        col.prop(env, "wetness")
-        col.prop(env, "snow")
-        col.prop(env, "cloud_cover")
-
-        col = layout.column(align=True)
-        col.prop(env, "wind_direction")
-        col.prop(env, "wind_strength")
 
 
 class BBT_PT_firmament_sky(Panel):
@@ -1155,7 +1119,7 @@ class BBT_PT_firmament_clouds(Panel):
                 _draw_knobs(col, obj, _CLOUD_WIND)
                 # Only meaningful when Live Environment is off; with it on a driver
                 # owns these inputs and would immediately overwrite the copied value.
-                if not fm.live_env:
+                if not _live_env_on(context.scene):
                     col.operator("bob_blender_tools.firmament_cloud_wind_from_env",
                                  icon="TRACKING_FORWARDS")
 
@@ -1219,7 +1183,7 @@ class BBT_PT_firmament_fog(Panel):
             col.prop(wind, "value", text="Wind Drift")
             if wind.value:
                 _draw_knobs(col, obj, _FOG_WIND)
-                if not fm.live_env:  # a live driver owns these inputs when on
+                if not _live_env_on(context.scene):  # a live driver owns these inputs when on
                     col.operator("bob_blender_tools.firmament_fog_wind_from_env",
                                  icon="TRACKING_FORWARDS")
 
@@ -1260,7 +1224,7 @@ class BBT_PT_firmament_weather(Panel):
                                   text="", icon="FILE_REFRESH")
                 op.object_name = fm.rain_object
             _draw_knobs(box, rain, _RAIN_WIND)
-            if not fm.live_env:  # a live driver owns Wind when on
+            if not _live_env_on(context.scene):  # a live driver owns Wind when on
                 op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.rain_object
@@ -1287,7 +1251,7 @@ class BBT_PT_firmament_weather(Panel):
                 op.object_name = fm.mote_object
             _draw_knobs(box, motes, _MOTE_LOOK)
             _draw_knobs(box, motes, _MOTE_WIND)
-            if not fm.live_env:  # a live driver owns Wind when on
+            if not _live_env_on(context.scene):  # a live driver owns Wind when on
                 op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.mote_object
@@ -1302,7 +1266,7 @@ class BBT_PT_firmament_weather(Panel):
         snow_mod = _named_mod(surface, "BOB_Snow")
         if snow_mod is not None:
             _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS)
-            if not fm.live_env:  # a live driver owns Snow when on
+            if not _live_env_on(context.scene):  # a live driver owns Snow when on
                 box.operator("bob_blender_tools.firmament_snow_from_env", icon="TRACKING_FORWARDS")
         else:
             box.label(text="Writes snow_cover for BobShaders to read", icon="INFO")
@@ -1330,7 +1294,6 @@ CLASSES = (
     BBT_OT_firmament_apply_season,
     BBT_OT_firmament_scene_preset,
     BBT_PT_firmament,
-    BBT_PT_firmament_env,
     BBT_PT_firmament_sky,
     BBT_PT_firmament_clouds,
     BBT_PT_firmament_fog,
@@ -1347,9 +1310,12 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_firmament = bpy.props.PointerProperty(type=BBT_FirmamentProps)
+    # Subscribe the atmosphere applier so the World master toggle / quality drive it (P6 scaling).
+    world_panel.register_applier(_apply_world)
 
 
 def unregister():
+    world_panel.unregister_applier(_apply_world)
     del bpy.types.Scene.bbt_firmament
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

@@ -22,13 +22,14 @@ re-entrancy). build_geonodes is non-destructive and restores the live knobs by
 socket name, so a structural rebuild preserves tuned values.
 """
 
+import os
 import random
 
 import bpy
 from bpy.props import EnumProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
-from . import server
+from . import server, ui_helpers
 
 # The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
 # socket exists (path/paint/camera sockets appear only when that feature is set).
@@ -94,6 +95,36 @@ def _apply(ops):
 
 def _assets_name(kind):
     return f"BOB_Assets_{kind.capitalize()}"
+
+
+# Biome enum: folders under library/models/<name>/ that carry a manifest.json (a real CC0 asset
+# set). The item list is cached module-side so Blender does not GC the enum strings (the same
+# pitfall the shader texture-set enum guards against), with a stable id per biome.
+_BIOME_ITEMS = [("NONE", "None", "No biomes in library/models", "", 0)]
+_BIOME_IDS = {"NONE": 0}
+
+
+def _models_root():
+    return os.path.join(os.path.dirname(server._repo_blender_dir()), "library", "models")
+
+
+def _biomes():
+    root = _models_root()
+    if not os.path.isdir(root):
+        return []
+    return sorted(n for n in os.listdir(root)
+                  if os.path.isfile(os.path.join(root, n, "manifest.json")))
+
+
+def _biome_items(self, context):
+    global _BIOME_ITEMS
+    items = []
+    for n in _biomes():
+        if n not in _BIOME_IDS:
+            _BIOME_IDS[n] = len(_BIOME_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(), f"Import the {n} asset set", "", _BIOME_IDS[n]))
+    _BIOME_ITEMS = items or [("NONE", "None", "No biomes in library/models", "", 0)]
+    return _BIOME_ITEMS
 
 
 def _nodes_mod(obj):
@@ -249,6 +280,36 @@ class BBT_OT_scatter_make_proxies(Operator):
         _apply([{"op": "make_proxies",
                  "kinds": ["trees", "rocks", "plants", "grass"]}])
         self.report({"INFO"}, "Proxy assets ready")
+        return {"FINISHED"}
+
+
+class BBT_OT_scatter_import_biome(Operator):
+    bl_idname = "bob_blender_tools.scatter_import_biome"
+    bl_label = "Import Assets"
+    bl_description = ("Fill the shared BOB_Assets_* collections with real CC0 meshes from one "
+                      "geographic scan set (library/models/<name>), replacing the block-out "
+                      "proxies. Layers instance those collections, so any layer already set to "
+                      "BOB_Assets_<kind> shows the real assets at once")
+    bl_options = {"REGISTER", "UNDO"}
+
+    biome: EnumProperty(name="Asset set", items=_biome_items)
+
+    def execute(self, context):
+        server._ensure_path()
+        from bbmcp import assets
+
+        if not self.biome or self.biome == "NONE":
+            self.report({"ERROR"}, "No asset set found in library/models")
+            return {"CANCELLED"}
+        base = assets.biome_dir(self.biome)
+        if not os.path.isfile(os.path.join(base, "manifest.json")):
+            self.report({"ERROR"}, f"No assets at library/models/{self.biome} (manifest.json missing)")
+            return {"CANCELLED"}
+        # Populate the shared collections only (same scope as Make Proxies). populate reuses each
+        # BOB_Assets_<kind> collection in place, so layers instancing it update live, no rebuild.
+        counts = assets.populate_scatter_assets(self.biome)
+        summary = ", ".join(f"{k}:{n}" for k, n in counts.items())
+        self.report({"INFO"}, f"Imported {self.biome} -> {summary}")
         return {"FINISHED"}
 
 
@@ -449,23 +510,41 @@ class BBT_PT_scatter(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
+    bl_order = 2  # pipeline stage 2 (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         scn = context.scene.bbt_scatter
         layout = self.layout
+        emitter = scn.emitter
+
+        # P1/P7: what we scatter on + which layer we edit, or the empty-state hint.
+        layer = _active_layer(context)
+        hdr = None
+        if emitter is not None:
+            hdr = f"{emitter.name} / {layer.name}" if layer is not None else emitter.name
+        ui_helpers.context_header(layout, "Scatter", hdr, icon="OUTLINER_OB_MESH",
+                                  empty="Pick an emitter to scatter on.")
 
         row = layout.row(align=True)
         row.prop(scn, "emitter")
         row.operator("bob_blender_tools.scatter_use_active", text="", icon="EYEDROPPER")
         layout.prop(scn, "path")
         layout.prop(scn, "camera")
-        layout.operator("bob_blender_tools.scatter_make_proxies", icon="OUTLINER_OB_GROUP_INSTANCE")
+
+        # Asset source: the shared BOB_Assets_* collections that layers instance. Block-out
+        # proxies to start, or import a real scan set to replace them (Scatter is the asset home).
+        col = layout.column(align=True)
+        col.label(text="Assets (shared, for layers to use)")
+        row = col.row(align=True)
+        row.operator("bob_blender_tools.scatter_make_proxies", text="Make Proxies",
+                     icon="OUTLINER_OB_GROUP_INSTANCE")
+        row.operator_menu_enum("bob_blender_tools.scatter_import_biome", "biome",
+                               text="Import Real", icon="IMPORT")
 
         coll = _active_coll(context)
-        if scn.emitter is None:
-            layout.label(text="Pick an emitter to add layers", icon="INFO")
-            return
+        if emitter is None:
+            return  # the context header already showed the hint
 
         row = layout.row()
         if coll is not None:
@@ -480,7 +559,8 @@ class BBT_PT_scatter(Panel):
         col.operator("bob_blender_tools.scatter_remove", text="", icon="REMOVE")
         col.operator("bob_blender_tools.scatter_duplicate", text="", icon="DUPLICATE")
 
-        layout.operator("bob_blender_tools.scatter_build_all", icon="MOD_PARTICLE_INSTANCE")
+        ui_helpers.structural_action(layout, "bob_blender_tools.scatter_build_all",
+                                     note="rebuilds every layer of this emitter")
         if scn.summary:
             layout.label(text=scn.summary, icon="INFO")
 
@@ -498,24 +578,28 @@ class BBT_PT_scatter_layer(Panel):
         layout = self.layout
         obj = _active_layer(context)
         if obj is None:
-            layout.label(text="No active layer", icon="INFO")
+            layout.label(text="Pick or add a layer to edit it.", icon="INFO")
             return
 
         spec = LAYER_TYPES.get(obj.bbt_scatter_layer.kind, LAYER_TYPES["empty"])
         layout.label(text=f"{obj.name}  ({spec['label']})", icon=spec["icon"])
 
-        # Structural: applied on Build (a rebuild), not from a callback.
+        # Structural group (P3): assets/align/mask apply on a Build (a rebuild), not from a
+        # callback. Marked so the split from the live knobs below is explicit.
         box = layout.box()
-        box.prop(obj.bbt_scatter_layer, "assets")
+        box.label(text="Structural (Build to apply)", icon=ui_helpers.STRUCTURAL_ICON)
+        box.prop(obj.bbt_scatter_layer, "assets")  # the per-layer collection browser
         box.prop(obj.bbt_scatter_layer, "align", expand=True)
         box.prop_search(obj.bbt_scatter_layer, "vgroup",
                         scn.emitter, "vertex_groups", text="Mask Group")
-        box.operator("bob_blender_tools.scatter_build_active", icon="FILE_REFRESH")
+        ui_helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
+                                     note="rebuilds this layer's graph (keeps tuned knobs)")
 
-        # Live: the modifier's own inputs, edited in place, no rebuild.
+        # Live group (P3): the modifier's own inputs, edited in place, no rebuild.
         if _nodes_mod(obj) is None:
             layout.label(text="No scatter modifier", icon="ERROR")
             return
+        layout.label(text="Live knobs (instant)")
         names = list(_CORE_KNOBS)
         if scn.path is not None:
             names += _PATH_KNOBS
@@ -578,6 +662,7 @@ CLASSES = (
     BBT_ScatterLayer,
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
+    BBT_OT_scatter_import_biome,
     BBT_OT_scatter_add,
     BBT_OT_scatter_remove,
     BBT_OT_scatter_duplicate,

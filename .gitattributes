@@ -13,6 +13,11 @@
 *.tga          filter=lfs diff=lfs merge=lfs -text
 *.psd          filter=lfs diff=lfs merge=lfs -text
 
+# 3D models (glTF geometry buffers and binary variants; the .gltf JSON stays diffable)
+*.bin          filter=lfs diff=lfs merge=lfs -text
+*.glb          filter=lfs diff=lfs merge=lfs -text
+*.fbx          filter=lfs diff=lfs merge=lfs -text
+
 # Volumes, point clouds, caches worth keeping
 *.vdb          filter=lfs diff=lfs merge=lfs -text
 *.abc          filter=lfs diff=lfs merge=lfs -text

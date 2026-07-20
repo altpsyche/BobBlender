@@ -1,0 +1,19 @@
+{
+  "trees": [
+    "tree_small_02/tree_small_02_1k.gltf"
+  ],
+  "rocks": [
+    "boulder_01/boulder_01_1k.gltf",
+    "rock_07/rock_07_1k.gltf",
+    "rock_09/rock_09_1k.gltf",
+    "stone_01/stone_01_1k.gltf"
+  ],
+  "grass": [
+    "grass_medium_02/grass_medium_02_1k.gltf"
+  ],
+  "plants": [
+    "shrub_01/shrub_01_1k.gltf",
+    "shrub_02/shrub_02_1k.gltf",
+    "shrub_03/shrub_03_1k.gltf"
+  ]
+}

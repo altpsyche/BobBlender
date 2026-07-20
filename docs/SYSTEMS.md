@@ -136,10 +136,10 @@ preview=...)` is the same entry.
 After a re-bake, send a `reload_image` op so the open session picks up the new
 pixels (see below), then rebuild `heightmap_terrain`.
 
-### From Blender: the Heightfield Terrain panel
+### From Blender: the Terrain panel
 
-The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Heightfield Terrain" panel with a
-Bake + Build Terrain button. It bakes in the tools venv (so Blender's own Python
+The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Terrain" panel (renamed from
+"Heightfield Terrain" in the 2026-07-20 UX redesign) with a Bake + Build Terrain button. It bakes in the tools venv (so Blender's own Python
 does not need numpy or CuPy), reloads the image, and builds the terrain object in
 place. Preview bakes at 256 for a fast look; turn it off to commit at full
 resolution. The panel is part of the extension, so picking up a code change to it
@@ -357,8 +357,9 @@ panel has a Wind Drift toggle plus a Use Env Wind button that copies the Environ
 (`bbt_env`) wind onto the clouds. The panel also groups the knobs (Shape, Layer, Wind)
 and has a Randomize Cloud Seed button.
 
-Live Environment (S5): the main Firmament panel has a Live Environment toggle (default
-on) that drives Wind Direction / Wind Speed of the clouds, fog, and particulates, the
+Live Environment (S5; toggle moved to the World panel in the 2026-07-20 redesign): the one
+Live Environment master (default on, on `bbt_world`) drives Wind Direction / Wind Speed of the
+clouds, fog, and particulates, the
 cloud layer's Coverage (from `env.cloud_cover`), and the snow-coverage Snow input (from
 `env.snow`) live from `bbt_env` with drivers, so moving an Environment slider moves every
 effect with no rebuild. The per-object Use Env Wind / Use Env Snow buttons are shown only
@@ -493,10 +494,11 @@ follow domain. The Preview/Final quality toggle scales the particle Count throug
 Quality Scale input (preview 0.35, final 1.0) at every build and when the toggle flips,
 so the viewport stays light and a final render restores the full count.
 
-Main-panel controls (S5): the Firmament panel top carries the Preview/Final quality
-toggle, the Live Environment toggle, and a Scene Preset menu (Clear Day, Golden Hour,
-Overcast, Storm, Foggy Dawn, Dust Storm, Winter) that sets the `bbt_env` context and
-seeds each subsystem in one pick, building any that are missing. The Environment
+Main-panel controls (S5; relocated to the World panel in the 2026-07-20 redesign): the World
+panel carries the Preview/Final quality level, the one Live Environment master, and the Scene
+Preset menu (Clear Day, Golden Hour, Overcast, Storm, Foggy Dawn, Dust Storm, Winter) that sets
+the `bbt_env` context and seeds each subsystem in one pick, building any that are missing. The
+Environment
 sub-panel has an Apply Season button that applies the current season's continuous state
 (snow, wetness, temperature) and, for Winter, builds the falling snow and the
 snow-coverage pass.
@@ -549,6 +551,23 @@ occlusion is a crude-but-real short upward Raycast against the same mesh (a hit 
 something is directly above, so less snow), gated by the Occlusion knob and meant to
 improve later. A heightfield has no overhangs, so occlusion has no effect there. The
 falling-snow look is the `particulates` Falling Snow mote preset.
+
+## snow_shell (recipe: `snow_shell`)
+
+The snow accumulation shell (BobShaders S4): gives snow real thickness and silhouette, not
+just a white shading. It runs as a modifier ON the surface AFTER the `snow` coverage pass
+(so `snow_cover` exists), reads that same attribute, blurs it (Blur Attribute) for rounded
+drifts, and displaces the surface along its normal by `snow_cover * Thickness`. Because it
+reads the SAME attribute the surface material reads, the shell thickness and the material
+whiteness line up by construction (the single-source rule). Attach it with
+`build_geonodes_on_object(obj, "snow_shell", "BOB_SnowShell", params)` (the BobShaders
+Weather panel's Add Snow Shell button), non-destructive like the snow pass. It adds a
+Geometry INPUT socket, so it augments the object's own mesh.
+
+| Param | Default | Live | What it does |
+|-------|---------|------|--------------|
+| `thickness` | 0.3 | yes | Metres the surface lifts along its normal at full coverage. |
+| `smooth` | 3 | yes | Blur iterations on `snow_cover` before displacing (rounded drifts). |
 
 ## Path (op: `make_path`)
 

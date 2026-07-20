@@ -15,7 +15,8 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
   repo utilities and the ComfyUI client sit alongside.
 - `blender/`: code that runs inside Blender's Python. `bbmcp/` is the authoring
   library, `runners/` are headless entry scripts, `extensions/bob_blender_tools/`
-  is the BobBlenderTools addon (MCP bridge, heightfield panel, next scatter).
+  is the BobBlenderTools addon (World, Terrain, Scatter, Shaders, Atmosphere, and a
+  collapsed Advanced/Bridge panel; see the panel-UX section below).
 - `renders/`: outputs, gitignored.
 - `config/`, `docs/`, `references/`.
 
@@ -59,9 +60,34 @@ builders are recipes in `blender/bbmcp/geonodes/recipes/`.
 ## The BobBlenderTools extension
 
 `blender/extensions/bob_blender_tools/` is the Bob suite's Blender-side host: one
-addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panels
-(MCP Bridge, Heightfield Terrain, and next Scatter). MCP is one capability here,
-not the roof.
+addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panels.
+MCP is one capability here, not the roof.
+
+### Panel UX (2026-07-20 redesign)
+
+The tab is ordered along the pipeline so the N-panel teaches the workflow (full plan and
+rationale in `UX-REDESIGN.md`): **World** (the shared `bbt_env`, promoted out of Firmament)
+then **Terrain**, **Scatter**, **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/
+weather), and a collapsed **Advanced** panel (the MCP Bridge, demoted from the artist's entry
+point). Order is set by `bl_order`, not registration; a one-line overview at the top of World
+names the sequence.
+
+Suite-wide principles, implemented once in `ui_helpers.py` (a context-header helper, a
+structural-action marker with a shared icon + "rebuilds:" note, and a preset row):
+
+- Native identity. Each panel reflects the active thing, not a panel-local pointer/name.
+  Shaders edits the active object's active material slot (detected as a BobShader via
+  `materials.master_type`); Scatter reflects the active emitter/layer; Terrain the target
+  object. No `material_name`/`target`.
+- One world, one place. The world master toggle (**Live Environment**) and the scene
+  **Quality** level live on World (`bbt_world`). A SUBSCRIBER REGISTRY in `world_panel.py`
+  lets each consumer register an applier `fn(scene)`; a world change re-applies all. World
+  never imports its consumers, so `env.py` stays the acyclic root and a new world-driven
+  subsystem is one `register_applier()` call. This folds the old per-panel `live_env` toggles
+  (Shaders + Firmament) into one.
+- Clear homes. Asset selection/import (Make Proxies, Import Biome) lives in Scatter;
+  converting a material to a BobShader lives in Shaders (Convert, with an active/selected/
+  collection scope for the unlinked scatter-asset collections).
 
 Its MCP Bridge runs a local socket server, applying ops on Blender's main thread
 through a timer (the only safe way to mutate `bpy` from a socket) and running only
@@ -80,9 +106,12 @@ the new op tag until the server is reconnected.
 
 ## Firmament: the atmosphere capability
 
-A sibling capability panel (peer to Heightfield Terrain and Scatter) that authors
-sky, clouds, fog, weather particulates, and snow coverage, and owns the shared world
-state. Built in slices S1-S5 (see `FIRMAMENT.md` for the design and the slice records).
+A sibling capability panel (labelled **Atmosphere** in the tab since the 2026-07-20 UX
+redesign; the module stays `firmament_panel.py`) that authors sky, clouds, fog, weather
+particulates, and snow coverage. It still owns and registers the shared world state, but the
+world's UI (the Environment sliders) now lives in the World panel, and the scene Quality level
+and the Live Environment master moved to `bbt_world` (see the panel-UX section).
+Built in slices S1-S5 (see `FIRMAMENT.md` for the design and the slice records).
 It is the base layer other capabilities read the world from, a one-way dependency, so
 the graph stays acyclic and a `BobBlenderFirmament` split stays mechanical. All bpy-only.
 
@@ -104,11 +133,13 @@ the graph stays acyclic and a `BobBlenderFirmament` split stays mechanical. All 
   cloud_cover) feed live via drivers on the GN modifier inputs under a Live Environment
   toggle, reinstalled on each build; a change of season is applied by an explicit Apply
   Season operator, never a property callback, to avoid the scatter rebuild re-entrancy.
-- `Scene.bbt_firmament` holds Firmament's own UI/subsystem state and the Preview/Final
-  quality level. The panel (`firmament_panel.py`) carries whole-scene presets, Apply
-  Season, the quality toggle, and the Environment / Sky / Clouds / Fog / Weather
-  sub-panels. New ops (`build_sky`) meant one MCP reconnect; the recipes reuse
-  `build_geonodes`, so recipe work is a Reload Builders, panel work an addon re-enable.
+- `Scene.bbt_firmament` holds Firmament's own subsystem state (sky/cloud/fog/weather object
+  names and knobs). Since the redesign the Preview/Final quality level and the Live Environment
+  master moved to `bbt_world`; whole-scene presets and Apply Season are drawn in the World panel
+  (the operators stay `firmament_*`); the Environment sub-panel moved to World. The Atmosphere
+  panel keeps the Sky / Clouds / Fog / Weather sub-panels. New ops (`build_sky`) meant one MCP
+  reconnect; the recipes reuse `build_geonodes`, so recipe work is a Reload Builders, panel work
+  an addon re-enable.
 
 ## BobShaders: the surface-materials capability
 
@@ -128,8 +159,11 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   per-instance variation, ending in `S_Weather`), and `surface_material()` (the `M_<name>`
   wrapper: one master group node -> one Principled BSDF). Cached and get-or-create, so a
   re-Build never wipes a wrapper's tuned inputs. As of S2, `S_TerrainMaster` (the multi-layer
-  blend) and `terrain_material()` join them; `S_TextureSet` and the triplanar/anti-tiling
-  helpers arrive at S3.
+  blend) and `terrain_material()` join them. As of S3, `texture_set_group()` builds a cached
+  per-set group that triplanar-samples a `library/textures/<name>/` set (Blender's BOX
+  projection, no UVs) and derives the normal from the height via a Bump node; the masters gained
+  Albedo/Roughness/Metallic map inputs (identity defaults) so colour tints the map, and the
+  wrapper rebuilds with an input snapshot when a set is assigned (keyed off a `bbt_sig`).
 - Coverage has one authority: `S_Weather` reads the `snow_cover` attribute where the
   Firmament GN pass ran (the terrain) and computes a shader-side fallback with the exact
   SYSTEMS.md formula everywhere else (scattered assets, plain meshes). A per-material Use
@@ -144,16 +178,40 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   `materials.assign_material` drives a small per-material Set-Material GN modifier
   (`BBT_Material`) at the end of the stack for any object carrying a Nodes modifier; a plain
   mesh just uses the object slot. This makes "assign a material to an object" work uniformly.
-- Live vs structural, per the repo policy: continuous world values (snow) feed the weather
-  layer live via drivers on the shared `S_EnvState` group, reinstalled on Build and gated by
-  BobShaders' own `bbt_shaders.live_env` toggle (it reads the world state, not Firmament's
-  UI). A change of kind (texture set, layer stack, season swap) is an explicit Build/Apply.
-- `Scene.bbt_shaders` holds BobShaders' own UI state (target, material name, master type,
-  active terrain layer, Live Environment). The panel (`shaders_panel.py`) carries
-  Build/Assign/Use-Active, presets, and the Surface / Terrain Layers (+ Layer Masks) /
-  Weather sub-panels (gated by master type) drawing the wrapper's live knobs. Registered
-  after Firmament, which owns `bbt_env`; a `make_material` MCP op stays a commented stub in
-  `dispatch.py`, added only if agent-over-MCP authoring is later wanted.
+- As of S4 the weather layer carries the full term stack: snow, wetness (with the documented
+  `env.weather`->wetness mapping: rain/storm wet the ground), frost (below freezing, up-facing),
+  and dust/moss season aging. `S_EnvState` drives four fields now (snow, wetness, temperature,
+  weather). Wet-cavity pooling uses Cycles Pointiness (confirmed working). The snow accumulation
+  shell (`geonodes/recipes/snow_shell.py`, attached by the BobShaders panel) displaces the
+  surface by the same `snow_cover` for real thickness.
+- Live vs structural, per the repo policy: continuous world values (snow, wetness, temperature,
+  weather) feed the weather layer live via drivers on the shared `S_EnvState` group, reinstalled
+  on New/Convert and gated by the one World master Live Environment toggle (`bbt_world.live_env`),
+  which drives Shaders through the world applier registry (`shaders_panel._apply_world`). A change
+  of kind (texture set, layer stack, dust/moss amount, season swap) is an explicit New/Convert/Apply.
+- Scatter output weathers by converting the scatter asset collection's materials to BobShaders
+  (Shaders' Convert with the Collection scope, since `BOB_Assets_*` is unlinked and not
+  viewport-selectable); the instances inherit the converted material and Object Info Random
+  varies each per instance. `bbmcp/assets.py` replaces the block-out proxies with real CC0 glTF
+  models from one geographic scan location (`library/models/<biome>/manifest.json`) via
+  **Scatter's Import Biome** (moved there from Shaders in the redesign), keeping the assets'
+  native materials; GN instancing stores each mesh once so even a multi-million-poly scanned tree
+  is memory-cheap to scatter. `materials.bobshade_material()` (Shaders' Convert) then converts
+  each material in place - routing its Principled Base Color/Roughness/Metallic through
+  `S_SurfaceMaster` (the asset's own maps feed the master's map inputs) so the assets gain
+  per-instance variation and the full weather layer while their alpha and normals stay intact.
+  One World control then weathers terrain and scattered assets alike; a Scene Preset (Winter)
+  moves terrain, scatter, and props together with no rebuild. Measured budget: a 1080p Final
+  full-stack frame (layered terrain + weathered scatter + clouds/fog/rain) is ~190s on the dev
+  5080. BobShaders core is S1-S5 complete.
+- `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the texture-set
+  pickers, and the Convert scope + collection). Identity is native: the material on the active
+  object's active slot (no `material_name`/`target`/`master` enum). The panel (`shaders_panel.py`)
+  lists every material slot of the active mesh with a per-row select and an adaptive New (empty)
+  or Convert (plain), a Batch-convert (active/selected/collection) for the scatter assets, and the
+  Surface / Terrain Layers (+ Layer Masks) / Weather sub-panels gated on `materials.master_type`
+  of the active material. Registered after Firmament, which owns `bbt_env`; a `make_material` MCP
+  op stays a commented stub in `dispatch.py`, added only if agent-over-MCP authoring is later wanted.
 
 ## Naming
 

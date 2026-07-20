@@ -25,7 +25,14 @@ from bpy.props import (
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
 
-from . import firmament_panel, scatter_panel, server, shaders_panel
+from . import (  # noqa: F401
+    firmament_panel,
+    scatter_panel,
+    server,
+    shaders_panel,
+    ui_helpers,
+    world_panel,
+)
 
 # A 2D top-down preview of the last baked heightfield, drawn in the panel. Loaded
 # by the bake operator, created in register() and freed in unregister().
@@ -148,8 +155,8 @@ class BBT_OT_reload(Operator):
 # Heightfield terrain: bake in the venv, build in place here.
 class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
-    material: PointerProperty(name="Material", type=bpy.types.Material,
-                              description="Material assigned to the terrain surface")
+    # No Material picker (docs/UX-REDESIGN.md decision D): a terrain gets its material by
+    # selecting it in the Shaders panel (New BobShader -> Terrain), the one native path.
     preset: EnumProperty(name="Preset", items=_preset_items, update=_apply_preset,
                          description="Load a set of slider values")
     backend: EnumProperty(
@@ -330,8 +337,7 @@ class BBT_OT_bake_terrain(Operator):
         apply_op({"op": "reload_image", "path": out_abs})
         tparams = {"heightmap": out_abs, "size": hf.terrain_size, "resolution": bake_size,
                    "height": hf.height, "sea_level": hf.sea_level}
-        if hf.material:
-            tparams["material"] = hf.material.name
+        # No material here (decision D): the terrain is shaded from the Shaders panel.
         apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain",
                   "name": hf.target, "params": tparams})
 
@@ -350,15 +356,23 @@ class BBT_OT_bake_terrain(Operator):
 
 
 # Panel
+# Pipeline panel order (docs/UX-REDESIGN.md section 4): World=0, Terrain=1, Scatter=2,
+# Shaders=3, Atmosphere=4, Advanced/Bridge=5. Set via bl_order so the N-panel teaches the
+# terrain -> scatter -> shade -> world sequence regardless of registration order (P6). The
+# dev/agent Bridge is demoted to a collapsed Advanced panel (decision B): it should not greet
+# an artist first, but stays in the tab for when an agent needs the live socket.
 class BBT_PT_panel(Panel):
-    bl_label = "MCP Bridge"
+    bl_label = "Advanced"
     bl_idname = "BBT_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
+    bl_order = 5
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
+        layout.label(text="MCP Bridge (agent/dev): live socket + builder reload", icon="CONSOLE")
         running = server.is_running()
         layout.label(
             text=server.status(),
@@ -371,11 +385,12 @@ class BBT_PT_panel(Panel):
 
 
 class BBT_PT_heightfield(Panel):
-    bl_label = "Heightfield Terrain"
+    bl_label = "Terrain"
     bl_idname = "BBT_PT_heightfield"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
+    bl_order = 1  # pipeline stage 1 (Terrain); see BBT_PT_panel comment
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -385,9 +400,10 @@ class BBT_PT_heightfield(Panel):
         if _preview_coll is not None and _PREVIEW_KEY in _preview_coll:
             layout.template_icon(icon_value=_preview_coll[_PREVIEW_KEY].icon_id, scale=8)
 
+        # P1: the target terrain object the bake builds (or replaces).
+        ui_helpers.context_header(layout, "Terrain object", hf.target, icon="OUTLINER_OB_MESH")
         col = layout.column(align=True)
         col.prop(hf, "target")
-        col.prop(hf, "material")
         layout.prop(hf, "preset")
 
         row = layout.row(align=True)
@@ -401,7 +417,12 @@ class BBT_PT_heightfield(Panel):
         row.prop(hf, "preview")
         row.prop(hf, "resolution")
 
-        layout.operator("bob_blender_tools.bake_terrain", icon="MOD_OCEAN", text="Bake + Build Terrain")
+        # P3: Bake + Build is STRUCTURAL (bakes a heightfield, then builds the mesh); the
+        # Shape/Erosion/Displace knobs below are its inputs. Shade the result in Shaders.
+        ui_helpers.structural_action(layout, "bob_blender_tools.bake_terrain",
+                                     text="Bake + Build Terrain",
+                                     note="bakes a heightfield, then builds the terrain mesh")
+        layout.label(text="Shade it in the Shaders panel", icon="INFO")
         if hf.last_bake:
             layout.label(text=f"Last: {hf.last_bake}", icon="INFO")
 
@@ -496,8 +517,9 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
     scatter_panel.register()
-    firmament_panel.register()  # owns and registers the shared world (bbt_env)
-    shaders_panel.register()    # reads bbt_env; registers after Firmament owns it
+    firmament_panel.register()  # owns and registers the shared world (bbt_env); subscribes its applier
+    world_panel.register()      # World panel + bbt_world master toggles (drive every consumer)
+    shaders_panel.register()    # reads bbt_env; subscribes its applier
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
@@ -510,6 +532,7 @@ def unregister():
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
     shaders_panel.unregister()
+    world_panel.unregister()
     firmament_panel.unregister()
     scatter_panel.unregister()
     del bpy.types.Scene.bbt_hf

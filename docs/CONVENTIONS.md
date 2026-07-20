@@ -40,6 +40,29 @@ When a geometry-node or material node group proves reusable:
    `library/blender_assets.cats.txt`).
 4. Give it a thumbnail and a one-line description.
 
+## Panel UX conventions
+
+The BobBlenderTools N-panel suite follows one design language (full rationale in
+`UX-REDESIGN.md`). When adding or editing a panel, keep to it:
+
+- Order along the pipeline with `bl_order`, not registration: World 0, Terrain 1, Scatter 2,
+  Shaders 3, Atmosphere 4, Advanced 5. A one-line overview at the top of World names the
+  sequence (panel labels stay plain, no stage numbers).
+- Native identity. Reflect the active thing (active object/material, active emitter/layer),
+  never a panel-local name or duplicate target pointer.
+- Use the shared helpers in `ui_helpers.py` so the language stays consistent: `context_header`
+  (the "what am I acting on" line + empty-state hint), `structural_action` (a build/rebuild
+  button with the shared `STRUCTURAL_ICON` and a short "rebuilds:/builds:" note), and
+  `preset_row` (the one preset control, an `operator_menu_enum` with per-item label +
+  description). Every preset in the suite uses `preset_row`.
+- Make live-vs-structural visible: group instant live knobs apart from structural
+  build/rebuild/apply actions, and mark the structural ones with `structural_action`.
+- Show only what applies to the current state (adaptive/minimal): per-row New OR Convert, not
+  both; hide sub-panels that do not apply (poll on the detected kind).
+- The world is driven from one place (the World panel, `bbt_world`). A world-driven subsystem
+  subscribes an applier via `world_panel.register_applier(fn)`; it does not add its own world
+  toggle.
+
 ## Git hygiene
 
 - Never commit `renders/`; they are regenerable.

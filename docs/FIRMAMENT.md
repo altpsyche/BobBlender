@@ -6,6 +6,12 @@ fog, and weather generation are going and how they stay Cycles-correct and
 separable for a later polyrepo split. Build against this; fold settled parts into
 `ARCHITECTURE.md` and `SYSTEMS.md` as slices land.
 
+The PANEL UX was redesigned 2026-07-20 (`UX-REDESIGN.md`): this panel is now labelled
+**Atmosphere** and keeps the Sky/Clouds/Fog/Weather builders. The shared world (the Environment
+sliders), the Preview/Final Quality level, the Live Environment master, and the Scene Presets /
+Apply Season moved to the new **World** panel (`bbt_world` + `bbt_env`); Firmament still owns and
+registers `bbt_env`. The atmosphere algorithms below are unchanged; only how they are driven moved.
+
 ## Decisions locked (2026-07-19)
 
 - Clouds are procedural volumes (a noise-driven volume box), no VDB assets in v1.

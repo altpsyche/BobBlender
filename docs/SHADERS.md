@@ -6,6 +6,12 @@ shading is going: strong, art-directable master materials, and the world-driven 
 layer that ties the whole suite together. Build against this; fold settled parts into
 `ARCHITECTURE.md` and `SYSTEMS.md` as slices land.
 
+The Shaders PANEL UX was redesigned 2026-07-20 (`UX-REDESIGN.md`): identity is now native
+(the active object's active material slot, detected via `materials.master_type`), the panel
+lists the active mesh's material slots with adaptive New/Convert, asset Import moved to Scatter,
+and the Live Environment toggle folded into the one World-panel master. The shading algorithms
+below are unchanged; only how they are driven moved.
+
 ## Two jobs
 
 BobShaders does two things, and both matter:
@@ -504,14 +510,160 @@ rendered and eyeballed like Firmament.
     (macro/distance detail) - S2 is solid-colour layers, so triplanar has nothing to project
     yet. The paint mask is a named attribute in S2; the RGBA splat image and erosion-baked
     masks are later.
-- S3 Texture, projection, anti-tiling: `S_TextureSet` from `library/textures/`, macro and
-  distance detail, terrain-stack and surface presets. Payoff: production fidelity, no tiling.
-- S4 Full weather + shell: wetness (with the cavity/mask source and the `env.weather`
-  mapping), frost, dust/moss on Apply, and the `snow_shell` accumulation pass.
-- S5 Whole-look + budget: assign to scattered assets so Scatter output weathers; confirm
-  Firmament scene presets (Winter) move the surfaces with no extra step; the erosion-mask
-  layer-driving glue if pursued; and a real 1080p budget frame with the full stack (layered
-  terrain + weathered scatter + Firmament volumes) on the dev GPU.
+- S3 Texture, projection, anti-tiling (done, 2026-07-20, headless Cycles/OptiX on the 5080):
+  texture sets from `library/textures/`, triplanar projection, colour-as-tint, and macro
+  break-up on both masters. Payoff: production fidelity with real PBR maps, no UVs, no obvious
+  tiling. What shipped and the decisions taken:
+  - Textures: three CC0 sets pulled from Poly Haven into `library/textures/` (soil =
+    forrest_ground_01, grass = aerial_grass_rock, rock = rocky_terrain), 1k, named to the
+    repo convention (`<set>_basecolor/roughness/normal/height/ao`), each with a SOURCE.txt.
+    LFS already tracks png/jpg.
+  - `texture_set_group(name)` builds a cached per-set group (the images are node properties,
+    not sockets, so it is per set like the ground-fog material). It uses Blender's built-in
+    Image Texture BOX projection for triplanar (world-projected, so it needs no UVs and works
+    on terrain), folds AO into the albedo, and outputs Base Color / Roughness / Metallic /
+    Normal / Height. `_find_maps` matches the conventional suffixes (with aliases like
+    diff/nor_gl/disp) and sets Non-Color on the data maps. Scale is a live knob (the Mapping
+    scale); the triplanar blend is a build-time property.
+  - Normal from HEIGHT via a Bump node, not the tangent-space normal map: a tangent-space
+    normal map is undefined on an un-UV'd triplanar mesh, whereas Bump works from screen-space
+    derivatives of the height, so it is robust on terrain. The normal-map files are downloaded
+    for a future world-space-triplanar-normal refinement but unused in S3.
+  - Colour as tint (the S1 architecture realised): the masters gained Albedo/Roughness/Metallic
+    map inputs defaulting to the multiplicative identity (white / 1), so a solid surface is
+    unchanged. When a set is assigned the wrapper links the set's maps in and albedo = Base
+    Color * map; on the solid->textured transition the tint defaults to white and Roughness to
+    1 so the map reads at face value. Switching solid<->textured never changes the master graph.
+  - Wrapper rebuild-with-snapshot: assigning or changing a texture set is structural, so the
+    wrapper rebuilds, snapshotting and restoring the Master node's tuned inputs by socket name
+    (the shader analogue of the GN modifier snapshot), keyed off a `bbt_sig` signature so an
+    unchanged call is a no-op.
+  - Terrain per-layer texture sets: each layer slot gained Albedo Map / Roughness Map / Detail
+    Height inputs; the wrapper wires a texture-set group per assigned layer (stored as a JSON
+    map on the material). The blended detail height across layers drives ONE Bump node into the
+    Principled normal (a single terrain normal, so no per-layer tangent problem), and the
+    height-lerp fold blends the detail heights alongside colour/roughness.
+  - Macro break-up (anti-tiling): a low-frequency world noise modulates albedo brightness on
+    the surface master (Macro Amount/Scale), so a repeating texture stops reading as a tile at
+    distance. DISTANCE-BASED detail (near/far scale blend by camera distance) is DEFERRED - it
+    doubles the triplanar sample count, so it is measured at the S5 budget, not added blind.
+  - Panel: a Texture picker on the Surface sub-panel (applied on Build) and a per-layer Texture
+    picker + Assign on the Terrain sub-panel (the slot rows show each layer's set), plus the
+    triplanar Scale / Bump Strength live knobs when a set is present. Sets are discovered from
+    `library/textures/`.
+  - Verified: 11/11 automated (texture icon/idname/prop audit; sets discovered; group outputs
+    and BOX projection; a textured sphere adds high-frequency detail vs the flat solid, via an
+    adjacent-pixel HF metric that isolates texture from the lighting gradient; base colour tints
+    the albedo; retexture keeps tuned inputs by snapshot; a terrain layer texture adds detail;
+    TexSet nodes wired) plus 12/12 register. Eyeball (AgX, 960p): a textured terrain (soil /
+    clumped grass / rock by the masks) with triplanar rock props, and the weather layer still
+    whitening the up-facing ground under snow with texture at the melt edges.
+- S4 Full weather + shell (done, 2026-07-20, headless Cycles/OptiX on the 5080): the rest of
+  the shared weather layer (wetness, frost, dust, moss) plus the snow accumulation shell.
+  Payoff: one world state drives snow, wet ground, frost, and season aging across every
+  surface, and snow gets real thickness. What shipped and the decisions taken:
+  - `S_EnvState` now also drives `env.weather` (the enum index) and computes the one documented
+    weather->wetness mapping: effective wetness = max(env.wetness, weather contribution), where
+    weather in {rain, storm} raises it (rain 0.6, storm 1.0) and clear/cloud/fog do not wet the
+    ground. This is the single convergence spot for `env.weather`, `wetness`, `snow`,
+    `temperature` (pinned in "Weather from the world state" above). The driver count on the
+    shared group is now four (snow, wetness, temperature, weather).
+  - `S_Weather` gained the term stack, applied in order on albedo/roughness/metallic:
+    dust (up-facing, warm) and moss (down-facing, green) aging -> wetness (darken albedo, drop
+    roughness for a wet sheen; optional cavity pooling) -> snow (existing) -> frost (below
+    freezing, up-facing, cool blue-white sheen). Each term is gated by a strength/amount (0 =
+    off); the masters and wrappers pass the five new inputs through.
+  - Wetness cavity pooling uses Cycles Pointiness, and Pointiness is now CONFIRMED working in
+    5.2 (a probe emitting Pointiness reads std ~0.24 on Suzanne; Phase-0's zero-read was a
+    setup issue). Pooling darkens only the concave areas, so it is a localized effect; it stays
+    optional (Wet Pooling default 0), with a painted/baked mask remaining the EEVEE-safe path.
+  - Dust and moss are continuous per-material amounts (manual knobs), not a live season-enum
+    driver - the live-vs-structural rule (a change of kind is set, not driven). Frost has no
+    micro-normal in S4 (a shading tint only); the crystalline micro-normal is a later polish
+    (it would need normals routed through the weather layer).
+  - Snow accumulation shell: `geonodes/recipes/snow_shell.py`, attached via
+    `build_geonodes_on_object` after the `snow` pass. It reads the SAME `snow_cover` attribute,
+    blurs it (Blur Attribute) for rounded drifts, and displaces the surface along its normal by
+    `snow_cover * Thickness` - so the shell thickness and the material whiteness line up by the
+    single-source rule. Owned by BobShaders (see the resolved decision below).
+  - Panel: the Weather sub-panel gained grouped term knobs (Snow / Wetness / Frost / Season
+    aging) and a Snow Accumulation Shell box (Add / Remove + Thickness / Smooth).
+  - Verified: 12/12 automated (icon/idname/term audit; S_EnvState drives env.weather; wetness
+    darkens; env.weather=storm darkens via the mapping; frost cools/whitens up-facing below
+    freezing; dust warms up-facing; moss greens down-facing; Pointiness carries signal; wet
+    pooling darkens concavities; the shell displaces the evaluated mesh by snow_cover) plus
+    12/12 register. Eyeball (AgX, 960p): a dry baseline, a storm frame with wet glossy darkened
+    ground, and a winter frame with snow drifts (real shell thickness) and snow-capped textured
+    rocks.
+- S5 Whole-look + budget (done, 2026-07-20, headless Cycles/OptiX on the 5080): the final core
+  slice, tying the suite together. Payoff: one world state moves every surface, and the full
+  stack renders in budget. What shipped and the results:
+  - Scattered assets weather: an "Assign to Collection" operator (with a collection picker on
+    the panel) assigns the built material to every mesh in a scatter's `BOB_Assets_*` collection,
+    so the scattered instances weather with the ground. Per-instance variation still applies per
+    instance: Object Info Random varies each scattered instance, verified (the field's render
+    std rose 0.061 -> 0.081 with Variation on). Scatter is object-native (the instances inherit
+    the asset objects' material), so no per-instance material plumbing is needed.
+  - The whole-look, one control: because BobShaders reads `bbt_env` live (S_EnvState drivers for
+    the computed path; Firmament drives the snow pass for the attribute path), moving the world
+    to Winter (env.snow 0 -> 0.85, temperature 15 -> -8, weather snow) moved the WHOLE scene -
+    terrain (attribute path), scatter and props (computed path) - with no rebuild, measured by
+    render-delta (mean 0.208 -> 0.518). This is the target vision: pick Winter and the map turns
+    white, the ground wets at the melt line, surfaces frost, all from the shared world state.
+  - Budget: a 1920x1080 Final frame with the full stack (textured layered terrain + ~976
+    weathered scatter instances + Firmament clouds + height fog + rain, 96 spp adaptive, OptiX
+    denoise) rendered in 190.9s (~3.2 min) on the 5080, within the plan's low-minutes budget and
+    consistent with Firmament's own ~175s atmosphere-only budget (the surfaces add little on top
+    of the volumes, which dominate). Levers if over budget are the Firmament ones (Preview
+    volume steps, thinner fog, cloud shadow off for a low sun).
+  - Verified: 7/7 (scatter instances present; assign-to-collection weathers; scattered assets
+    whiten with env.snow via the computed path; per-instance variation; Winter env moves the
+    whole scene with no rebuild; full-stack frame builds; budget < 360s). Eyeball: the 1080p
+    stress frame reads as a foggy rainstorm over a rock-strewn terrain (fog deliberately dense
+    for the stress case; the S4 winter frame is the beauty look).
+  - Erosion-mask -> layer glue: DEFERRED as a follow-on (the plan's "if pursued"). It is
+    venv-side (the heightfields bake would emit flow-accumulation / deposition masks alongside
+    the height PNG). The shader hook is already in place: each terrain layer reads a paint
+    attribute (`bbt_paint_L{i}`), so a future erosion bake can write those to drive sediment
+    into valleys and bare rock onto ridges with no shader change.
+
+- Real biome scatter assets (added 2026-07-20): the block-out proxies can be replaced with
+  real CC0 meshes from ONE geographic scan location so the scatter instances coherent, real
+  trees/rocks/grass/plants. `bbmcp/assets.py` imports glTF models from `library/models/<biome>/`
+  (a `manifest.json` maps kind -> files) into the `BOB_Assets_<Kind>` collections, unparenting
+  and baking transforms and keeping the assets' NATIVE materials (trees and grass need their
+  alpha-leaf materials, which the opaque surface master cannot represent - so BobShaders
+  textures the ground and the real assets bring their own look). glTF over .blend keeps the
+  download light and self-describes the PBR textures. The shipped biome is Poly Haven's
+  `verdant_trail` (one scan location): tree_small_02, boulders/rocks (boulder_01, rock_07/09,
+  stone_01), grass_medium_02 (5 variants), and shrubs (shrub_01/02/03). GN instancing stores
+  each mesh once, so even the 2.06M-poly scanned tree is memory-cheap to scatter; keep tree
+  density modest for render time. The panel's Import Real Assets button populates the
+  collections; rebuild the scatter to pick them up. Verified: import fills all four kinds with
+  real high-poly meshes, the scatter instances them (77 trees / 680 rocks / 20k grass / 1.8k
+  plants), and a 960p frame reads as a real verdant hillside of trees, boulders, grass, and
+  shrubs on the textured terrain. Note: `library/models/` goes through Git-LFS (`.bin`/`.glb`
+  added); the tree alone is ~96MB, so heavier biomes are a size trade-off.
+- Every asset a BobShader (added 2026-07-20): `materials.bobshade_material(mat)` converts an
+  imported material IN PLACE by routing its Principled Base Color / Roughness / Metallic through
+  `S_SurfaceMaster` - the asset's own UV maps feed the master's map inputs (tint white, scalars
+  1, so they read at face value), so it gains per-instance variation, macro break-up, and the
+  full weather layer (snow / wet / frost / dust / moss), while its Alpha, Normal, and Emission
+  are untouched (leaves and grass keep their alpha cutout). Triplanar and the texture-set loader
+  stay off - the assets are UV-mapped with their own textures. Coverage is the computed path
+  (assets carry no snow_cover pass). The panel's BobShade Assets button converts every material
+  on the scatter asset collections (idempotent, skips a material that already has a Master node)
+  and installs the env drivers, so one env control snows/frosts the whole scene - terrain and
+  scattered trees/rocks/grass alike. Verified 5/5 (11/11 materials converted, idempotent, alpha
+  wiring preserved, base colour via the master, and the assets whiten with env.snow by
+  render-delta); eyeball: a summer frame reads fully native (green trees, scanned rock, alpha
+  leaves) and a winter frame snow-caps the rocks, dusts the canopies, and blankets the ground.
+
+BobShaders core (S1-S5) is complete: strong master materials (surface + multi-layer terrain),
+texture sets with triplanar, the shared world-driven weather layer (snow, wet, frost, dust,
+moss), the snow accumulation shell, and the whole-look integration, all headless-verified on
+the dev GPU. Remaining follow-ons (non-core): the erosion-mask glue, frost micro-normal,
+distance-based texture detail, world-space triplanar normal maps, and the EEVEE curvature mask.
 
 ## Open decisions
 
@@ -530,10 +682,11 @@ rendered and eyeballed like Firmament.
 - Op vs panel-only: RESOLVED (2026-07-19) to panel-only, in-process like Scatter (no
   reconnect); the `make_material` stub in `dispatch.py` stays commented. Add a
   `build_material` op only if agent-over-MCP material authoring is later wanted.
-- Accumulation shell home: BobShaders (recommended, it reads `snow_cover` and pairs with the
-  surface look) versus a Firmament/geonodes recipe.
-- Curvature/cavity in EEVEE: accept degrade-to-mask, or bake a curvature map so EEVEE and
-  Cycles match.
+- Accumulation shell home: RESOLVED (S4) to BobShaders. `snow_shell` is a geonodes recipe
+  (in `bbmcp/geonodes/recipes/`) but it is attached and owned by the BobShaders panel, reads
+  `snow_cover`, and pairs with the surface look.
+- Curvature/cavity in EEVEE: Pointiness is CONFIRMED working in Cycles (S4), so curvature and
+  wet-cavity pooling use it there; EEVEE still degrades to a painted/baked mask (deferred).
 
 ## Toward the next thing
 

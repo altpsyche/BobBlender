@@ -28,6 +28,7 @@ from . import (  # noqa: E402,F401
     particulates,
     scatter,
     snow,
+    snow_shell,
     terrain,
     volumetrics,
     wave_grid,
