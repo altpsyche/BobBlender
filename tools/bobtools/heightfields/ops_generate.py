@@ -1,0 +1,99 @@
+"""Generator ops: create or add height. Stack ops `(h, xp, params, seed) -> h`.
+
+Generators run on the backend array module so they compose with the GPU erosion in one stack.
+They write into the incoming field via a `mix` mode (add / multiply / replace / max), so a
+recipe can stack a ridged base, blend in dunes, and cut mesas from voronoi. The base ridged-
+multifractal generation lives in generate.py (resolution-independent, world-sampled); these add
+the family-specific structure (directional dunes, cellular mesas) that gives the four landscape
+families their character.
+"""
+
+import numpy as np
+
+
+def _coords(xp, size):
+    """Normalised world grid over [0, 1) -- resolution-independent sample points, like generate.py."""
+    u = (xp.arange(size, dtype=xp.float64) + 0.5) / size
+    return xp.meshgrid(u, u)
+
+
+def _mix(h, field, mode, amount):
+    if mode == "replace":
+        return field
+    if mode == "multiply":
+        return h * (1.0 - amount + amount * field)
+    if mode == "max":
+        m = h.__class__ if False else None  # placeholder; use xp via field
+        return field  # handled by caller with xp.maximum
+    return h + amount * field  # add (default)
+
+
+def _value_noise(xp, x, y, freq, seed):
+    """Cheap smooth value noise in [0,1] at world coords, for warping/variation (not the hero
+    detail -- generate.py's gradient noise is that). Hash a jittered lattice, bilinear-blend."""
+    xf = x * freq
+    yf = y * freq
+    x0 = xp.floor(xf).astype(xp.int64)
+    y0 = xp.floor(yf).astype(xp.int64)
+    tx = xf - x0
+    ty = yf - y0
+    def rand(ix, iy):
+        n = (ix * 374761393 + iy * 668265263 + seed * 362437) & 0x7fffffff
+        n = (n ^ (n >> 13)) * 1274126177 & 0x7fffffff
+        return (n % 100000) / 100000.0
+    v00 = rand(x0, y0); v10 = rand(x0 + 1, y0); v01 = rand(x0, y0 + 1); v11 = rand(x0 + 1, y0 + 1)
+    sx = tx * tx * (3 - 2 * tx)
+    sy = ty * ty * (3 - 2 * ty)
+    return (v00 * (1 - sx) + v10 * sx) * (1 - sy) + (v01 * (1 - sx) + v11 * sx) * sy
+
+
+def dunes(h, xp, seed=0, wind=35.0, frequency=14.0, sharpness=2.0, warp=0.12,
+          variation=0.4, mix="add", amount=0.5):
+    """Directional wind-formed dunes: parallel asymmetric ridges along the wind direction,
+    warped and amplitude-modulated by low-frequency noise so they meander like a real sand sea."""
+    x, y = _coords(xp, h.shape[0])
+    a = np.radians(wind)
+    # warp the projection so dune crests meander
+    wx = _value_noise(xp, x, y, 3.0, seed + 11) - 0.5
+    wy = _value_noise(xp, x, y, 3.0, seed + 23) - 0.5
+    proj = (x + warp * wx) * np.cos(a) + (y + warp * wy) * np.sin(a)
+    phase = (proj * frequency) % 1.0
+    # asymmetric crest: gentle stoss, steep lee (sawtooth raised to sharpness)
+    ridge = (1.0 - xp.abs(2.0 * phase - 1.0)) ** sharpness
+    envelope = 1.0 - variation + variation * _value_noise(xp, x, y, 2.0, seed + 5)
+    field = ridge * envelope
+    if mix == "max":
+        return xp.maximum(h, field)
+    return _mix(h, field, mix, amount)
+
+
+def voronoi(h, xp, seed=0, cells=8.0, pattern="mesa", jitter=0.85, mix="multiply", amount=0.7):
+    """Jittered-grid Voronoi (Worley) cellular structure. pattern='mesa' gives flat-topped cells
+    (plateaus/tablelands); pattern='crack' gives the ridged cell borders (cracked hardpan, joints)."""
+    n = h.shape[0]
+    x, y = _coords(xp, n)
+    gx = x * cells
+    gy = y * cells
+    ix = xp.floor(gx)
+    iy = xp.floor(gy)
+    f1 = xp.full_like(x, 1e9)
+    f2 = xp.full_like(x, 1e9)
+    for oy in (-1, 0, 1):
+        for ox in (-1, 0, 1):
+            cxi = ix + ox
+            cyi = iy + oy
+            jx = _value_noise(xp, (cxi + 0.5) / cells, (cyi + 0.5) / cells, cells, seed + 1)
+            jy = _value_noise(xp, (cxi + 0.5) / cells, (cyi + 0.5) / cells, cells, seed + 99)
+            fx = cxi + 0.5 + jitter * (jx - 0.5)
+            fy = cyi + 0.5 + jitter * (jy - 0.5)
+            d = xp.sqrt((gx - fx) ** 2 + (gy - fy) ** 2)
+            nf1 = xp.minimum(f1, d)
+            f2 = xp.minimum(xp.maximum(f1, d), f2)
+            f1 = nf1
+    if pattern == "crack":
+        field = xp.clip((f2 - f1) * cells * 0.5, 0.0, 1.0)   # thin borders bright
+    else:  # mesa: flat cells, sharp rims (1 - normalized F1, plateaued)
+        field = xp.clip(1.0 - f1, 0.0, 1.0) ** 0.5
+    if mix == "max":
+        return xp.maximum(h, field)
+    return _mix(h, field, mix, amount)
