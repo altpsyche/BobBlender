@@ -170,6 +170,12 @@ class BBT_HeightfieldProps(PropertyGroup):
     preview: BoolProperty(name="Preview (256)", default=True,
                           description="Bake at 256 for a fast look; off for full resolution")
     resolution: IntProperty(name="Resolution", default=768, min=64, max=4096)
+    mesh_res: IntProperty(
+        name="Mesh Density", default=384, min=8, soft_max=1024, max=4096,
+        description="Grid vertices per side for the displaced terrain mesh, INDEPENDENT of the "
+                    "bake resolution. The heightmap keeps its full detail for shading; the mesh "
+                    "needs only enough vertices for the silhouette. Matching it to a 2048 bake "
+                    "would build ~4M vertices and stall the viewport")
     seed: IntProperty(name="Seed", default=7)
     octaves: IntProperty(name="Octaves", default=5, min=1, max=10)
     ridged: FloatProperty(name="Ridged", default=0.4, min=0.0, max=1.0)
@@ -337,7 +343,12 @@ class BBT_OT_bake_terrain(Operator):
         # take it from the returned metadata for the terrain grid resolution.
         bake_size = int(meta.get("size", hf.resolution))
         apply_op({"op": "reload_image", "path": out_abs})
-        tparams = {"heightmap": out_abs, "size": hf.terrain_size, "resolution": bake_size,
+        # Mesh grid density is DECOUPLED from the bake resolution: the heightmap keeps its full
+        # detail (sampled for displacement and shading), but the mesh only needs enough vertices
+        # for the silhouette. Matching verts to texels built 0.6M-4.2M verts and stalled the
+        # viewport. Cap at the bake size so a low-res preview is not needlessly dense.
+        grid_res = min(int(hf.mesh_res), bake_size)
+        tparams = {"heightmap": out_abs, "size": hf.terrain_size, "resolution": grid_res,
                    "height": hf.height, "sea_level": hf.sea_level}
         # No material here (decision D): the terrain is shaded from the Shaders panel.
         apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain",
@@ -485,6 +496,7 @@ class BBT_PT_hf_displace(Panel):
         layout.prop(hf, "terrain_size")
         layout.prop(hf, "height")
         layout.prop(hf, "sea_level")
+        layout.prop(hf, "mesh_res")
 
 
 _CLASSES = (
