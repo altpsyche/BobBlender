@@ -402,7 +402,13 @@ class BBT_OT_scatter_biome_scatter(Operator):
             _apply([{"op": "make_proxies", "kinds": [kind]}])
             asset_coll = bpy.data.collections.get(_assets_name(kind))
             knobs, align = _biome_layer_params(kind, cfg)
-            name = _unique_object_name(f"{emitter.name} {spec['label']}")
+            # Idempotent: reuse an existing layer of this kind (build_geonodes rebuilds it in
+            # place by name) instead of stacking a `.001` duplicate. So re-running Biome Scatter
+            # or Apply Biome refreshes the layers rather than doubling the instance count.
+            existing = next((o for o in coll.objects
+                             if getattr(o.bbt_scatter_layer, "kind", "") == kind), None)
+            name = existing.name if existing is not None \
+                else _unique_object_name(f"{emitter.name} {spec['label']}")
             params = {"emitter": emitter.name, "align": align, **knobs}
             if asset_coll is not None:
                 params["assets"] = asset_coll.name

@@ -56,19 +56,25 @@ _HYDRAULIC_DEFAULTS = dict(
 
 # Thermal and stream-power (CPU).
 
-def _edge_shift(a, dy, dx):
-    padded = np.pad(a, 1, mode="edge")
+def _edge_shift(a, dy, dx, mode="edge"):
+    padded = np.pad(a, 1, mode=mode)
     return padded[1 + dy : 1 + dy + a.shape[0], 1 + dx : 1 + dx + a.shape[1]]
 
 
 def thermal(h, talus=0.008, factor=0.35, iterations=1):
-    """Slump material down 4-neighbour slopes steeper than talus. In place."""
+    """Slump material down 4-neighbour slopes steeper than talus. In place.
+
+    Mass-conserving at the border: the outflow term edge-pads (a boundary cell sees
+    itself as its off-grid neighbour, so nothing flows off-grid), while the reinjection
+    zero-pads (no material arrives from off-grid sources). Edge-padding the reinjection
+    instead re-adds a border cell's own outflow, manufacturing mass along the rim.
+    """
     for _ in range(iterations):
         for dy, dx, _dist in _NEIGHBOURS[:4]:
             diff = h - _edge_shift(h, dy, dx)
             move = np.clip((diff - talus) * factor, 0.0, None)
             h -= move
-            h += _edge_shift(move, -dy, -dx)
+            h += _edge_shift(move, -dy, -dx, mode="constant")
     return h
 
 
