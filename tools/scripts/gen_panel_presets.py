@@ -39,14 +39,23 @@ def build_panel_presets() -> dict:
     return out
 
 
+def build_panel_stacks() -> dict:
+    """Each preset's raw op stack, so the P4 stack editor can load one to edit
+    without hopping to the venv. These are the neutral (as-authored) stacks; the
+    global-knob modulation only applies to the preset+knobs bake path."""
+    return {name: presets.stack(name) for name in presets.PRESETS}
+
+
 def main():
     data = {
         "_note": "Generated from bobtools.heightfields.presets by "
                  "tools/scripts/gen_panel_presets.py. Do not edit by hand.",
         "presets": build_panel_presets(),
+        "stacks": build_panel_stacks(),
     }
     OUT.write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote {OUT} ({len(data['presets'])} presets)")
+    print(f"wrote {OUT} ({len(data['presets'])} presets, "
+          f"{len(data['stacks'])} stacks)")
 
 
 if __name__ == "__main__":

@@ -47,7 +47,13 @@ def main():
 
     if args.knobs_file:
         with open(args.knobs_file) as fh:
-            params = build_params(json.load(fh))
+            knobs = json.load(fh)
+        # A knobs file may carry an explicit op stack (the panel's custom-stack mode);
+        # pass it through as-is. Otherwise expand the preset + global knobs.
+        if "stack" in knobs:
+            params = {k: knobs[k] for k in ("size", "seed", "backend", "stack") if k in knobs}
+        else:
+            params = build_params(knobs)
     else:
         with open(args.params_file) as fh:
             params = json.load(fh)
