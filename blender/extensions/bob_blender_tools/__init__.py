@@ -738,7 +738,7 @@ class BBT_PT_hf_shape(Panel):
         layout = self.layout
         row = layout.row(align=True)
         row.prop(hf, "seed")
-        row.operator("bob_blender_tools.random_seed", text="", icon="FILE_REFRESH")
+        row.operator("bob_blender_tools.random_seed", text="", icon=ui_helpers.SEED_ICON)
         # The five curated global knobs modulate the chosen landscape preset.
         col = layout.column(align=True)
         col.prop(hf, "relief")

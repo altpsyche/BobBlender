@@ -583,20 +583,6 @@ class BBT_OT_scatter_random_seed(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_scatter_use_active(Operator):
-    bl_idname = "bob_blender_tools.scatter_use_active"
-    bl_label = "Use Active"
-    bl_description = "Set the emitter to the active object in the viewport"
-
-    def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != "MESH":
-            self.report({"ERROR"}, "Active object is not a mesh")
-            return {"CANCELLED"}
-        context.scene.bbt_scatter.emitter = obj
-        return {"FINISHED"}
-
-
 # UI
 def _draw_knobs(layout, obj, names, seed_btn=False):
     """Draw each present socket's live value, by name. Skips absent sockets."""
@@ -614,7 +600,7 @@ def _draw_knobs(layout, obj, names, seed_btn=False):
         row.prop(inp, "value", text=nm)
         if seed_btn and nm == "Seed":
             row.operator("bob_blender_tools.scatter_random_seed", text="",
-                         icon="FILE_REFRESH")
+                         icon=ui_helpers.SEED_ICON)
 
 
 class BBT_UL_scatter_layers(UIList):
@@ -650,9 +636,7 @@ class BBT_PT_scatter(Panel):
         ui_helpers.context_header(layout, "Scatter", hdr, icon="OUTLINER_OB_MESH",
                                   empty="Pick an emitter to scatter on.")
 
-        row = layout.row(align=True)
-        row.prop(scn, "emitter")
-        row.operator("bob_blender_tools.scatter_use_active", text="", icon="EYEDROPPER")
+        layout.prop(scn, "emitter")
         layout.prop(scn, "path")
         layout.prop(scn, "camera")
 
@@ -712,8 +696,9 @@ class BBT_PT_scatter_layer(Panel):
             layout.label(text="Pick or add a layer to edit it.", icon="INFO")
             return
 
+        # The parent Scatter header already names the active layer; here show only its kind.
         spec = LAYER_TYPES.get(obj.bbt_scatter_layer.kind, LAYER_TYPES["empty"])
-        layout.label(text=f"{obj.name}  ({spec['label']})", icon=spec["icon"])
+        layout.label(text=spec["label"], icon=spec["icon"])
 
         # Structural group (P3): assets/align/mask apply on a Build (a rebuild), not from a
         # callback. Marked so the split from the live knobs below is explicit.
@@ -801,7 +786,6 @@ CLASSES = (
     BBT_OT_scatter_build_active,
     BBT_OT_scatter_build_all,
     BBT_OT_scatter_random_seed,
-    BBT_OT_scatter_use_active,
     BBT_UL_scatter_layers,
     BBT_PT_scatter,
     BBT_PT_scatter_layer,

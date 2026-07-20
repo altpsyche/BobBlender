@@ -25,7 +25,7 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import server, world_panel
+from . import server, ui_helpers, world_panel
 
 
 def _live_env_on(scene):
@@ -588,23 +588,6 @@ class BBT_OT_firmament_build_clouds(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_firmament_cloud_seed(Operator):
-    bl_idname = "bob_blender_tools.firmament_cloud_seed"
-    bl_label = "Randomize Cloud Seed"
-    bl_description = "Reshuffle the cloud pattern with a new seed"
-
-    def execute(self, context):
-        import random
-
-        obj = bpy.data.objects.get(context.scene.bbt_firmament.cloud_object)
-        seed = _input(obj, "Cloud Seed")
-        if seed is None:
-            return {"CANCELLED"}
-        seed.value = random.randint(0, 99999)
-        obj.update_tag()
-        return {"FINISHED"}
-
-
 class BBT_OT_firmament_cloud_preset(Operator):
     bl_idname = "bob_blender_tools.firmament_cloud_preset"
     bl_label = "Cloud Preset"
@@ -638,24 +621,6 @@ class BBT_OT_firmament_cloud_preset(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_firmament_cloud_wind_from_env(Operator):
-    bl_idname = "bob_blender_tools.firmament_cloud_wind_from_env"
-    bl_label = "Use Env Wind"
-    bl_description = "Copy the Environment wind direction and strength onto the clouds"
-
-    def execute(self, context):
-        env = _env.get_env(context.scene)
-        obj = bpy.data.objects.get(context.scene.bbt_firmament.cloud_object)
-        wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
-        if env is None or wdir is None or wspd is None:
-            return {"CANCELLED"}
-        wdir.value = env.wind_direction
-        wspd.value = env.wind_strength
-        obj.update_tag()
-        self.report({"INFO"}, "Cloud wind synced from Environment")
-        return {"FINISHED"}
-
-
 class BBT_OT_firmament_build_fog(Operator):
     bl_idname = "bob_blender_tools.firmament_build_fog"
     bl_label = "Build Fog"
@@ -683,23 +648,6 @@ class BBT_OT_firmament_build_fog(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_firmament_fog_seed(Operator):
-    bl_idname = "bob_blender_tools.firmament_fog_seed"
-    bl_label = "Randomize Fog Seed"
-    bl_description = "Reshuffle the fog pattern with a new seed"
-
-    def execute(self, context):
-        import random
-
-        obj = bpy.data.objects.get(context.scene.bbt_firmament.fog_object)
-        seed = _input(obj, "Fog Seed")
-        if seed is None:
-            return {"CANCELLED"}
-        seed.value = random.randint(0, 99999)
-        obj.update_tag()
-        return {"FINISHED"}
-
-
 class BBT_OT_firmament_fog_preset(Operator):
     bl_idname = "bob_blender_tools.firmament_fog_preset"
     bl_label = "Fog Preset"
@@ -724,24 +672,6 @@ class BBT_OT_firmament_fog_preset(Operator):
                 inp.value = val
         obj.update_tag()
         self.report({"INFO"}, f"Applied {FOG_PRESETS[self.preset]['label']} preset")
-        return {"FINISHED"}
-
-
-class BBT_OT_firmament_fog_wind_from_env(Operator):
-    bl_idname = "bob_blender_tools.firmament_fog_wind_from_env"
-    bl_label = "Use Env Wind"
-    bl_description = "Copy the Environment wind direction and strength onto the fog"
-
-    def execute(self, context):
-        env = _env.get_env(context.scene)
-        obj = bpy.data.objects.get(context.scene.bbt_firmament.fog_object)
-        wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
-        if env is None or wdir is None or wspd is None:
-            return {"CANCELLED"}
-        wdir.value = env.wind_direction
-        wspd.value = env.wind_strength
-        obj.update_tag()
-        self.report({"INFO"}, "Fog wind synced from Environment")
         return {"FINISHED"}
 
 
@@ -808,18 +738,22 @@ class BBT_OT_firmament_build_motes(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_firmament_particulate_seed(Operator):
-    bl_idname = "bob_blender_tools.firmament_particulate_seed"
+class BBT_OT_firmament_randomize_seed(Operator):
+    # One reshuffle-seed operator for every atmosphere object (clouds, fog, rain, motes):
+    # they only differ by which object and which named Seed input, so both are properties
+    # rather than three near-identical operator classes.
+    bl_idname = "bob_blender_tools.firmament_randomize_seed"
     bl_label = "Randomize Seed"
-    bl_description = "Reshuffle the particle pattern with a new seed"
+    bl_description = "Reshuffle this atmosphere pattern with a new seed"
 
     object_name: StringProperty()
+    seed_input: StringProperty(default="Seed")
 
     def execute(self, context):
         import random
 
         obj = bpy.data.objects.get(self.object_name)
-        seed = _input(obj, "Seed")
+        seed = _input(obj, self.seed_input)
         if seed is None:
             return {"CANCELLED"}
         seed.value = random.randint(0, 99999)
@@ -827,15 +761,17 @@ class BBT_OT_firmament_particulate_seed(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_firmament_particulate_wind_from_env(Operator):
-    bl_idname = "bob_blender_tools.firmament_particulate_wind_from_env"
+class BBT_OT_firmament_wind_from_env(Operator):
+    # One "copy Environment wind onto this object" operator for every atmosphere object;
+    # they were identical apart from how the object was resolved, so it takes object_name.
+    bl_idname = "bob_blender_tools.firmament_wind_from_env"
     bl_label = "Use Env Wind"
-    bl_description = "Copy the Environment wind direction and strength onto the particles"
+    bl_description = "Copy the Environment wind direction and strength onto this object"
 
     object_name: StringProperty()
 
     def execute(self, context):
-        env = getattr(context.scene, "bbt_env", None)
+        env = _env.get_env(context.scene)
         obj = bpy.data.objects.get(self.object_name)
         wdir, wspd = _input(obj, "Wind Direction"), _input(obj, "Wind Speed")
         if env is None or wdir is None or wspd is None:
@@ -843,7 +779,7 @@ class BBT_OT_firmament_particulate_wind_from_env(Operator):
         wdir.value = env.wind_direction
         wspd.value = env.wind_strength
         obj.update_tag()
-        self.report({"INFO"}, "Particle wind synced from Environment")
+        self.report({"INFO"}, "Wind synced from Environment")
         return {"FINISHED"}
 
 
@@ -1029,10 +965,9 @@ class BBT_PT_firmament(Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        layout = self.layout
-        layout.label(text="Sky, clouds, fog, and weather. Drive the world from the World panel.",
-                     icon="INFO")
-        layout.operator("bob_blender_tools.firmament_build_sky", icon="LIGHT_SUN")
+        # Container only: Sky / Clouds / Fog / Weather are the sub-panels below. Build Sky
+        # lives in the Sky sub-panel, so it is not repeated here.
+        pass
 
 
 class BBT_PT_firmament_sky(Panel):
@@ -1087,8 +1022,7 @@ class BBT_PT_firmament_clouds(Panel):
         box.prop(fm, "cloud_shadows")
         row = box.row(align=True)
         row.operator("bob_blender_tools.firmament_build_clouds", icon="OUTLINER_OB_VOLUME")
-        row.operator_menu_enum("bob_blender_tools.firmament_cloud_preset", "preset",
-                               text="Preset", icon="PRESET")
+        ui_helpers.preset_row(row, "bob_blender_tools.firmament_cloud_preset")
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.cloud_object)
@@ -1101,9 +1035,10 @@ class BBT_PT_firmament_clouds(Panel):
         _draw_knobs(col, obj, _CLOUD_SHAPE)
         seed = _input(obj, "Cloud Seed")
         if seed is not None:
-            row = col.row(align=True)
-            row.prop(seed, "value", text="Cloud Seed")
-            row.operator("bob_blender_tools.firmament_cloud_seed", text="", icon="FILE_REFRESH")
+            ui_helpers.seed_row(col, seed, "bob_blender_tools.firmament_randomize_seed",
+                                text="Cloud Seed",
+                                op_props={"object_name": fm.cloud_object,
+                                          "seed_input": "Cloud Seed"})
         _draw_knobs(col, obj, _CLOUD_SHAPE2)
 
         col = layout.column(align=True)
@@ -1120,8 +1055,9 @@ class BBT_PT_firmament_clouds(Panel):
                 # Only meaningful when Live Environment is off; with it on a driver
                 # owns these inputs and would immediately overwrite the copied value.
                 if not _live_env_on(context.scene):
-                    col.operator("bob_blender_tools.firmament_cloud_wind_from_env",
-                                 icon="TRACKING_FORWARDS")
+                    op = col.operator("bob_blender_tools.firmament_wind_from_env",
+                                      icon="TRACKING_FORWARDS")
+                    op.object_name = fm.cloud_object
 
 
 class BBT_PT_firmament_fog(Panel):
@@ -1144,8 +1080,7 @@ class BBT_PT_firmament_fog(Panel):
             box.prop(fm, "fog_heightmap")
         row = box.row(align=True)
         row.operator("bob_blender_tools.firmament_build_fog", icon="OUTLINER_OB_VOLUME")
-        row.operator_menu_enum("bob_blender_tools.firmament_fog_preset", "preset",
-                               text="Preset", icon="PRESET")
+        ui_helpers.preset_row(row, "bob_blender_tools.firmament_fog_preset")
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.fog_object)
@@ -1158,9 +1093,10 @@ class BBT_PT_firmament_fog(Panel):
         _draw_knobs(col, obj, _FOG_SHAPE)
         seed = _input(obj, "Fog Seed")
         if seed is not None:
-            row = col.row(align=True)
-            row.prop(seed, "value", text="Fog Seed")
-            row.operator("bob_blender_tools.firmament_fog_seed", text="", icon="FILE_REFRESH")
+            ui_helpers.seed_row(col, seed, "bob_blender_tools.firmament_randomize_seed",
+                                text="Fog Seed",
+                                op_props={"object_name": fm.fog_object,
+                                          "seed_input": "Fog Seed"})
 
         col = layout.column(align=True)
         col.label(text="Look", icon="COLOR")
@@ -1184,8 +1120,9 @@ class BBT_PT_firmament_fog(Panel):
             if wind.value:
                 _draw_knobs(col, obj, _FOG_WIND)
                 if not _live_env_on(context.scene):  # a live driver owns these inputs when on
-                    col.operator("bob_blender_tools.firmament_fog_wind_from_env",
-                                 icon="TRACKING_FORWARDS")
+                    op = col.operator("bob_blender_tools.firmament_wind_from_env",
+                                      icon="TRACKING_FORWARDS")
+                    op.object_name = fm.fog_object
 
 
 class BBT_PT_firmament_weather(Panel):
@@ -1210,22 +1147,18 @@ class BBT_PT_firmament_weather(Panel):
         box.label(text="Rain", icon="OUTLINER_OB_FORCE_FIELD")
         row = box.row(align=True)
         row.operator("bob_blender_tools.firmament_build_rain", icon="MOD_FLUIDSIM")
-        row.operator_menu_enum("bob_blender_tools.firmament_rain_preset", "preset",
-                               text="Preset", icon="PRESET")
+        ui_helpers.preset_row(row, "bob_blender_tools.firmament_rain_preset")
         rain = bpy.data.objects.get(fm.rain_object)
         if rain is not None and _nodes_mod(rain) is not None:
             box.prop(rain, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, rain, _RAIN_KNOBS)
             seed = _input(rain, "Seed")
             if seed is not None:
-                row = box.row(align=True)
-                row.prop(seed, "value", text="Seed")
-                op = row.operator("bob_blender_tools.firmament_particulate_seed",
-                                  text="", icon="FILE_REFRESH")
-                op.object_name = fm.rain_object
+                ui_helpers.seed_row(box, seed, "bob_blender_tools.firmament_randomize_seed",
+                                    op_props={"object_name": fm.rain_object})
             _draw_knobs(box, rain, _RAIN_WIND)
             if not _live_env_on(context.scene):  # a live driver owns Wind when on
-                op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
+                op = box.operator("bob_blender_tools.firmament_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.rain_object
             _draw_knobs(box, rain, ["Color"])
@@ -1236,23 +1169,19 @@ class BBT_PT_firmament_weather(Panel):
         box.label(text="Motes (Dust / Amber / Snow)", icon="PARTICLES")
         row = box.row(align=True)
         row.operator("bob_blender_tools.firmament_build_motes", icon="OUTLINER_OB_POINTCLOUD")
-        row.operator_menu_enum("bob_blender_tools.firmament_mote_preset", "preset",
-                               text="Preset", icon="PRESET")
+        ui_helpers.preset_row(row, "bob_blender_tools.firmament_mote_preset")
         motes = bpy.data.objects.get(fm.mote_object)
         if motes is not None and _nodes_mod(motes) is not None:
             box.prop(motes, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, motes, _MOTE_KNOBS)
             seed = _input(motes, "Seed")
             if seed is not None:
-                row = box.row(align=True)
-                row.prop(seed, "value", text="Seed")
-                op = row.operator("bob_blender_tools.firmament_particulate_seed",
-                                  text="", icon="FILE_REFRESH")
-                op.object_name = fm.mote_object
+                ui_helpers.seed_row(box, seed, "bob_blender_tools.firmament_randomize_seed",
+                                    op_props={"object_name": fm.mote_object})
             _draw_knobs(box, motes, _MOTE_LOOK)
             _draw_knobs(box, motes, _MOTE_WIND)
             if not _live_env_on(context.scene):  # a live driver owns Wind when on
-                op = box.operator("bob_blender_tools.firmament_particulate_wind_from_env",
+                op = box.operator("bob_blender_tools.firmament_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.mote_object
             _draw_knobs(box, motes, _DOMAIN_KNOBS)
@@ -1276,17 +1205,13 @@ CLASSES = (
     BBT_FirmamentProps,
     BBT_OT_firmament_build_sky,
     BBT_OT_firmament_build_clouds,
-    BBT_OT_firmament_cloud_seed,
     BBT_OT_firmament_cloud_preset,
-    BBT_OT_firmament_cloud_wind_from_env,
     BBT_OT_firmament_build_fog,
-    BBT_OT_firmament_fog_seed,
     BBT_OT_firmament_fog_preset,
-    BBT_OT_firmament_fog_wind_from_env,
     BBT_OT_firmament_build_rain,
     BBT_OT_firmament_build_motes,
-    BBT_OT_firmament_particulate_seed,
-    BBT_OT_firmament_particulate_wind_from_env,
+    BBT_OT_firmament_randomize_seed,
+    BBT_OT_firmament_wind_from_env,
     BBT_OT_firmament_rain_preset,
     BBT_OT_firmament_mote_preset,
     BBT_OT_firmament_build_snow_cover,

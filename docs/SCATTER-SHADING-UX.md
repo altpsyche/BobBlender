@@ -7,7 +7,7 @@ is panel and pipeline behaviour plus one auto-convert step; it does NOT change a
 the solid and terrain render baselines stay byte-identical (confirmed: 0.0 pixel delta).
 
 Implementation: `shaders_panel._editing_material` / `_asset_materials` + the top-panel scatter
-material list + `BBT_OT_shaders_select_asset_material` + `bbt_shaders.asset_material` (P1/P2);
+material list + `BBT_OT_shaders_select` (target="asset") + `bbt_shaders.asset_material` (P1/P2);
 `world_panel` Apply Biome `weather_assets` toggle (default on) converting each scattered kind's
 `BOB_Assets_<kind>` after the scatter step (P3); the `assets.py` docstring corrected. Verified:
 select a scatter layer, its asset materials list, Surface and Weather sub-panels edit the chosen
@@ -63,7 +63,8 @@ scatter layer becomes the panel's proxy for editing those materials. All in `sha
   the assets collection's materials (deduped by datablock, e.g. `tree_small_02_leaves / branches /
   trunk`), each row a select plus a status tag (surface BobShader, or plain with a per-material
   Convert), plus "Convert all". Selecting sets `asset_material`.
-- New operator `BBT_OT_shaders_select_asset_material`.
+- Asset-material selection via the shared `BBT_OT_shaders_select` (target="asset"), the one
+  selector operator for material slots, asset materials and terrain layers.
 
 Result: select a tree layer in the viewport, its materials list in the Shaders panel, pick one, and
 the Surface and Weather sub-panels edit it, updating every scattered instance with no rebuild.
