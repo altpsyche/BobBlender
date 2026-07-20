@@ -1348,6 +1348,12 @@ def terrain_master_group():
     for i in range(1, MAX_TERRAIN_LAYERS):
         col, rough, metal, H, enable, dh = layers[i]
         fy = -i * 300
+        # Gate the height by Enable before it enters the fold. Enable only zeroing the colour
+        # blend factor (below) let a DISABLED layer still push its height into acc_H, raising the
+        # bar for later layers and suppressing them (a disabled slot's masks default to strength 0,
+        # so its height is high). Fold H toward a floor when disabled so it never wins and never
+        # pollutes acc_H; an enabled layer (Enable 1) is unchanged, so enabled terrains are identical.
+        H = _lerp(g, -1000.0, H, enable, (fx - 200, fy))
         hmax = _mmath(g, "MAXIMUM", acc_H, H, (fx, fy))
         ma = _mmath(g, "SUBTRACT", hmax, soft, (fx + 170, fy))
         b1 = _mmath(g, "MAXIMUM", _mmath(g, "SUBTRACT", acc_H, ma, (fx + 340, fy + 80)), 0.0, (fx + 510, fy + 80))
