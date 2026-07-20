@@ -135,7 +135,8 @@ def biome_manifest(biome):
         if isinstance(val, list):
             models[key] = _norm_entries(val)  # legacy flat kind -> models
 
-    meta = dict(raw.get("meta") or {})
+    raw_meta = raw.get("meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
     meta.setdefault("name", folder.replace("_", " ").title())
     is_v2 = any(k in raw for k in ("meta", "models", "scatter", "world"))
     meta.setdefault("version", 2 if is_v2 else 1)
@@ -210,21 +211,35 @@ def validate_biome(biome):
             warnings.append(f"model kind '{kind}': {dropped} malformed entry/entries ignored "
                             "(want a file string or an object with a \"file\")")
 
-    # Scatter: each configured kind must be a known kind with models to place.
-    for kind in man["scatter"]:
+    # Scatter: each configured kind must be a known kind with models to place, and
+    # its value must be a placement-settings object (a non-dict crashes Biome Scatter).
+    for kind, cfg in man["scatter"].items():
         if kind not in _SCATTER_KINDS:
             warnings.append(f"scatter kind '{kind}' unknown {list(_SCATTER_KINDS)}")
         elif not man["models"].get(kind):
             warnings.append(f"scatter kind '{kind}' has no models to place")
+        if not isinstance(cfg, dict):
+            warnings.append(f"scatter kind '{kind}': config must be an object of placement "
+                            f"settings, got {type(cfg).__name__}")
 
-    # Terrain: a known layer key and an existing texture set folder per layer.
+    # Terrain: layers must be a list of {layer, texture} objects, each with a known
+    # layer key and an existing texture set folder.
     if man["terrain"]:
-        for L in man["terrain"]["layers"]:
-            key = L.get("layer") if isinstance(L, dict) else None
+        layers = man["terrain"].get("layers")
+        if not isinstance(layers, list):
+            warnings.append("terrain layers must be a list of {layer, texture} objects")
+            layers = []
+        for L in layers:
+            if not isinstance(L, dict):
+                warnings.append(f"terrain layer entry must be an object, got {type(L).__name__}")
+                continue
+            key = L.get("layer")
             if key not in _TERRAIN_LAYER_KEYS:
                 warnings.append(f"terrain layer '{key}' unknown {list(_TERRAIN_LAYER_KEYS)}")
-            tex = L.get("texture") if isinstance(L, dict) else None
-            if tex and not os.path.isdir(os.path.join(_textures_root(), tex)):
+            tex = L.get("texture")
+            if not tex:
+                warnings.append(f"terrain layer '{key}' has no texture set")
+            elif not os.path.isdir(os.path.join(_textures_root(), tex)):
                 warnings.append(f"terrain texture set missing: library/textures/{tex}")
 
     # World: only known bbt_env fields.

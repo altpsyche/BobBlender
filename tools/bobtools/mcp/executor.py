@@ -19,12 +19,14 @@ log = logging.getLogger("bob.executor")
 
 
 def run_build(request: BuildRequest, *, timeout: float = 300.0) -> BuildResult:
-    root = config.repo_root()
     blender = config.blender_binary()
     runner = config.blender_runner("headless_build.py")
 
-    output_abs = (root / request.output_file).resolve()
-    base_abs = str((root / request.base_file).resolve()) if request.base_file else ""
+    try:
+        output_abs = config.resolve_under_repo(request.output_file)
+        base_abs = str(config.resolve_under_repo(request.base_file)) if request.base_file else ""
+    except ValueError as exc:
+        return BuildResult(ok=False, output_file=request.output_file, error=str(exc))
 
     # Payload the runner reads: contract fields + resolved absolute paths.
     payload = request.model_dump()

@@ -228,18 +228,28 @@ class BBT_OT_world_apply_biome(Operator):
             except RuntimeError:
                 pass
 
+        def fail(step):
+            # A nested operator signals failure with {'CANCELLED'} (it does not raise), so
+            # ploughing on would build later steps against absent assets and report success
+            # over a half-built scene. Stop the chain and say which step failed.
+            self.report({"ERROR"}, f"Apply {self.biome}: {step} failed; scene half-applied "
+                                   f"(after: {', '.join(steps) or 'nothing'})")
+
         steps = []
         if man["models"]:
             # Import first so the scatter instances real meshes. glTF import re-points the active
             # object, so re-assert the target as active before the terrain step below.
-            bpy.ops.bob_blender_tools.scatter_import_biome(biome=self.biome)
+            if "CANCELLED" in bpy.ops.bob_blender_tools.scatter_import_biome(biome=self.biome):
+                fail("import assets"); return {"CANCELLED"}
             steps.append("assets")
         if man["terrain"]:
             make_target_active()
-            bpy.ops.bob_blender_tools.shaders_biome_terrain(biome=self.biome)
+            if "CANCELLED" in bpy.ops.bob_blender_tools.shaders_biome_terrain(biome=self.biome):
+                fail("terrain"); return {"CANCELLED"}
             steps.append("terrain")
         if man["scatter"]:
-            bpy.ops.bob_blender_tools.scatter_biome_scatter(biome=self.biome)
+            if "CANCELLED" in bpy.ops.bob_blender_tools.scatter_biome_scatter(biome=self.biome):
+                fail("scatter"); return {"CANCELLED"}
             steps.append("scatter")
             # Weather the scattered assets: convert each kind's BOB_Assets_<kind> to BobShaders
             # (shaders_convert Collection scope; idempotent, installs the env feed). Off skips it.
@@ -254,7 +264,8 @@ class BBT_OT_world_apply_biome(Operator):
                         print(f"[bob_blender_tools] apply biome: convert {coll} skipped ({exc})")
                 steps.append("weathered assets")
         if man["world"]:
-            bpy.ops.bob_blender_tools.world_biome_world(biome=self.biome)
+            if "CANCELLED" in bpy.ops.bob_blender_tools.world_biome_world(biome=self.biome):
+                fail("world"); return {"CANCELLED"}
             steps.append("world")
         msg = f"Applied {self.biome} on {target.name}: {', '.join(steps) or '(nothing to apply)'}"
         if warn:

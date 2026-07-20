@@ -41,6 +41,21 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def resolve_under_repo(rel_or_abs: str) -> Path:
+    """Resolve a path against the repo root and refuse anything that escapes it.
+
+    Agent/wire-supplied output paths reach the file writers here; without this an
+    absolute path or a `..` traversal would let a build overwrite files outside the
+    repo (pathlib lets an absolute right-operand win over the root). Callers pass
+    repo-relative paths; this keeps the write inside the tree.
+    """
+    root = repo_root()
+    resolved = (root / rel_or_abs).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"path escapes repo root: {rel_or_abs!r}")
+    return resolved
+
+
 def projects_dir() -> Path:
     return repo_root() / "projects"
 
@@ -82,8 +97,14 @@ def bridge_host() -> str:
 def bridge_port() -> int:
     env = os.environ.get("BOB_BRIDGE_PORT")
     if env:
-        return int(env)
-    return int(settings().get("bridge", {}).get("port", DEFAULT_BRIDGE_PORT))
+        try:
+            return int(env)
+        except ValueError:
+            pass  # non-numeric override: fall through to the config/default
+    try:
+        return int(settings().get("bridge", {}).get("port", DEFAULT_BRIDGE_PORT))
+    except (TypeError, ValueError):
+        return DEFAULT_BRIDGE_PORT
 
 
 # Blender executable, resolved per platform

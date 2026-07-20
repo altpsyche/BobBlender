@@ -183,6 +183,13 @@ def build_geonodes_on_object(obj, recipe_name, mod_name, params, reset=False):
 
     new_ng, out = new_group(group_name)
     build(new_ng, out, params)
+    # Preserve the modifier's position in the stack. modifiers.new appends to the end,
+    # so on an object carrying a later modifier (e.g. a snow_shell that runs after the
+    # snow-coverage pass) a naive remove+new would reorder the stack and evaluate this
+    # modifier last, breaking downstream passes that must run after it (the shell would
+    # read a snow_cover the coverage pass has not written yet). Mirror build_geonodes and
+    # move the fresh modifier back to the old index.
+    old_index = list(obj.modifiers).index(old_mod) if old_mod is not None else len(obj.modifiers)
     if old_mod is not None:
         obj.modifiers.remove(old_mod)
     if old_group is not None and old_group.users == 0:
@@ -191,6 +198,8 @@ def build_geonodes_on_object(obj, recipe_name, mod_name, params, reset=False):
 
     mod = obj.modifiers.new(name=mod_name, type="NODES")
     mod.node_group = new_ng
+    if old_index < len(obj.modifiers) and mod != obj.modifiers[old_index]:
+        obj.modifiers.move(len(obj.modifiers) - 1, old_index)
     if snap:
         _restore_knobs(mod, snap)
     obj.update_tag()

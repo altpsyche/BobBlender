@@ -17,6 +17,25 @@ import bpy
 _state = {"sock": None, "thread": None, "running": False, "port": None}
 _jobs: "queue.Queue" = queue.Queue()
 
+# Bound an untrusted local connection: cap the payload and time out a stalled read,
+# so a client that never sends the newline terminator (or floods bytes) cannot wedge a
+# handler thread forever or exhaust memory.
+_MAX_PAYLOAD = 8 * 1024 * 1024
+_READ_TIMEOUT = 30.0
+
+
+def _validate_ops(ops):
+    """Structural check at the socket trust boundary. Contract (Pydantic) validation runs
+    in the venv MCP server, but the socket is a second entry point: reject anything that is
+    not a list of dicts each carrying a string "op" before it reaches a builder. apply_op
+    still enforces the op allowlist."""
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    for op in ops:
+        if not isinstance(op, dict) or not isinstance(op.get("op"), str):
+            raise ValueError("each op must be an object with a string 'op' field")
+    return ops
+
 
 # Path and config
 def _repo_blender_dir() -> str:
@@ -70,15 +89,19 @@ def _process_jobs():
 # Socket plumbing
 def _handle(conn: socket.socket):
     try:
+        conn.settimeout(_READ_TIMEOUT)  # accept() does NOT inherit the listener timeout
         data = b""
         while not data.endswith(b"\n"):
             chunk = conn.recv(65536)
             if not chunk:
                 break
             data += chunk
+            if len(data) > _MAX_PAYLOAD:
+                raise ValueError("payload exceeds size limit")
         req = json.loads(data.decode() or "{}")
+        ops = _validate_ops(req.get("ops", []))
         holder, done = {}, threading.Event()
-        _jobs.put((req.get("ops", []), holder, done))
+        _jobs.put((ops, holder, done))
         done.wait(timeout=60)
         reply = holder.get("result", {"ok": False, "error": "main-thread timeout"})
     except Exception as exc:

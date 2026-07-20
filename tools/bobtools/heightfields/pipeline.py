@@ -47,16 +47,23 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     params = dict(params)
     if preview:
         params["size"] = PREVIEW_SIZE
-    key = cache.params_hash(params)
-    if not force:
-        side = io.read_sidecar(out_path)
-        if side is not None and side.get("hash") == key:
-            return {**side, "cached": True}
 
     size = int(params.get("size", 512))
     seed = int(params.get("seed", 0))
     passes = _scale_passes(params.get("passes", DEFAULT_PASSES), size)
     backend = backend_mod.select(params.get("backend", "auto"))
+
+    # Key the cache on the RESOLVED recipe: the scaled pass list and the backend
+    # that actually runs (backend.name, not "auto"). This stops a GPU-baked sidecar
+    # from being served to a CPU-only machine that would resolve "auto" differently,
+    # and drops params keys that do not affect output from the key.
+    resolved = {"size": size, "seed": seed, "backend": backend.name,
+                "passes": passes, "generate": params.get("generate", {})}
+    key = cache.params_hash(resolved)
+    if not force:
+        side = io.read_sidecar(out_path)
+        if side is not None and side.get("hash") == key:
+            return {**side, "cached": True}
 
     t0 = time.perf_counter()
     base = generate.generate_base(size, seed=seed, **params.get("generate", {}))

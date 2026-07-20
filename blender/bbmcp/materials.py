@@ -656,6 +656,32 @@ def _vscale(g, vec, scalar, loc):
     return n.outputs["Vector"]
 
 
+# Bump when any shared S_* group's interface (sockets) changes. A group cached in an
+# older .blend carries a stale (or absent) stamp and is rebuilt in place on first
+# access, so an addon upgrade refreshes the interface instead of reusing a group that
+# lacks new sockets -- which otherwise KeyErrors when the caller wires them, or
+# silently renders the old behaviour.
+S_GROUP_VER = 1
+
+
+def _cached_group(name):
+    """Get-or-create a version-stamped shared shader group. Returns (group, needs_build);
+    when needs_build is False the cached group is current and the caller returns it as-is.
+    A stale group is rebuilt in place (datablock kept, nodes + interface cleared) so
+    materials already referencing it pick up the fresh interface rather than dangling."""
+    g = bpy.data.node_groups.get(name)
+    if g is not None and g.get("bbt_ver") == S_GROUP_VER:
+        return g, False
+    if g is not None:
+        g.nodes.clear()
+        for item in list(g.interface.items_tree):
+            g.interface.remove(item)
+    else:
+        g = bpy.data.node_groups.new(name, "ShaderNodeTree")
+    g["bbt_ver"] = S_GROUP_VER
+    return g, True
+
+
 def env_state_group():
     """The world-to-shader bridge: one shared group whose internal Value nodes hold the
     live env fields, driven once from scene.bbt_env by the panel. Because a node group is
@@ -663,10 +689,9 @@ def env_state_group():
     every surface (Phase-0). No inputs; outputs Snow, Wetness, Temperature. When Firmament
     is absent no driver is installed and the Value defaults stand (no snow), so a material
     still renders standalone."""
-    g = bpy.data.node_groups.get(ENV_STATE)
-    if g is not None:
+    g, _fresh = _cached_group(ENV_STATE)
+    if not _fresh:
         return g
-    g = bpy.data.node_groups.new(ENV_STATE, "ShaderNodeTree")
     _gout(g, "Snow", "NodeSocketFloat")
     _gout(g, "Wetness", "NodeSocketFloat")
     _gout(g, "Temperature", "NodeSocketFloat")
@@ -722,10 +747,9 @@ def weather_group():
     The attribute path's snow_cover already includes its own Snow multiply, so both paths
     scale with env.snow identically.
     """
-    g = bpy.data.node_groups.get(WEATHER)
-    if g is not None:
+    g, _fresh = _cached_group(WEATHER)
+    if not _fresh:
         return g
-    g = bpy.data.node_groups.new(WEATHER, "ShaderNodeTree")
     _gin(g, "Base Color", "NodeSocketColor", (0.5, 0.5, 0.5, 1.0))
     _gin(g, "Roughness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Metallic", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -856,10 +880,9 @@ def surface_master_group():
     the same colour drives both looks and switching solid<->textured loses no tuned value.
     Triplanar, anti-tiling, and the texture-set loader are S3, once library/textures/ has
     real maps to project (the plan's recommended texture timing)."""
-    g = bpy.data.node_groups.get(SURFACE_MASTER)
-    if g is not None:
+    g, _fresh = _cached_group(SURFACE_MASTER)
+    if not _fresh:
         return g
-    g = bpy.data.node_groups.new(SURFACE_MASTER, "ShaderNodeTree")
     _gin(g, "Base Color", "NodeSocketColor", (0.5, 0.5, 0.5, 1.0))
     _gin(g, "Roughness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Metallic", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -1251,10 +1274,9 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
 def terrain_master_group():
     """The multi-layer terrain blend, ending in S_Weather. One shared group, MAX_TERRAIN_LAYERS
     fixed slots; the stack is the enabled ones. See the module comment for the height-lerp."""
-    g = bpy.data.node_groups.get(TERRAIN_MASTER)
-    if g is not None:
+    g, _fresh = _cached_group(TERRAIN_MASTER)
+    if not _fresh:
         return g
-    g = bpy.data.node_groups.new(TERRAIN_MASTER, "ShaderNodeTree")
 
     _gin(g, "Blend Softness", "NodeSocketFloat", 0.15, 0.001, 1.0)
     _gin(g, "Macro Amount", "NodeSocketFloat", 0.15, 0.0, 1.0)
@@ -1506,11 +1528,10 @@ def texture_set_group(name, directory=None):
     (the images are node properties, not sockets, so the group is per set, like the ground-fog
     material). Scale is a live knob (Mapping scale); the triplanar blend is a build property."""
     gname = TEXTURE_SET_PREFIX + name
-    g = bpy.data.node_groups.get(gname)
-    if g is not None:
+    g, _fresh = _cached_group(gname)
+    if not _fresh:
         return g
     maps = _find_maps(directory if directory is not None else texture_set_dir(name))
-    g = bpy.data.node_groups.new(gname, "ShaderNodeTree")
     _gin(g, "Scale", "NodeSocketFloat", 1.0, 0.0)
     _gin(g, "Bump Strength", "NodeSocketFloat", 0.3, 0.0, 10.0)
     _gin(g, "Detail Blend", "NodeSocketFloat", 0.4, 0.0, 1.0)  # anti-tiling detail-scale mix
