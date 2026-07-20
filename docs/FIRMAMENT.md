@@ -700,8 +700,9 @@ Findings from S1 (2026-07-19, headless Cycles 5.2):
   - S4 polish pass (done, 2026-07-19): rain readability (cone needle + opacity plateau +
     retuned presets, above), sun-lit motes (Translucent BSDF mixed into the mote material,
     above), and two consistency additions matching the Clouds/Fog panels: a "Use Env Wind"
-    button for rain and motes (`firmament_particulate_wind_from_env`, live-syncs Wind
-    Direction/Speed from `bbt_env`), and object-level `cycles.use_motion_blur` set on build
+    button for rain and motes (the shared `firmament_wind_from_env`, live-syncs Wind
+    Direction/Speed from `bbt_env` onto the named object; one operator now serves clouds,
+    fog, rain and motes), and object-level `cycles.use_motion_blur` set on build
     (not just the scene switch), so fast particles are guaranteed included. Re-verified
     headless (14 polish checks green: cone geometry, alignment preserved, determinism,
     opacity plateau, translucent mote, particulate Use-Env-Wind, object motion blur, icons,

@@ -21,6 +21,10 @@ nothing here holds state, so a Reload Builders or addon re-enable needs no speci
 # FILE_REFRESH already reads as "rebuild" where the suite uses it today.
 STRUCTURAL_ICON = "FILE_REFRESH"
 
+# Reshuffle-a-seed marker. Kept distinct from STRUCTURAL_ICON so a seed reshuffle never
+# reads as "this rebuilds": FILE_REFRESH means rebuild, RNDCURVE means new random value.
+SEED_ICON = "RNDCURVE"
+
 
 def context_header(layout, label, value, icon="NONE", empty=None):
     """Draw the "what am I acting on" header (P1), or the empty-state hint (P7).
@@ -65,3 +69,19 @@ def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
     label + description. Same control and wording for every preset in the suite (terrain,
     scatter layer, cloud, fog, surface, stack, scene)."""
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
+
+
+def seed_row(layout, seed_input, op_idname, text="Seed", op_props=None):
+    """The one seed idiom: the seed value and a reshuffle button on one row, marked with
+    SEED_ICON so a reshuffle reads distinctly from a structural rebuild.
+
+    seed_input: the resolved socket/input whose `.value` holds the seed.
+    op_props: fields to set on the reshuffle operator (e.g. {"object_name": name}).
+    """
+    row = layout.row(align=True)
+    row.prop(seed_input, "value", text=text)
+    op = row.operator(op_idname, text="", icon=SEED_ICON)
+    if op_props:
+        for key, val in op_props.items():
+            setattr(op, key, val)
+    return op
