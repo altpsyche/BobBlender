@@ -59,10 +59,21 @@ def sel_noise(h, xp, frequency=6.0, seed=0, contrast=0.5):
     return xp.clip((n - 0.5) / max(inv, 1e-3) + 0.5, 0.0, 1.0)
 
 
+def sel_path(h, xp, curves=(), width=0.02, falloff=0.04):
+    """Channel-band mask: 1 within `width` of any curve polyline, easing to 0 over `falloff`. Lets an
+    erosion op be masked to the carved band (naturalise only the channel, leave the sculpt alone)."""
+    from . import ops_carve
+    if not curves:
+        return xp.zeros_like(h)
+    dist = ops_carve._distance_uv(h.shape, curves, xp, ops_erode._ndimage(xp))
+    return ops_carve._profile(dist, width, falloff, xp)
+
+
 SELECTORS = {
     "height": sel_height,
     "slope": sel_slope,
     "curvature": sel_curvature,
     "flow": sel_flow,
     "noise": sel_noise,
+    "path": sel_path,
 }

@@ -17,8 +17,8 @@ from pathlib import Path
 # Files whose contents define a bake's output. A change to any of them shifts the
 # fingerprint, so old sidecars stop counting as cache hits with no manual bump.
 _SOURCE_FILES = ("engine.py", "generate.py", "ops_generate.py", "ops_erode.py",
-                 "ops_filter.py", "ops_select.py", "presets.py", "params.py",
-                 "pipeline.py")
+                 "ops_filter.py", "ops_select.py", "ops_carve.py", "presets.py",
+                 "params.py", "pipeline.py")
 
 
 def _source_sig() -> str:

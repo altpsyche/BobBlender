@@ -400,6 +400,52 @@ def _host_argv(repo, extra):
     return inner
 
 
+def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, maps=False):
+    """Run one venv heightfield bake by subprocess, under a wait-cursor + progress guard.
+
+    Writes the knobs (expanded via build_params) or full params JSON to a temp file, hops to the host
+    when inside the Steam container, blocks, and returns (meta, None) with the parsed result metadata,
+    or (None, error_message) on any failure. The single owner of the bake-invocation contract, shared
+    by the Terrain bake and the Paths Bake & Erode so the two cannot drift."""
+    repo = os.path.dirname(server._repo_blender_dir())
+    payload = knobs if knobs is not None else params
+    flag = "--knobs-file" if knobs is not None else "--params-file"
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump(payload, tmp)
+    tmp.close()
+    extra = ["--out", out_abs, flag, tmp.name, "--force"]
+    if preview:
+        extra.append("--preview")
+    if maps:
+        extra.append("--maps")
+    argv = _host_argv(repo, extra)
+    wm = context.window_manager
+    window = context.window
+    if window:
+        window.cursor_set("WAIT")
+    wm.progress_begin(0, 1)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    except FileNotFoundError:
+        return None, ("bake runner not found. Inside Steam, the host bake needs "
+                      "steam-runtime-launch-client; or launch Blender directly (not via "
+                      "Steam) so the tools venv is reachable.")
+    except Exception as exc:  # subprocess never launched
+        return None, f"bake could not run: {exc}"
+    finally:
+        os.unlink(tmp.name)
+        wm.progress_end()
+        if window:
+            window.cursor_set("DEFAULT")
+    if proc.returncode != 0:
+        return None, f"bake failed: {(proc.stderr or proc.stdout or '').strip()[-200:]}"
+    lines = (proc.stdout or "").strip().splitlines()
+    try:
+        return (json.loads(lines[-1]) if lines else {}), None
+    except ValueError:
+        return {}, None
+
+
 class BBT_OT_detect_backends(Operator):
     bl_idname = "bob_blender_tools.detect_backends"
     bl_label = "Check Backends"
@@ -458,51 +504,12 @@ class BBT_OT_bake_terrain(Operator):
                 "erosion": hf.erosion, "warp": hf.warp,
             }
 
-        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump(knobs, tmp)
-        tmp.close()
+        # Blocking bake with feedback (wait cursor + progress spinner) via the shared host-bake runner.
         t0 = time.perf_counter()
-        extra = ["--out", out_abs, "--knobs-file", tmp.name, "--force"]
-        if hf.preview:
-            extra.append("--preview")
-        if hf.emit_maps:
-            extra.append("--maps")
-        argv = _host_argv(repo, extra)
-        # Blocking bake with feedback: a wait cursor and the progress spinner, so
-        # the UI shows work instead of looking hung. (A window only exists when
-        # Blender runs with a UI, not headless.)
-        wm = context.window_manager
-        window = context.window
-        if window:
-            window.cursor_set("WAIT")
-        wm.progress_begin(0, 1)
-        try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
-        except FileNotFoundError:
-            self.report(
-                {"ERROR"},
-                "bake runner not found. Inside Steam, the host bake needs "
-                "steam-runtime-launch-client; or launch Blender directly (not via "
-                "Steam) so the tools venv is reachable.",
-            )
+        meta, err = _run_host_bake(context, out_abs, knobs=knobs, preview=hf.preview, maps=hf.emit_maps)
+        if err is not None:
+            self.report({"ERROR"}, err)
             return {"CANCELLED"}
-        except Exception as exc:  # subprocess never launched
-            self.report({"ERROR"}, f"bake could not run: {exc}")
-            return {"CANCELLED"}
-        finally:
-            os.unlink(tmp.name)
-            wm.progress_end()
-            if window:
-                window.cursor_set("DEFAULT")
-
-        if proc.returncode != 0:
-            self.report({"ERROR"}, f"bake failed: {(proc.stderr or proc.stdout or '').strip()[-200:]}")
-            return {"CANCELLED"}
-        lines = (proc.stdout or "").strip().splitlines()
-        try:
-            meta = json.loads(lines[-1]) if lines else {}
-        except ValueError:
-            meta = {}
 
         # Build the terrain in place from the fresh PNG.
         server._ensure_path()
