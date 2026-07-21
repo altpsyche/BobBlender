@@ -72,11 +72,16 @@ def _mask_for(h, xp, spec):
     return sel(h, xp, **{k: v for k, v in spec.items() if k != "kind"})
 
 
-def run_stack(field, stack, backend, seed=0):
-    """Evaluate an ordered op stack on `field`; return a normalised [0, 1] numpy array.
+def run_stack(field, stack, backend, seed=0, normalize=True):
+    """Evaluate an ordered op stack on `field`; return a [0, 1] numpy array.
 
     Each op is `{"kind": <registered>, **params}` and may carry `"mask": {selector spec}`.
-    Unknown op or selector kinds raise so a typo is loud."""
+    Unknown op or selector kinds raise so a typo is loud.
+
+    normalize=True (generation from a zero base) min-max stretches the result to fill [0, 1].
+    normalize=False (eroding an EXISTING baked field, e.g. carve-then-erode over the terrain PNG)
+    keeps the input's absolute height mapping so a re-baked terrain stays registered with anything
+    placed against the original -- the water level, the draped curves -- and only clips to [0, 1]."""
     xp = backend.xp
     h = xp.asarray(field, dtype=xp.float64)
     for i, op in enumerate(stack):
@@ -92,6 +97,9 @@ def run_stack(field, stack, backend, seed=0):
             m = xp.clip(_mask_for(before, xp, mask_spec), 0.0, 1.0)
             after = before * (1.0 - m) + after * m
         h = xp.clip(after, 0.0, None)
-    h = h - h.min()
-    h = h / xp.maximum(h.max(), 1e-9)
+    if normalize:
+        h = h - h.min()
+        h = h / xp.maximum(h.max(), 1e-9)
+    else:
+        h = xp.clip(h, 0.0, 1.0)
     return backend.asnumpy(h).astype(np.float64)

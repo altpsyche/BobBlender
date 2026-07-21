@@ -40,6 +40,8 @@ side/tangent field for them arrive with their consumers; C2 roles differ by knob
 profile is symmetric.
 """
 
+import os
+
 import bpy
 from bpy.props import (
     BoolProperty,
@@ -585,6 +587,19 @@ class BBT_CurvesProps(PropertyGroup):
         description="Terrain mesh the curves carve and scatter on "
                     "(defaults to the Scatter emitter, else the active mesh)")
     summary: StringProperty(default="")
+    # Bake & Erode (commit step): fold the curve carves into the terrain heightfield and weather them.
+    erode_strength: FloatProperty(
+        name="Erosion", default=0.5, min=0.0, max=1.0,
+        description="How hard to weather the carved channels: slumps the hard banks to a natural "
+                    "repose angle and cuts small tributaries. Higher = more erosion")
+    erode_scope: EnumProperty(
+        name="Scope", default="band",
+        items=[("band", "Carved band", "Erode only the channels + banks, leaving the rest of the "
+                "sculpted terrain untouched"),
+               ("global", "Whole terrain", "Re-erode the entire terrain with the channels present, "
+                "so rivers cut natural valleys and tributaries (dramatic; the base landform shifts)")],
+        description="Erode only the channel band, or re-erode the whole terrain")
+    erode_summary: StringProperty(default="")
 
 
 # Operators
@@ -807,6 +822,129 @@ class BBT_OT_curve_build_all(Operator):
         return {"FINISHED"}
 
 
+def _curve_band_spec(curve, terrain, cap=300):
+    """One curve's centreline as terrain-UV points [[u, v], ...] plus its channel width, for the
+    erosion `path` band mask. Reuses path_curve._ordered_polyline_xy (the same order-robust wire walk
+    the drape uses) so the band tracks the channel exactly. u = x/size + 0.5; v = 0.5 - y/size (the
+    PNG is top-row-first while Blender samples it V-up). Returns None for a degenerate curve."""
+    _apply_curve_transform(curve)  # origin assumption: the curve XY IS the terrain sample point
+    server._ensure_path()
+    from bbmcp import path_curve
+    xy = path_curve._ordered_polyline_xy(curve)
+    if len(xy) > cap:
+        xy = path_curve._resample_xy(xy, cap)
+    if len(xy) < 2:
+        return None
+    size = float(terrain.get("bbt_terrain_size", 90.0)) or 1.0
+    cfg = curve.bbt_curve
+    return {"points": [[min(max(x / size + 0.5, 0.0), 1.0), min(max(0.5 - y / size, 0.0), 1.0)]
+                       for x, y in xy],
+            "width": max(cfg.width * 0.5, 0.01) / size,
+            "falloff": max(cfg.falloff, 0.1) / size}
+
+
+class BBT_OT_curve_bake_erode(Operator):
+    bl_idname = "bob_blender_tools.curve_bake_erode"
+    bl_label = "Bake & Erode Curves"
+    bl_description = ("Commit: run the venv erosion on the terrain heightfield to weather the landscape "
+                      "the curves shape, then RE-IMPOSE every curve on the eroded terrain (re-drape, "
+                      "carve the channel + banks, rebuild the water) so bed, banks and water re-derive "
+                      "together and the water stays contained -- no gap. Rerun after editing curves or "
+                      "the terrain")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        scn = context.scene.bbt_curves
+        terrain = _terrain(context)
+        if terrain is None:
+            self.report({"ERROR"}, "Pick a terrain mesh")
+            return {"CANCELLED"}
+        hm = terrain.get("bbt_heightmap")
+        if not hm or not os.path.exists(hm):
+            self.report({"ERROR"}, "Terrain has no baked heightfield -- bake it in the Terrain panel first")
+            return {"CANCELLED"}
+        # Always erode the CLEAN source, never a previous eroded output (else re-runs stack up). If the
+        # terrain is currently showing an eroded PNG, fall back to the stored clean source.
+        clean_src = terrain.get("bbt_heightmap_clean") if hm.endswith("_eroded.png") else hm
+        if not clean_src or not os.path.exists(clean_src):
+            clean_src = hm
+        size = float(terrain.get("bbt_terrain_size", 90.0))
+        height = float(terrain.get("bbt_terrain_height", 22.0))
+        sea = float(terrain.get("bbt_terrain_sea", 0.22))
+        grid_res = int(terrain.get("bbt_terrain_res", 256))
+
+        # Curves to re-impose after the erode, plus their UV polylines for the band mask.
+        specs, curves = [], []
+        for entry in scn.curves:
+            curve = entry.curve
+            if curve is None:
+                continue
+            cfg = curve.bbt_curve
+            impose = ROLES.get(cfg.role, ROLES["dirt_path"]).get("family") == "impose"
+            if cfg.do_terrain or cfg.do_material or cfg.do_scatter or (cfg.do_water and impose):
+                curves.append(curve)
+            if cfg.do_terrain:
+                spec = _curve_band_spec(curve, terrain)
+                if spec is not None:
+                    specs.append(spec)
+        if not curves:
+            self.report({"WARNING"}, "No curves with a channel to erode + re-impose")
+            return {"CANCELLED"}
+
+        # Erosion stack (NO baked carve): thermal slump + fluvial incision, scaled by strength. Band
+        # scope masks it to the curve corridor (weather along the channels), global erodes everything.
+        # The channel itself is re-imposed live afterwards, so bed/banks/water re-derive against the
+        # eroded terrain and the water stays contained (the C5 by-construction harmony, re-established).
+        s = float(scn.erode_strength)
+        thermal = {"kind": "thermal", "talus": 0.010 - 0.006 * s, "iterations": int(6 + 20 * s)}
+        fluvial = {"kind": "fluvial", "iterations": int(12 + 40 * s), "k": 2e-4 + 5e-4 * s,
+                   "diffusion": 0.1}
+        if scn.erode_scope == "band" and specs:
+            band = max(c["width"] + c["falloff"] for c in specs) * 2.0
+            mask = {"kind": "path", "curves": specs, "width": band, "falloff": max(band, 0.05)}
+            thermal["mask"] = mask
+            fluvial["mask"] = mask  # same spec; the mask is read-only, so one dict serves both ops
+        stack = [thermal, fluvial]
+
+        stem = os.path.splitext(os.path.basename(clean_src))[0]
+        out_abs = os.path.join(os.path.dirname(clean_src), f"{stem}_eroded.png")
+        params = {"base_png": clean_src, "stack": stack, "backend": "auto", "seed": 0}
+
+        from . import _run_host_bake
+        _meta, err = _run_host_bake(context, out_abs, params=params)
+        if err is not None:
+            self.report({"ERROR"}, err)
+            return {"CANCELLED"}
+
+        # Swap the terrain to the eroded PNG and record the clean source for the next re-run. The drape
+        # now samples the eroded terrain (bbt_heightmap = eroded), so the re-imposed channels + water
+        # follow the eroded ground.
+        _apply([{"op": "reload_image", "path": out_abs},
+                {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": terrain.name,
+                 "params": {"heightmap": out_abs, "size": size, "resolution": grid_res,
+                            "height": height, "sea_level": sea}}])
+        terrain["bbt_heightmap"] = out_abs
+        terrain["bbt_heightmap_clean"] = clean_src
+
+        # Re-impose every curve on the eroded terrain: re-drape + carve the channel/banks, rebuild the
+        # water ribbon, push the live params. Bed, banks and water all re-derive from the eroded
+        # path_z, so they stay in harmony and the water is contained (no gap). Mirrors Build All.
+        for curve in curves:
+            cfg = curve.bbt_curve
+            impose = ROLES.get(cfg.role, ROLES["dirt_path"]).get("family") == "impose"
+            _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
+            if cfg.do_water and impose:
+                _build_water(curve)
+            _sync_curve_params(context, curve)
+        context.view_layer.update()
+
+        scope = "corridor band" if scn.erode_scope == "band" else "whole terrain"
+        scn.erode_summary = f"eroded ({scope}), re-imposed {len(curves)} curve(s)"
+        self.report({"INFO"},
+                    f"Eroded {terrain.name} ({scope}) + re-imposed {len(curves)} curve(s)")
+        return {"FINISHED"}
+
+
 class BBT_UL_curves(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_prop, index):
         curve = item.curve
@@ -859,6 +997,19 @@ class BBT_PT_paths(Panel):
                                          note="carves every terrain-channel curve")
         if scn.summary:
             layout.label(text=scn.summary, icon="INFO")
+
+        # Naturalise: fold the carves into the heightfield and weather them. Needs a baked terrain
+        # (the erosion works on the heightfield raster, not the live GN carve).
+        terrain = _terrain(context)
+        if scn.curves and _has_bake(terrain):
+            box = layout.box()
+            box.label(text="Naturalise landscape (Bake & Erode)", icon="MODIFIER")
+            box.prop(scn, "erode_strength", slider=True)
+            box.prop(scn, "erode_scope")
+            box.operator("bob_blender_tools.curve_bake_erode", icon="MATFLUID")
+            note = box.row()
+            note.enabled = False
+            note.label(text=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
 
 
 class BBT_PT_paths_active(Panel):
@@ -940,6 +1091,7 @@ CLASSES = (
     BBT_OT_curve_duplicate,
     BBT_OT_curve_build,
     BBT_OT_curve_build_all,
+    BBT_OT_curve_bake_erode,
     BBT_UL_curves,
     BBT_PT_paths,
     BBT_PT_paths_active,

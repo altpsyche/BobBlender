@@ -196,11 +196,52 @@ water master needs a freshly built material (S_GROUP_VER bump forces it; delete 
 doubt). Ripple animation needs playback / a frame change to move. Build order: Build drapes the curve
 (monotonic) via the overlay, THEN lays the ribbon, so the ribbon sits on the descending centreline.
 
-## What is next (pick with Siva)
-Remaining phase is the optional baked one:
-- C6 baked venv carve (optional) — rasterize the curve to a distance field in the heightfield
-  bake (a `carve` op in tools/bobtools/heightfields/engine.py `_OPS`) so natural erosion and the
-  flow/wetness maps respect the channel. A "Bake curve into terrain" commit step, not the live loop.
+## C6 erosion after curves — DONE 2026-07-22, headless-verified (design v2, gap-fixed)
+Siva: "the landscape becomes unnatural with all the curve modifications" -> run erosion after the
+curves. Shipped as a "Bake & Erode Curves" commit (strength slider + whole-terrain/band scope toggle).
+
+IMPORTANT design note (v1 -> v2, do not regress): v1 baked the carve INTO the heightfield and set the
+live overlays to mask-only. Siva hit "erosion pushes the terrain down, the water and terrain have a
+huge gap" -- because mask-only dropped the overlay's CONTAINMENT BANKS, so erosion lowered the banks
+with nothing re-imposing them and the fixed-level water floated (the old C5 float bug, reintroduced).
+v2 (current) does NOT bake the carve and does NOT go mask-only. Instead:
+  erode the terrain -> swap the terrain to the eroded PNG -> RE-IMPOSE every curve on the eroded
+  terrain (re-drape + overlay carve=True + rebuild the water).
+So bed, banks and water all re-derive from the eroded path_z together (the C5 by-construction
+harmony, re-established against the eroded ground). Verified headless: even with GLOBAL erosion
+(terrain pushed down), 0% of the water's shore verts float -- banks sit above water exactly as the
+clean build (mean terrain-above-water -3.5 m, 0 floating of 2208 shore verts).
+
+What landed (after a cleanup pass):
+- venv building blocks: `path` selector (ops_select -> ops_carve._distance_uv, the channel-band mask),
+  pipeline `base_png` input + run_stack `normalize=False` (erode an existing PNG, keep its absolute
+  height mapping), cache keys on the loaded base's content hash. ops_carve.py now holds ONLY the
+  distance-field/profile helpers the selector needs. (A baked `carve` op with trench/impose modes was
+  built + verified during development, then REMOVED in the cleanup as dead: option B never bakes a
+  carve. Re-add it when the eroded-channel mode below is designed -- the impose take-lower + UV
+  alignment math is recorded in git history / this doc.)
+- Addon operator BBT_OT_curve_bake_erode (splines_panel.py): erosion-only stack (thermal + fluvial,
+  scaled by scn.erode_strength; band scope masks to the curve corridor via `path`, global erodes
+  all), bakes the CLEAN source (bbt_heightmap, or bbt_heightmap_clean if currently showing an eroded
+  PNG) -> <stem>_hf_eroded.png via the shared `_run_host_bake` helper (__init__.py, also used by the
+  Terrain bake), swaps the terrain onto it (bbt_heightmap = eroded, bbt_heightmap_clean = source),
+  then re-imposes every channel curve (_build_curve_overlay carve=True re-drapes on the eroded
+  terrain) and rebuilds the water -- one loop, mirroring Build All. Re-runs start from the clean
+  source (idempotent).
+- _curve_band_spec (splines_panel): the curve's UV polyline + channel width for the band mask, via
+  path_curve._ordered_polyline_xy (shared with the drape). UV mapping verified: u = x/size + 0.5,
+  v = 0.5 - y/size (PNG top-row-first, Blender samples V-up), lands on the curve, not mirrored.
+
+TRADEOFF (v2): the channel itself is re-imposed (overlay embankment), NOT erosion-weathered; the
+LANDSCAPE around/along it is what erodes. That fixes the gap and naturalises the terrain, which is
+the complaint -- BUT Siva then noted "the banks still feel unnatural", which is this tradeoff biting:
+the re-imposed embankment is a smooth procedural slope. A true "eroded channel + water re-fit to it"
+is the open enhancement -- it needs the water to re-derive its fill level from the eroded channel
+floor (a new water-fill model), not the current fixed path_z - WaterDepth. See the heightfield/erosion
+research (in progress) before committing to it.
+- NOT yet done (optional next): the eroded-channel mode above; emit flow/wetness maps on the eroded
+  PNG for the riverbed material; a "revert to clean" button; global-scope strength tuning.
+Remaining older item:
 - Future (named, not scoped): a separate sea/ocean/lake surface; bridges/culverts where a road
   crosses a river (R6 take-lower currently sinks the road into the water); tributary networks and
   width-from-flow-accumulation beyond the simple downstream ramp.

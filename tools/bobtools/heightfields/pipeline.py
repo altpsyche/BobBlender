@@ -12,6 +12,7 @@ so a preview at PREVIEW_SIZE and a full bake are the same landform at two sampli
 densities.
 """
 
+import hashlib
 import os
 import time
 
@@ -56,7 +57,19 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     if preview:
         params["size"] = PREVIEW_SIZE
 
-    size = int(params.get("size", 768))
+    # base_png: erode an EXISTING baked field in place of generating from zero (the carve-then-erode
+    # "Bake & Erode Curves" path). The base sets the resolution, and the result is NOT re-normalised
+    # (run_stack normalize=False) so it keeps the base's absolute height mapping.
+    base_png = params.get("base_png")
+    if base_png:
+        base = io.read_png16(base_png)
+        size = int(base.shape[0])
+        params["size"] = size
+        base_sig = hashlib.sha256(base.tobytes()).hexdigest()[:12]  # key on the loaded field itself
+    else:
+        size = int(params.get("size", 768))
+        base = None
+        base_sig = None
     seed = int(params.get("seed", 0))
     want_maps = bool(params.get("maps", False))
     stack = _stack_for(params)
@@ -66,9 +79,10 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     # knob modulations already applied) and the backend that actually runs
     # (backend.name, not "auto"), so a GPU-baked sidecar is not served to a CPU-only
     # machine that would resolve "auto" differently. The source fingerprint in
-    # cache.py invalidates it when the op math changes.
+    # cache.py invalidates it when the op math changes. A base_png bake also keys on the
+    # base's content so re-eroding an edited terrain re-runs.
     resolved = {"size": size, "seed": seed, "backend": backend.name, "stack": stack,
-                "maps": want_maps}
+                "maps": want_maps, "base": base_sig}
     key = cache.params_hash(resolved)
     if not force:
         side = io.read_sidecar(out_path)
@@ -81,9 +95,11 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     t0 = time.perf_counter()
     # Generators establish the base into this zero field; the engine normalises the
     # result to [0, 1]. Erosion is edge-aware (borders are drainage outlets), so no
-    # reflected margin is needed and no border rim forms.
-    base = np.zeros((size, size), dtype=np.float64)
-    eroded = engine.run_stack(base, stack, backend, seed=seed)
+    # reflected margin is needed and no border rim forms. With a base_png the field is
+    # the loaded terrain and the result keeps its absolute mapping (normalize=False).
+    if base is None:
+        base = np.zeros((size, size), dtype=np.float64)
+    eroded = engine.run_stack(base, stack, backend, seed=seed, normalize=base_png is None)
     # Optional flow/wetness maps (a drainage solve on the final field) for shading and
     # scatter to key off the terrain's own hydrology; opt-in since they add cost.
     map_paths = _emit_maps(out_path, eroded, backend) if want_maps else {}
