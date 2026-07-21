@@ -52,6 +52,18 @@ class MakePath(BaseModel):
     sea_level: float = 0.3
 
 
+class DrapeCurve(BaseModel):
+    op: Literal["drape_curve"] = "drape_curve"
+    name: str = "Path"  # an existing curve object
+    # Re-sample this heightmap at each control point and set its Z to the terrain
+    # surface, in place, so a hand-drawn or moved curve follows the current ground
+    # (the counterpart to make_path's drape). Must match the heightmap_terrain build.
+    heightmap: str | None = None
+    size: float = 60.0
+    height: float = 14.0
+    sea_level: float = 0.3
+
+
 class ReloadImage(BaseModel):
     op: Literal["reload_image"] = "reload_image"
     path: str | None = None  # absolute image path, or None to reload all
@@ -70,7 +82,7 @@ class BuildSky(BaseModel):
 
 # Add MakeMaterial and other ops to this union as the library grows.
 Operation = Annotated[
-    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, ReloadImage, BuildSky],
+    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, DrapeCurve, ReloadImage, BuildSky],
     Field(discriminator="op"),
 ]
 

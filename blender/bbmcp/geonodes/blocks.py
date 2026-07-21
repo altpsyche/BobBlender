@@ -170,6 +170,10 @@ def _curve_meshes(ng, path_obj, location):
     reads the matching vertex on the other.
     """
     curve = object_geometry(ng, path_obj, location)
+    # Curve to Mesh evaluates the curve at its resolution_u (subdivisions per segment); the Paths
+    # panel bumps that on the datablock (see splines_panel _build_curve_terrain) so the polyline is
+    # dense and the carved bench reads smooth. A coarse curve evaluates to a few straight segments
+    # whose slope kinks at each junction facet the bench into steps.
     to_mesh = ng.nodes.new("GeometryNodeCurveToMesh")
     to_mesh.location = (location[0] + 200, location[1])
     ng.links.new(curve, to_mesh.inputs["Curve"])
@@ -205,42 +209,46 @@ def curve_distance(ng, path_obj, location=(-900, -500)):
     return prox.outputs["Distance"], prox.outputs["Position"]
 
 
-def curve_path_sample(ng, path_obj, location=(-900, -500)):
-    """Horizontal distance to a draped path curve, plus its height there.
+def curve_field(ng, path_obj, location=(-900, -500)):
+    """The shared per-point curve field (docs/SPLINES.md 4.2): (distance, near_pos, path_z).
 
-    Returns (distance, path_z): the XY distance to the nearest curve edge, and
-    the curve's own Z at the nearest curve vertex. Because a draped curve carries
-    a smooth grade in Z, path_z is a clean trail height, not the terrain's fine
-    relief. Used by heightmap_terrain to level a bench along the trail.
+    - distance: XY distance from each point to the curve.
+    - near_pos: the nearest point on the flattened (z = 0) curve, whose XY is the centreline.
+    - path_z:   the draped curve's height at the nearest point, INTERPOLATED along the curve so it
+      grades smoothly (see drape_curve for how the curve gets its draped Z).
+
+    Generalises curve_distance (distance + near_pos) and adds the draped path_z, so a consumer
+    that needs several of these (the curve overlay) solves proximity ONCE rather than per effect
+    (docs/SPLINES.md 9 #4). side and tangent join this tuple when their consumers land (the
+    asymmetric embankment and scatter-align in C4); the follow-terrain bench profile and the
+    curve mask attribute need only these three.
     """
     draped, flat = _curve_meshes(ng, path_obj, location)
-    sample = _sample_grid_flat(ng, (location[0] + 560, location[1] - 300))
+    grid_flat = _sample_grid_flat(ng, (location[0] + 560, location[1] - 300))
 
+    # Distance + centreline in the XY plane (flat curve). EDGES gives the nearest point ON the
+    # edge (interpolated), so the band width is horizontal and continuous, not snapped to a vertex.
     prox = ng.nodes.new("GeometryNodeProximity")
     prox.target_element = "EDGES"
     prox.location = (location[0] + 760, location[1])
     ng.links.new(flat, prox.inputs["Geometry"])
-    ng.links.new(sample, prox.inputs["Sample Position"])
+    ng.links.new(grid_flat, prox.inputs["Sample Position"])
 
-    nearest = ng.nodes.new("GeometryNodeSampleNearest")
-    nearest.domain = "POINT"
-    nearest.location = (location[0] + 760, location[1] - 200)
-    ng.links.new(flat, nearest.inputs["Geometry"])
-    ng.links.new(sample, nearest.inputs["Sample Position"])
+    # path_z: the nearest point on the DRAPED curve's edges, sampled at the grid point's real
+    # position (near the path terrain_z ~= curve_z). Its Z is INTERPOLATED along the edge, so the
+    # bench grades smoothly. Reading a vertex Z with Sample Nearest + Sample Index terraced the
+    # bench -- one flat plateau per curve vertex, a step at each boundary; the edge Position on the
+    # 3D curve has no such steps.
+    proxz = ng.nodes.new("GeometryNodeProximity")
+    proxz.target_element = "EDGES"
+    proxz.location = (location[0] + 760, location[1] - 260)
+    ng.links.new(draped, proxz.inputs["Geometry"])
+    ng.links.new(position(ng, (location[0] + 580, location[1] - 260)), proxz.inputs["Sample Position"])
+    zsep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    zsep.location = (location[0] + 960, location[1] - 260)
+    ng.links.new(proxz.outputs["Position"], zsep.inputs[0])
 
-    # Read the draped mesh's Z at the nearest vertex index.
-    sep = ng.nodes.new("ShaderNodeSeparateXYZ")
-    sep.location = (location[0] + 760, location[1] - 380)
-    ng.links.new(position(ng, (location[0] + 580, location[1] - 380)), sep.inputs[0])
-
-    idx = ng.nodes.new("GeometryNodeSampleIndex")
-    idx.data_type = "FLOAT"
-    idx.domain = "POINT"
-    idx.location = (location[0] + 960, location[1] - 260)
-    ng.links.new(draped, idx.inputs["Geometry"])
-    ng.links.new(sep.outputs["Z"], idx.inputs["Value"])
-    ng.links.new(nearest.outputs["Index"], idx.inputs["Index"])
-    return prox.outputs["Distance"], idx.outputs["Value"]
+    return prox.outputs["Distance"], prox.outputs["Position"], zsep.outputs["Z"]
 
 
 def smooth_falloff(ng, value, inner, outer, location=(0, 0)):

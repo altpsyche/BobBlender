@@ -1199,6 +1199,60 @@ def _autoconfig_riverbed(mat):
     setv("Terrain Wetness", 0.6)
 
 
+# Masks other than the curve band, cleared on the curve-surface layer so it keys ONLY off the
+# curve (a road/dirt surface follows the path, not a slope or altitude).
+_CURVE_OTHER_MASKS = ("Slope Strength", "Height Strength", "Noise Strength",
+                      "Paint Strength", "Curvature Strength", "Flow Strength")
+
+
+def apply_curve_surface(mat, base_color, roughness=0.85, height_bias=0.3):
+    """Configure a terrain BobShader layer as the curve surface band (BobSplines C3): a layer
+    keyed to the curve overlay's bbt_curve_mask, so a road/dirt surface reads only along a path.
+    Mirrors _autoconfig_riverbed but for the curve mask. Idempotent: reuses the slot already keyed
+    to the curve on a re-apply, else the highest free (disabled) slot, else the top slot.
+
+    height_bias is kept modest on purpose (docs/SPLINES.md 9 #7): the layer's height field is
+    weight (= the curve mask here) + Height Bias + macro, so off the curve weight -> 0 and H ->
+    Height Bias; a small bias wins the height-lerp ON the curve (mask 1 -> H ~ 1 + bias) but loses
+    to a full base layer (H ~ 1) OFF it, so the surface does not bleed past the path. A genuinely
+    hard road edge (H gated by the mask directly) is a later refinement.
+
+    Returns the configured slot index, or None when mat is not a terrain BobShader.
+    """
+    grp = mat.node_tree.nodes.get("Master") if mat and mat.use_nodes and mat.node_tree else None
+    if grp is None or master_type(mat) != "terrain":
+        return None
+    if grp.inputs.get("L0 Curve Strength") is None:
+        return None  # an older master group without the Curve channel; rebuild the material
+
+    slot, free = None, None
+    for i in range(MAX_TERRAIN_LAYERS):
+        cs = grp.inputs.get(f"L{i} Curve Strength")
+        en = grp.inputs.get(f"L{i} Enable")
+        if cs is not None and cs.default_value > 0.0:
+            slot = i  # reuse the existing curve slot
+            break
+        if free is None and i > 0 and en is not None and en.default_value == 0.0:
+            free = i
+    if slot is None:
+        slot = free if free is not None else MAX_TERRAIN_LAYERS - 1
+    p = f"L{slot} "
+
+    def setv(name, val):
+        sock = grp.inputs.get(p + name)
+        if sock is not None:
+            sock.default_value = val
+
+    setv("Enable", 1.0)
+    setv("Curve Strength", 1.0)
+    setv("Base Color", base_color)
+    setv("Roughness", roughness)
+    setv("Height Bias", height_bias)
+    for m in _CURVE_OTHER_MASKS:
+        setv(m, 0.0)  # a reused slot might carry another mask; the curve band keys off the curve alone
+    return slot
+
+
 def surface_material(mat_name, texture_set=None):
     """A single-surface wrapper (S_SurfaceMaster), optionally with a texture set assigned.
 
@@ -1342,12 +1396,22 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     flow_band = _mrange(g, I["Flow Map"], f_lo, I[p + "Flow Threshold"], 0.0, 1.0, (x0 + 200, y - 1200))
     flow = _gated(g, flow_band, I[p + "Flow Strength"], (x0 + 380, y - 1200))
 
+    # Curve: the curve overlay's mask attribute (bbt_curve_mask, 1 on a path band; BobSplines C3).
+    # Keeps the layer to a path/road, gated by strength. Absent attribute reads 0, so a
+    # Curve-Strength layer correctly vanishes off every curve.
+    ca = g.nodes.new("ShaderNodeAttribute")
+    ca.attribute_type = "GEOMETRY"
+    ca.attribute_name = "bbt_curve_mask"
+    ca.location = (x0, y - 1340)
+    curve = _gated(g, ca.outputs["Fac"], I[p + "Curve Strength"], (x0 + 200, y - 1340))
+
     # Weight = all masks, then Enable gates the layer out entirely.
     w = _mmath(g, "MULTIPLY", slope, alt, (x0 + 1040, y))
     w = _mmath(g, "MULTIPLY", w, noise, (x0 + 1210, y))
     w = _mmath(g, "MULTIPLY", w, paint, (x0 + 1380, y))
     w = _mmath(g, "MULTIPLY", w, curv, (x0 + 1550, y))
     w = _mmath(g, "MULTIPLY", w, flow, (x0 + 1720, y))
+    w = _mmath(g, "MULTIPLY", w, curve, (x0 + 1890, y))
 
     # Height field for the height-lerp: presence (weight) + a per-layer macro noise + bias.
     mtex = g.nodes.new("ShaderNodeTexNoise")
@@ -1404,6 +1468,10 @@ def terrain_master_group():
         # (channels/riverbeds). Gated by Flow Strength (0 = off, the default).
         _gin(g, p + "Flow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Flow Threshold", "NodeSocketFloat", 0.6, 0.0, 1.0)
+        # Curve band: keep this layer to a path/road, keyed off the curve overlay's baked
+        # bbt_curve_mask attribute (BobSplines C3, docs/SPLINES.md 4.4). Gated by Curve Strength
+        # (0 = off, the default), the same shape as the Flow mask keying a riverbed layer.
+        _gin(g, p + "Curve Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         # Texture-set maps (S3), identity defaults so an untextured layer is unchanged.
         _gin(g, p + "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
         _gin(g, p + "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)

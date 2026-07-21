@@ -908,7 +908,7 @@ class BBT_PT_shaders(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 3  # pipeline stage 3 (docs/UX-REDESIGN.md section 4)
+    bl_order = 4  # pipeline stage 4 (docs/UX-REDESIGN.md section 4, docs/SPLINES.md 5)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
