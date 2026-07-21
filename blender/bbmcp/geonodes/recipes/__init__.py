@@ -25,6 +25,7 @@ def names():
 # Import recipe modules so their @recipe decorators run.
 from . import (  # noqa: E402,F401
     curve_overlay,
+    curve_water,
     heightmap_terrain,
     particulates,
     scatter,

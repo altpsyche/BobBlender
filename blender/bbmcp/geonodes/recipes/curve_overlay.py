@@ -12,8 +12,11 @@ paths stacks instead of being limited to a single inline path. It:
 2. Writes the curve mask attributes the shader and scatter READ instead of re-solving proximity
    (docs/SPLINES.md 9 #2 / #4): bbt_curve_mask (0..1, 1 on the band), this curve's own edge ring
    under edge_attr (the shoulder ring, for a Verge scatter layer, R5), an optional per-role surface
-   class attribute (R5), and bbt_curve_dist (the XY distance). bbt_curve_mask MAX-accumulates across
-   curves, so overlapping paths add rather than overwrite (a prior overlay's value is read and maxed).
+   class attribute (R5), bbt_curve_carved (coverage of carving curves, for the junction take-lower
+   rule, R6), and bbt_curve_dist (the XY distance). The masks MAX-accumulate across curves, so
+   overlapping paths add rather than overwrite (a prior overlay's value is read and maxed).
+3. Resolves crossings by TAKE-LOWER (R6): where a prior curve carved, this curve may only lower the
+   surface, so a junction settles to the lower bench rather than the last-built curve winning.
 
 Cross-section knobs live ONCE here, on the overlay modifier, snapshot-restored across a rebuild
 like any GN knob (the single-owner decision): nothing downstream duplicates a width/depth knob.
@@ -105,6 +108,12 @@ def build(ng, out, params: dict):
     add_input(ng, "Shoulder Width", "NodeSocketFloat", float(params.get("shoulder_width", 0.0)), 0.0)
     add_input(ng, "Bank Slope", "NodeSocketFloat", float(params.get("bank_slope", 1.0)), 0.05)
     add_input(ng, "Bank Bias", "NodeSocketFloat", float(params.get("bank_bias", 0.0)), -1.0, 1.0)
+    # Bank Height (impose/river only): the channel banks rise to at least path_z + Bank Height, so
+    # the water (which sits below path_z) is contained even where the river runs across a slope and
+    # the downhill ground falls away below it. In a valley the natural banks are already higher, so
+    # this builds nothing there (MAX with the terrain); on a sidehill it raises a downhill levee.
+    if params.get("impose", False):
+        add_input(ng, "Bank Height", "NodeSocketFloat", float(params.get("bank_height", 0.4)), 0.0)
 
     gi = nodes.new("NodeGroupInput")
     gi.location = (-1200, 0)
@@ -113,16 +122,25 @@ def build(ng, out, params: dict):
     # curve_field solves proximity ONCE: distance to the centreline, the draped curve Z, the
     # arclength distance to the nearest spline end (taper), and the side of the curve (embankment).
     curve = bpy.data.objects.get(params.get("curve", ""))
-    dist, near, path_z, end_dist, side = curve_field(ng, curve, (-1100, -560))
+    # tangent is unused here (the embankment reads only `side`); the river water ribbon consumes it.
+    dist, near, path_z, end_dist, side, _tangent = curve_field(ng, curve, (-1100, -560))
 
-    # Bench target: level toward (live terrain Z at the centreline) - Depth, sampled LIVE off the
-    # incoming terrain (R1), not the stale draped path_z. diff drives both the carve and, by its
-    # magnitude, the slope-aware embankment width.
-    live_z = _live_terrain_z(ng, geometry, near, path_z, (-1050, -960))
+    # Bench target Z, in one of two families (docs/SPLINES.md 9 #1):
+    # - FOLLOW (dirt path / trail / road): sample the LIVE terrain Z under the centreline (R1) so
+    #   the bench tracks a re-sculpt or a curve move, then recess it by Depth.
+    # - IMPOSE (river / stream): use the DRAPED monotonic path_z instead, so the terrain conforms
+    #   DOWN to the descending water centreline rather than the channel following the ground. The
+    #   drape (drape_curve monotonic) guarantees path_z never rises source->mouth, so the carved bed
+    #   runs downhill; Depth sinks the bed below the water surface the ribbon later sits on.
+    # diff drives both the carve and, by its magnitude, the slope-aware embankment width.
+    if params.get("impose", False):
+        bench_z = path_z
+    else:
+        bench_z = _live_terrain_z(ng, geometry, near, path_z, (-1050, -960))
     psep = nodes.new("ShaderNodeSeparateXYZ")
     psep.location = (-780, -120)
     links.new(position(ng, (-960, -120)), psep.inputs[0])
-    target_z = math_node(ng, "SUBTRACT", live_z, gi.outputs["Path Depth"], (-600, -120))
+    target_z = math_node(ng, "SUBTRACT", bench_z, gi.outputs["Path Depth"], (-600, -120))
     diff = math_node(ng, "SUBTRACT", target_z, psep.outputs["Z"], (-420, -120))
 
     # Cross-section band (R4). The flat bench spans Path Width + Shoulder Width at bench level;
@@ -152,14 +170,64 @@ def build(ng, out, params: dict):
     taper = smooth_falloff(ng, end_dist, 0.0, taper_outer, (840, 620))
     onpath = math_node(ng, "MULTIPLY", onpath, taper, (1020, 500))
 
-    # Bench carve: offset = diff * onpath, so the surface meets the bench on the path (onpath 1) and
-    # is untouched off it (onpath 0). carve off = a mask-only overlay (do_terrain off): geometry
-    # passes through, the masks below still write.
-    offset = math_node(ng, "MULTIPLY", diff, onpath, (1200, 120))
-    carved = displace_z(ng, geometry, offset, (1380, 0)) if params.get("carve", True) else geometry
+    if params.get("impose", False):
+        # IMPOSE trough (river/stream): carve a flat bed at path_z - Depth across the bench, then
+        # let the banks rise to the HIGHER of the natural terrain or a rim at path_z + Bank Height.
+        # In a valley the natural walls are already above the rim, so nothing extra is built; on a
+        # cross-slope the fallen-away downhill side is raised to the rim (a levee), so the level
+        # water is contained instead of perching/floating off the open downhill edge. wall_t is 0
+        # inside the bench (so target = bed there) and ramps to 1 by `outer`; beyond `outer` the rim
+        # slopes back to the terrain over a further Path Falloff so the levee is not a cliff. End
+        # Taper still fades the ends.
+        rim = math_node(ng, "ADD", path_z, gi.outputs["Bank Height"], (660, 40))
+        wall_top = math_node(ng, "MAXIMUM", psep.outputs["Z"], rim, (840, 40))
+        # The bank rises from the bed to the rim over a SHORT run held at Bank Slope (rise/run), so
+        # it reaches above the water right at the bench edge and contains it -- a gradual rise over
+        # the whole embankment left the water edge overhanging the still-low near bank. rise =
+        # rim - bed = Path Depth + Bank Height. Beyond the rim the levee slopes back to terrain.
+        rise = math_node(ng, "ADD", gi.outputs["Path Depth"], gi.outputs["Bank Height"], (660, -60))
+        wall_run = math_node(ng, "MAXIMUM",
+                             math_node(ng, "DIVIDE", rise, gi.outputs["Bank Slope"], (840, -60)),
+                             0.3, (1020, -60))
+        wall_top_d = math_node(ng, "ADD", inner, wall_run, (1200, -60))
+        wall_t = smooth_falloff(ng, dist, inner, wall_top_d, (660, -140))
+        target = mix_float(ng, wall_t, target_z, wall_top, (1040, 40))  # bed in bench -> wall top
+        levee = math_node(ng, "ADD", wall_top_d, gi.outputs["Path Falloff"], (660, -280))
+        band = math_node(ng, "SUBTRACT", 1.0, smooth_falloff(ng, dist, wall_top_d, levee, (840, -280)),
+                         (1020, -280))
+        band = math_node(ng, "MULTIPLY", band, taper, (1200, -280))
+        offset_raw = math_node(ng, "MULTIPLY",
+                               math_node(ng, "SUBTRACT", target, psep.outputs["Z"], (1400, 40)),
+                               band, (1740, 120))
+    else:
+        # FOLLOW bench carve: offset = diff * onpath, so the surface meets the bench on the path
+        # (onpath 1) and is untouched off it (onpath 0).
+        offset_raw = math_node(ng, "MULTIPLY", diff, onpath, (1120, 120))
+    # Junction Z rule (R6, docs/SPLINES.md 9 #9, take-lower): where a PRIOR curve already carved
+    # (its bbt_curve_carved coverage rode in on this overlay's input geometry), only let this curve
+    # LOWER the surface, never raise it, so a crossing settles to the lower bench instead of the
+    # last-built curve clobbering the other. Order-independent for the crossing height; the mix by
+    # prior coverage eases a partial overlap rather than stepping it. It reads bbt_curve_carved (not
+    # bbt_curve_mask) so a mask-only path -- material/scatter but no carve -- does not suppress a
+    # crossing road's fill. A lone curve has prior 0 everywhere, so it is byte-identical to before.
+    prior = nodes.new("GeometryNodeInputNamedAttribute")
+    prior.data_type = "FLOAT"
+    prior.location = (1120, -100)
+    prior.inputs["Name"].default_value = "bbt_curve_carved"
+    down_only = math_node(ng, "MINIMUM", offset_raw, 0.0, (1300, -40))
+    offset = mix_float(ng, prior.outputs["Attribute"], offset_raw, down_only, (1480, 80))
+    # carve off = a mask-only overlay (do_terrain off): geometry passes through, the masks below
+    # still write.
+    carved = displace_z(ng, geometry, offset, (1660, 0)) if params.get("carve", True) else geometry
 
     # bbt_curve_mask (the geometric band scatter and the shared surface layer read) MAX-accumulated.
-    geo = _store_max(ng, carved, "bbt_curve_mask", onpath, (1560, 0))
+    geo = _store_max(ng, carved, "bbt_curve_mask", onpath, (1840, 0))
+
+    # bbt_curve_carved: coverage of curves that actually CARVE (do_terrain on), MAX-accumulated, for
+    # the junction take-lower gate above. Written only when this overlay carves, so a mask-only
+    # overlay leaves it untouched.
+    if params.get("carve", True):
+        geo = _store_max(ng, geo, "bbt_curve_carved", onpath, (2020, 0))
 
     # Curve edge ring (R5): the shoulder/embankment only -- onpath weighted by a core-off mask that
     # is 0 on the driving surface (dist < Path Width) and 1 beyond the flat bench. Stored under THIS
@@ -179,6 +247,15 @@ def build(ng, out, params: dict):
     surface_attr = params.get("surface_attr", "")
     if surface_attr and surface_attr != "bbt_curve_mask":
         geo = _store_max(ng, geo, surface_attr, onpath, (2460, 0))
+
+    # bbt_curve_wet (BobSplines C5.4, the damp bed): the river/stream role writes its band into a
+    # wetness mask the terrain material reads (materials.apply_curve_wet) so the bed and banks read
+    # damp and glossy, weather-amplified. Same band as onpath (1 in the channel, easing up the
+    # banks), MAX-accumulated. Written only when the role asks (wet_attr set), so a dry path leaves
+    # it untouched and the attribute reads 0 everywhere else.
+    wet_attr = params.get("wet_attr", "")
+    if wet_attr:
+        geo = _store_max(ng, geo, wet_attr, onpath, (2500, -300))
 
     # bbt_curve_dist (raw, per curve): the XY distance to the centreline, for a consumer that wants
     # to threshold the band itself. Overlap is last-writer (an accepted v1 artifact, section 9 #9).

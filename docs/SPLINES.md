@@ -5,12 +5,17 @@ by a fresh chat: every claim about the current code is grounded at file:line, an
 phased so each phase ships something usable. Plain house style (no em-dashes, per the repo
 writing convention).
 
-**C1-C4 shipped (2026-07-21).** The two Tier-1 decisions in section 9 are confirmed (see the note
-there). C1 (Paths panel + typed curve list), C2 (the standalone `curve_overlay` modifier: per-curve,
+**C1-C5 shipped (2026-07-21); C5 static-gated, awaiting Blender verify.** The two Tier-1 decisions in
+section 9 are confirmed (see the note there); C5 (rivers) also resolves risk #1 (opposite drape
+semantics) with the monotonic downhill solve + impose carve, and risk #3 by laying water as its own
+Curve-to-Mesh ribbon rather than displacing the terrain grid. C1 (Paths panel + typed curve list),
+C2 (the standalone `curve_overlay` modifier: per-curve,
 multi-curve, writes the `bbt_curve_mask`/`_dist` attributes consumers READ, retires the inline path
 grade), C3 (a Curve mask channel on the terrain material + role surface band), and C4 (scatter reads
 `bbt_curve_mask` per layer -- clear / keep-only -- and a new `scatter_along` recipe places instances
-along a curve with optional align; `scn.path` retired) are implemented. C2 fixes after Blender
+along a curve with optional align; `scn.path` retired) are implemented. C5 (rivers) adds the IMPOSE
+family: a monotonic downhill drape, an impose carve, the `curve_water` ribbon, the `S_WaterMaster`
+water BobShader, and the `bbt_curve_wet` damp bed (see section 7). C2 fixes after Blender
 review: `path_z` now comes from interpolated edge proximity (not a quantized vertex sample), the
 curve is densified via `resolution_u`, and the drape samples the heightmap bilinearly -- the carved
 path is smooth. Static-gated (py_compile + reference grep + a pydantic round-trip), NOT fully
@@ -375,7 +380,55 @@ curve.
   own rotation, so they were not needed; they remain for a surface-scatter align and the asymmetric
   embankment. Auto bank/edge layers per role deferred. Existing per-kind `path_width` values in
   `scatter_panel.LAYER_TYPES` are now vestigial (harmless).
-- **C5 (water)**: river water-surface recipe with flow direction; weather puddle integration.
+- **C5 (water / rivers) -- DONE 2026-07-21, static-gated, awaiting Blender verify**: the IMPOSE
+  family (river / stream). Unlike a path, a river runs monotonically DOWNHILL and the terrain
+  conforms DOWN to it (resolves risk #1). Four pieces:
+  - C5.1 downhill drape + impose carve: `path_curve.drape_curve` gained a `monotonic` mode
+    (`_monotonic_descend`) that clamps the sampled centreline into a downhill profile from source to
+    mouth (running min-slope ceiling, plus a linear-to-sea ceiling when `to_sea`), and a `densify`
+    that resamples the curve to N points along its shape BEFORE the solve; `DrapeCurve` contract
+    gained `monotonic`/`min_slope`/`to_sea`/`densify`. `curve_overlay` gained an `impose` param: the
+    bench target is the draped monotonic `path_z` (not the live raycast), so the terrain cuts DOWN
+    to the descending water centreline. Path Depth is the bed below the water surface; the R4
+    embankment grades the banks back up. DENSIFY is load-bearing (measured headless): with the raw
+    4 control points the smooth centreline ignores the terrain's relief and 17% of the water floated
+    above the ground; resampling to 48 points before the solve tracks the real valley and drops it
+    to 0%, so the water sits in the channel everywhere. Roles seed `densify` 48 and default
+    `to_sea` off (follow the valley floor; enable it for a river that must reach a coast).
+  - C5.2 water ribbon: new `curve_water` recipe (registered) sweeps a flat horizontal line (the
+    channel width) along the curve for the XY route (Z-up normal so it stays horizontal across the
+    width), then sets each vertex Z to `path_z - Water Depth`, where `path_z` is `curve_field`'s
+    draped descending centreline -- the SAME solve the overlay carves the bed to (`path_z - Path
+    Depth`). So the surface is always Water Depth below the rim and (Path Depth - Water Depth) above
+    the bed, in harmony with the channel BY CONSTRUCTION (no read of the carved terrain, no floating).
+    This is the spline-river model every established tool uses (UE5 Water, Torque3D, Waterways): the
+    curve drives the water, the terrain is carved to it. `curve_field` also gives the shore distance
+    and the tangent for free, so it stores `bbt_flow` (unit downhill tangent * a speed that rises on
+    rapids, falls to the banks),
+    `bbt_foam` (banks + steep sections), and `bbt_shore` (0 mid, 1 at banks). Built as its own
+    object `BOB_Water_<curve>` by the Paths panel.
+  - C5.3 water BobShader: `materials.S_WaterMaster` (`water_master_group` / `water_material`), the
+    third master kind (`master_type` gains `"water"`; `new_bobshader(master="water")`). Depth-colour
+    gradient (shallow->deep by `bbt_shore`), foam (`bbt_foam`), a frame-driven scrolling ripple
+    normal advected along `bbt_flow` (no bake), transparency via Transmission + IOR + a bank Alpha
+    fade. `_build_wrapper` widened to drive Transmission/IOR/Alpha/Normal into the Principled (a
+    no-op for surface/terrain). Ends in `S_Weather`, so the below-freezing frost term freezes it to
+    ice (Transmission and ripples collapse as it gets cold). `S_GROUP_VER` bumped to 2. Shaders
+    panel gets a `water` New option, a Water sub-panel, and the `_MASTER_TAG` entry.
+  - C5.4 interactions: `curve_overlay` writes `bbt_curve_wet`; `terrain_master_group` MAXes it into
+    the Wetness Map and `materials.apply_curve_wet` raises Terrain Wetness so the bed reads damp,
+    weather-amplified. Scatter clears in the water band (reuses the shipped `bbt_curve_mask` clear);
+    reeds on the banks are a Verge scatter layer (the shipped mode, no new code). Sea mouth = the
+    `to_sea` drape lands the mouth at sea level (absolute Z 0); a separate ocean surface is future.
+  Scope trims: rivers key the damp bed via wetness (apply_curve_wet), not a distinct silt surface
+  layer, so a river and a dirt path share the C3 curve-surface channel if both want a surface band
+  (the documented C3 shared-surface limit). `curve_field` now returns a 6-tuple: its `tangent` was
+  surfaced (R4 deferred it "until a consumer lands") for the river flow direction, read by the same
+  reliable Sample-Index path as `side`; curve_overlay ignores it. Baked flow/foam-to-image and the
+  venv river carve stay C6. VERIFY watch: `GeometryNodeCurvePrimitiveLine` / `GeometryNodeResampleCurve`
+  / `GeometryNodeCurveToMesh` with a PROFILE / `GeometryNodeSetCurveNormal` (Z-up) are new to this
+  repo (the last three set defensively); the water master needs a freshly built material (the
+  `S_GROUP_VER` bump handles it). The ripple animation needs playback / a frame change to move.
 - **C6 (optional, baked)**: venv `carve` op + flow/wetness bias + "Bake curve into terrain".
 
 ### Polish pass (R1-R5) -- DONE, static-gated, awaiting Blender verify
@@ -411,7 +464,13 @@ so confirm they build on the first Reload Builders.
   path's ring; with none bound it reads a name nothing writes, so it scatters nothing (empty = off,
   not "every path" -- deliberately, so the pick is explicit). The `scatter` recipe gained a
   `curve_attr` param the Verge mode routes via `scatter_panel.edge_attr_name` (derived from the
-  curve name on both sides at build). Junction Z (risk #9) stays noted-as-future.
+  curve name on both sides at build).
+- **R6 junction Z (take-lower, risk #9)**: the overlay writes a `bbt_curve_carved` coverage
+  attribute (MAX-accumulated, only by carving curves), and clamps its own carve so that where a
+  prior curve carved it may only LOWER the surface, never raise it. A crossing therefore settles to
+  the lower bench, order-independently, instead of the last-built curve clobbering the other. Eases
+  by the prior coverage so a partial overlap blends; a lone curve is unaffected. A true shared-height
+  junction or a bridge/culvert role remains future work.
 
 ## 8. Open questions
 
@@ -432,13 +491,19 @@ Grounded in the current GN/material/scatter code. The Tier-1 items should be res
 
 **Decisions confirmed (2026-07-21, with Siva).**
 - #1 scope: C1-C3 target the FOLLOW-TERRAIN family only (dirt path, road, trail). Rivers/streams
-  are deferred to a later phase, after the monotonic-descending-Z solve and the carve-vs-ribbon
-  question (risk #3) are settled. C1 ships this family.
-- #2 ownership: `bbt_curve` holds ONLY structural fields (role + which channels are on). The
-  cross-section knobs live ONCE on the terrain modifier (scene-owned, snapshot-restored). Scatter
-  and, later, material/water READ the overlay's baked mask attribute rather than duplicating a
-  knob. C1 honours this (no width/depth on `bbt_curve`); the shared baked attribute + single
-  proximity solve (risk #4) land with the C2 overlay.
+  were deferred to a later phase, after the monotonic-descending-Z solve and the carve-vs-ribbon
+  question (risk #3) are settled. C1 ships the follow family. RESOLVED in C5 (2026-07-21): both
+  questions are settled and the IMPOSE family (river/stream) shipped -- monotonic drape + impose
+  carve, and water as its own Curve-to-Mesh ribbon (not a terrain-grid displace). See section 7 C5.
+- #2 ownership: the cross-section params have ONE owner and consumers READ the overlay's baked mask
+  attribute rather than duplicating a knob or re-solving proximity. **UPDATED 2026-07-22:** the owner
+  moved from the terrain modifier (snapshot-restored) to `bbt_curve` on the curve object, as live
+  FloatProperties whose update callback syncs each value to BOTH the terrain carve overlay and the
+  water ribbon (`splines_panel._sync_curve_params`). One set of numbers drives both, in real time, no
+  Build; `Width` is now the full channel width (1:1). This removes the snapshot dance (which had
+  clobbered the derived water width) and makes changing Depth re-carve the terrain and reposition the
+  water together. The C1-C5 "knobs on the overlay" text below is the prior model; the mechanism is
+  now bbt_curve → sync, but the single-owner principle is unchanged.
 
 Tier 1 (shapes the architecture):
 1. **Rivers vs paths have opposite drape semantics.** Paths/roads FOLLOW terrain (drape then
@@ -447,7 +512,10 @@ Tier 1 (shapes the architecture):
    water ribbon that pokes through the ground where the curve dips then rises. `curve_path_sample`
    returns whatever Z the terrain has, with no monotonicity. Split roles into "follow" and
    "impose" families: rivers/streams need a monotonic descending centreline (solve/clamp Z, or
-   artist source/mouth heights interpolated), and the terrain conforms to the river.
+   artist source/mouth heights interpolated), and the terrain conforms to the river. RESOLVED (C5):
+   `drape_curve` monotonic mode clamps the sampled centreline downhill (running min-slope ceiling +
+   optional linear-to-sea); the `curve_overlay` impose mode carves the terrain DOWN to that draped
+   `path_z`. The "follow" family is unchanged (impose defaults False).
 2. **Knob ownership across multiple targets.** One curve drives a terrain overlay, maybe a scatter
    layer, and a water mesh, on three datablocks. Duplicated width/depth knobs drift (the
    config-vs-scene trap, `docs/AUTHORING-MODEL-REVIEW.md`). Resolve: `bbt_curve` holds only
@@ -458,7 +526,9 @@ Tier 1 (shapes the architecture):
    road/path on a coarse terrain grid carves blocky and the per-vertex mask edge is stair-stepped;
    the shader cannot compute curve distance itself. Either locally subdivide the terrain along
    curves, or build roads as their own Curve-to-Mesh ribbon with its own material and carve/mask
-   the terrain only for paths and rivers.
+   the terrain only for paths and rivers. PARTLY RESOLVED (C5): the river WATER surface is its own
+   Curve-to-Mesh ribbon (`curve_water`), crisp regardless of the terrain grid; the carved bed still
+   rides the terrain displace (the bed is soft/organic, so tessellation matters less there).
 
 Tier 2 (correctness / performance):
 4. **Per-grid proximity per curve, live, is a perf cliff.** `curve_distance` solves a proximity
@@ -482,7 +552,10 @@ Tier 3 (name now, solve later):
 8. **Endpoints bulge**: proximity goes radial past a curve end, fanning the effect into a
    semicircle. Taper width or cap near the ends.
 9. **Junctions/crossings**: MAX-compositing merges masks but not conflicting bench Z where roads
-   cross or a tributary meets a river. Needs a Z rule, or accept v1 artifacts.
+   cross or a tributary meets a river. RESOLVED v1 (R6, take-lower): a curve overlay may only LOWER
+   the surface where a prior curve already carved (gated by a bbt_curve_carved coverage attribute),
+   so a crossing settles to the lower bench, order-independently, instead of the last-built curve
+   clobbering the other. A shared-height junction or a bridge/culvert role is still future work.
 10. **Wire by PointerProperty, not name** (today's `scn.path.name` will not survive a network's
     renames/reorders).
 11. **Steep-terrain roads**: a flat bench of width W on slope s implies cut/fill ~ `W*tan(s)/2`,
@@ -497,9 +570,13 @@ Tier 3 (name now, solve later):
 - Terrain recipe (inline path today, overlay tomorrow):
   `blender/bbmcp/geonodes/recipes/heightmap_terrain.py`.
 - Scatter recipe (path effect): `blender/bbmcp/geonodes/recipes/scatter.py:152-288`.
-- Terrain material (layer blend, flow/wetness, attribute reads): `blender/bbmcp/materials.py`
+- Water ribbon (C5): `blender/bbmcp/geonodes/recipes/curve_water.py` (the `curve_water` recipe:
+  Curve to Mesh ribbon + `bbt_flow`/`bbt_foam`/`bbt_shore`). Monotonic river drape in
+  `path_curve.drape_curve` (`_monotonic_descend`).
+- Terrain / water material (layer blend, flow/wetness, attribute reads): `blender/bbmcp/materials.py`
   (`terrain_master_group`, `_terrain_layer`, `terrain_material`, `_autoconfig_riverbed`,
-  `weather_group`, `env_state_group`).
+  `apply_curve_surface`, `apply_curve_wet`, `water_master_group`, `water_material`, `_build_wrapper`,
+  `master_type`, `weather_group`, `env_state_group`, `S_GROUP_VER`).
 - Venv bake (baked mode): `tools/bobtools/heightfields/{pipeline,engine,maps,ops_erode,
   ops_select,ops_filter,params,presets,cache}.py`.
 - BobSplines home (new): `blender/extensions/bob_blender_tools/splines_panel.py` (the Paths panel

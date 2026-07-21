@@ -274,18 +274,22 @@ def _sample_curve_attr(ng, flat_mesh, grid_flat, name, data_type, location):
 
 def curve_field(ng, path_obj, location=(-900, -500)):
     """The shared per-point curve field (docs/SPLINES.md 4.2): (distance, near_pos, path_z,
-    end_dist, side).
+    end_dist, side, tangent).
 
     - distance: XY distance from each point to the curve.
     - near_pos: the nearest point on the flattened (z = 0) curve, whose XY is the centreline.
     - path_z:   the draped curve's height at the nearest point, INTERPOLATED along the curve so it
-      grades smoothly (see drape_curve for how the curve gets its draped Z). The overlay prefers a
-      live terrain raycast (R1) and keeps this only as the off-mesh fallback.
+      grades smoothly (see drape_curve for how the curve gets its draped Z). The follow-family
+      overlay prefers a live terrain raycast (R1) and keeps this only as the off-mesh fallback; the
+      IMPOSE family (rivers) uses path_z directly as the water/bed reference, and the water ribbon
+      (curve_water) sits a fixed depth below the SAME path_z, so bed and surface stay in harmony.
     - end_dist: arclength distance to the nearest spline end at the nearest curve vertex, for the
       endpoint taper (R3). Stored on the curve, carried through Curve to Mesh, sampled at the grid.
     - side:     sign of the 2D cross product tangent x (grid - centreline), i.e. -1 / 0 / +1 for the
-      left / on / right of the curve, for the asymmetric embankment (R4). The raw tangent stays
-      internal (no other consumer yet).
+      left / on / right of the curve, for the asymmetric embankment (R4).
+    - tangent:  the curve's 3D unit tangent at the nearest vertex (Sample Nearest -> Sample Index).
+      Its XY gives the downstream flow direction and its Z the local descent (rapids); consumed by
+      the river water ribbon (C5). Sampled by the same reliable index read that drives `side`.
 
     Generalises curve_distance (distance + near_pos), so a consumer that needs several of these (the
     curve overlay) solves proximity ONCE rather than per effect (docs/SPLINES.md 9 #4).
@@ -342,7 +346,7 @@ def curve_field(ng, path_obj, location=(-900, -500)):
     cross = math_node(ng, "SUBTRACT", txvy, tyvx, (location[0] + 1700, location[1] - 900))
     side = math_node(ng, "SIGN", cross, None, (location[0] + 1880, location[1] - 900))
 
-    return prox.outputs["Distance"], prox.outputs["Position"], zsep.outputs["Z"], end_dist, side
+    return prox.outputs["Distance"], prox.outputs["Position"], zsep.outputs["Z"], end_dist, side, tangent
 
 
 def smooth_falloff(ng, value, inner, outer, location=(0, 0)):
