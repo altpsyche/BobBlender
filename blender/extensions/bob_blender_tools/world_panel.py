@@ -289,7 +289,7 @@ class BBT_PT_world(Panel):
         env = context.scene.bbt_env
 
         # One-line pipeline overview (decision E): the N-panel teaches the sequence.
-        layout.label(text="World, then Terrain, Scatter, Shaders, Atmosphere", icon="INFO")
+        layout.label(text="World, Terrain, Paths, Scatter, Shaders, Atmosphere", icon="INFO")
 
         # Scene-wide masters.
         row = layout.row(align=True)

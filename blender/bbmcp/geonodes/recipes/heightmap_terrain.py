@@ -6,24 +6,15 @@ Blender just reads the result.
 
 Params: heightmap (absolute image path), size, resolution, height, sea_level.
 
-Optional path param (a curve object name) grades a trail: within Path Width of
-the curve the ground is levelled to the curve's own height, easing back to
-natural terrain over Path Falloff, recessed by Path Depth. The curve should be
-draped onto the surface (make_path does this when given the heightmap), so its
-smooth Z profile grades the trail without copying the terrain's fine relief.
+Path grading is no longer inline here. A curve now carves the terrain through the
+standalone curve_overlay modifier (docs/SPLINES.md 4.3, BobSplines C2), stacked on
+the terrain object, so a network of paths composes and downstream effects read the
+overlay's baked mask attribute rather than this recipe re-solving proximity.
 """
 
 import bpy
 
-from ..blocks import (
-    curve_path_sample,
-    displace_z,
-    grid_source,
-    math_node,
-    mix_float,
-    position,
-    smooth_falloff,
-)
+from ..blocks import displace_z, grid_source, math_node, position
 from ..scaffold import add_input
 from . import recipe
 
@@ -36,12 +27,6 @@ def build(ng, out, params: dict):
     mesh = grid_source(ng, gi, params.get("size", 60.0), params.get("resolution", 512))
     add_input(ng, "Height", "NodeSocketFloat", float(params.get("height", 14.0)))
     add_input(ng, "Sea Level", "NodeSocketFloat", float(params.get("sea_level", 0.3)), 0.0)
-
-    path = bpy.data.objects.get(params.get("path", ""))
-    if path is not None:
-        add_input(ng, "Path Width", "NodeSocketFloat", float(params.get("path_width", 2.4)), 0.0)
-        add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.5)), 0.0)
-        add_input(ng, "Path Depth", "NodeSocketFloat", float(params.get("path_depth", 0.3)))
 
     nodes, links = ng.nodes, ng.links
 
@@ -79,17 +64,6 @@ def build(ng, out, params: dict):
         gi.outputs["Height"], (500, -100),
     )
     z = terrain_z
-
-    if path is not None:
-        # Level the trail to the draped curve's own smooth height, so it grades
-        # gently instead of copying the terrain's fine relief. The curve is draped
-        # onto the surface by make_path, so its Z is already a world height.
-        dist, path_flat = curve_path_sample(ng, path, (-1100, -560))
-        path_z = math_node(ng, "SUBTRACT", path_flat, gi.outputs["Path Depth"], (680, -760))
-        p_outer = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Path Falloff"], (500, -560))
-        mask = smooth_falloff(ng, dist, gi.outputs["Path Width"], p_outer, (680, -560))
-        # mask 0 on the path -> path_z, 1 off it -> terrain_z.
-        z = mix_float(ng, mask, path_z, terrain_z, (880, -300))
 
     geometry = displace_z(ng, mesh, z, (1120, 0))
 

@@ -31,6 +31,7 @@ from . import (  # noqa: F401
     scatter_panel,
     server,
     shaders_panel,
+    splines_panel,
     ui_helpers,
     world_panel,
 )
@@ -529,6 +530,13 @@ class BBT_OT_bake_terrain(Operator):
         if obj is not None:
             obj["bbt_heightmap"] = out_abs
             obj["bbt_terrain_size"] = float(hf.terrain_size)
+            # The rest of the build params, so a downstream grade (the Paths panel) can
+            # rebuild heightmap_terrain in place with a path without re-baking. resolution is
+            # the grid density actually built (structural), so it must be exact; height and
+            # sea level snapshot-restore on rebuild but are stored as the seed fallback.
+            obj["bbt_terrain_res"] = int(grid_res)
+            obj["bbt_terrain_height"] = float(hf.height)
+            obj["bbt_terrain_sea"] = float(hf.sea_level)
         if hf.emit_maps:
             base, ext = os.path.splitext(out_abs)
             for kind in ("flow", "wetness"):
@@ -652,9 +660,10 @@ class BBT_UL_terrain_ops(UIList):
 
 
 # Panel
-# Pipeline panel order (docs/UX-REDESIGN.md section 4): World=0, Terrain=1, Scatter=2,
-# Shaders=3, Atmosphere=4, Advanced/Bridge=5. Set via bl_order so the N-panel teaches the
-# terrain -> scatter -> shade -> world sequence regardless of registration order (P6). The
+# Pipeline panel order (docs/UX-REDESIGN.md section 4, + Paths per docs/SPLINES.md 5): World=0,
+# Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via bl_order so
+# the N-panel teaches the terrain -> paths -> scatter -> shade sequence regardless of registration
+# order (P6). The
 # dev/agent Bridge is demoted to a collapsed Advanced panel (decision B): it should not greet
 # an artist first, but stays in the tab for when an agent needs the live socket.
 class BBT_PT_panel(Panel):
@@ -663,7 +672,7 @@ class BBT_PT_panel(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 5
+    bl_order = 6
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -848,6 +857,7 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
     scatter_panel.register()
+    splines_panel.register()    # Paths: typed curves; drives terrain (grade) + scatter (clear)
     firmament_panel.register()  # owns and registers the shared world (bbt_env); subscribes its applier
     world_panel.register()      # World panel + bbt_world master toggles (drive every consumer)
     shaders_panel.register()    # reads bbt_env; subscribes its applier
@@ -865,6 +875,7 @@ def unregister():
     shaders_panel.unregister()
     world_panel.unregister()
     firmament_panel.unregister()
+    splines_panel.unregister()
     scatter_panel.unregister()
     del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):

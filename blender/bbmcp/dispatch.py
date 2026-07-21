@@ -7,6 +7,7 @@ _HANDLERS = {
     "build_geonodes": geonodes.build_geonodes,
     "make_proxies": proxies.make_proxies,
     "make_path": path_curve.make_path,
+    "drape_curve": path_curve.drape_curve,
     "reload_image": images.reload_image,
     "build_sky": world.build_sky,
     # "make_material": materials.make,    # later

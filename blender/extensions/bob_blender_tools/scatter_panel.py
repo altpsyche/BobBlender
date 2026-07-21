@@ -620,7 +620,7 @@ class BBT_PT_scatter(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 2  # pipeline stage 2 (docs/UX-REDESIGN.md section 4)
+    bl_order = 3  # pipeline stage 3, after Paths (docs/UX-REDESIGN.md section 4, docs/SPLINES.md 5)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
