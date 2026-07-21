@@ -16,7 +16,7 @@ Modifier inputs (editable knobs):
   patchy density for clumping; Strength 0 = off).
 - Curve (BobSplines C4, curve_mode clear/keep): reads a terrain curve mask (written by the
   curve overlay), curve_attr selecting which one -- bbt_curve_mask (the whole band, default) or
-  bbt_curve_edge (the shoulder/verge ring, R5, for an auto bank layer). clear clears the layer
+  bbt_curve_edge (the shoulder/verge ring, R5, for the panel's Verge mode). clear clears the layer
   along it, keep scatters only within it. No scn.path proximity: the overlay solved it once, this
   just reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.

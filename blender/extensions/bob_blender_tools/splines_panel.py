@@ -75,7 +75,7 @@ ROLES = {
         "path_width": 2.4, "path_falloff": 3.5, "path_depth": 0.3, "end_taper": 2.0,
         "shoulder_width": 0.0, "bank_slope": 1.0, "bank_bias": 0.0,
         "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
-        "surface_attr": "", "surface_channel": "a", "bank_kind": "grass",
+        "surface_attr": "", "surface_channel": "a",
     },
     "trail": {
         "label": "Trail", "icon": "IPO_LINEAR",
@@ -83,7 +83,7 @@ ROLES = {
         "path_width": 1.2, "path_falloff": 2.0, "path_depth": 0.15, "end_taper": 1.0,
         "shoulder_width": 0.0, "bank_slope": 1.2, "bank_bias": 0.0,
         "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
-        "surface_attr": "", "surface_channel": "a", "bank_kind": "grass",
+        "surface_attr": "", "surface_channel": "a",
     },
     "road": {
         "label": "Road", "icon": "MOD_CURVE",
@@ -91,7 +91,7 @@ ROLES = {
         "path_width": 4.5, "path_falloff": 4.0, "path_depth": 0.4, "end_taper": 2.0,
         "shoulder_width": 1.5, "bank_slope": 0.7, "bank_bias": 0.0,
         "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8, "surface_hard": 1.0,
-        "surface_attr": "bbt_curve_mask_b", "surface_channel": "b", "bank_kind": "plants",
+        "surface_attr": "bbt_curve_mask_b", "surface_channel": "b",
     },
 }
 
@@ -205,13 +205,17 @@ def _build_curve_overlay(terrain, curve, carve=True):
     server._ensure_path()
     from bbmcp.geonodes import build_geonodes_on_object
 
+    from . import scatter_panel
+
     params = {"curve": curve.name, "carve": carve, "path_width": role["path_width"],
               "path_falloff": role["path_falloff"], "path_depth": role["path_depth"],
               "end_taper": role.get("end_taper", 0.0),
               "shoulder_width": role.get("shoulder_width", 0.0),
               "bank_slope": role.get("bank_slope", 1.0),
               "bank_bias": role.get("bank_bias", 0.0),
-              "surface_attr": role.get("surface_attr", "")}
+              "surface_attr": role.get("surface_attr", ""),
+              # this curve's own edge ring, so a Verge scatter layer can target just this path.
+              "edge_attr": scatter_panel.edge_attr_name(curve)}
     build_geonodes_on_object(terrain, "curve_overlay", _overlay_name(curve), params)
     _position_overlay(terrain, curve)
     return "draped" if draped else "curve Z"
@@ -252,33 +256,6 @@ def _clear_scatter(context):
     return True
 
 
-def _bank_scatter(context, role):
-    """Auto-add (or refresh) ONE verge scatter layer for the emitter, a keep-only layer bound to the
-    overlay's bbt_curve_edge ring so it dresses the path shoulders, not the driving surface
-    (BobSplines R5). One layer covers every curve: bbt_curve_edge MAX-accumulates across overlays,
-    exactly as _clear_scatter reads the shared band. Idempotent: reuse the existing edge layer.
-    Returns True when it ran."""
-    kind = role.get("bank_kind")
-    scn_scatter = getattr(context.scene, "bbt_scatter", None)
-    emitter = getattr(scn_scatter, "emitter", None) if scn_scatter is not None else None
-    if not kind or emitter is None:
-        return False
-    from . import scatter_panel
-
-    coll = emitter.bbt_scatter_coll
-    existing = None
-    if coll is not None:
-        existing = next((o for o in coll.objects
-                         if o.bbt_scatter_layer.curve_mode == "keep"
-                         and o.bbt_scatter_layer.curve_attr == "bbt_curve_edge"), None)
-    name = existing.name if existing is not None \
-        else _unique_object_name(f"{emitter.name} Bank")
-    scatter_panel.create_layer(emitter, context.scene, kind, name, curve_mode="keep",
-                               curve_attr="bbt_curve_edge",
-                               camera=getattr(scn_scatter, "camera", None))
-    return True
-
-
 # Data model
 def _curve_poll(self, obj):
     return obj.type == "CURVE"
@@ -308,10 +285,6 @@ class BBT_Curve(PropertyGroup):
     do_scatter: BoolProperty(
         name="Scatter", default=True,
         description="Clear scattered assets along the curve on the Scatter emitter")
-    do_bank: BoolProperty(
-        name="Bank scatter", default=False,
-        description="Auto-add a verge scatter layer that keeps to the path shoulders "
-                    "(reads the overlay's bbt_curve_edge ring); off by default")
 
 
 class BBT_CurveEntry(PropertyGroup):
@@ -437,8 +410,8 @@ class BBT_OT_curve_build(Operator):
         did = []
 
         # Any channel needs the overlay's masks; build it once (carve only when the Terrain channel
-        # is on, else it is a mask-only overlay driving material/scatter/bank).
-        if cfg.do_terrain or cfg.do_material or cfg.do_scatter or cfg.do_bank:
+        # is on, else it is a mask-only overlay driving material/scatter/verge).
+        if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
             if terrain is None:
                 self.report({"WARNING"}, "Pick a terrain mesh")
             else:
@@ -456,12 +429,6 @@ class BBT_OT_curve_build(Operator):
                 did.append("cleared scatter")
             else:
                 self.report({"WARNING"}, "Scatter clear needs a Scatter emitter with layers")
-
-        if cfg.do_bank:
-            if _bank_scatter(context, role):
-                did.append("bank scatter")
-            else:
-                self.report({"WARNING"}, "Bank scatter needs a Scatter emitter")
 
         context.scene.bbt_curves.summary = \
             f"{role['label']}: {', '.join(did) or 'nothing (check channels)'}"
@@ -486,7 +453,7 @@ class BBT_OT_curve_build_all(Operator):
             if curve is None:
                 continue
             cfg = curve.bbt_curve
-            if cfg.do_terrain or cfg.do_material or cfg.do_scatter or cfg.do_bank:
+            if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
                 _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
                 built += 1
         # Material: one surface layer per DISTINCT role surface class among the do_material curves
@@ -510,12 +477,6 @@ class BBT_OT_curve_build_all(Operator):
         if any(e.curve is not None and e.curve.bbt_curve.do_scatter for e in scn.curves) \
                 and _clear_scatter(context):
             extra.append("cleared scatter")
-        # One shared bank layer reads the accumulated bbt_curve_edge, so a single build covers every
-        # do_bank curve (representative role: the first one that asks for it).
-        bank_role = next((ROLES.get(e.curve.bbt_curve.role, ROLES["dirt_path"]) for e in scn.curves
-                          if e.curve is not None and e.curve.bbt_curve.do_bank), None)
-        if bank_role is not None and _bank_scatter(context, bank_role):
-            extra.append("bank scatter")
         note = (", " + ", ".join(extra)) if extra else ""
         scn.summary = f"built {built} curve(s){note}"
         self.report({"INFO"}, f"Built {built} curve(s) on {terrain.name}{note}")
@@ -615,9 +576,11 @@ class BBT_PT_paths_active(Panel):
         box.prop(cfg, "do_terrain")
         box.prop(cfg, "do_material")
         box.prop(cfg, "do_scatter")
-        box.prop(cfg, "do_bank")
         ui_helpers.structural_action(box, "bob_blender_tools.curve_build",
                                      note="drapes + carves, adds the surface band, clears scatter")
+        tip = box.row()
+        tip.enabled = False
+        tip.label(text="Verge plants: a Scatter layer, Curve = Verge (path edge)", icon="INFO")
 
         # Live group (P3): the cross-section knobs live on the curve's overlay modifier (the single
         # owner), edited in place. They appear once this curve has carved the terrain.

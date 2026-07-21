@@ -401,13 +401,17 @@ so confirm they build on the first Reload Builders.
   the cut/fill depth to hold `Bank Slope`, capped at 3x falloff), `Bank Bias` skews it to one side
   (via `side`). Roles: road gets shoulders + a gentler bank; dirt/trail near-symmetric. `tangent` is
   computed internally for `side` and not yet surfaced (no other consumer).
-- **R5 per-role surfaces + auto bank scatter**: a SECOND material curve channel (`Curve B
+- **R5 per-role surfaces + verge scatter**: a SECOND material curve channel (`Curve B
   Strength`/`Curve B Hard` off `bbt_curve_mask_b`) lets a paved road key its own layer distinct from
   dirt (`apply_curve_surface(channel="a"|"b")`; Build All keys one layer per distinct class). The
-  overlay writes `bbt_curve_edge` (the shoulder ring); a new `do_bank` channel auto-adds ONE
-  keep-only verge scatter layer reading it (via `scatter_panel.create_layer`, the factored
-  create+build path shared with Add; the `scatter` recipe gained a `curve_attr` param). Junction Z
-  (risk #9) stays noted-as-future.
+  each curve's overlay writes its own `bbt_curve_edge_<curve>` (the shoulder ring); scatter gets a
+  **Verge (path edge)** `curve_mode` that keeps a layer to that ring, controlled entirely in the
+  Scatter panel like any scatter layer (no auto-created layer, no cross-panel magic -- an earlier
+  auto-`do_bank` toggle was cut for readability). Verge takes a Curve, like Along: it follows THAT
+  path's ring; with none bound it reads a name nothing writes, so it scatters nothing (empty = off,
+  not "every path" -- deliberately, so the pick is explicit). The `scatter` recipe gained a
+  `curve_attr` param the Verge mode routes via `scatter_panel.edge_attr_name` (derived from the
+  curve name on both sides at build). Junction Z (risk #9) stays noted-as-future.
 
 ## 8. Open questions
 

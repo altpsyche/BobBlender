@@ -10,10 +10,10 @@ paths stacks instead of being limited to a single inline path. It:
    slope-aware (R4): it widens with the cut/fill depth so a bench on a slope ramps out at Bank Slope
    instead of cliffing (docs/SPLINES.md 9 #11), and Bank Bias skews it to one side of the curve.
 2. Writes the curve mask attributes the shader and scatter READ instead of re-solving proximity
-   (docs/SPLINES.md 9 #2 / #4): bbt_curve_mask (0..1, 1 on the band), bbt_curve_edge (the shoulder/
-   embankment ring only, for auto edge-scatter, R5), an optional per-role surface class attribute
-   (R5), and bbt_curve_dist (the XY distance). The masks MAX-accumulate across curves, so
-   overlapping paths add rather than overwrite (a prior overlay's value is read back and maxed).
+   (docs/SPLINES.md 9 #2 / #4): bbt_curve_mask (0..1, 1 on the band), this curve's own edge ring
+   under edge_attr (the shoulder ring, for a Verge scatter layer, R5), an optional per-role surface
+   class attribute (R5), and bbt_curve_dist (the XY distance). bbt_curve_mask MAX-accumulates across
+   curves, so overlapping paths add rather than overwrite (a prior overlay's value is read and maxed).
 
 Cross-section knobs live ONCE here, on the overlay modifier, snapshot-restored across a rebuild
 like any GN knob (the single-owner decision): nothing downstream duplicates a width/depth knob.
@@ -161,27 +161,31 @@ def build(ng, out, params: dict):
     # bbt_curve_mask (the geometric band scatter and the shared surface layer read) MAX-accumulated.
     geo = _store_max(ng, carved, "bbt_curve_mask", onpath, (1560, 0))
 
-    # bbt_curve_edge (R5): the shoulder/embankment ring only -- onpath weighted by a core-off mask
-    # that is 0 on the driving surface (dist < Path Width) and 1 beyond the flat bench -- so an auto
-    # edge-scatter layer keeps to the verge, not the road surface.
+    # Curve edge ring (R5): the shoulder/embankment only -- onpath weighted by a core-off mask that
+    # is 0 on the driving surface (dist < Path Width) and 1 beyond the flat bench. Stored under THIS
+    # curve's own attribute (scatter_panel.edge_attr_name), so a Verge scatter layer targets one
+    # path's verge; only this curve's overlay writes it, so it holds this ring alone. A Verge layer
+    # with no curve bound reads a name nothing writes, so it scatters nothing (it needs a path).
     core_outer = math_node(ng, "MAXIMUM", inner, math_node(ng, "ADD", gi.outputs["Path Width"], 0.1, (1560, 380)), (1740, 380))
     edge = math_node(ng, "MULTIPLY", onpath,
                      smooth_falloff(ng, dist, gi.outputs["Path Width"], core_outer, (1740, 460)), (1920, 440))
-    geo = _store_max(ng, geo, "bbt_curve_edge", edge, (2100, 0))
+    edge_attr = params.get("edge_attr", "")
+    if edge_attr:
+        geo = _store_max(ng, geo, edge_attr, edge, (2100, 0))
 
     # bbt_curve_<class> (R5): the per-role surface band, so a distinct role (a paved road) keys its
     # own terrain-material layer instead of sharing one look with dirt paths. Written only when the
     # role asks for a non-shared class (else the shared bbt_curve_mask above is the surface too).
     surface_attr = params.get("surface_attr", "")
     if surface_attr and surface_attr != "bbt_curve_mask":
-        geo = _store_max(ng, geo, surface_attr, onpath, (2280, 0))
+        geo = _store_max(ng, geo, surface_attr, onpath, (2460, 0))
 
     # bbt_curve_dist (raw, per curve): the XY distance to the centreline, for a consumer that wants
     # to threshold the band itself. Overlap is last-writer (an accepted v1 artifact, section 9 #9).
     store_dist = nodes.new("GeometryNodeStoreNamedAttribute")
     store_dist.data_type = "FLOAT"
     store_dist.domain = "POINT"
-    store_dist.location = (2460, 0)
+    store_dist.location = (2640, 0)
     links.new(geo, store_dist.inputs["Geometry"])
     store_dist.inputs["Name"].default_value = "bbt_curve_dist"
     links.new(dist, store_dist.inputs["Value"])

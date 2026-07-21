@@ -85,11 +85,16 @@ section 7 "Polish pass"). Static-gated (py_compile + reference grep); NOT yet Bl
 - R4 road shape (risk #11): `curve_field` gains `side`; the overlay adds `Shoulder Width`, a
   slope-aware embankment (`Bank Slope`, capped at 3x falloff), and `Bank Bias` (skew by side). Roles
   seed them. `tangent` is computed internally for `side`, not surfaced (no other consumer yet).
-- R5 per-role surfaces + auto bank scatter: a SECOND material curve channel (Curve B off
+- R5 per-role surfaces + verge scatter: a SECOND material curve channel (Curve B off
   `bbt_curve_mask_b`) lets a road key its own layer vs dirt (`apply_curve_surface(channel=)`). The
-  overlay writes `bbt_curve_edge` (shoulder ring); a `do_bank` channel auto-adds one keep-only verge
-  layer reading it via the factored `scatter_panel.create_layer` (shared with Add; `scatter` recipe
-  gained `curve_attr`). Junction Z (risk #9) stays noted-as-future.
+  each curve's overlay writes its own `bbt_curve_edge_<curve>` (shoulder ring); scatter gets a
+  **Verge (path edge)** curve_mode that keeps a layer to that ring, controlled in the Scatter panel
+  like any layer. Verge takes a Curve (like Along) and follows THAT path's ring; with none bound it
+  reads a name nothing writes, so it scatters nothing (empty = off, not "every path" -- Siva's call,
+  so the pick is explicit). The earlier auto-`do_bank` toggle (a hidden auto-created layer) was CUT
+  for readability, per Siva: verge is now just a scatter mode, no cross-panel magic. `scatter`
+  recipe gained `curve_attr`; Verge routes it via `scatter_panel.edge_attr_name(curve)`. Junction Z
+  (risk #9) stays noted-as-future.
 
 VERIFY watch: the five new curve GN nodes (Spline Parameter / Spline Length / Curve Tangent / Sample
 Nearest / Sample Index) are standard but NEW to this repo, so confirm they build on first Reload
