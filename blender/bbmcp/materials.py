@@ -661,7 +661,9 @@ def _vscale(g, vec, scalar, loc):
 # access, so an addon upgrade refreshes the interface instead of reusing a group that
 # lacks new sockets -- which otherwise KeyErrors when the caller wires them, or
 # silently renders the old behaviour.
-S_GROUP_VER = 1
+# v2 (BobSplines C5): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
+# bbt_curve_wet damp-bed read, so existing cached groups must rebuild to pick both up.
+S_GROUP_VER = 2
 
 
 def _cached_group(name):
@@ -971,6 +973,19 @@ def surface_master_group():
     return g
 
 
+# Principled inputs a master group may drive BEYOND Base Color / Roughness / Metallic (the water
+# master, C5.3). Wired only when the master exposes the matching OUTPUT, so surface and terrain
+# masters (which do not) are byte-identical. The Principled transmission socket was renamed across
+# Blender versions (Transmission -> Transmission Weight in 4.x), so each master output maps to a
+# list of candidate BSDF socket names and the first that exists wins.
+_WRAPPER_EXTRA_OUTPUTS = (
+    ("Transmission", ("Transmission Weight", "Transmission")),
+    ("IOR", ("IOR",)),
+    ("Alpha", ("Alpha",)),
+    ("Normal", ("Normal",)),
+)
+
+
 def _build_wrapper(mat_name, master, sig, wire):
     """Build (or rebuild) a thin wrapper material: one master group node ("Master") feeding
     one Principled BSDF and the Output. `sig` is a structure signature stored on the material;
@@ -1004,6 +1019,15 @@ def _build_wrapper(mat_name, master, sig, wire):
     nt.links.new(grp.outputs["Base Color"], bsdf.inputs["Base Color"])
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
+    # Water master (C5.3): also drive Transmission / IOR / Alpha / Normal when the master exposes
+    # them. A no-op for surface / terrain masters (their groups carry no such outputs).
+    for out_name, candidates in _WRAPPER_EXTRA_OUTPUTS:
+        src = grp.outputs.get(out_name)
+        if src is None:
+            continue
+        target = next((bsdf.inputs.get(c) for c in candidates if bsdf.inputs.get(c) is not None), None)
+        if target is not None:
+            nt.links.new(src, target)
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     _restore_group_inputs(grp, snap)
     if wire is not None:
@@ -1099,11 +1123,12 @@ def bobshade_material(mat, variation=0.15):
 
 
 def master_type(mat):
-    """The BobShader master kind of a material: 'surface', 'terrain', or None when it is not a
-    BobShader. A BobShader is any material whose node tree carries a "Master" group node whose
-    tree is S_SurfaceMaster or S_TerrainMaster (the identity the redesign keys off, replacing the
-    old stored material_name). Covers wrapper materials (surface_material/terrain_material) and
-    converted asset materials (bobshade_material), which all add that Master node."""
+    """The BobShader master kind of a material: 'surface', 'terrain', 'water', or None when it is
+    not a BobShader. A BobShader is any material whose node tree carries a "Master" group node whose
+    tree is S_SurfaceMaster, S_TerrainMaster, or S_WaterMaster (the identity the redesign keys off,
+    replacing the old stored material_name). Covers wrapper materials (surface_material /
+    terrain_material / water_material) and converted asset materials (bobshade_material), which all
+    add that Master node."""
     if mat is None or not mat.use_nodes or mat.node_tree is None:
         return None
     node = mat.node_tree.nodes.get("Master")
@@ -1113,6 +1138,8 @@ def master_type(mat):
         return "surface"
     if node.node_tree.name == TERRAIN_MASTER:
         return "terrain"
+    if node.node_tree.name == WATER_MASTER:
+        return "water"
     return None
 
 
@@ -1133,6 +1160,8 @@ def new_bobshader(obj, master="surface"):
         # tuned inputs), and only when the drainage maps are present to key off.
         if fresh and (flow is not None or wet is not None):
             _autoconfig_riverbed(mat)
+    elif master == "water":
+        mat = water_material(obj.name)
     else:
         mat = surface_material(obj.name)
     assign_material(obj, mat)
@@ -1268,6 +1297,24 @@ def apply_curve_surface(mat, base_color, roughness=0.85, height_bias=0.3, hard_e
     return slot
 
 
+def apply_curve_wet(mat, wetness=0.6):
+    """Make a terrain BobShader read damp along a river's channel (BobSplines C5.4). The curve
+    overlay writes bbt_curve_wet into the terrain's Wetness Map (MAX-accumulated inside
+    terrain_master_group); this raises Terrain Wetness -- the multiplier that wetness path is gated
+    by -- so the bed and banks read wet and glossy, weather-amplified. Idempotent and non-lowering:
+    it never drops an existing higher Terrain Wetness (a riverbed autoconfig or a wetter role wins),
+    so re-Build is safe. Returns True when applied, or None when mat is not a terrain BobShader (or
+    an older master group without the wet path -- rebuild the material)."""
+    grp = mat.node_tree.nodes.get("Master") if mat and mat.use_nodes and mat.node_tree else None
+    if grp is None or master_type(mat) != "terrain":
+        return None
+    sock = grp.inputs.get("Terrain Wetness")
+    if sock is None:
+        return None
+    sock.default_value = max(sock.default_value, float(wetness))
+    return True
+
+
 def surface_material(mat_name, texture_set=None):
     """A single-surface wrapper (S_SurfaceMaster), optionally with a texture set assigned.
 
@@ -1296,6 +1343,179 @@ def surface_material(mat_name, texture_set=None):
             grp.inputs["Metallic"].default_value = 0.0
 
     return _build_wrapper(mat_name, master, sig, wire)
+
+
+# BobShaders water master (S_WaterMaster, BobSplines C5.3). The third BobShader kind, for the river
+# ribbons curve_water lays in a carved channel. It reads the ribbon's baked bbt_flow / bbt_foam /
+# bbt_shore attributes and produces a flowing, depth-tinted, foaming, transparent surface that
+# freezes to ice below 0 C. Like the other masters it ends in S_Weather, so it inherits the shared
+# wetness/frost/snow layer and the live env feed; the freeze reuses that below-freezing frost path
+# rather than adding a new system. Beyond Base Color/Roughness/Metallic it also outputs Transmission,
+# IOR, Normal, and Alpha, which the widened _build_wrapper drives into the Principled BSDF.
+WATER_MASTER = "S_WaterMaster"
+_WATER_SHALLOW = (0.16, 0.34, 0.36, 1.0)  # near-shore tint
+_WATER_DEEP = (0.02, 0.09, 0.13, 1.0)     # deep body
+_WATER_FOAM = (0.92, 0.95, 0.97, 1.0)
+
+
+def water_master_group():
+    """The water-surface master (see the section comment). Ripples scroll live: a frame-driven
+    Value node advects a world-space noise along bbt_flow, so the surface animates with no bake."""
+    g, _fresh = _cached_group(WATER_MASTER)
+    if not _fresh:
+        return g
+    _gin(g, "Shallow Color", "NodeSocketColor", _WATER_SHALLOW)
+    _gin(g, "Deep Color", "NodeSocketColor", _WATER_DEEP)
+    _gin(g, "Depth", "NodeSocketFloat", 1.5, 0.0)
+    _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
+    _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
+    _gin(g, "Transmission", "NodeSocketFloat", 0.92, 0.0, 1.0)
+    _gin(g, "Flow Speed", "NodeSocketFloat", 0.06, 0.0)
+    _gin(g, "Ripple Strength", "NodeSocketFloat", 0.15, 0.0, 2.0)
+    _gin(g, "Ripple Scale", "NodeSocketFloat", 1.8, 0.0)
+    _gin(g, "Foam Color", "NodeSocketColor", _WATER_FOAM)
+    _gin(g, "Foam Amount", "NodeSocketFloat", 1.0, 0.0, 2.0)
+    _gin(g, "Edge Fade", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    # Weather passthrough (as surface_master), so the shared S_Weather layer works. Snow defaults
+    # OFF for water: flowing water sheds snow, and the winter look comes from the frost/freeze path.
+    _gin(g, "Snow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Use Attribute", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
+    _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
+    _gin(g, "Altitude", "NodeSocketFloat", 0.0)
+    _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    for _wn, _wd in _WEATHER_EXTRA:
+        _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
+    _gout(g, "Base Color", "NodeSocketColor")
+    _gout(g, "Roughness", "NodeSocketFloat")
+    _gout(g, "Metallic", "NodeSocketFloat")
+    _gout(g, "Transmission", "NodeSocketFloat")
+    _gout(g, "IOR", "NodeSocketFloat")
+    _gout(g, "Alpha", "NodeSocketFloat")
+    _gout(g, "Normal", "NodeSocketVector")
+
+    gi = g.nodes.new("NodeGroupInput")
+    gi.location = (-1400, 0)
+    go = g.nodes.new("NodeGroupOutput")
+    go.location = (900, 0)
+    I, O = gi.outputs, go.inputs
+
+    # Live env: Temperature drives the freeze term (shared group, driven from bbt_env by the panel;
+    # 15 C default when Firmament is absent, so cold -> 0 and the water never freezes standalone).
+    env = g.nodes.new("ShaderNodeGroup")
+    env.node_tree = env_state_group()
+    env.location = (-1400, -560)
+    cold = _mrange(g, env.outputs["Temperature"], 0.0, -6.0, 0.0, 1.0, (-1200, -560))  # 0 warm, 1 icy
+    warm = _mmath(g, "SUBTRACT", 1.0, cold, (-1020, -560))
+
+    # Ribbon attributes (curve_water stores these on the water mesh).
+    def _geo_attr(name, y):
+        n = g.nodes.new("ShaderNodeAttribute")
+        n.attribute_type = "GEOMETRY"
+        n.attribute_name = name
+        n.location = (-1400, y)
+        return n
+    flow = _geo_attr("bbt_flow", 380)
+    foam_a = _geo_attr("bbt_foam", 240)
+    shore_a = _geo_attr("bbt_shore", 100)
+
+    # Frame-driven time (mirrors _install_env_drivers, but `frame` is a built-in driver variable so
+    # no scene target is needed): ripples scroll without a bake. Installed once on the fresh group.
+    tval = g.nodes.new("ShaderNodeValue")
+    tval.name = tval.label = "water_time"
+    tval.location = (-1400, -260)
+    try:
+        fc = tval.outputs[0].driver_add("default_value")
+        fc = fc[0] if isinstance(fc, list) else fc
+        fc.driver.type = "SCRIPTED"
+        fc.driver.expression = "frame"
+    except (RuntimeError, TypeError):
+        pass  # no anim context (headless build): ripples hold at frame 0, the surface still renders
+    time = _mmath(g, "MULTIPLY", tval.outputs[0], I["Flow Speed"], (-1200, -260))
+
+    # Advect a world-space noise along the flow: pos - flow*time, plus a slow 4D evolution so the
+    # ripples change shape while drifting (no scroll-reset pop because the noise field is infinite).
+    geo = g.nodes.new("ShaderNodeNewGeometry")
+    geo.location = (-1400, 560)
+    flow_off = _vscale(g, flow.outputs["Vector"], time, (-1020, 300))
+    adv = g.nodes.new("ShaderNodeVectorMath")
+    adv.operation = "SUBTRACT"
+    adv.location = (-820, 460)
+    g.links.new(geo.outputs["Position"], adv.inputs[0])
+    g.links.new(flow_off, adv.inputs[1])
+    noise = g.nodes.new("ShaderNodeTexNoise")
+    noise.noise_dimensions = "4D"
+    noise.location = (-640, 460)
+    noise.inputs["Detail"].default_value = 3.0
+    noise.inputs["Roughness"].default_value = 0.5
+    g.links.new(adv.outputs["Vector"], noise.inputs["Vector"])
+    g.links.new(I["Ripple Scale"], noise.inputs["Scale"])
+    g.links.new(_mmath(g, "MULTIPLY", time, 0.3, (-820, 300)), noise.inputs["W"])
+
+    # Bump the surface normal by the noise, weakened to zero as it freezes (ice reads glassy-flat).
+    ripple = _mmath(g, "MULTIPLY", I["Ripple Strength"], warm, (-460, 300))
+    bump = g.nodes.new("ShaderNodeBump")
+    bump.location = (-100, 420)
+    g.links.new(ripple, bump.inputs["Strength"])
+    g.links.new(noise.outputs["Fac"], bump.inputs["Height"])
+
+    # Depth colour: deep mid-channel (shore 0), shallow near the banks (shore 1). deepness * Depth,
+    # clamped, so a higher Depth pushes the deep colour further out toward the banks.
+    deepness = _mmath(g, "SUBTRACT", 1.0, shore_a.outputs["Fac"], (-1000, 100))
+    dt = g.nodes.new("ShaderNodeMath")
+    dt.operation = "MULTIPLY"
+    dt.use_clamp = True
+    dt.location = (-820, 100)
+    g.links.new(deepness, dt.inputs[0])
+    g.links.new(I["Depth"], dt.inputs[1])
+    col = _mixcol(g, dt.outputs["Value"], I["Shallow Color"], I["Deep Color"], (-620, 60))
+
+    # Foam on top: white where bbt_foam is high (banks + rapids), scaled by Foam Amount.
+    foam = g.nodes.new("ShaderNodeMath")
+    foam.operation = "MULTIPLY"
+    foam.use_clamp = True
+    foam.location = (-620, 240)
+    g.links.new(foam_a.outputs["Fac"], foam.inputs[0])
+    g.links.new(I["Foam Amount"], foam.inputs[1])
+    col = _mixcol(g, foam.outputs["Value"], col, I["Foam Color"], (-420, 120))
+    # Base roughness: glassy water, rougher where foam churns.
+    rough = _lerp(g, I["Water Roughness"], 0.6, foam.outputs["Value"], (-420, -120))
+
+    # Weather layer: inherit wetness/frost/snow. Its below-freezing frost term whitens + roughens
+    # the albedo, so the ice look rides in here for free; metallic stays 0.
+    weather = g.nodes.new("ShaderNodeGroup")
+    weather.node_tree = weather_group()
+    weather.location = (-160, -300)
+    g.links.new(col, weather.inputs["Base Color"])
+    g.links.new(rough, weather.inputs["Roughness"])
+    weather.inputs["Metallic"].default_value = 0.0
+    for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
+                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
+        g.links.new(I[name], weather.inputs[name])
+
+    # Transmission collapses to opaque as it freezes; IOR passes through; Alpha optionally fades the
+    # ribbon toward the banks (Edge Fade, default off) so the shoreline blends into the bed.
+    trans = _mmath(g, "MULTIPLY", I["Transmission"], warm, (300, -420))
+    alpha = _mmath(g, "SUBTRACT", 1.0,
+                   _mmath(g, "MULTIPLY", shore_a.outputs["Fac"], I["Edge Fade"], (300, -560)),
+                   (480, -560))
+
+    g.links.new(weather.outputs["Base Color"], O["Base Color"])
+    g.links.new(weather.outputs["Roughness"], O["Roughness"])
+    g.links.new(weather.outputs["Metallic"], O["Metallic"])
+    g.links.new(trans, O["Transmission"])
+    g.links.new(I["IOR"], O["IOR"])
+    g.links.new(alpha, O["Alpha"])
+    g.links.new(bump.outputs["Normal"], O["Normal"])
+    return g
+
+
+def water_material(mat_name):
+    """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines C5.3). The
+    widened _build_wrapper drives the master's Transmission / IOR / Alpha / Normal into the
+    Principled BSDF on top of the usual Base Color / Roughness / Metallic. get-or-create, so a
+    re-Build keeps tuned inputs."""
+    return _build_wrapper(mat_name, water_master_group(), "water", None)
 
 
 # BobShaders terrain master (S2). S_TerrainMaster blends an ordered stack of surface layers
@@ -1591,8 +1811,24 @@ def terrain_master_group():
     g.links.new(acc_col, weather.inputs["Base Color"])
     g.links.new(acc_rough, weather.inputs["Roughness"])
     g.links.new(acc_metal, weather.inputs["Metallic"])
+    # Damp bed (BobSplines C5.4): a river/stream overlay writes bbt_curve_wet along its channel; MAX
+    # it into the Wetness Map so the bed and banks read damp (materials.apply_curve_wet raises
+    # Terrain Wetness, the multiplier that path is gated by, so it shows). An absent attribute reads
+    # 0, so a terrain with no river is byte-identical; weather still amplifies it (rain raises env
+    # wetness in S_Weather, and wetf takes the MAX of the terrain map and the weather wetness).
+    cwet = g.nodes.new("ShaderNodeAttribute")
+    cwet.attribute_type = "GEOMETRY"
+    cwet.attribute_name = "bbt_curve_wet"
+    cwet.location = (fx + 40, -900)
+    wetmap = g.nodes.new("ShaderNodeMath")
+    wetmap.operation = "MAXIMUM"
+    wetmap.use_clamp = True
+    wetmap.location = (fx + 220, -900)
+    g.links.new(I["Wetness Map"], wetmap.inputs[0])
+    g.links.new(cwet.outputs["Fac"], wetmap.inputs[1])
+    g.links.new(wetmap.outputs["Value"], weather.inputs["Wetness Map"])
     for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", "Wetness Map", "Terrain Wetness",
+                 "Altitude", "Altitude Falloff", "Terrain Wetness",
                  *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):

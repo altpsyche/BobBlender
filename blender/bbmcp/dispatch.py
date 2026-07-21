@@ -8,6 +8,7 @@ _HANDLERS = {
     "make_proxies": proxies.make_proxies,
     "make_path": path_curve.make_path,
     "drape_curve": path_curve.drape_curve,
+    "inspect_river": path_curve.inspect_river,  # read-only diagnostic (float check)
     "reload_image": images.reload_image,
     "build_sky": world.build_sky,
     # "make_material": materials.make,    # later

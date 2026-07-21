@@ -70,6 +70,11 @@ _WEATHER_SEASON = ["Dust Amount", "Moss Amount"]
 _SHELL_KNOBS = ["Thickness", "Smooth"]
 SNOW_SHELL_MOD = "BOB_SnowShell"
 
+# Water master knobs (BobSplines C5.3), split colour/optics from the flow/foam animation.
+_WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Water Roughness", "IOR",
+               "Transmission", "Edge Fade"]
+_WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Foam Color", "Foam Amount"]
+
 # Surface presets: named parameter sets applied to the wrapper's Master inputs (like the
 # scatter layer types and the cloud presets). A Blender-side dict; nothing else reads it.
 # S1 sets the solid-colour look and per-instance variation; the weather knobs stay at
@@ -478,7 +483,9 @@ class BBT_OT_shaders_new(Operator):
         name="Master",
         items=[("surface", "Surface", "Single-surface master for props, rocks, vegetation"),
                ("terrain", "Terrain", "Multi-layer terrain master (blends layers by slope, "
-                                      "altitude, noise, paint with a height-aware blend)")],
+                                      "altitude, noise, paint with a height-aware blend)"),
+               ("water", "Water", "Water-surface master for river/stream ribbons: flowing, "
+                                  "depth-tinted, foaming, transparent, freezes below 0 C")],
         default="surface")
 
     def execute(self, context):
@@ -899,7 +906,8 @@ def _draw_layer_inputs(layout, node, i, names):
 
 
 # Per-row slot status icons and labels by detected master type.
-_MASTER_TAG = {"surface": ("MATERIAL", "Surface"), "terrain": ("MESH_GRID", "Terrain")}
+_MASTER_TAG = {"surface": ("MATERIAL", "Surface"), "terrain": ("MESH_GRID", "Terrain"),
+               "water": ("MATFLUID", "Water")}
 
 
 class BBT_PT_shaders(Panel):
@@ -1093,6 +1101,32 @@ class BBT_PT_shaders_surface(Panel):
             _draw_inputs(layout, node, _MACRO_KNOBS)
 
 
+class BBT_PT_shaders_water(Panel):
+    bl_label = "Water"
+    bl_idname = "BBT_PT_shaders_water"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_shaders"
+
+    @classmethod
+    def poll(cls, context):
+        return _materials().master_type(_editing_material(context)) == "water"
+
+    def draw(self, context):
+        layout = self.layout
+        node = _master_node(_editing_material(context))
+        if node is None:
+            return
+        layout.label(text="Depth colour + optics", icon="MATFLUID")
+        _draw_inputs(layout, node, _WATER_LOOK)
+        layout.label(text="Flow + foam (animated, needs playback)", icon="FORCE_FORCE")
+        _draw_inputs(layout, node, _WATER_FLOW)
+        cap = layout.row()
+        cap.enabled = False
+        cap.label(text="Freezes to ice below 0 C (Weather sub-panel)")
+
+
 class BBT_PT_shaders_terrain(Panel):
     bl_label = "Terrain Layers"
     bl_idname = "BBT_PT_shaders_terrain"
@@ -1254,6 +1288,7 @@ CLASSES = (
     BBT_OT_shaders_snow_shell_remove,
     BBT_PT_shaders,
     BBT_PT_shaders_surface,
+    BBT_PT_shaders_water,
     BBT_PT_shaders_terrain,
     BBT_PT_shaders_terrain_masks,
     BBT_PT_shaders_weather,

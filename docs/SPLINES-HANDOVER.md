@@ -1,4 +1,4 @@
-# Handover: BobSplines (curve system) — continue after C4
+# Handover: BobSplines (curve system) — continue after C5
 
 Status: 2026-07-21, branch fix/audit-remediation. For a fresh chat picking up BobSplines. The
 durable spec is docs/SPLINES.md (phase plan, file maps at section 7, risk review at section 9);
@@ -8,11 +8,15 @@ em-dashes, no emojis), per the repo convention.
 ## Repo and environment
 - /home/siva/dev/BobBlender — centralised Blender hub, Blender 5.2 LTS, Git + LFS.
 - Siva is a technical artist: GN, materials, tools, rendering; not modeling.
-- CONSTRAINT: there is NO Blender binary or live MCP bridge in the CLI env, so the addon (imports
-  bpy) cannot be registered or drawn headless. The static gate is `python -m py_compile` on every
-  touched file, plus grepping that removed/renamed operator idnames and class names have no
-  dangling refs, plus a pydantic round-trip for new MCP ops. Visual verification means Siva
-  reloads the addon in Blender. Siva is at the keyboard in Blender and reports back.
+- TESTING (updated 2026-07-21): there IS a Blender binary at
+  `~/.steam/steam/steamapps/common/Blender/blender` (5.2), so bbmcp recipes/ops CAN be run and
+  MEASURED headless -- `blender --background --factory-startup --python <script>.py`, importing
+  bbmcp directly (no addon register needed; the recipes don't need it). This is how the C5 water
+  geometry was verified (build terrain/curve/overlay/water, then evaluate meshes + ray_cast to
+  measure Z relationships). A live MCP bridge into Siva's open session also exists (build_live over
+  the socket) but only runs whitelisted bbmcp ops and needs a manual "Reload Builders" to pick up
+  code changes. The static gate (py_compile + reference grep + pydantic round-trip) still runs
+  first; the SHADER LOOK still needs Siva's eyes (headless can't judge the render).
 - 5.2 API GOTCHA (bit us twice): some Geometry Nodes that had a `mode` enum PROPERTY now expose it
   as a menu SOCKET instead. `GeometryNodeResampleCurve.mode` and `GeometryNodeCurveToPoints.mode`
   both raise AttributeError. Set such modes defensively (try/except) and rely on the node default,
@@ -21,25 +25,53 @@ em-dashes, no emojis), per the repo convention.
   have Siva run a 3-line probe in Blender's console to report the socket API rather than guessing.
 
 ## What BobSplines is
-A curve gets a ROLE (dirt path, trail, road, ... rivers later) that drives four channels from ONE
-curve: terrain shape (a cross-section carve), terrain material (a surface band), scatter (clear /
-keep-only / along-curve), and water (rivers, deferred). LIVE Geometry Nodes by default; a BAKED
-venv carve is a later optional commit step. Panel label "Paths", module splines_panel.py.
+A curve gets a ROLE (dirt path, trail, road, river, stream) that drives four channels from ONE
+curve: terrain shape (a cross-section carve), terrain material (a surface band or damp bed), scatter
+(clear / keep-only / along-curve), and water (a river's flowing surface). LIVE Geometry Nodes by
+default; a BAKED venv carve is a later optional commit step. Panel label "Paths", module
+splines_panel.py.
 
 ## Confirmed Tier-1 decisions (with Siva, do not relitigate)
-1. Scope C1-C3 (and C4) to the FOLLOW-TERRAIN family only: dirt_path, trail, road. Rivers and
-   streams are DEFERRED until the monotonic-descending-Z solve and the carve-vs-Curve-to-Mesh-ribbon
-   question (docs/SPLINES.md section 9 #1 and #3) are settled. Berm/ridge is also out of the family.
-2. Single-owner knobs: bbt_curve (on the curve object) holds ONLY structural fields (role + which
-   channels are on). The cross-section knobs live ONCE on the curve's overlay modifier
-   (snapshot-restored). Consumers (material, scatter) READ the overlay's baked bbt_curve_mask
-   attribute rather than duplicating a knob or re-solving proximity.
+1. C1-C4 scoped to the FOLLOW-TERRAIN family (dirt_path, trail, road); rivers/streams were DEFERRED
+   until the monotonic-descending-Z solve and the carve-vs-Curve-to-Mesh-ribbon question
+   (docs/SPLINES.md section 9 #1 and #3) were settled. Both are now settled and the IMPOSE family
+   (river/stream) shipped in C5 (see the C5 section below). Berm/ridge is still out of the family.
+2. Single-owner knobs: the cross-section params have ONE owner. (Originally the overlay modifier,
+   snapshot-restored; SUPERSEDED 2026-07-22 -- the owner is now bbt_curve on the curve object, see
+   the UX unification below. Same principle, cleaner: no snapshot dance, one source, live-synced to
+   both the carve and the water.) Consumers (material, scatter) still READ the overlay's baked
+   bbt_curve_mask attribute rather than duplicating a knob or re-solving proximity.
 
-## Status: C1-C4 DONE, committed, Blender-verified
-Committed on fix/audit-remediation (commits "Spline System" 9e38911, "improved spline system"
-74ff5ac). Working tree clean. Siva verified in Blender: the carved path is smooth, along-curve
-instances sit on the terrain and stand upright. Detailed per-phase file maps are in docs/SPLINES.md
-section 7; the short version:
+## UX unification + live params (2026-07-22, geometry verified headless)
+The river carve params (on the terrain overlay) and the water params (on the ribbon object) used to
+be two disjoint live-knob sections drawn off the two modifiers; changing water depth did not touch
+the terrain, Path Width was a radius (never 1:1 with the water), and the rebuild snapshot kept
+clobbering the derived water width. Fixed by making bbt_curve the SINGLE owner of the shape params:
+- bbt_curve gains FloatProperties (width, depth, falloff, taper, shoulder, bank_slope, bank_bias,
+  bank_height, water_level, flow, foam_bank, foam_rapids), each with an update callback that pushes
+  the value -- translated/derived -- onto BOTH the overlay modifier and the water ribbon
+  (splines_panel._sync_curve_params), live, no Build. So one set of numbers drives both and stays in
+  sync; changing Depth re-carves the terrain AND repositions the water (verified: depth 1.2->2.5 moved
+  the bed -1.29 and the water -0.55).
+- Width is now the FULL channel width (1:1): the overlay Path Width (a radius) gets width/2; the water
+  ribbon Width is derived to fill the bed and meet the banks at the waterline. Role defaults re-scaled
+  to full width (river 10, road 9, dirt 4.8, stream 4, trail 2.4).
+- water_level (0..1 fill) replaces the old Water Depth knob: Water Depth = depth*(1-water_level), so
+  the water sits inside the channel and the fill is intuitive.
+- Build now (re)builds the overlay/water with reset=True (structural-only params) then calls
+  _sync_curve_params; role change / Add re-seeds bbt_curve from the role (_seed_role_params). The
+  panel draws ONE live "Shape" section (Cross-section / Banks / Water) off bbt_curve; the old
+  _PATH_KNOBS/_WATER_KNOBS/_draw_mod_knobs/_mod_input plumbing is gone.
+DEPLOY: this touches splines_panel.py (the ADDON), so a full addon reload (restart Blender, or F3
+Reload Scripts) is needed, not just Reload Builders.
+
+## Status: C1-C4 DONE + Blender-verified; C5 DONE, static-gated, awaiting Blender verify
+C1-C4 committed on fix/audit-remediation (commits "Spline System" 9e38911, "improved spline system"
+74ff5ac). Siva verified C1-C4 in Blender: the carved path is smooth, along-curve instances sit on
+the terrain and stand upright. C5 (rivers) is implemented and static-gated (py_compile + reference
+grep + a pydantic round-trip on the extended DrapeCurve contract), NOT yet Blender-verified -- see
+the C5 section below for what to check. Detailed per-phase file maps are in docs/SPLINES.md section
+7; the short version:
 
 - C1 plumbing: Paths panel (splines_panel.py, bl_order 2 after Terrain) with a typed curve list
   bound by PointerProperty (not name); add/remove/duplicate/build. New `drape_curve` bbmcp op
@@ -93,8 +125,12 @@ section 7 "Polish pass"). Static-gated (py_compile + reference grep); NOT yet Bl
   reads a name nothing writes, so it scatters nothing (empty = off, not "every path" -- Siva's call,
   so the pick is explicit). The earlier auto-`do_bank` toggle (a hidden auto-created layer) was CUT
   for readability, per Siva: verge is now just a scatter mode, no cross-panel magic. `scatter`
-  recipe gained `curve_attr`; Verge routes it via `scatter_panel.edge_attr_name(curve)`. Junction Z
-  (risk #9) stays noted-as-future.
+  recipe gained `curve_attr`; Verge routes it via `scatter_panel.edge_attr_name(curve)`.
+- R6 junction Z (take-lower, risk #9): the overlay writes bbt_curve_carved (MAX coverage of carving
+  curves) and clamps its carve so that where a prior curve carved it may only LOWER the surface,
+  never raise it -> a crossing settles to the lower bench, order-independently, no last-writer
+  clobber. Reads bbt_curve_carved (not bbt_curve_mask) so a mask-only path does not suppress a
+  crossing road's fill. Shared-height junction / bridge-culvert still future.
 
 VERIFY watch: the five new curve GN nodes (Spline Parameter / Spline Length / Curve Tangent / Sample
 Nearest / Sample Index) are standard but NEW to this repo, so confirm they build on first Reload
@@ -110,18 +146,66 @@ terrain; and both Build operators call context.view_layer.update() to rebuild th
 If this proves insufficient, the deeper fix is to expose the curve as an explicit Object INPUT socket
 on the overlay group (set on the modifier, so the dependency is declared) instead of on the node.
 
+## C5 water / rivers — DONE 2026-07-21; geometry verified headless, shader look awaits Siva
+The IMPOSE family (river/stream) shipped, resolving decision #1 and risks #1/#3 (see docs/SPLINES.md
+section 7 C5 for the full file map). GEOMETRY VERIFIED HEADLESS: ran the full terrain -> monotonic
+drape -> impose overlay -> water build through the Blender binary (5.2) against the real
+library/_generated/Terrain_hf.png and measured water-vertex Z vs the ground and the carved bed --
+after the densify fix, 0% of the water floats above the ground and it sits ~0.6 above the carved bed
+along the whole run. The SHADER look (depth colour, scrolling flow, foam, freeze) still needs Siva's
+eyes. What landed:
+- C5.1 downhill drape + impose carve: `path_curve.drape_curve` gained a `monotonic` mode
+  (`_monotonic_descend`): sample the terrain along the curve, then clamp the centreline into a
+  downhill profile from the higher (source) end to the lower (mouth) end -- a running min-slope
+  ceiling forces a continuous fall, and `to_sea` adds a linear source->sea ceiling so the mouth
+  reaches sea level (absolute Z 0). It also gained `densify`: resample the curve to N points along
+  its shape and rebuild it as one dense NURBS BEFORE sampling+solving. densify is load-bearing --
+  measured headless, the raw 4 control points make `path_z` a smooth line that ignores the terrain
+  (17% of the water floated above the ground); resampling to 48 points tracks the valley and drops
+  it to 0%. `DrapeCurve` contract gained monotonic/min_slope/to_sea/densify. `curve_overlay` gained
+  `impose`: when set, the bench target is the DRAPED monotonic `path_z` (not the R1 live raycast),
+  so the terrain conforms DOWN to the water centreline. Path Depth is the bed below the water
+  surface; the R4 embankment grades the banks back up. Roles seed densify 48, to_sea off.
+- C5.2 water ribbon: new `curve_water` recipe. Curve to Mesh sweeps a flat line (channel width)
+  along the curve for the XY route (Z-up normal, horizontal across width), then sets each vertex Z
+  to `path_z - Water Depth`, where `path_z` is `curve_field`'s draped descending centreline -- the
+  SAME solve the overlay carves the bed to (`path_z - Path Depth`). So the surface is Water Depth
+  below the rim and stays in harmony with the bed BY CONSTRUCTION, with no read of the carved terrain
+  (the spline-river model UE5/Torque3D/Waterways use: the curve drives the water, the terrain is
+  carved to it). `curve_field` now returns a 6-tuple (its `tangent` was surfaced for the flow
+  direction). Stores `bbt_flow` (unit downhill tangent * speed: faster on rapids, slower to the
+  banks), `bbt_foam` (banks + steep), and `bbt_shore` (0 mid, 1 banks, from the centreline distance).
+  Its own object `BOB_Water_<curve>`, built by the Paths panel AFTER the overlay drapes the curve.
+- C5.3 water BobShader: `materials.S_WaterMaster` (`water_master_group` / `water_material`), the
+  third master kind. Depth-colour gradient, foam, a frame-driven scrolling ripple normal advected
+  along `bbt_flow` (no bake), transparency (Transmission + IOR + a bank Alpha fade). `_build_wrapper`
+  widened to drive Transmission/IOR/Alpha/Normal into the Principled (no-op for surface/terrain).
+  Ends in S_Weather so the below-freezing frost term freezes it to ice (Transmission + ripples
+  collapse cold). `S_GROUP_VER` bumped 1 -> 2. Shaders panel: a `water` New option, a Water
+  sub-panel, `_MASTER_TAG` entry; Weather sub-panel already applies (kind-agnostic poll).
+- C5.4 damp bed: `curve_overlay` writes `bbt_curve_wet`; `terrain_master_group` MAXes it into the
+  Wetness Map and `materials.apply_curve_wet` raises Terrain Wetness so the bed reads damp,
+  weather-amplified. Scatter clears in the water band (the shipped `bbt_curve_mask` clear); reeds on
+  the banks are a Verge scatter layer (shipped mode, no new code). Sea mouth = the `to_sea` drape.
+
+VERIFY watch (C5): `GeometryNodeCurveLine` / `GeometryNodeResampleCurve` (count mode set defensively,
+5.2 socket-vs-property) / `GeometryNodeCurveToMesh` WITH a profile are new to this repo; confirm the
+ribbon builds and that the profile's `bbt_shore` attribute propagates onto the swept mesh (the one
+part existing code does not already exercise -- curve_field uses Curve to Mesh with no profile). The
+water master needs a freshly built material (S_GROUP_VER bump forces it; delete S_WaterMaster if in
+doubt). Ripple animation needs playback / a frame change to move. Build order: Build drapes the curve
+(monotonic) via the overlay, THEN lays the ribbon, so the ribbon sits on the descending centreline.
+
 ## What is next (pick with Siva)
-Remaining phases are the deferred and optional ones:
-- C5 water / rivers — DEFERRED by decision #1. Blocked on: a monotonic-descending centreline
-  solve (source/mouth heights, clamp Z) so a river runs downhill and the terrain cuts DOWN to it
-  (opposite drape from a path), and the "carve the terrain vs lay a Curve-to-Mesh water ribbon"
-  choice (risk #3). This is the natural next DESIGN task; do the design before building.
+Remaining phase is the optional baked one:
 - C6 baked venv carve (optional) — rasterize the curve to a distance field in the heightfield
   bake (a `carve` op in tools/bobtools/heightfields/engine.py `_OPS`) so natural erosion and the
   flow/wetness maps respect the channel. A "Bake curve into terrain" commit step, not the live loop.
-- Junction/crossing Z rule (risk #9) — the masks MAX-composite but the bench Z does not, so where
-  two curves cross the later overlay levels to its own centreline and clobbers the other. Needs a Z
-  rule (take-lower) or a bridge/culvert role. Left as-is (Tier-3).
+- Future (named, not scoped): a separate sea/ocean/lake surface; bridges/culverts where a road
+  crosses a river (R6 take-lower currently sinks the road into the water); tributary networks and
+  width-from-flow-accumulation beyond the simple downstream ramp.
+- (Junction/crossing Z rule, risk #9 — DONE R6, take-lower: see the polish list above. A true
+  shared-height junction or a bridge/culvert role is still future work.)
 
 Note: the polish pass (R1-R5 above) landed the refinements the old handover listed here (live
 re-drape, hard edge, endpoint taper, road shoulders/embankment, per-role surfaces, auto bank
@@ -131,17 +215,21 @@ surfaced only when a scatter-align/other consumer needs it.
 ## How to re-test / continue in Blender
 - After changing bbmcp GN or op code: Advanced panel > Reload Builders (refreshes bbmcp), then
   press the relevant Build (Paths: Build This Curve / Build All; Scatter: Build This Layer).
-- The C3 Curve material channel is a new socket on the CACHED S_TerrainMaster node group, so it
-  only appears on a freshly built terrain material. On an existing .blend, delete the
-  S_TerrainMaster node group (or start fresh) to regenerate it; apply_curve_surface returns None on
-  an old group and the panel says to shade it in Shaders.
+- The C3 Curve material channel and the C5 damp-bed read are new sockets/graph on the CACHED
+  S_TerrainMaster group, and S_WaterMaster is a new group; the C5 `S_GROUP_VER` bump (1 -> 2)
+  rebuilds all cached S_* groups in place on first access, so a freshly built material picks them up.
+  On an existing .blend that still shows the old behaviour, delete the S_TerrainMaster / S_WaterMaster
+  node group to force a rebuild.
 - Static gate before handing to Siva: `python -m py_compile <files>`; grep that renamed/removed
   operator idnames and class names have no dangling refs.
 
 ## Key files
-- Panel: blender/extensions/bob_blender_tools/splines_panel.py (Paths). Mirrors scatter_panel.py,
-  world_panel.py (applier pattern), ui_helpers.py.
-- Recipes: blender/bbmcp/geonodes/recipes/{curve_overlay,scatter,scatter_along,heightmap_terrain}.py.
+- Panel: blender/extensions/bob_blender_tools/splines_panel.py (Paths; river/stream roles, do_water,
+  _build_water). Mirrors scatter_panel.py, world_panel.py (applier pattern), ui_helpers.py.
+- Shaders panel: blender/extensions/bob_blender_tools/shaders_panel.py (water New option +
+  BBT_PT_shaders_water sub-panel).
+- Recipes: blender/bbmcp/geonodes/recipes/{curve_overlay,curve_water,scatter,scatter_along,heightmap_terrain}.py.
+  curve_overlay gained impose + bbt_curve_wet; curve_water (NEW) is the water ribbon.
 - GN blocks: blender/bbmcp/geonodes/blocks.py (curve_field, curve_distance, smooth_falloff,
   _curve_meshes; displace_z, object_geometry, math_node, random_value, position).
 - Curve authoring + drape: blender/bbmcp/path_curve.py (make_path, drape_curve, _surface_z);

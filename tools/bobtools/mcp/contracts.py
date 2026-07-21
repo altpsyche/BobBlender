@@ -62,6 +62,15 @@ class DrapeCurve(BaseModel):
     size: float = 60.0
     height: float = 14.0
     sea_level: float = 0.3
+    # River drape (docs/SPLINES.md 9 #1, the IMPOSE family): clamp the sampled Z into a monotonic
+    # downhill profile from source to mouth so the water never runs uphill. min_slope forces a
+    # gentle continuous fall through flats; to_sea pulls the mouth to sea level (absolute Z 0).
+    # densify (>= 2) resamples the curve to that many points before sampling+solving so path_z
+    # tracks the real valley (a coarse curve floats the water over dips); rebuilds as one NURBS.
+    monotonic: bool = False
+    min_slope: float = 0.0
+    to_sea: bool = False
+    densify: int = 0
 
 
 class ReloadImage(BaseModel):
