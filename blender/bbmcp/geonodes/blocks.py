@@ -161,22 +161,38 @@ def _flatten_xy(ng, vector, location=(0, 0)):
     return flat.outputs["Vector"]
 
 
-def _curve_meshes(ng, path_obj, location):
+def _curve_meshes(ng, path_obj, location, stores=()):
     """Turn a path curve into (draped_mesh, flat_mesh).
 
     draped_mesh keeps the curve's Z (the graded trail profile); flat_mesh is the
     same wire mesh flattened to z = 0 so horizontal distance and the nearest
     point measure in the XY plane. Both share topology, so an index from one
     reads the matching vertex on the other.
+
+    stores: optional (attr_name, value_socket, data_type) tuples stored on the curve (POINT domain)
+    BEFORE Curve to Mesh, so per-point curve fields (end distance for the taper, tangent for the
+    embankment) ride onto both meshes and can be Sample-Nearest'd at the grid. Empty by default
+    (curve_distance needs none).
     """
-    curve = object_geometry(ng, path_obj, location)
+    geo = object_geometry(ng, path_obj, location)
+    sy = location[1] + 240
+    for name, value, dtype in stores:
+        store = ng.nodes.new("GeometryNodeStoreNamedAttribute")
+        store.data_type = dtype
+        store.domain = "POINT"
+        store.location = (location[0], sy)
+        sy += 200
+        ng.links.new(geo, store.inputs["Geometry"])
+        store.inputs["Name"].default_value = name
+        ng.links.new(value, store.inputs["Value"])
+        geo = store.outputs["Geometry"]
     # Curve to Mesh evaluates the curve at its resolution_u (subdivisions per segment); the Paths
-    # panel bumps that on the datablock (see splines_panel _build_curve_terrain) so the polyline is
+    # panel bumps that on the datablock (see splines_panel _build_curve_overlay) so the polyline is
     # dense and the carved bench reads smooth. A coarse curve evaluates to a few straight segments
     # whose slope kinks at each junction facet the bench into steps.
     to_mesh = ng.nodes.new("GeometryNodeCurveToMesh")
     to_mesh.location = (location[0] + 200, location[1])
-    ng.links.new(curve, to_mesh.inputs["Curve"])
+    ng.links.new(geo, to_mesh.inputs["Curve"])
 
     flat_curve = _flatten_xy(ng, position(ng, (location[0] + 200, location[1] - 220)),
                              (location[0] + 380, location[1] - 220))
@@ -209,21 +225,76 @@ def curve_distance(ng, path_obj, location=(-900, -500)):
     return prox.outputs["Distance"], prox.outputs["Position"]
 
 
+def _end_dist_field(ng, location):
+    """A curve field: per-point arclength distance to the NEAREST spline end (0 at both ends,
+    rising toward the middle). Evaluated when stored on the curve. Drives the endpoint taper (R3)
+    so the band fades in over the last stretch instead of fanning into a radial cap past the tip."""
+    sp = ng.nodes.new("GeometryNodeSplineParameter")
+    sp.location = location
+    sl = ng.nodes.new("GeometryNodeSplineLength")
+    sl.location = (location[0], location[1] - 180)
+    from_end = math_node(ng, "SUBTRACT", sl.outputs["Length"], sp.outputs["Length"],
+                         (location[0] + 200, location[1] - 90))
+    return math_node(ng, "MINIMUM", sp.outputs["Length"], from_end, (location[0] + 380, location[1]))
+
+
+def _tangent_field(ng, location):
+    """The curve's unit tangent at each point (a curve field), stored on the curve for the side
+    computation. Kept internal: no consumer needs the raw tangent yet, only its sign about the
+    centreline (side), so it is not surfaced in curve_field's tuple (docs/SPLINES.md note on adding
+    field outputs only with their consumer)."""
+    t = ng.nodes.new("GeometryNodeInputTangent")
+    t.location = location
+    return t.outputs["Tangent"]
+
+
+def _sample_curve_attr(ng, flat_mesh, grid_flat, name, data_type, location):
+    """Read a per-point attribute stored on the flat curve mesh at the vertex NEAREST each grid
+    point (Sample Nearest -> Sample Index), bringing a curve field (end distance, tangent) onto the
+    terrain grid. proximity gives the distance/centreline but no index, so this is a second nearest
+    solve on the same flat mesh."""
+    near = ng.nodes.new("GeometryNodeSampleNearest")
+    near.domain = "POINT"
+    near.location = location
+    ng.links.new(flat_mesh, near.inputs["Geometry"])
+    ng.links.new(grid_flat, near.inputs["Sample Position"])
+    attr = ng.nodes.new("GeometryNodeInputNamedAttribute")
+    attr.data_type = data_type
+    attr.location = (location[0], location[1] - 180)
+    attr.inputs["Name"].default_value = name
+    samp = ng.nodes.new("GeometryNodeSampleIndex")
+    samp.data_type = data_type
+    samp.domain = "POINT"
+    samp.location = (location[0] + 200, location[1] - 60)
+    ng.links.new(flat_mesh, samp.inputs["Geometry"])
+    ng.links.new(attr.outputs["Attribute"], samp.inputs["Value"])
+    ng.links.new(near.outputs["Index"], samp.inputs["Index"])
+    return samp.outputs["Value"]
+
+
 def curve_field(ng, path_obj, location=(-900, -500)):
-    """The shared per-point curve field (docs/SPLINES.md 4.2): (distance, near_pos, path_z).
+    """The shared per-point curve field (docs/SPLINES.md 4.2): (distance, near_pos, path_z,
+    end_dist, side).
 
     - distance: XY distance from each point to the curve.
     - near_pos: the nearest point on the flattened (z = 0) curve, whose XY is the centreline.
     - path_z:   the draped curve's height at the nearest point, INTERPOLATED along the curve so it
-      grades smoothly (see drape_curve for how the curve gets its draped Z).
+      grades smoothly (see drape_curve for how the curve gets its draped Z). The overlay prefers a
+      live terrain raycast (R1) and keeps this only as the off-mesh fallback.
+    - end_dist: arclength distance to the nearest spline end at the nearest curve vertex, for the
+      endpoint taper (R3). Stored on the curve, carried through Curve to Mesh, sampled at the grid.
+    - side:     sign of the 2D cross product tangent x (grid - centreline), i.e. -1 / 0 / +1 for the
+      left / on / right of the curve, for the asymmetric embankment (R4). The raw tangent stays
+      internal (no other consumer yet).
 
-    Generalises curve_distance (distance + near_pos) and adds the draped path_z, so a consumer
-    that needs several of these (the curve overlay) solves proximity ONCE rather than per effect
-    (docs/SPLINES.md 9 #4). side and tangent join this tuple when their consumers land (the
-    asymmetric embankment and scatter-align in C4); the follow-terrain bench profile and the
-    curve mask attribute need only these three.
+    Generalises curve_distance (distance + near_pos), so a consumer that needs several of these (the
+    curve overlay) solves proximity ONCE rather than per effect (docs/SPLINES.md 9 #4).
     """
-    draped, flat = _curve_meshes(ng, path_obj, location)
+    end_dist_curve = _end_dist_field(ng, (location[0] - 320, location[1] + 320))
+    tangent_curve = _tangent_field(ng, (location[0] - 320, location[1] + 120))
+    draped, flat = _curve_meshes(ng, path_obj, location,
+                                 stores=(("bbt_end_dist", end_dist_curve, "FLOAT"),
+                                         ("bbt_tangent", tangent_curve, "FLOAT_VECTOR")))
     grid_flat = _sample_grid_flat(ng, (location[0] + 560, location[1] - 300))
 
     # Distance + centreline in the XY plane (flat curve). EDGES gives the nearest point ON the
@@ -248,7 +319,30 @@ def curve_field(ng, path_obj, location=(-900, -500)):
     zsep.location = (location[0] + 960, location[1] - 260)
     ng.links.new(proxz.outputs["Position"], zsep.inputs[0])
 
-    return prox.outputs["Distance"], prox.outputs["Position"], zsep.outputs["Z"]
+    end_dist = _sample_curve_attr(ng, flat, grid_flat, "bbt_end_dist", "FLOAT",
+                                  (location[0] + 760, location[1] - 560))
+
+    # side: sign of the 2D cross tangent x (grid - centreline). tangent sampled at the nearest curve
+    # vertex; v = grid - centreline, both flattened to z = 0. cross_z = tx*vy - ty*vx.
+    tangent = _sample_curve_attr(ng, flat, grid_flat, "bbt_tangent", "FLOAT_VECTOR",
+                                 (location[0] + 760, location[1] - 780))
+    tsep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    tsep.location = (location[0] + 1160, location[1] - 780)
+    ng.links.new(tangent, tsep.inputs[0])
+    v = ng.nodes.new("ShaderNodeVectorMath")
+    v.operation = "SUBTRACT"
+    v.location = (location[0] + 1160, location[1] - 980)
+    ng.links.new(grid_flat, v.inputs[0])
+    ng.links.new(prox.outputs["Position"], v.inputs[1])
+    vsep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    vsep.location = (location[0] + 1340, location[1] - 980)
+    ng.links.new(v.outputs["Vector"], vsep.inputs[0])
+    txvy = math_node(ng, "MULTIPLY", tsep.outputs["X"], vsep.outputs["Y"], (location[0] + 1520, location[1] - 820))
+    tyvx = math_node(ng, "MULTIPLY", tsep.outputs["Y"], vsep.outputs["X"], (location[0] + 1520, location[1] - 980))
+    cross = math_node(ng, "SUBTRACT", txvy, tyvx, (location[0] + 1700, location[1] - 900))
+    side = math_node(ng, "SIGN", cross, None, (location[0] + 1880, location[1] - 900))
+
+    return prox.outputs["Distance"], prox.outputs["Position"], zsep.outputs["Z"], end_dist, side
 
 
 def smooth_falloff(ng, value, inner, outer, location=(0, 0)):
