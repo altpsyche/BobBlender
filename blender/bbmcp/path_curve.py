@@ -89,6 +89,10 @@ def drape_curve(op: dict) -> dict:
                 z = _surface_z(pixels, width_px, height_px, x, y, size, height, sea_level)
                 p.co = (x, y, z, w)
                 n += 1
+    # Mutating control points in Python does not auto-tag the datablock, so a modifier that reads
+    # this curve (the terrain's curve overlay, via Object Info) can keep evaluating the pre-drape
+    # geometry. Tag it so dependents re-evaluate against the new draped points.
+    obj.data.update_tag()
     return {"op": "drape_curve", "created": [obj.name], "info": f"draped {n} points"}
 
 
