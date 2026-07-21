@@ -26,7 +26,7 @@ import os
 import random
 
 import bpy
-from bpy.props import EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from . import server, ui_helpers
@@ -35,7 +35,8 @@ from . import server, ui_helpers
 # socket exists (path/paint/camera sockets appear only when that feature is set).
 _CORE_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale",
                "Min Normal Z", "Max Normal Z"]
-_PATH_KNOBS = ["Path Width", "Path Falloff"]
+# Live knobs for an along-curve layer (the scatter_along recipe), drawn instead of _CORE_KNOBS.
+_ALONG_KNOBS = ["Spacing", "Offset", "Z Offset", "Yaw", "Jitter", "Seed", "Min Scale", "Max Scale"]
 _HEIGHT_KNOBS = ["Height Strength", "Height Min", "Height Max", "Height Falloff"]
 _NOISE_KNOBS = ["Noise Strength", "Noise Scale", "Noise Contrast", "Noise Seed"]
 _CAMERA_KNOBS = ["Camera Distance", "Camera Cone", "Cull Falloff"]
@@ -226,6 +227,11 @@ def _active_layer(context):
     return coll.objects[idx]
 
 
+def _layer_recipe(lay):
+    """Which recipe a layer builds: along-curve placement vs the surface Poisson scatter."""
+    return "scatter_along" if lay.curve_mode == "along" else "scatter"
+
+
 def _build_params(obj, scn):
     """Structural params for a layer rebuild, read from its object-native config.
 
@@ -233,13 +239,23 @@ def _build_params(obj, scn):
     old modifier by socket name, so a structural rebuild keeps the tuned values.
     """
     lay = obj.bbt_scatter_layer
+    if lay.curve_mode == "along":
+        # scatter_along places instances along the curve, then projects them DOWN onto the emitter
+        # so they sit on the terrain following the curve's route (needs both the curve and emitter).
+        params = {"align": lay.curve_align, "emitter": scn.emitter.name if scn.emitter else ""}
+        if lay.assets is not None:
+            params["assets"] = lay.assets.name
+        if lay.curve is not None:
+            params["curve"] = lay.curve.name
+        return params
     params = {"emitter": scn.emitter.name if scn.emitter else "", "align": lay.align}
     if lay.assets is not None:
         params["assets"] = lay.assets.name
     if lay.vgroup:
         params["vgroup"] = lay.vgroup
-    if scn.path is not None:
-        params["path"] = scn.path.name
+    # clear/keep read the terrain's baked bbt_curve_mask (BobSplines C4); no scn.path proximity.
+    if lay.curve_mode in ("clear", "keep"):
+        params["curve_mode"] = lay.curve_mode
     if scn.camera is not None:
         params["camera"] = scn.camera.name
     return params
@@ -255,6 +271,18 @@ def _count_instances(context, objs):
 
 
 # Data model
+def _emitter_poll(self, obj):
+    return obj.type == "MESH"
+
+
+def _path_poll(self, obj):
+    return obj.type == "CURVE"
+
+
+def _camera_poll(self, obj):
+    return obj.type == "CAMERA"
+
+
 class BBT_ScatterLayer(PropertyGroup):
     """Structural config, stored on the layer object. The name is the object's."""
 
@@ -271,18 +299,21 @@ class BBT_ScatterLayer(PropertyGroup):
         name="Mask Group",
         description="Emitter vertex group that paints where this layer scatters "
                     "(blank = off); applied on Build")
-
-
-def _emitter_poll(self, obj):
-    return obj.type == "MESH"
-
-
-def _path_poll(self, obj):
-    return obj.type == "CURVE"
-
-
-def _camera_poll(self, obj):
-    return obj.type == "CAMERA"
+    # Curve binding (BobSplines C4). clear/keep read the terrain's baked bbt_curve_mask; along
+    # switches the layer to the scatter_along recipe (instances placed on the curve itself).
+    curve_mode: EnumProperty(
+        name="Curve",
+        items=[("none", "None", "Ignore curves"),
+               ("clear", "Clear", "Clear this layer along paths (read the curve mask)"),
+               ("keep", "Keep only", "Scatter only along paths (the curve band)"),
+               ("along", "Along curve", "Place instances along a chosen curve (fence posts, cobbles)")],
+        default="none")
+    curve: PointerProperty(
+        name="Curve", type=bpy.types.Object, poll=_path_poll,
+        description="Curve to place instances along (Along curve mode)")
+    curve_align: BoolProperty(
+        name="Align to curve", default=True,
+        description="Orient along-curve instances to follow the path (Along curve mode)")
 
 
 class BBT_ScatterProps(PropertyGroup):
@@ -291,9 +322,6 @@ class BBT_ScatterProps(PropertyGroup):
     emitter: PointerProperty(
         name="Emitter", type=bpy.types.Object, poll=_emitter_poll,
         description="Object to scatter on (usually the terrain)")
-    path: PointerProperty(
-        name="Path", type=bpy.types.Object, poll=_path_poll,
-        description="Optional curve; clears a trail through every layer")
     camera: PointerProperty(
         name="Camera", type=bpy.types.Object, poll=_camera_poll,
         description="Optional camera; every layer culls scatter outside its view")
@@ -412,9 +440,6 @@ class BBT_OT_scatter_biome_scatter(Operator):
             params = {"emitter": emitter.name, "align": align, **knobs}
             if asset_coll is not None:
                 params["assets"] = asset_coll.name
-            if scn.path is not None:
-                params["path"] = scn.path.name
-                params["path_width"] = spec["path_width"]
             if scn.camera is not None:
                 params["camera"] = scn.camera.name
             _apply([{"op": "build_geonodes", "recipe": "scatter", "name": name, "params": params}])
@@ -467,9 +492,6 @@ class BBT_OT_scatter_add(Operator):
         params = {"emitter": emitter.name, "align": spec["align"], **spec["knobs"]}
         if assets is not None:
             params["assets"] = assets.name
-        if scn.path is not None:
-            params["path"] = scn.path.name
-            params["path_width"] = spec["path_width"]
         if scn.camera is not None:
             params["camera"] = scn.camera.name
         _apply([{"op": "build_geonodes", "recipe": "scatter",
@@ -538,7 +560,7 @@ class BBT_OT_scatter_build_active(Operator):
         if obj is None or scn.emitter is None:
             self.report({"ERROR"}, "No emitter or active layer")
             return {"CANCELLED"}
-        _apply([{"op": "build_geonodes", "recipe": "scatter",
+        _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
                  "name": obj.name, "params": _build_params(obj, scn)}])
         obj = _active_layer(context)
         n = _count_instances(context, [obj]) if obj else 0
@@ -559,7 +581,7 @@ class BBT_OT_scatter_build_all(Operator):
             return {"CANCELLED"}
         objs = list(coll.objects)
         for obj in objs:
-            _apply([{"op": "build_geonodes", "recipe": "scatter",
+            _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
                      "name": obj.name, "params": _build_params(obj, scn)}])
         objs = list(coll.objects)
         total = _count_instances(context, objs)
@@ -637,7 +659,6 @@ class BBT_PT_scatter(Panel):
                                   empty="Pick an emitter to scatter on.")
 
         layout.prop(scn, "emitter")
-        layout.prop(scn, "path")
         layout.prop(scn, "camera")
 
         # Asset source: the shared BOB_Assets_* collections that layers instance. Block-out
@@ -697,17 +718,25 @@ class BBT_PT_scatter_layer(Panel):
             return
 
         # The parent Scatter header already names the active layer; here show only its kind.
-        spec = LAYER_TYPES.get(obj.bbt_scatter_layer.kind, LAYER_TYPES["empty"])
+        lay = obj.bbt_scatter_layer
+        along = lay.curve_mode == "along"
+        spec = LAYER_TYPES.get(lay.kind, LAYER_TYPES["empty"])
         layout.label(text=spec["label"], icon=spec["icon"])
 
-        # Structural group (P3): assets/align/mask apply on a Build (a rebuild), not from a
+        # Structural group (P3): assets/align/mask/curve apply on a Build (a rebuild), not from a
         # callback. Marked so the split from the live knobs below is explicit.
         box = layout.box()
         box.label(text="Structural (Build to apply)", icon=ui_helpers.STRUCTURAL_ICON)
-        box.prop(obj.bbt_scatter_layer, "assets")  # the per-layer collection browser
-        box.prop(obj.bbt_scatter_layer, "align", expand=True)
-        box.prop_search(obj.bbt_scatter_layer, "vgroup",
-                        scn.emitter, "vertex_groups", text="Mask Group")
+        # Curve binding (BobSplines C4): clear/keep read the terrain's baked curve mask; along
+        # switches this layer to place instances along the chosen curve instead of the surface.
+        box.prop(lay, "curve_mode")
+        if along:
+            box.prop(lay, "curve")
+            box.prop(lay, "curve_align")
+        box.prop(lay, "assets")  # the per-layer collection browser
+        if not along:
+            box.prop(lay, "align", expand=True)
+            box.prop_search(lay, "vgroup", scn.emitter, "vertex_groups", text="Mask Group")
         ui_helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
@@ -716,10 +745,7 @@ class BBT_PT_scatter_layer(Panel):
             layout.label(text="No scatter modifier", icon="ERROR")
             return
         layout.label(text="Live knobs (instant)")
-        names = list(_CORE_KNOBS)
-        if scn.path is not None:
-            names += _PATH_KNOBS
-        _draw_knobs(layout, obj, names, seed_btn=True)
+        _draw_knobs(layout, obj, _ALONG_KNOBS if along else list(_CORE_KNOBS), seed_btn=True)
 
 
 class BBT_PT_scatter_masks(Panel):
@@ -736,6 +762,9 @@ class BBT_PT_scatter_masks(Panel):
         obj = _active_layer(context)
         if obj is None or _nodes_mod(obj) is None:
             layout.label(text="No active layer", icon="INFO")
+            return
+        if obj.bbt_scatter_layer.curve_mode == "along":
+            layout.label(text="Not used for an along-curve layer", icon="INFO")
             return
         layout.label(text="Altitude")
         _draw_knobs(layout, obj, _HEIGHT_KNOBS)
@@ -764,6 +793,9 @@ class BBT_PT_scatter_camera(Panel):
         obj = _active_layer(context)
         if obj is None or _nodes_mod(obj) is None:
             layout.label(text="No active layer", icon="INFO")
+            return
+        if obj.bbt_scatter_layer.curve_mode == "along":
+            layout.label(text="Not used for an along-curve layer", icon="INFO")
             return
         if scn.camera is None:
             layout.label(text="Set a Camera on the Scatter panel", icon="INFO")

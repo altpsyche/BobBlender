@@ -61,7 +61,9 @@ def build(ng, out, params: dict):
     target_z = math_node(ng, "SUBTRACT", path_z, gi.outputs["Path Depth"], (-420, -120))
     diff = math_node(ng, "SUBTRACT", target_z, psep.outputs["Z"], (-240, -120))
     offset = math_node(ng, "MULTIPLY", diff, onpath, (-40, 20))
-    carved = displace_z(ng, geometry, offset, (220, 0))
+    # carve off = a mask-only overlay: a curve that drives material/scatter but leaves the terrain
+    # shape alone (do_terrain off). The geometry passes through; the mask below is still written.
+    carved = displace_z(ng, geometry, offset, (220, 0)) if params.get("carve", True) else geometry
 
     # bbt_curve_mask, MAX-accumulated: read the value a prior curve's overlay stored (0 when the
     # attribute is absent), keep the stronger band, so overlapping paths add rather than overwrite.
