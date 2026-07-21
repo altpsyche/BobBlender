@@ -218,6 +218,13 @@ def _build_curve_overlay(terrain, curve, carve=True):
               "edge_attr": scatter_panel.edge_attr_name(curve)}
     build_geonodes_on_object(terrain, "curve_overlay", _overlay_name(curve), params)
     _position_overlay(terrain, curve)
+    # The overlay reads the curve via an Object Info node (a node-level reference, not a modifier
+    # input), so after the overlay's modifier is rebuilt in place, or the curve is edited/moved/
+    # re-draped, Blender does not always re-establish the terrain->curve dependency: the overlay
+    # keeps evaluating a stale curve and Build alone will not fix it (only recreating the objects
+    # did). Tag both so the graph relinks and the overlay re-evaluates the current curve.
+    curve.update_tag()
+    terrain.update_tag()
     return "draped" if draped else "curve Z"
 
 
@@ -430,6 +437,9 @@ class BBT_OT_curve_build(Operator):
             else:
                 self.report({"WARNING"}, "Scatter clear needs a Scatter emitter with layers")
 
+        # Rebuild the dependency graph so the overlay relinks to the (edited/re-draped) curve; a
+        # stale link is why an edit or re-bake needed a delete + re-add before, not just a Build.
+        context.view_layer.update()
         context.scene.bbt_curves.summary = \
             f"{role['label']}: {', '.join(did) or 'nothing (check channels)'}"
         self.report({"INFO"}, f"Built {curve.name}: {', '.join(did) or 'no channels applied'}")
@@ -477,6 +487,9 @@ class BBT_OT_curve_build_all(Operator):
         if any(e.curve is not None and e.curve.bbt_curve.do_scatter for e in scn.curves) \
                 and _clear_scatter(context):
             extra.append("cleared scatter")
+        # Relink the dependency graph so every overlay re-evaluates its current curve (see the note
+        # in Build This Curve): a stale terrain->curve link was why a delete + re-add was needed.
+        context.view_layer.update()
         note = (", " + ", ".join(extra)) if extra else ""
         scn.summary = f"built {built} curve(s){note}"
         self.report({"INFO"}, f"Built {built} curve(s) on {terrain.name}{note}")

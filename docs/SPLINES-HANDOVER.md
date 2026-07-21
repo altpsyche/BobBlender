@@ -100,6 +100,16 @@ VERIFY watch: the five new curve GN nodes (Spline Parameter / Spline Length / Cu
 Nearest / Sample Index) are standard but NEW to this repo, so confirm they build on first Reload
 Builders. R2 and R5-surfaces need a freshly built terrain material (delete S_TerrainMaster).
 
+DEP-STALENESS FIX (2026-07-21, needs Blender verify): Siva hit "curves stop carving the terrain after
+a re-bake or a curve edit/move; only delete + re-add fixes it, Build alone does not." Root cause: the
+overlay reads the curve via an Object Info node (a node-level reference, not a modifier input), so
+after the overlay modifier is rebuilt in place or the curve mutates, Blender does not always relink
+the terrain->curve dependency and the overlay evaluates a stale curve. Fix: drape_curve now
+obj.data.update_tag()s the curve after mutating points; _build_curve_overlay update_tag()s curve +
+terrain; and both Build operators call context.view_layer.update() to rebuild the depsgraph relations.
+If this proves insufficient, the deeper fix is to expose the curve as an explicit Object INPUT socket
+on the overlay group (set on the modifier, so the dependency is declared) instead of on the node.
+
 ## What is next (pick with Siva)
 Remaining phases are the deferred and optional ones:
 - C5 water / rivers — DEFERRED by decision #1. Blocked on: a monotonic-descending centreline
