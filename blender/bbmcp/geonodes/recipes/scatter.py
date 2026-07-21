@@ -14,7 +14,10 @@ Modifier inputs (editable knobs):
   smooth height band on world Z; Strength 0 = off).
 - Noise mask: Noise Scale / Noise Contrast / Noise Seed / Noise Strength (procedural
   patchy density for clumping; Strength 0 = off).
-- Path (when a path curve is set): Path Width / Path Falloff.
+- Curve (BobSplines C4, curve_mode clear/keep): reads the terrain's baked bbt_curve_mask
+  (written by the curve overlay) so a path clears a trail (clear) or scatter keeps only to
+  the band (keep). No scn.path proximity: the overlay solved it once, this just reads it, so
+  many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.
 - Camera cull (when a camera is set): Camera Distance / Camera Cone / Cull Falloff.
 
@@ -22,14 +25,13 @@ All masks multiply into the Poisson Density Factor (a 0..1 field), so they compo
 the slope band drives the Selection instead. The emitter, the asset collection, and
 the optional camera are set on the nodes (Blender 5.x GN modifiers no longer store
 object or collection inputs). Params: emitter and camera (object names), assets (a
-collection name), path (a curve object name), vgroup (a vertex group name on the
-emitter). Replace assets by editing that collection or repointing Collection Info.
+collection name), curve_mode (none/clear/keep), vgroup (a vertex group name on the
+emitter). Placing instances ALONG a curve is the separate scatter_along recipe.
 """
 
 import bpy
 
 from ..blocks import (
-    curve_distance,
     math_node,
     mix_float,
     noise_field,
@@ -153,9 +155,9 @@ def _camera_cull(ng, camera, gi, pos, loc):
 def build(ng, out, params: dict):
     emitter = bpy.data.objects.get(params.get("emitter", ""))
     assets = bpy.data.collections.get(params.get("assets", ""))
-    path = bpy.data.objects.get(params.get("path", ""))
     camera = bpy.data.objects.get(params.get("camera", ""))
     vgroup = params.get("vgroup", "")
+    curve_mode = params.get("curve_mode", "none")  # none / clear / keep, off the bbt_curve_mask band
 
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-1400, 0)
@@ -175,9 +177,6 @@ def build(ng, out, params: dict):
     add_input(ng, "Noise Contrast", "NodeSocketFloat", float(params.get("noise_contrast", 0.5)), 0.0, 1.0)
     add_input(ng, "Noise Seed", "NodeSocketInt", int(params.get("noise_seed", 0)))
     add_input(ng, "Noise Strength", "NodeSocketFloat", float(params.get("noise_strength", 0.0)), 0.0, 1.0)
-    if path is not None:
-        add_input(ng, "Path Width", "NodeSocketFloat", float(params.get("path_width", 3.0)), 0.0)
-        add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.0)), 0.0)
     if vgroup:
         add_input(ng, "Paint Strength", "NodeSocketFloat", float(params.get("paint_strength", 1.0)), 0.0, 1.0)
     if camera is not None:
@@ -208,13 +207,19 @@ def build(ng, out, params: dict):
     factor = math_node(ng, "MULTIPLY", factor,
                        _noise_mask(ng, gi, pos, (-840, -820)), (400, -600))
 
-    # Path clearing: density to zero along the trail, easing back over Path Falloff.
-    if path is not None:
-        p_inner = gi.outputs["Path Width"]
-        p_outer = math_node(ng, "ADD", p_inner, gi.outputs["Path Falloff"], (-840, 500))
-        dist_curve, _ = curve_distance(ng, path, (-1200, 700))
-        path_mask = smooth_falloff(ng, dist_curve, p_inner, p_outer, (-660, 600))
-        factor = math_node(ng, "MULTIPLY", factor, path_mask, (580, -400))
+    # Curve band (BobSplines C4): read the terrain's baked bbt_curve_mask (0..1, 1 on a path).
+    # clear -> multiply by (1 - mask) so density drops to zero along the trail; keep -> multiply by
+    # the mask so scatter stays only in the band (reeds along a bank). Absent attribute reads 0:
+    # clear then leaves density untouched, keep correctly yields nothing (no curve, no band).
+    if curve_mode in ("clear", "keep"):
+        cmask = nodes.new("GeometryNodeInputNamedAttribute")
+        cmask.data_type = "FLOAT"
+        cmask.location = (-840, 560)
+        cmask.inputs["Name"].default_value = "bbt_curve_mask"
+        band = cmask.outputs["Attribute"]
+        if curve_mode == "clear":
+            band = math_node(ng, "SUBTRACT", 1.0, band, (-640, 560))
+        factor = math_node(ng, "MULTIPLY", factor, band, (580, -400))
 
     # Vertex-group paint mask: the emitter's group weight (via Object Info) scales
     # density where painted. Mixed by Paint Strength.

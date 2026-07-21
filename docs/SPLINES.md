@@ -5,15 +5,20 @@ by a fresh chat: every claim about the current code is grounded at file:line, an
 phased so each phase ships something usable. Plain house style (no em-dashes, per the repo
 writing convention).
 
-**C1 + C2 + C3 shipped (2026-07-21).** The two Tier-1 decisions in section 9 are confirmed (see
-the note there). C1 (Paths panel + typed curve list wiring the existing grade/clear), C2 (the
-standalone `curve_overlay` modifier: per-curve, multi-curve, writes the `bbt_curve_mask`/`_dist`
-attributes consumers READ, retires the inline path grade), and C3 (a Curve mask channel on the
-terrain material, keyed to `bbt_curve_mask`, plus a role surface band) are implemented.
-Static-gated (py_compile + reference grep + a pydantic round-trip of the new op), NOT yet verified
-in Blender. See section 7 C1/C2/C3 for the file maps. NOTE for existing scenes: the Curve layer
-channel is a new socket on the cached S_TerrainMaster group, so it appears only on a freshly built
-terrain material (delete the S_TerrainMaster node group or start fresh to regenerate it).
+**C1-C4 shipped (2026-07-21).** The two Tier-1 decisions in section 9 are confirmed (see the note
+there). C1 (Paths panel + typed curve list), C2 (the standalone `curve_overlay` modifier: per-curve,
+multi-curve, writes the `bbt_curve_mask`/`_dist` attributes consumers READ, retires the inline path
+grade), C3 (a Curve mask channel on the terrain material + role surface band), and C4 (scatter reads
+`bbt_curve_mask` per layer -- clear / keep-only -- and a new `scatter_along` recipe places instances
+along a curve with optional align; `scn.path` retired) are implemented. C2 fixes after Blender
+review: `path_z` now comes from interpolated edge proximity (not a quantized vertex sample), the
+curve is densified via `resolution_u`, and the drape samples the heightmap bilinearly -- the carved
+path is smooth. Static-gated (py_compile + reference grep + a pydantic round-trip), NOT fully
+verified in Blender (C4 unverified). See section 7 for the file maps. NOTE for existing scenes: the
+Curve layer channel is a new socket on the cached S_TerrainMaster group, so it appears only on a
+freshly built terrain material (delete the S_TerrainMaster node group to regenerate it). The
+scatter-along / Curve to Points mode is set defensively (Blender 5.2 changed the resample/points
+node mode API from an attribute to a menu socket); verify the along spacing in Blender.
 
 **Name.** The system is **BobSplines**, the fourth authored subsystem alongside BobShaders,
 BobFirmament, and the scatter/terrain tools. Following the BobFirmament -> "Atmosphere" panel
@@ -350,8 +355,26 @@ curve.
   the Curve channel is a new socket on the cached S_TerrainMaster group, so it only appears on a
   freshly built terrain material (delete the S_TerrainMaster node group to regenerate it); an
   older material makes `apply_curve_surface` return None and the panel says so.
-- **C4 (scatter)**: path modes (keep-only, scatter-along, align) and per-layer curve binding;
-  auto bank/edge layers per role.
+- **C4 (scatter) -- DONE 2026-07-21**: a curve drives scatter through the baked `bbt_curve_mask`,
+  not a `scn.path` proximity (decision #2; multi-curve, no per-layer proximity solve). Files:
+  - `blender/bbmcp/geonodes/recipes/scatter.py`: reads `bbt_curve_mask` as a density factor with a
+    `curve_mode` param (none/clear/keep); dropped the `path`/`curve_distance` proximity + Path
+    Width/Falloff sockets.
+  - `blender/bbmcp/geonodes/recipes/scatter_along.py` (new): places instances ALONG a curve (Curve
+    to Points, count = curve length / Spacing) with optional align-to-tangent; registered in
+    `recipes/__init__.py`.
+  - `blender/bbmcp/geonodes/recipes/curve_overlay.py`: a `carve` param so a curve can write the mask
+    without displacing (a mask-only overlay, when Terrain shape is off).
+  - `scatter_panel.py`: `BBT_ScatterLayer` gains `curve_mode` (none/clear/keep/along) + `curve` +
+    `curve_align`; `scn.path` and the Path knobs removed; the layer routes to `scatter` or
+    `scatter_along`; the Active Layer panel draws the curve controls (Masks/Camera sub-panels note
+    they are unused for an along layer).
+  - `splines_panel.py`: the Scatter channel now builds the overlay for the mask (carve only when
+    Terrain shape is on), flips unbound scatter layers to "clear", and rebuilds; `scn.path` gone.
+  Scope trims: `side`/`tangent` still not in `curve_field` -- along-mode align uses Curve to Points'
+  own rotation, so they were not needed; they remain for a surface-scatter align and the asymmetric
+  embankment. Auto bank/edge layers per role deferred. Existing per-kind `path_width` values in
+  `scatter_panel.LAYER_TYPES` are now vestigial (harmless).
 - **C5 (water)**: river water-surface recipe with flow direction; weather puddle integration.
 - **C6 (optional, baked)**: venv `carve` op + flow/wetness bias + "Bake curve into terrain".
 

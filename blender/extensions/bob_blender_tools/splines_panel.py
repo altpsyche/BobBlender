@@ -15,9 +15,11 @@ trail, road); C2 gives terrain shape its own standalone GN overlay:
   the Flow mask keying a riverbed layer), so a road/dirt surface reads only along the path with
   no re-solved proximity. One shared curve-surface layer for now (all paths share it); distinct
   per-role surfaces need distinct mask attributes, a later step.
-- Scatter (from C1): clear a trail. Build binds the active curve to the Scatter emitter and
-  rebuilds its layers through the scatter panel's own build. Multi-curve scatter that reads
-  bbt_curve_mask is C4; C2/C3 still use the single scn.path binding.
+- Scatter (C4): a curve drives scatter through the baked bbt_curve_mask, not a scn.path proximity.
+  The scatter recipe reads the mask per layer (clear a trail / keep-only along the band), so every
+  curve with an overlay is respected at once (multi-curve). A layer can also switch to the
+  scatter_along recipe to place instances ALONG a curve (fence posts), optionally aligned. The
+  Paths Scatter channel flips unbound layers to clear and rebuilds; per-layer modes live in Scatter.
 
 Ownership (docs/SPLINES.md section 9, confirmed): bbt_curve on the curve object holds ONLY
 structural fields (role + which channels are on). The cross-section knobs (Path Width / Falloff /
@@ -179,9 +181,11 @@ def _position_overlay(terrain, curve):
         terrain.modifiers.move(i, j)
 
 
-def _build_curve_terrain(terrain, curve):
-    """Drape the curve onto the terrain (when it has a bake), then build/update the curve's
-    overlay modifier. Returns a short note on the drape source."""
+def _build_curve_overlay(terrain, curve, carve=True):
+    """Drape the curve onto the terrain (when it has a bake), then build/update the curve's overlay
+    modifier. The overlay always writes the bbt_curve_mask attribute; carve=False makes it mask-only
+    (no displacement), for a curve that drives material/scatter but not the terrain shape. Returns a
+    short note on the drape source."""
     # Densify the curve evaluation so the carved bench is smooth (see _CURVE_RES). On the datablock,
     # so scatter's proximity reads the same smooth centreline.
     if curve.type == "CURVE" and curve.data.resolution_u < _CURVE_RES:
@@ -194,7 +198,7 @@ def _build_curve_terrain(terrain, curve):
     server._ensure_path()
     from bbmcp.geonodes import build_geonodes_on_object
 
-    params = {"curve": curve.name, "path_width": role["path_width"],
+    params = {"curve": curve.name, "carve": carve, "path_width": role["path_width"],
               "path_falloff": role["path_falloff"], "path_depth": role["path_depth"]}
     build_geonodes_on_object(terrain, "curve_overlay", _overlay_name(curve), params)
     _position_overlay(terrain, curve)
@@ -215,15 +219,21 @@ def _apply_curve_material(terrain, role):
     return materials.apply_curve_surface(mat, role["surface"], role.get("surface_rough", 0.85))
 
 
-def _clear_scatter_along(context, curve):
-    """Bind the curve as the scatter path and rebuild the emitter's layers through the scatter
-    panel's own build (no duplicated clearing logic). Returns True when it ran."""
+def _clear_scatter(context):
+    """Make the emitter's surface scatter avoid the paths: flip any layer still set to no curve
+    binding to "clear" (so it reads the curve mask), leave explicit keep/along/clear layers alone,
+    then rebuild the layers through the scatter panel's own build. Scatter reads the baked
+    bbt_curve_mask (BobSplines C4), so every curve with an overlay is cleared at once, no scn.path.
+    Returns True when it ran."""
     scn_scatter = getattr(context.scene, "bbt_scatter", None)
     emitter = getattr(scn_scatter, "emitter", None) if scn_scatter is not None else None
     coll = emitter.bbt_scatter_coll if emitter is not None else None
     if emitter is None or coll is None or not coll.objects:
         return False
-    scn_scatter.path = curve
+    for obj in coll.objects:
+        lay = obj.bbt_scatter_layer
+        if lay.curve_mode == "none":
+            lay.curve_mode = "clear"
     bpy.ops.bob_blender_tools.scatter_build_all()
     return True
 
@@ -368,8 +378,8 @@ class BBT_OT_curve_build(Operator):
     bl_idname = "bob_blender_tools.curve_build"
     bl_label = "Build This Curve"
     bl_description = ("Apply the active curve's channels: carve a bench into the terrain (its own "
-                      "overlay modifier) and clear scatter along it. Drapes the curve onto the "
-                      "terrain first so it follows the ground")
+                      "overlay modifier), add the surface band, and clear scatter along it. Drapes "
+                      "the curve onto the terrain first so it follows the ground")
 
     def execute(self, context):
         curve = _active_curve(context)
@@ -381,11 +391,14 @@ class BBT_OT_curve_build(Operator):
         terrain = _terrain(context)
         did = []
 
-        if cfg.do_terrain:
+        # Any channel needs the overlay's bbt_curve_mask; build it once (carve only when the Terrain
+        # channel is on, else it is a mask-only overlay driving material/scatter).
+        if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
             if terrain is None:
-                self.report({"WARNING"}, "Pick a terrain mesh to carve")
+                self.report({"WARNING"}, "Pick a terrain mesh")
             else:
-                did.append(f"carved terrain ({_build_curve_terrain(terrain, curve)})")
+                note = _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
+                did.append(f"carved terrain ({note})" if cfg.do_terrain else "curve mask")
 
         if cfg.do_material:
             if _apply_curve_material(terrain, role) is not None:
@@ -394,7 +407,7 @@ class BBT_OT_curve_build(Operator):
                 self.report({"WARNING"}, "Material band needs a Terrain BobShader (shade it in Shaders)")
 
         if cfg.do_scatter:
-            if _clear_scatter_along(context, curve):
+            if _clear_scatter(context):
                 did.append("cleared scatter")
             else:
                 self.report({"WARNING"}, "Scatter clear needs a Scatter emitter with layers")
@@ -408,34 +421,36 @@ class BBT_OT_curve_build(Operator):
 class BBT_OT_curve_build_all(Operator):
     bl_idname = "bob_blender_tools.curve_build_all"
     bl_label = "Build All"
-    bl_description = "Carve every curve whose Terrain channel is on into the terrain"
+    bl_description = "Build every curve that has a channel on: overlays (carve/mask), surface band, scatter clear"
 
     def execute(self, context):
         scn = context.scene.bbt_curves
         terrain = _terrain(context)
         if terrain is None:
-            self.report({"ERROR"}, "Pick a terrain mesh to carve")
+            self.report({"ERROR"}, "Pick a terrain mesh")
             return {"CANCELLED"}
         built = 0
         for entry in scn.curves:
             curve = entry.curve
-            if curve is None or not curve.bbt_curve.do_terrain:
+            if curve is None:
                 continue
-            _build_curve_terrain(terrain, curve)
-            built += 1
-        # The material band and scatter clear are shared/single (one bbt_curve_mask surface layer,
-        # one scn.path binding) in C3, so apply them from the ACTIVE curve's role. Per-role
-        # surfaces and multi-curve scatter reading the mask are a later step.
+            cfg = curve.bbt_curve
+            if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
+                _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
+                built += 1
+        # Material band from the ACTIVE curve's role (one shared surface layer for now). Scatter
+        # clear reads the accumulated bbt_curve_mask, so a single rebuild covers every curve.
         active = _active_curve(context)
         extra = []
         if active is not None and active.bbt_curve.do_material and \
                 _apply_curve_material(terrain, ROLES.get(active.bbt_curve.role, ROLES["dirt_path"])) is not None:
             extra.append("surface band")
-        if active is not None and active.bbt_curve.do_scatter and _clear_scatter_along(context, active):
-            extra.append(f"scatter along {active.name}")
+        if any(e.curve is not None and e.curve.bbt_curve.do_scatter for e in scn.curves) \
+                and _clear_scatter(context):
+            extra.append("cleared scatter")
         note = (", " + ", ".join(extra)) if extra else ""
-        scn.summary = f"carved {built} curve(s){note}"
-        self.report({"INFO"}, f"Built {built} curve(s) into {terrain.name}{note}")
+        scn.summary = f"built {built} curve(s){note}"
+        self.report({"INFO"}, f"Built {built} curve(s) on {terrain.name}{note}")
         return {"FINISHED"}
 
 

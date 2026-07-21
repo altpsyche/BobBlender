@@ -28,6 +28,7 @@ from . import (  # noqa: E402,F401
     heightmap_terrain,
     particulates,
     scatter,
+    scatter_along,
     snow,
     snow_shell,
     terrain,
