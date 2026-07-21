@@ -253,9 +253,12 @@ def _build_params(obj, scn):
         params["assets"] = lay.assets.name
     if lay.vgroup:
         params["vgroup"] = lay.vgroup
-    # clear/keep read the terrain's baked bbt_curve_mask (BobSplines C4); no scn.path proximity.
+    # clear/keep read the terrain's baked curve mask (BobSplines C4); no scn.path proximity.
+    # curve_attr picks which mask (blank = bbt_curve_mask; an auto bank layer = bbt_curve_edge).
     if lay.curve_mode in ("clear", "keep"):
         params["curve_mode"] = lay.curve_mode
+        if lay.curve_attr:
+            params["curve_attr"] = lay.curve_attr
     if scn.camera is not None:
         params["camera"] = scn.camera.name
     return params
@@ -268,6 +271,54 @@ def _count_instances(context, objs):
     return sum(1 for i in dg.object_instances
                if i.is_instance and i.parent is not None
                and i.parent.original.name in names)
+
+
+def create_layer(emitter, scene, kind, name, *, curve_mode="none", curve=None,
+                 curve_attr="", camera=None):
+    """Create or rebuild a scatter layer object `name` on the emitter and return it.
+
+    The shared create+build path for the Add operator and the Paths auto bank applier (one place
+    instead of two copies of the sequence): resolve the asset collection, build the recipe that
+    matches curve_mode (scatter vs scatter_along), move the object into the emitter's scatter
+    collection, and write its structural config. An existing `name` is rebuilt in place
+    (build_geonodes restores tuned knobs by socket name), so callers get idempotency by reusing a
+    name.
+    """
+    spec = LAYER_TYPES[kind]
+    coll = _ensure_scatter_coll(emitter, scene)
+    assets = None
+    if kind != "empty":
+        _apply([{"op": "make_proxies", "kinds": [kind]}])
+        assets = bpy.data.collections.get(_assets_name(kind))
+
+    recipe = "scatter_along" if curve_mode == "along" else "scatter"
+    params = {"emitter": emitter.name, "align": spec["align"], **spec.get("knobs", {})}
+    if assets is not None:
+        params["assets"] = assets.name
+    if camera is not None:
+        params["camera"] = camera.name
+    if curve_mode in ("clear", "keep"):
+        params["curve_mode"] = curve_mode
+        if curve_attr:
+            params["curve_attr"] = curve_attr
+    if curve_mode == "along":
+        params["align"] = True
+        if curve is not None:
+            params["curve"] = curve.name
+    _apply([{"op": "build_geonodes", "recipe": recipe, "name": name, "params": params}])
+
+    obj = bpy.data.objects[name]
+    _move_to_collection(obj, coll)
+    lay = obj.bbt_scatter_layer
+    lay.kind = kind
+    lay.assets = assets
+    lay.align = spec["align"]
+    lay.curve_mode = curve_mode
+    if curve is not None:
+        lay.curve = curve
+    if curve_attr:
+        lay.curve_attr = curve_attr
+    return obj
 
 
 # Data model
@@ -314,6 +365,10 @@ class BBT_ScatterLayer(PropertyGroup):
     curve_align: BoolProperty(
         name="Align to curve", default=True,
         description="Orient along-curve instances to follow the path (Along curve mode)")
+    curve_attr: StringProperty(
+        name="Curve Attr", default="",
+        description="Which curve mask this layer reads in Clear/Keep mode (blank = the whole band "
+                    "bbt_curve_mask); an auto bank layer reads bbt_curve_edge to keep to the verge")
 
 
 class BBT_ScatterProps(PropertyGroup):
@@ -481,29 +536,9 @@ class BBT_OT_scatter_add(Operator):
             return {"CANCELLED"}
 
         spec = LAYER_TYPES[self.kind]
-        coll = _ensure_scatter_coll(emitter, context.scene)
-
-        assets = None
-        if self.kind != "empty":
-            _apply([{"op": "make_proxies", "kinds": [self.kind]}])
-            assets = bpy.data.collections.get(_assets_name(self.kind))
-
         name = _unique_object_name(f"{emitter.name} {spec['label']}")
-        params = {"emitter": emitter.name, "align": spec["align"], **spec["knobs"]}
-        if assets is not None:
-            params["assets"] = assets.name
-        if scn.camera is not None:
-            params["camera"] = scn.camera.name
-        _apply([{"op": "build_geonodes", "recipe": "scatter",
-                 "name": name, "params": params}])
-
-        obj = bpy.data.objects[name]
-        _move_to_collection(obj, coll)
-        lay = obj.bbt_scatter_layer
-        lay.kind = self.kind
-        lay.assets = assets
-        lay.align = spec["align"]
-        scn.active = list(coll.objects).index(obj)
+        obj = create_layer(emitter, context.scene, self.kind, name, camera=scn.camera)
+        scn.active = list(emitter.bbt_scatter_coll.objects).index(obj)
         self.report({"INFO"}, f"Added {spec['label']} layer")
         return {"FINISHED"}
 

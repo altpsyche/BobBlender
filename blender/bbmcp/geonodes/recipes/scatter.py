@@ -14,10 +14,11 @@ Modifier inputs (editable knobs):
   smooth height band on world Z; Strength 0 = off).
 - Noise mask: Noise Scale / Noise Contrast / Noise Seed / Noise Strength (procedural
   patchy density for clumping; Strength 0 = off).
-- Curve (BobSplines C4, curve_mode clear/keep): reads the terrain's baked bbt_curve_mask
-  (written by the curve overlay) so a path clears a trail (clear) or scatter keeps only to
-  the band (keep). No scn.path proximity: the overlay solved it once, this just reads it, so
-  many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
+- Curve (BobSplines C4, curve_mode clear/keep): reads a terrain curve mask (written by the
+  curve overlay), curve_attr selecting which one -- bbt_curve_mask (the whole band, default) or
+  bbt_curve_edge (the shoulder/verge ring, R5, for an auto bank layer). clear clears the layer
+  along it, keep scatters only within it. No scn.path proximity: the overlay solved it once, this
+  just reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.
 - Camera cull (when a camera is set): Camera Distance / Camera Cone / Cull Falloff.
 
@@ -157,7 +158,8 @@ def build(ng, out, params: dict):
     assets = bpy.data.collections.get(params.get("assets", ""))
     camera = bpy.data.objects.get(params.get("camera", ""))
     vgroup = params.get("vgroup", "")
-    curve_mode = params.get("curve_mode", "none")  # none / clear / keep, off the bbt_curve_mask band
+    curve_mode = params.get("curve_mode", "none")  # none / clear / keep, off a curve mask band
+    curve_attr = params.get("curve_attr", "bbt_curve_mask")  # which mask: the band, or bbt_curve_edge
 
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-1400, 0)
@@ -215,7 +217,7 @@ def build(ng, out, params: dict):
         cmask = nodes.new("GeometryNodeInputNamedAttribute")
         cmask.data_type = "FLOAT"
         cmask.location = (-840, 560)
-        cmask.inputs["Name"].default_value = "bbt_curve_mask"
+        cmask.inputs["Name"].default_value = curve_attr
         band = cmask.outputs["Attribute"]
         if curve_mode == "clear":
             band = math_node(ng, "SUBTRACT", 1.0, band, (-640, 560))

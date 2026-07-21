@@ -48,7 +48,8 @@ from bpy.types import Operator, Panel, PropertyGroup, UIList
 from . import server, ui_helpers
 
 # The cross-section knobs the panel draws live off the curve's overlay modifier (the single owner).
-_PATH_KNOBS = ["Path Width", "Path Falloff", "Path Depth"]
+_PATH_KNOBS = ["Path Width", "Path Falloff", "Path Depth", "End Taper",
+               "Shoulder Width", "Bank Slope", "Bank Bias"]
 
 # Curve overlay modifiers are named per curve so a terrain can carry several, and so removing a
 # curve finds and drops exactly its modifier.
@@ -71,20 +72,26 @@ ROLES = {
     "dirt_path": {
         "label": "Dirt Path", "icon": "IPO_EASE_IN_OUT",
         "desc": "A shallow worn trail draped onto the ground",
-        "path_width": 2.4, "path_falloff": 3.5, "path_depth": 0.3,
-        "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9,
+        "path_width": 2.4, "path_falloff": 3.5, "path_depth": 0.3, "end_taper": 2.0,
+        "shoulder_width": 0.0, "bank_slope": 1.0, "bank_bias": 0.0,
+        "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
+        "surface_attr": "", "surface_channel": "a", "bank_kind": "grass",
     },
     "trail": {
         "label": "Trail", "icon": "IPO_LINEAR",
         "desc": "A narrow footpath, barely recessed",
-        "path_width": 1.2, "path_falloff": 2.0, "path_depth": 0.15,
-        "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9,
+        "path_width": 1.2, "path_falloff": 2.0, "path_depth": 0.15, "end_taper": 1.0,
+        "shoulder_width": 0.0, "bank_slope": 1.2, "bank_bias": 0.0,
+        "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
+        "surface_attr": "", "surface_channel": "a", "bank_kind": "grass",
     },
     "road": {
         "label": "Road", "icon": "MOD_CURVE",
-        "desc": "A wide graded track (a flat bench + shoulders arrive later)",
-        "path_width": 4.5, "path_falloff": 4.0, "path_depth": 0.4,
-        "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8,
+        "desc": "A wide graded track: a flat bench + shoulders, embanked on slopes",
+        "path_width": 4.5, "path_falloff": 4.0, "path_depth": 0.4, "end_taper": 2.0,
+        "shoulder_width": 1.5, "bank_slope": 0.7, "bank_bias": 0.0,
+        "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8, "surface_hard": 1.0,
+        "surface_attr": "bbt_curve_mask_b", "surface_channel": "b", "bank_kind": "plants",
     },
 }
 
@@ -199,7 +206,12 @@ def _build_curve_overlay(terrain, curve, carve=True):
     from bbmcp.geonodes import build_geonodes_on_object
 
     params = {"curve": curve.name, "carve": carve, "path_width": role["path_width"],
-              "path_falloff": role["path_falloff"], "path_depth": role["path_depth"]}
+              "path_falloff": role["path_falloff"], "path_depth": role["path_depth"],
+              "end_taper": role.get("end_taper", 0.0),
+              "shoulder_width": role.get("shoulder_width", 0.0),
+              "bank_slope": role.get("bank_slope", 1.0),
+              "bank_bias": role.get("bank_bias", 0.0),
+              "surface_attr": role.get("surface_attr", "")}
     build_geonodes_on_object(terrain, "curve_overlay", _overlay_name(curve), params)
     _position_overlay(terrain, curve)
     return "draped" if draped else "curve Z"
@@ -216,7 +228,9 @@ def _apply_curve_material(terrain, role):
     server._ensure_path()
     from bbmcp import materials
 
-    return materials.apply_curve_surface(mat, role["surface"], role.get("surface_rough", 0.85))
+    return materials.apply_curve_surface(mat, role["surface"], role.get("surface_rough", 0.85),
+                                         hard_edge=role.get("surface_hard", 0.0),
+                                         channel=role.get("surface_channel", "a"))
 
 
 def _clear_scatter(context):
@@ -235,6 +249,33 @@ def _clear_scatter(context):
         if lay.curve_mode == "none":
             lay.curve_mode = "clear"
     bpy.ops.bob_blender_tools.scatter_build_all()
+    return True
+
+
+def _bank_scatter(context, role):
+    """Auto-add (or refresh) ONE verge scatter layer for the emitter, a keep-only layer bound to the
+    overlay's bbt_curve_edge ring so it dresses the path shoulders, not the driving surface
+    (BobSplines R5). One layer covers every curve: bbt_curve_edge MAX-accumulates across overlays,
+    exactly as _clear_scatter reads the shared band. Idempotent: reuse the existing edge layer.
+    Returns True when it ran."""
+    kind = role.get("bank_kind")
+    scn_scatter = getattr(context.scene, "bbt_scatter", None)
+    emitter = getattr(scn_scatter, "emitter", None) if scn_scatter is not None else None
+    if not kind or emitter is None:
+        return False
+    from . import scatter_panel
+
+    coll = emitter.bbt_scatter_coll
+    existing = None
+    if coll is not None:
+        existing = next((o for o in coll.objects
+                         if o.bbt_scatter_layer.curve_mode == "keep"
+                         and o.bbt_scatter_layer.curve_attr == "bbt_curve_edge"), None)
+    name = existing.name if existing is not None \
+        else _unique_object_name(f"{emitter.name} Bank")
+    scatter_panel.create_layer(emitter, context.scene, kind, name, curve_mode="keep",
+                               curve_attr="bbt_curve_edge",
+                               camera=getattr(scn_scatter, "camera", None))
     return True
 
 
@@ -267,6 +308,10 @@ class BBT_Curve(PropertyGroup):
     do_scatter: BoolProperty(
         name="Scatter", default=True,
         description="Clear scattered assets along the curve on the Scatter emitter")
+    do_bank: BoolProperty(
+        name="Bank scatter", default=False,
+        description="Auto-add a verge scatter layer that keeps to the path shoulders "
+                    "(reads the overlay's bbt_curve_edge ring); off by default")
 
 
 class BBT_CurveEntry(PropertyGroup):
@@ -391,9 +436,9 @@ class BBT_OT_curve_build(Operator):
         terrain = _terrain(context)
         did = []
 
-        # Any channel needs the overlay's bbt_curve_mask; build it once (carve only when the Terrain
-        # channel is on, else it is a mask-only overlay driving material/scatter).
-        if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
+        # Any channel needs the overlay's masks; build it once (carve only when the Terrain channel
+        # is on, else it is a mask-only overlay driving material/scatter/bank).
+        if cfg.do_terrain or cfg.do_material or cfg.do_scatter or cfg.do_bank:
             if terrain is None:
                 self.report({"WARNING"}, "Pick a terrain mesh")
             else:
@@ -411,6 +456,12 @@ class BBT_OT_curve_build(Operator):
                 did.append("cleared scatter")
             else:
                 self.report({"WARNING"}, "Scatter clear needs a Scatter emitter with layers")
+
+        if cfg.do_bank:
+            if _bank_scatter(context, role):
+                did.append("bank scatter")
+            else:
+                self.report({"WARNING"}, "Bank scatter needs a Scatter emitter")
 
         context.scene.bbt_curves.summary = \
             f"{role['label']}: {', '.join(did) or 'nothing (check channels)'}"
@@ -435,19 +486,36 @@ class BBT_OT_curve_build_all(Operator):
             if curve is None:
                 continue
             cfg = curve.bbt_curve
-            if cfg.do_terrain or cfg.do_material or cfg.do_scatter:
+            if cfg.do_terrain or cfg.do_material or cfg.do_scatter or cfg.do_bank:
                 _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
                 built += 1
-        # Material band from the ACTIVE curve's role (one shared surface layer for now). Scatter
-        # clear reads the accumulated bbt_curve_mask, so a single rebuild covers every curve.
-        active = _active_curve(context)
+        # Material: one surface layer per DISTINCT role surface class among the do_material curves
+        # (R5), so a paved road and a dirt trail read differently. Dedupe by channel. Scatter clear
+        # reads the accumulated bbt_curve_mask, so a single rebuild covers every curve.
         extra = []
-        if active is not None and active.bbt_curve.do_material and \
-                _apply_curve_material(terrain, ROLES.get(active.bbt_curve.role, ROLES["dirt_path"])) is not None:
-            extra.append("surface band")
+        seen_channels, surfaced = set(), 0
+        for entry in scn.curves:
+            c = entry.curve
+            if c is None or not c.bbt_curve.do_material:
+                continue
+            role = ROLES.get(c.bbt_curve.role, ROLES["dirt_path"])
+            ch = role.get("surface_channel", "a")
+            if ch in seen_channels:
+                continue
+            if _apply_curve_material(terrain, role) is not None:
+                seen_channels.add(ch)
+                surfaced += 1
+        if surfaced:
+            extra.append(f"{surfaced} surface band(s)")
         if any(e.curve is not None and e.curve.bbt_curve.do_scatter for e in scn.curves) \
                 and _clear_scatter(context):
             extra.append("cleared scatter")
+        # One shared bank layer reads the accumulated bbt_curve_edge, so a single build covers every
+        # do_bank curve (representative role: the first one that asks for it).
+        bank_role = next((ROLES.get(e.curve.bbt_curve.role, ROLES["dirt_path"]) for e in scn.curves
+                          if e.curve is not None and e.curve.bbt_curve.do_bank), None)
+        if bank_role is not None and _bank_scatter(context, bank_role):
+            extra.append("bank scatter")
         note = (", " + ", ".join(extra)) if extra else ""
         scn.summary = f"built {built} curve(s){note}"
         self.report({"INFO"}, f"Built {built} curve(s) on {terrain.name}{note}")
@@ -547,6 +615,7 @@ class BBT_PT_paths_active(Panel):
         box.prop(cfg, "do_terrain")
         box.prop(cfg, "do_material")
         box.prop(cfg, "do_scatter")
+        box.prop(cfg, "do_bank")
         ui_helpers.structural_action(box, "bob_blender_tools.curve_build",
                                      note="drapes + carves, adds the surface band, clears scatter")
 

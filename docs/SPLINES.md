@@ -378,6 +378,37 @@ curve.
 - **C5 (water)**: river water-surface recipe with flow direction; weather puddle integration.
 - **C6 (optional, baked)**: venv `carve` op + flow/wetness bias + "Bake curve into terrain".
 
+### Polish pass (R1-R5) -- DONE, static-gated, awaiting Blender verify
+
+Broad-sweep refinements to the shipped follow-terrain family (no new channel). Static-gated
+(py_compile + reference grep); the five new curve nodes (Spline Parameter / Spline Length / Curve
+Tangent / Sample Nearest / Sample Index) are standard non-`mode`-enum nodes but are NEW to this repo,
+so confirm they build on the first Reload Builders.
+
+- **R1 live re-drape** (`curve_overlay.py` `_live_terrain_z`): the bench levels to the terrain Z
+  raycast LIVE at the centreline each eval, so it tracks a terrain re-sculpt or a curve edit with no
+  re-Build. `curve_field`'s draped `path_z` is now only the off-mesh fallback; the Build-time drape
+  still runs to sit the curve wire on the ground.
+- **R2 hard road edge** (`materials.py`, risk #7): a per-layer `Curve Hard` socket mixes H toward a
+  steep remap of the curve mask, so a road surface edges crisply regardless of Blend Softness;
+  `apply_curve_surface(hard_edge=)`, road role 1.0, dirt/trail 0.0. New socket on the cached
+  `S_TerrainMaster` group, so it needs a freshly built terrain material.
+- **R3 endpoint taper** (`blocks.py` `_end_dist_field`, overlay `End Taper` socket, risk #8): the
+  band fades over the last `End Taper` metres and no longer fans into a radial semicircle past a
+  spline end (the tip vertex has end_dist 0, so its fan tapers too).
+- **R4 road shape** (`blocks.py` `curve_field` gains `side`; overlay, risk #11): a flat Shoulder
+  Width extends the bench, then a slope-aware embankment grades back to terrain (width scales with
+  the cut/fill depth to hold `Bank Slope`, capped at 3x falloff), `Bank Bias` skews it to one side
+  (via `side`). Roles: road gets shoulders + a gentler bank; dirt/trail near-symmetric. `tangent` is
+  computed internally for `side` and not yet surfaced (no other consumer).
+- **R5 per-role surfaces + auto bank scatter**: a SECOND material curve channel (`Curve B
+  Strength`/`Curve B Hard` off `bbt_curve_mask_b`) lets a paved road key its own layer distinct from
+  dirt (`apply_curve_surface(channel="a"|"b")`; Build All keys one layer per distinct class). The
+  overlay writes `bbt_curve_edge` (the shoulder ring); a new `do_bank` channel auto-adds ONE
+  keep-only verge scatter layer reading it (via `scatter_panel.create_layer`, the factored
+  create+build path shared with Add; the `scatter` recipe gained a `curve_attr` param). Junction Z
+  (risk #9) stays noted-as-future.
+
 ## 8. Open questions
 
 - One overlay modifier per curve (editability, snapshot parity) vs a single overlay iterating the
