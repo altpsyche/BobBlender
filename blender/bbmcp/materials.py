@@ -663,16 +663,31 @@ def _vscale(g, vec, scalar, loc):
 # silently renders the old behaviour.
 # v2 (BobSplines C5): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
 # bbt_curve_wet damp-bed read, so existing cached groups must rebuild to pick both up.
-S_GROUP_VER = 2
+# v3 (water look pass W1-W6): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and a
+# manual Frozen -> ice path (new Shore Foam / Foam Crispness / Wave Detail / Frozen sockets), so a
+# cached v2 water group must rebuild to expose them.
+S_GROUP_VER = 3
+
+# Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of every
+# material instancing the group (the new sockets get fresh identifiers, verified), so a global
+# S_GROUP_VER bump wipes terrain/surface tuning too. When a change is scoped to ONE group, version it
+# here instead so only that group rebuilds and the rest keep their tuned values. (The string keys are
+# the group names, == the WATER_MASTER etc. constants defined below.)
+#   S_WaterMaster v4: geometry Gerstner waves in curve_water made the shader's low-frequency flow
+#   bump redundant -- it now carries only a subtle high-frequency detail normal (the old one combed
+#   into hair-like streaks). Graph + default change, same interface, so water-only rebuild.
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 4}
 
 
 def _cached_group(name):
     """Get-or-create a version-stamped shared shader group. Returns (group, needs_build);
     when needs_build is False the cached group is current and the caller returns it as-is.
     A stale group is rebuilt in place (datablock kept, nodes + interface cleared) so
-    materials already referencing it pick up the fresh interface rather than dangling."""
+    materials already referencing it pick up the fresh interface rather than dangling. The
+    expected version is the per-group override if present, else the shared S_GROUP_VER."""
+    want = _GROUP_VER_OVERRIDE.get(name, S_GROUP_VER)
     g = bpy.data.node_groups.get(name)
-    if g is not None and g.get("bbt_ver") == S_GROUP_VER:
+    if g is not None and g.get("bbt_ver") == want:
         return g, False
     if g is not None:
         g.nodes.clear()
@@ -680,7 +695,7 @@ def _cached_group(name):
             g.interface.remove(item)
     else:
         g = bpy.data.node_groups.new(name, "ShaderNodeTree")
-    g["bbt_ver"] = S_GROUP_VER
+    g["bbt_ver"] = want
     return g, True
 
 
@@ -1356,11 +1371,61 @@ WATER_MASTER = "S_WaterMaster"
 _WATER_SHALLOW = (0.16, 0.34, 0.36, 1.0)  # near-shore tint
 _WATER_DEEP = (0.02, 0.09, 0.13, 1.0)     # deep body
 _WATER_FOAM = (0.92, 0.95, 0.97, 1.0)
+_WATER_ICE = (0.66, 0.77, 0.83, 1.0)      # pale blue-white frozen tint
+_ICE_ROUGHNESS = 0.32                     # frosted-glassy ice (vs the near-mirror liquid roughness)
+
+
+def set_water_render_flags(mat):
+    """Make a water material actually read as water in EEVEE-Next (W1): raytraced refraction so the
+    0.92 Transmission bends what is behind the surface instead of reading flat grey. These are 5.2
+    material datablock flags (probed live, not guessed): use_raytrace_refraction is the EEVEE-Next
+    name (use_screen_refraction is the retained 4.x alias, set too for safety); show_transparent_back
+    off drops the doubled back face; DITHERED keeps the surface refraction-capable (BLENDED alpha
+    cannot refract). No-op / harmless in Cycles, which refracts from the Transmission weight alone.
+    The scene's eevee.use_raytracing must also be on -- see enable_eevee_refraction, called from the
+    addon build path (a scene setting, out of a material builder's remit)."""
+    if mat is None:
+        return
+    for flag in ("use_raytrace_refraction", "use_screen_refraction"):
+        if hasattr(mat, flag):
+            setattr(mat, flag, True)
+    if hasattr(mat, "show_transparent_back"):
+        mat.show_transparent_back = False
+    if hasattr(mat, "use_transparent_shadow"):
+        mat.use_transparent_shadow = True
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "DITHERED"  # DITHERED refracts; BLENDED (alpha) does not
+
+
+def enable_eevee_refraction(scene):
+    """Turn on the scene-level EEVEE-Next ray tracing that raytraced refraction needs to show (W1).
+    A no-op unless the active engine is EEVEE, and it only ever switches the toggle ON (never off, so
+    it will not fight a user who wants it off). Cycles needs nothing here. Kept out of the material
+    builder because it mutates the scene; the addon calls it when it builds/assigns water."""
+    if scene is None:
+        return
+    eng = getattr(getattr(scene, "render", None), "engine", "")
+    ee = getattr(scene, "eevee", None)
+    if ee is not None and eng.startswith("BLENDER_EEVEE") and hasattr(ee, "use_raytracing"):
+        ee.use_raytracing = True
 
 
 def water_master_group():
-    """The water-surface master (see the section comment). Ripples scroll live: a frame-driven
-    Value node advects a world-space noise along bbt_flow, so the surface animates with no bake."""
+    """The water-surface master (see the section comment). The surface animates live off a
+    frame-driven Value node, no bake:
+      - Waves (W2): three flow-advected noise octaves (a slow swell, the main ripple, a fine chop)
+        chained into one normal. Each octave is sampled at TWO phases half a cycle apart and blended
+        by a triangle wave, the flow-map trick, so the advection resets without a visible pop even
+        where bbt_flow diverges (banks vs mid-channel, rapids). All three fade out as it freezes.
+      - Foam (W3): bbt_foam (banks + rapids) is lifted by a shore term (shallow water near the banks,
+        from bbt_shore), broken up by a flow-scrolled noise, and thresholded to crisp lines whose
+        sharpness is Foam Crispness -- not a flat white wash. Foam also roughens the surface.
+      - Freeze (W4): a manual Frozen input OR the env below-0 term freezes the water: the flow normal
+        collapses to glassy-flat, cracked-ice detail fades in (a Voronoi distance-to-edge bump),
+        transmission drops to opaque, and (manual path) the albedo tints icy blue-white. The shared
+        S_Weather frost term adds the winter sheen on the env-cold path.
+    Beyond Base Color / Roughness / Metallic it outputs Transmission / IOR / Alpha / Normal, which
+    the widened _build_wrapper drives into the Principled BSDF."""
     g, _fresh = _cached_group(WATER_MASTER)
     if not _fresh:
         return g
@@ -1370,12 +1435,18 @@ def water_master_group():
     _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
     _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
     _gin(g, "Transmission", "NodeSocketFloat", 0.92, 0.0, 1.0)
-    _gin(g, "Flow Speed", "NodeSocketFloat", 0.06, 0.0)
-    _gin(g, "Ripple Strength", "NodeSocketFloat", 0.15, 0.0, 2.0)
+    _gin(g, "Flow Speed", "NodeSocketFloat", 0.08, 0.0)
+    # Ripple Strength is the SHADER micro-detail normal only (fine surface texture); the visible
+    # waves are geometry Gerstner in curve_water. Kept low so it never combs into streaks.
+    _gin(g, "Ripple Strength", "NodeSocketFloat", 0.10, 0.0, 2.0)
     _gin(g, "Ripple Scale", "NodeSocketFloat", 1.8, 0.0)
+    _gin(g, "Wave Detail", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Foam Color", "NodeSocketColor", _WATER_FOAM)
-    _gin(g, "Foam Amount", "NodeSocketFloat", 1.0, 0.0, 2.0)
+    _gin(g, "Foam Amount", "NodeSocketFloat", 1.2, 0.0, 2.0)
+    _gin(g, "Shore Foam", "NodeSocketFloat", 0.6, 0.0, 1.0)
+    _gin(g, "Foam Crispness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Edge Fade", "NodeSocketFloat", 0.0, 0.0, 1.0)
+    _gin(g, "Frozen", "NodeSocketFloat", 0.0, 0.0, 1.0)
     # Weather passthrough (as surface_master), so the shared S_Weather layer works. Snow defaults
     # OFF for water: flowing water sheds snow, and the winter look comes from the frost/freeze path.
     _gin(g, "Snow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -1395,97 +1466,165 @@ def water_master_group():
     _gout(g, "Normal", "NodeSocketVector")
 
     gi = g.nodes.new("NodeGroupInput")
-    gi.location = (-1400, 0)
+    gi.location = (-1900, 0)
     go = g.nodes.new("NodeGroupOutput")
-    go.location = (900, 0)
+    go.location = (1500, 0)
     I, O = gi.outputs, go.inputs
 
     # Live env: Temperature drives the freeze term (shared group, driven from bbt_env by the panel;
-    # 15 C default when Firmament is absent, so cold -> 0 and the water never freezes standalone).
+    # 15 C default when Firmament is absent, so env cold -> 0 and the water never freezes standalone
+    # -- which is why the manual Frozen input exists). frozen = max(manual, env cold); liquid = 1 - it.
     env = g.nodes.new("ShaderNodeGroup")
     env.node_tree = env_state_group()
-    env.location = (-1400, -560)
-    cold = _mrange(g, env.outputs["Temperature"], 0.0, -6.0, 0.0, 1.0, (-1200, -560))  # 0 warm, 1 icy
-    warm = _mmath(g, "SUBTRACT", 1.0, cold, (-1020, -560))
+    env.location = (-1900, -900)
+    cold = _mrange(g, env.outputs["Temperature"], 0.0, -6.0, 0.0, 1.0, (-1700, -900))  # 0 warm, 1 icy
+    frozen = _mmath(g, "MAXIMUM", cold, I["Frozen"], (-1520, -900))
+    liquid = _mmath(g, "SUBTRACT", 1.0, frozen, (-1340, -900))
 
     # Ribbon attributes (curve_water stores these on the water mesh).
     def _geo_attr(name, y):
         n = g.nodes.new("ShaderNodeAttribute")
         n.attribute_type = "GEOMETRY"
         n.attribute_name = name
-        n.location = (-1400, y)
+        n.location = (-1900, y)
         return n
     flow = _geo_attr("bbt_flow", 380)
     foam_a = _geo_attr("bbt_foam", 240)
     shore_a = _geo_attr("bbt_shore", 100)
 
     # Frame-driven time (mirrors _install_env_drivers, but `frame` is a built-in driver variable so
-    # no scene target is needed): ripples scroll without a bake. Installed once on the fresh group.
+    # no scene target is needed): waves scroll without a bake. Installed once on the fresh group.
     tval = g.nodes.new("ShaderNodeValue")
     tval.name = tval.label = "water_time"
-    tval.location = (-1400, -260)
+    tval.location = (-1900, -260)
     try:
         fc = tval.outputs[0].driver_add("default_value")
         fc = fc[0] if isinstance(fc, list) else fc
         fc.driver.type = "SCRIPTED"
         fc.driver.expression = "frame"
     except (RuntimeError, TypeError):
-        pass  # no anim context (headless build): ripples hold at frame 0, the surface still renders
-    time = _mmath(g, "MULTIPLY", tval.outputs[0], I["Flow Speed"], (-1200, -260))
-
-    # Advect a world-space noise along the flow: pos - flow*time, plus a slow 4D evolution so the
-    # ripples change shape while drifting (no scroll-reset pop because the noise field is infinite).
+        pass  # no anim context (headless build): waves hold at frame 0, the surface still renders
+    time = _mmath(g, "MULTIPLY", tval.outputs[0], I["Flow Speed"], (-1700, -260))
     geo = g.nodes.new("ShaderNodeNewGeometry")
-    geo.location = (-1400, 560)
-    flow_off = _vscale(g, flow.outputs["Vector"], time, (-1020, 300))
-    adv = g.nodes.new("ShaderNodeVectorMath")
-    adv.operation = "SUBTRACT"
-    adv.location = (-820, 460)
-    g.links.new(geo.outputs["Position"], adv.inputs[0])
-    g.links.new(flow_off, adv.inputs[1])
-    noise = g.nodes.new("ShaderNodeTexNoise")
-    noise.noise_dimensions = "4D"
-    noise.location = (-640, 460)
-    noise.inputs["Detail"].default_value = 3.0
-    noise.inputs["Roughness"].default_value = 0.5
-    g.links.new(adv.outputs["Vector"], noise.inputs["Vector"])
-    g.links.new(I["Ripple Scale"], noise.inputs["Scale"])
-    g.links.new(_mmath(g, "MULTIPLY", time, 0.3, (-820, 300)), noise.inputs["W"])
+    geo.location = (-1900, 560)
+    pos = geo.outputs["Position"]
 
-    # Bump the surface normal by the noise, weakened to zero as it freezes (ice reads glassy-flat).
-    ripple = _mmath(g, "MULTIPLY", I["Ripple Strength"], warm, (-460, 300))
-    bump = g.nodes.new("ShaderNodeBump")
-    bump.location = (-100, 420)
-    g.links.new(ripple, bump.inputs["Strength"])
-    g.links.new(noise.outputs["Fac"], bump.inputs["Height"])
+    def _vsub(a, b, loc):
+        n = g.nodes.new("ShaderNodeVectorMath")
+        n.operation = "SUBTRACT"
+        n.location = loc
+        g.links.new(a, n.inputs[0])
+        g.links.new(b, n.inputs[1])
+        return n.outputs["Vector"]
+
+    def _noise(vec, scale, w, detail, loc):
+        n = g.nodes.new("ShaderNodeTexNoise")
+        n.noise_dimensions = "4D"
+        n.location = loc
+        n.inputs["Detail"].default_value = detail
+        n.inputs["Roughness"].default_value = 0.5
+        g.links.new(vec, n.inputs["Vector"])
+        _mplug(g, n.inputs["Scale"], scale)
+        _mplug(g, n.inputs["W"], w)
+        return n.outputs["Fac"]
+
+    def _flow_octave(scale, scroll, wspeed, detail, y):
+        """One flow-advected noise height, sampled at two phases 0.5 apart and cross-faded by a
+        triangle wave (weight 1 at a reset seam, 0 mid-cycle) so the scroll never pops. `scroll`
+        is the advection distance in metres per cycle, `scale` the noise frequency."""
+        p0 = _mmath(g, "FRACT", time, None, (-1500, y))
+        p1 = _mmath(g, "FRACT", _mmath(g, "ADD", time, 0.5, (-1500, y - 130)), None, (-1330, y - 130))
+        d0 = _mmath(g, "MULTIPLY", p0, scroll, (-1330, y))
+        d1 = _mmath(g, "MULTIPLY", p1, scroll, (-1330, y - 260))
+        s0 = _noise(_vsub(pos, _vscale(g, flow.outputs["Vector"], d0, (-1150, y)), (-980, y)),
+                    scale, _mmath(g, "MULTIPLY", time, wspeed, (-1150, y - 400)), detail, (-800, y))
+        s1 = _noise(_vsub(pos, _vscale(g, flow.outputs["Vector"], d1, (-1150, y - 260)),
+                          (-980, y - 260)),
+                    scale, _mmath(g, "MULTIPLY", _mmath(g, "ADD", time, 0.5, (-1330, y - 520)),
+                                  wspeed, (-1150, y - 520)), detail, (-800, y - 260))
+        w = _mmath(g, "ABSOLUTE",
+                   _mmath(g, "SUBTRACT", _mmath(g, "MULTIPLY", p0, 2.0, (-800, y - 400)), 1.0,
+                          (-620, y - 400)), None, (-440, y - 400))
+        return _lerp(g, s0, s1, w, (-440, y - 160))
+
+    def _wave_bump(height, strength, normal_in, loc):
+        b = g.nodes.new("ShaderNodeBump")
+        b.location = loc
+        _mplug(g, b.inputs["Strength"], strength)
+        g.links.new(height, b.inputs["Height"])
+        if normal_in is not None:
+            g.links.new(normal_in, b.inputs["Normal"])
+        return b.outputs["Normal"]
+
+    # Fine surface detail only. The VISIBLE waves are geometry Gerstner (curve_water); a
+    # low-frequency bump here combed into hair-like streaks under a grazing view, so this is now two
+    # HIGH-frequency, LOW-strength flow-scrolled octaves that read as micro-texture riding on the
+    # geometry waves. Chained through the Bump Normal input; both fade out as it freezes.
+    rs = _mmath(g, "MULTIPLY", I["Ripple Strength"], liquid, (-260, 620))
+    fine_str = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", rs, 0.6, (-260, 140)),
+                      I["Wave Detail"], (-80, 140))
+    mid_h = _flow_octave(_mmath(g, "MULTIPLY", I["Ripple Scale"], 2.0, (-1700, 620)),
+                         0.5, 0.35, 3.0, 620)
+    fine_h = _flow_octave(_mmath(g, "MULTIPLY", I["Ripple Scale"], 5.0, (-1700, 140)),
+                          0.3, 0.60, 4.0, 140)
+    n_mid = _wave_bump(mid_h, rs, None, (140, 560))
+    n_fine = _wave_bump(fine_h, fine_str, n_mid, (400, 320))
+
+    # Cracked-ice normal: a Voronoi distance-to-edge bump that fades in with `frozen` and chains on
+    # top of the (now flat) wave normal. Strength 0 when liquid, so it is a pass-through.
+    voro = g.nodes.new("ShaderNodeTexVoronoi")
+    voro.voronoi_dimensions = "3D"
+    voro.feature = "DISTANCE_TO_EDGE"
+    voro.location = (320, 40)
+    voro.inputs["Scale"].default_value = 0.6  # world-scale cells, ~1.5 m ice plates
+    g.links.new(pos, voro.inputs["Vector"])
+    ice_str = _mmath(g, "MULTIPLY", frozen, 0.35, (500, 40))
+    normal = _wave_bump(voro.outputs["Distance"], ice_str, n_fine, (680, 200))
 
     # Depth colour: deep mid-channel (shore 0), shallow near the banks (shore 1). deepness * Depth,
     # clamped, so a higher Depth pushes the deep colour further out toward the banks.
-    deepness = _mmath(g, "SUBTRACT", 1.0, shore_a.outputs["Fac"], (-1000, 100))
+    deepness = _mmath(g, "SUBTRACT", 1.0, shore_a.outputs["Fac"], (-1000, -260))
     dt = g.nodes.new("ShaderNodeMath")
     dt.operation = "MULTIPLY"
     dt.use_clamp = True
-    dt.location = (-820, 100)
+    dt.location = (-820, -260)
     g.links.new(deepness, dt.inputs[0])
     g.links.new(I["Depth"], dt.inputs[1])
-    col = _mixcol(g, dt.outputs["Value"], I["Shallow Color"], I["Deep Color"], (-620, 60))
+    col = _mixcol(g, dt.outputs["Value"], I["Shallow Color"], I["Deep Color"], (-620, -300))
 
-    # Foam on top: white where bbt_foam is high (banks + rapids), scaled by Foam Amount.
-    foam = g.nodes.new("ShaderNodeMath")
-    foam.operation = "MULTIPLY"
-    foam.use_clamp = True
-    foam.location = (-620, 240)
-    g.links.new(foam_a.outputs["Fac"], foam.inputs[0])
-    g.links.new(I["Foam Amount"], foam.inputs[1])
-    col = _mixcol(g, foam.outputs["Value"], col, I["Foam Color"], (-420, 120))
-    # Base roughness: glassy water, rougher where foam churns.
-    rough = _lerp(g, I["Water Roughness"], 0.6, foam.outputs["Value"], (-420, -120))
+    # Foam (W3). Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise breaks
+    # it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam Crispness.
+    foam_wash = _mmath(g, "MULTIPLY", foam_a.outputs["Fac"], I["Foam Amount"], (-1000, -480))
+    shore_shallow = _mrange(g, shore_a.outputs["Fac"], 0.6, 1.0, 0.0, 1.0, (-1000, -640))
+    shore_foam = _mmath(g, "MULTIPLY", shore_shallow, I["Shore Foam"], (-820, -640))
+    foam_base = _mmath(g, "MAXIMUM", foam_wash, shore_foam, (-640, -540))
+    foam_scroll = _vscale(g, flow.outputs["Vector"], _mmath(g, "MULTIPLY", time, 0.6, (-1000, -800)),
+                          (-820, -800))
+    foam_n = _noise(_vsub(pos, foam_scroll, (-640, -800)),
+                    _mmath(g, "MULTIPLY", I["Ripple Scale"], 1.5, (-820, -940)),
+                    _mmath(g, "MULTIPLY", time, 0.4, (-820, -1060)), 2.0, (-460, -800))
+    # foam_base * (0.5 + noise): streaks where the noise is high, gaps where low.
+    foam_mod = _mmath(g, "MULTIPLY", foam_base,
+                      _mmath(g, "ADD", 0.5, foam_n, (-280, -800)), (-100, -560))
+    half_w = _mmath(g, "MULTIPLY", _mmath(g, "SUBTRACT", 1.0, I["Foam Crispness"], (-280, -940)),
+                    0.5, (-100, -940))
+    foam_lo = _mmath(g, "SUBTRACT", 0.5, half_w, (80, -900))
+    foam_hi = _mmath(g, "ADD", 0.55, half_w, (80, -1020))
+    foam = _mmath(g, "MULTIPLY",
+                  _mrange(g, foam_mod, foam_lo, foam_hi, 0.0, 1.0, (260, -740)), liquid, (440, -740))
+    col = _mixcol(g, foam, col, I["Foam Color"], (620, -560))
+    # Base roughness: near-mirror water, rougher where foam churns, frosted where frozen.
+    rough = _lerp(g, I["Water Roughness"], 0.6, foam, (620, -820))
+    rough = _lerp(g, rough, _ICE_ROUGHNESS, frozen, (620, -980))
+    # Ice tint on the manual freeze path (the env-cold path is tinted by the S_Weather frost term,
+    # so tinting there too would double up); icy blue-white as Frozen rises.
+    col = _mixcol(g, _mmath(g, "MULTIPLY", I["Frozen"], 0.8, (620, -360)), col, _WATER_ICE, (800, -420))
 
     # Weather layer: inherit wetness/frost/snow. Its below-freezing frost term whitens + roughens
-    # the albedo, so the ice look rides in here for free; metallic stays 0.
+    # the albedo on the env-cold path; metallic stays 0.
     weather = g.nodes.new("ShaderNodeGroup")
     weather.node_tree = weather_group()
-    weather.location = (-160, -300)
+    weather.location = (980, -560)
     g.links.new(col, weather.inputs["Base Color"])
     g.links.new(rough, weather.inputs["Roughness"])
     weather.inputs["Metallic"].default_value = 0.0
@@ -1494,11 +1633,12 @@ def water_master_group():
         g.links.new(I[name], weather.inputs[name])
 
     # Transmission collapses to opaque as it freezes; IOR passes through; Alpha optionally fades the
-    # ribbon toward the banks (Edge Fade, default off) so the shoreline blends into the bed.
-    trans = _mmath(g, "MULTIPLY", I["Transmission"], warm, (300, -420))
-    alpha = _mmath(g, "SUBTRACT", 1.0,
-                   _mmath(g, "MULTIPLY", shore_a.outputs["Fac"], I["Edge Fade"], (300, -560)),
-                   (480, -560))
+    # ribbon toward the banks (Edge Fade, default off), but frozen ice is fully opaque.
+    trans = _mmath(g, "MULTIPLY", I["Transmission"], liquid, (980, -1120))
+    edge = _mmath(g, "SUBTRACT", 1.0,
+                  _mmath(g, "MULTIPLY", shore_a.outputs["Fac"], I["Edge Fade"], (980, -1300)),
+                  (1160, -1300))
+    alpha = _lerp(g, edge, 1.0, frozen, (1160, -1180))
 
     g.links.new(weather.outputs["Base Color"], O["Base Color"])
     g.links.new(weather.outputs["Roughness"], O["Roughness"])
@@ -1506,7 +1646,7 @@ def water_master_group():
     g.links.new(trans, O["Transmission"])
     g.links.new(I["IOR"], O["IOR"])
     g.links.new(alpha, O["Alpha"])
-    g.links.new(bump.outputs["Normal"], O["Normal"])
+    g.links.new(normal, O["Normal"])
     return g
 
 
@@ -1514,8 +1654,11 @@ def water_material(mat_name):
     """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines C5.3). The
     widened _build_wrapper drives the master's Transmission / IOR / Alpha / Normal into the
     Principled BSDF on top of the usual Base Color / Roughness / Metallic. get-or-create, so a
-    re-Build keeps tuned inputs."""
-    return _build_wrapper(mat_name, water_master_group(), "water", None)
+    re-Build keeps tuned inputs. The material's EEVEE refraction/transparency flags are set here so
+    the Transmission actually refracts (W1); the scene-level ray tracing toggle is the addon's job."""
+    mat = _build_wrapper(mat_name, water_master_group(), "water", None)
+    set_water_render_flags(mat)
+    return mat
 
 
 # BobShaders terrain master (S2). S_TerrainMaster blends an ordered stack of surface layers

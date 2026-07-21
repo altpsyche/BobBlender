@@ -70,10 +70,13 @@ _WEATHER_SEASON = ["Dust Amount", "Moss Amount"]
 _SHELL_KNOBS = ["Thickness", "Smooth"]
 SNOW_SHELL_MOD = "BOB_SnowShell"
 
-# Water master knobs (BobSplines C5.3), split colour/optics from the flow/foam animation.
+# Water master knobs (BobSplines C5.3, look pass W1-W6), split colour/optics from the flow/foam
+# animation, with the freeze slider on its own so it reads as the deliberate action it is.
 _WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Water Roughness", "IOR",
                "Transmission", "Edge Fade"]
-_WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Foam Color", "Foam Amount"]
+_WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Wave Detail",
+               "Foam Color", "Foam Amount", "Shore Foam", "Foam Crispness"]
+_WATER_FREEZE = ["Frozen"]
 
 # Surface presets: named parameter sets applied to the wrapper's Master inputs (like the
 # scatter layer types and the cloud presets). A Blender-side dict; nothing else reads it.
@@ -512,6 +515,8 @@ class BBT_OT_shaders_new(Operator):
                                    "not New - a solid material would hide their textures")
             return {"CANCELLED"}
         mat = mats.new_bobshader(obj, self.master)
+        if self.master == "water":
+            mats.enable_eevee_refraction(context.scene)  # so EEVEE-Next refracts the Transmission
         _feed_env(context.scene)
         self.report({"INFO"}, f"New {self.master} BobShader {mat.name} on {obj.name}")
         return {"FINISHED"}
@@ -1122,9 +1127,11 @@ class BBT_PT_shaders_water(Panel):
         _draw_inputs(layout, node, _WATER_LOOK)
         layout.label(text="Flow + foam (animated, needs playback)", icon="FORCE_FORCE")
         _draw_inputs(layout, node, _WATER_FLOW)
+        layout.label(text="Freeze", icon="FREEZE")
+        _draw_inputs(layout, node, _WATER_FREEZE)
         cap = layout.row()
         cap.enabled = False
-        cap.label(text="Freezes to ice below 0 C (Weather sub-panel)")
+        cap.label(text="Frozen 1 = ice; also freezes below 0 C (Weather sub-panel)")
 
 
 class BBT_PT_shaders_terrain(Panel):

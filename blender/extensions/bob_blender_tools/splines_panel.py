@@ -80,7 +80,8 @@ _CURVE_RES = 128
 # so one set of params drives both and updating depth re-carves the terrain and moves the water.
 # The water_level/flow/foam/bank_height keys matter only to the impose family (harmless on paths).
 _SHAPE_KEYS = ("width", "depth", "falloff", "taper", "shoulder", "bank_slope", "bank_bias",
-               "bank_height", "water_level", "flow", "foam_bank", "foam_rapids")
+               "bank_height", "water_level", "flow", "foam_bank", "foam_rapids",
+               "wave_amp", "wave_len", "wave_steep", "wave_chop")
 ROLES = {
     "dirt_path": {
         "label": "Dirt Path", "icon": "IPO_EASE_IN_OUT",
@@ -88,6 +89,7 @@ ROLES = {
         "width": 4.8, "depth": 0.3, "falloff": 3.5, "taper": 2.0, "shoulder": 0.0,
         "bank_slope": 1.0, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
         "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -97,6 +99,7 @@ ROLES = {
         "width": 2.4, "depth": 0.15, "falloff": 2.0, "taper": 1.0, "shoulder": 0.0,
         "bank_slope": 1.2, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
         "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -106,6 +109,7 @@ ROLES = {
         "width": 9.0, "depth": 0.4, "falloff": 4.0, "taper": 2.0, "shoulder": 1.5,
         "bank_slope": 0.7, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
         "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8, "surface_hard": 1.0,
         "surface_attr": "bbt_curve_mask_b", "surface_channel": "b",
     },
@@ -116,6 +120,7 @@ ROLES = {
         "width": 10.0, "depth": 1.2, "falloff": 4.5, "taper": 3.0, "shoulder": 0.5,
         "bank_slope": 0.9, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.58, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
+        "wave_amp": 0.10, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
         "surface": (0.12, 0.11, 0.09, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         # densify: solve the descent from the terrain sampled DENSELY along the curve so the water
@@ -130,6 +135,7 @@ ROLES = {
         "width": 4.0, "depth": 0.5, "falloff": 2.5, "taper": 2.0, "shoulder": 0.2,
         "bank_slope": 1.1, "bank_bias": 0.0, "bank_height": 0.25,
         "water_level": 0.56, "flow": 1.4, "foam_bank": 0.4, "foam_rapids": 1.2,
+        "wave_amp": 0.06, "wave_len": 2.5, "wave_steep": 0.45, "wave_chop": 0.8,
         "surface": (0.14, 0.12, 0.10, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         "drape": {"monotonic": True, "min_slope": 0.03, "to_sea": False, "densify": 48},
@@ -375,6 +381,9 @@ def _build_water(curve):
         return None
     # A GN-generated mesh shades through a Set-Material modifier (like the terrain), not the slot.
     materials.assign_material(obj, materials.water_material(name))
+    # EEVEE-Next only refracts the water's Transmission with scene ray tracing on (the material
+    # flags are set in water_material); a no-op in Cycles / when already on.
+    materials.enable_eevee_refraction(bpy.context.scene)
     obj.update_tag()
     return obj
 
@@ -436,7 +445,9 @@ def _sync_curve_params(context, curve):
         fill, water_depth = _derived_water(cfg)
         for name, val in (("Width", fill), ("Water Depth", water_depth), ("End Taper", cfg.taper),
                           ("Flow Base", cfg.flow), ("Foam Bank", cfg.foam_bank),
-                          ("Foam Rapids", cfg.foam_rapids)):
+                          ("Foam Rapids", cfg.foam_rapids), ("Wave Amplitude", cfg.wave_amp),
+                          ("Wave Length", cfg.wave_len), ("Wave Steepness", cfg.wave_steep),
+                          ("Wave Chop", cfg.wave_chop)):
             _set_mod_input(wmod, name, val)
         water.update_tag()
 
@@ -540,6 +551,20 @@ class BBT_Curve(PropertyGroup):
     foam_rapids: FloatProperty(
         name="Foam (rapids)", default=1.0, min=0.0, max=1.0, update=_sync_cb,
         description="River/stream: foam on steep white-water sections")
+    wave_amp: FloatProperty(
+        name="Wave Height", default=0.10, min=0.0, soft_max=0.6, update=_sync_cb,
+        description="River/stream: Gerstner wave height in metres (real animated crest/trough "
+                    "displacement of the water surface). 0 = a flat sheet")
+    wave_len: FloatProperty(
+        name="Wave Length", default=4.5, min=0.2, soft_max=20.0, update=_sync_cb,
+        description="River/stream: spacing between wave crests in metres")
+    wave_steep: FloatProperty(
+        name="Wave Steepness", default=0.4, min=0.0, max=1.0, update=_sync_cb,
+        description="River/stream: 0 rounded swells, 1 peaked crests (the Gerstner trochoid)")
+    wave_chop: FloatProperty(
+        name="Wave Chop", default=0.7, min=0.0, max=1.0, update=_sync_cb,
+        description="River/stream: how much the crests meander (breaks the regular wave lattice "
+                    "into natural chop); 0 = clean parallel swells")
 
 
 class BBT_CurveEntry(PropertyGroup):
@@ -897,6 +922,13 @@ class BBT_PT_paths_active(Panel):
             col.prop(cfg, "flow")
             col.prop(cfg, "foam_bank")
             col.prop(cfg, "foam_rapids")
+
+            layout.label(text="Waves (animated)", icon="MOD_WAVE")
+            col = layout.column(align=True)
+            col.prop(cfg, "wave_amp")
+            col.prop(cfg, "wave_len")
+            col.prop(cfg, "wave_steep")
+            col.prop(cfg, "wave_chop")
 
 
 CLASSES = (
