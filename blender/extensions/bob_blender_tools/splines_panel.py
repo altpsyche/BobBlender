@@ -83,7 +83,7 @@ _CURVE_RES = 128
 # The water_level/flow/foam/bank_height keys matter only to the impose family (harmless on paths).
 _SHAPE_KEYS = ("width", "depth", "falloff", "taper", "shoulder", "bank_slope", "bank_bias",
                "bank_height", "water_level", "flow", "foam_bank", "foam_rapids",
-               "wave_amp", "wave_len", "wave_steep", "wave_chop")
+               "wave_amp", "wave_len", "wave_steep", "wave_speed", "wave_chop")
 ROLES = {
     "dirt_path": {
         "label": "Dirt Path", "icon": "IPO_EASE_IN_OUT",
@@ -91,7 +91,7 @@ ROLES = {
         "width": 4.8, "depth": 0.3, "falloff": 3.5, "taper": 2.0, "shoulder": 0.0,
         "bank_slope": 1.0, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
-        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
         "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -101,7 +101,7 @@ ROLES = {
         "width": 2.4, "depth": 0.15, "falloff": 2.0, "taper": 1.0, "shoulder": 0.0,
         "bank_slope": 1.2, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
-        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
         "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -111,7 +111,7 @@ ROLES = {
         "width": 9.0, "depth": 0.4, "falloff": 4.0, "taper": 2.0, "shoulder": 1.5,
         "bank_slope": 0.7, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
-        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
+        "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
         "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8, "surface_hard": 1.0,
         "surface_attr": "bbt_curve_mask_b", "surface_channel": "b",
     },
@@ -122,7 +122,7 @@ ROLES = {
         "width": 10.0, "depth": 1.2, "falloff": 4.5, "taper": 3.0, "shoulder": 0.5,
         "bank_slope": 0.9, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.58, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
-        "wave_amp": 0.10, "wave_len": 4.5, "wave_steep": 0.4, "wave_chop": 0.7,
+        "wave_amp": 0.10, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
         "surface": (0.12, 0.11, 0.09, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         # densify: solve the descent from the terrain sampled DENSELY along the curve so the water
@@ -137,7 +137,7 @@ ROLES = {
         "width": 4.0, "depth": 0.5, "falloff": 2.5, "taper": 2.0, "shoulder": 0.2,
         "bank_slope": 1.1, "bank_bias": 0.0, "bank_height": 0.25,
         "water_level": 0.56, "flow": 1.4, "foam_bank": 0.4, "foam_rapids": 1.2,
-        "wave_amp": 0.06, "wave_len": 2.5, "wave_steep": 0.45, "wave_chop": 0.8,
+        "wave_amp": 0.06, "wave_len": 2.5, "wave_steep": 0.45, "wave_speed": 0.6, "wave_chop": 0.8,
         "surface": (0.14, 0.12, 0.10, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         "drape": {"monotonic": True, "min_slope": 0.03, "to_sea": False, "densify": 48},
@@ -266,6 +266,23 @@ def _apply_curve_transform(curve):
     curve.data.update_tag()
 
 
+def _curve_off_terrain(curve, terrain):
+    """True if any of the curve's control points sits outside the terrain footprint (|x|,|y| > size/2).
+
+    A cheap panel-side check (control points only, no mesh eval) so the Active Path panel can warn that
+    a dragged-off point will be clipped by the drape. Terrain is centred at the origin, size square."""
+    if curve is None or terrain is None or curve.type != "CURVE":
+        return False
+    half = 0.5 * float(terrain.get("bbt_terrain_size", 90.0))
+    for spline in curve.data.splines:
+        pts = spline.bezier_points if spline.type == "BEZIER" else spline.points
+        for p in pts:
+            co = p.co
+            if abs(co[0]) > half or abs(co[1]) > half:
+                return True
+    return False
+
+
 def _build_curve_overlay(terrain, curve, carve=True):
     """Drape the curve onto the terrain (when it has a bake), then build/update the curve's overlay
     modifier. The overlay always writes the bbt_curve_mask attribute; carve=False makes it mask-only
@@ -285,7 +302,9 @@ def _build_curve_overlay(terrain, curve, carve=True):
         # role["drape"] adds the monotonic downhill solve for a river/stream (empty for a path).
         res = _apply([{"op": "drape_curve", "name": curve.name,
                        **_drape_params(terrain), **role.get("drape", {})}])
-        draped = True
+        # A drape that failed (missing heightmap, curve entirely off the terrain) returns an info-only
+        # dict with no "created"; do not then claim the curve was draped.
+        draped = bool(res and res[0].get("created"))
         # drape_curve clips points dragged off the terrain (else a river's monotonic solve carves a
         # runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back on.
         off_terrain = bool(res and res[0].get("dropped"))
@@ -483,11 +502,16 @@ def _sync_curve_params(context, curve):
     wmod = next((m for m in water.modifiers if m.type == "NODES"), None) if water else None
     if wmod is not None:
         fill, water_depth = _derived_water(cfg)
-        for name, val in (("Width", fill), ("Water Depth", water_depth), ("End Taper", cfg.taper),
+        # Bed Depth = the full channel depth below the rim, so the ribbon can store the water-column
+        # thickness (Bed Depth - Water Depth) per vertex for the shader's depth absorption. In
+        # banks-from-erosion mode the containing trough is the shallow guarantee, so use that.
+        bed_depth = _guarantee_depth(cfg) if cfg.banks_from_erosion else cfg.depth
+        for name, val in (("Width", fill), ("Water Depth", water_depth), ("Bed Depth", bed_depth),
+                          ("End Taper", cfg.taper),
                           ("Flow Base", cfg.flow), ("Foam Bank", cfg.foam_bank),
                           ("Foam Rapids", cfg.foam_rapids), ("Wave Amplitude", cfg.wave_amp),
                           ("Wave Length", cfg.wave_len), ("Wave Steepness", cfg.wave_steep),
-                          ("Wave Chop", cfg.wave_chop)):
+                          ("Wave Speed", cfg.wave_speed), ("Wave Chop", cfg.wave_chop)):
             _set_mod_input(wmod, name, val)
         water.update_tag()
 
@@ -606,6 +630,10 @@ class BBT_Curve(PropertyGroup):
     wave_steep: FloatProperty(
         name="Wave Steepness", default=0.4, min=0.0, max=1.0, update=_sync_cb,
         description="River/stream: 0 rounded swells, 1 peaked crests (the Gerstner trochoid)")
+    wave_speed: FloatProperty(
+        name="Wave Speed", default=0.6, min=0.0, soft_max=3.0, update=_sync_cb,
+        description="River/stream: how fast the wave crests travel downstream (the Gerstner phase "
+                    "speed); 0 = standing waves")
     wave_chop: FloatProperty(
         name="Wave Chop", default=0.7, min=0.0, max=1.0, update=_sync_cb,
         description="River/stream: how much the crests meander (breaks the regular wave lattice "
@@ -701,11 +729,17 @@ class BBT_OT_curve_remove(Operator):
         if entry is None:
             return {"CANCELLED"}
         curve = entry.curve
-        # Drop the curve's overlay modifier first so its carve and mask contribution disappear.
-        terrain = _terrain(context)
-        mod = _overlay_mod(terrain, curve)
-        if mod is not None:
-            terrain.modifiers.remove(mod)
+        name = curve.name if curve is not None else "(missing)"
+        had_scatter = curve is not None and curve.bbt_curve.do_scatter
+        # Drop the curve's overlay modifier first so its carve and mask contribution disappear. Search
+        # ALL meshes for it, not just the current terrain pick: if the pick changed since Build, the
+        # overlay lives on the OTHER terrain and would otherwise be orphaned there, carving forever.
+        oname = _overlay_name(curve) if curve is not None else None
+        if oname is not None:
+            for obj in bpy.data.objects:
+                m = next((md for md in obj.modifiers if md.type == "NODES" and md.name == oname), None)
+                if m is not None:
+                    obj.modifiers.remove(m)
         # Drop the river's water-surface ribbon object too, if it has one.
         water = _water_obj(curve)
         if water is not None:
@@ -715,6 +749,12 @@ class BBT_OT_curve_remove(Operator):
             bpy.data.objects.remove(curve, do_unlink=True)
         scn.curves.remove(idx)
         scn.active = max(0, min(scn.active, len(scn.curves) - 1))
+        # Rebuild scatter so a layer that was cleared along this curve's (now gone) mask fills back in;
+        # without this the emitter keeps a bald strip where the deleted path used to be.
+        rescattered = had_scatter and _clear_scatter(context)
+        context.view_layer.update()
+        self.report({"INFO"},
+                    f"Removed {name}" + (", rebuilt scatter" if rescattered else ""))
         return {"FINISHED"}
 
 
@@ -737,6 +777,7 @@ class BBT_OT_curve_duplicate(Operator):
         entry = scn.curves.add()
         entry.curve = dup
         scn.active = len(scn.curves) - 1
+        self.report({"INFO"}, f"Duplicated to {dup.name}; shape it and Build")
         return {"FINISHED"}
 
 
@@ -762,12 +803,16 @@ class BBT_OT_curve_build(Operator):
         # Any channel needs the overlay's masks; build it once (carve only when the Terrain channel
         # is on, else it is a mask-only overlay driving material/scatter/verge/water). A water-only
         # river still needs it, because that is where the monotonic downhill drape runs.
-        if cfg.do_terrain or cfg.do_material or cfg.do_scatter or (cfg.do_water and impose):
-            if terrain is None:
-                self.report({"WARNING"}, "Pick a terrain mesh")
-            else:
-                note = _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
-                did.append(f"carved terrain ({note})" if cfg.do_terrain else "curve mask")
+        needs_terrain = cfg.do_terrain or cfg.do_material or cfg.do_scatter or (cfg.do_water and impose)
+        if needs_terrain and terrain is None:
+            # Every requested channel needs a terrain to drape/carve/mask against; without one the
+            # material band, water, and scatter would all fail with misleading downstream messages
+            # (or build a water ribbon on an undraped curve). Stop here with one clear reason.
+            self.report({"ERROR"}, "Pick a terrain mesh in the Paths panel first")
+            return {"CANCELLED"}
+        if needs_terrain:
+            note = _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
+            did.append(f"carved terrain ({note})" if cfg.do_terrain else "curve mask")
 
         if cfg.do_material:
             if _apply_curve_material(terrain, role) is not None:
@@ -997,7 +1042,10 @@ class BBT_OT_curve_bake_erode(Operator):
         params = {"base_png": clean_src, "stack": stack, "backend": "auto", "seed": 0}
 
         from . import _run_host_bake
-        _meta, err = _run_host_bake(context, out_abs, params=params)
+        # Emit flow/wetness sidecar maps beside the eroded PNG (<stem>_eroded_flow.png / _wetness.png).
+        # The terrain material discovers them by the sibling convention (materials._terrain_maps), so
+        # after a material rebuild the riverbed layer keys off the ERODED drainage, not the clean base.
+        _meta, err = _run_host_bake(context, out_abs, params=params, maps=True)
         if err is not None:
             self.report({"ERROR"}, err)
             return {"CANCELLED"}
@@ -1032,6 +1080,57 @@ class BBT_OT_curve_bake_erode(Operator):
         scn.erode_summary = f"eroded ({scope}), re-imposed {len(curves)} curve(s)"
         self.report({"INFO"},
                     f"Eroded {terrain.name} ({scope}) + re-imposed {len(curves)} curve(s)")
+        return {"FINISHED"}
+
+
+class BBT_OT_curve_revert_erode(Operator):
+    bl_idname = "bob_blender_tools.curve_revert_erode"
+    bl_label = "Revert to Clean"
+    bl_description = ("Undo Bake & Erode: swap the terrain back to the clean (pre-erosion) heightfield "
+                      "and re-impose every curve on it, so the full graded channel returns. Use this to "
+                      "get back to the un-eroded sculpt after trying an erode")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        scn = context.scene.bbt_curves
+        terrain = _terrain(context)
+        if terrain is None:
+            self.report({"ERROR"}, "Pick a terrain mesh in the Paths panel first")
+            return {"CANCELLED"}
+        clean = terrain.get("bbt_heightmap_clean")
+        if not clean or not os.path.exists(clean):
+            self.report({"ERROR"}, "No clean heightfield recorded (nothing eroded to revert)")
+            return {"CANCELLED"}
+        size = float(terrain.get("bbt_terrain_size", 90.0))
+        height = float(terrain.get("bbt_terrain_height", 22.0))
+        sea = float(terrain.get("bbt_terrain_sea", 0.22))
+        grid_res = int(terrain.get("bbt_terrain_res", 256))
+        _apply([{"op": "reload_image", "path": clean},
+                {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": terrain.name,
+                 "params": {"heightmap": clean, "size": size, "resolution": grid_res,
+                            "height": height, "sea_level": sea}}])
+        terrain["bbt_heightmap"] = clean
+        del terrain["bbt_heightmap_clean"]
+        # Re-impose every curve on the clean terrain with the full graded channel back (clear the
+        # banks-from-erosion flag so the overlay stamps the shoulder/banks again, not the shallow bed).
+        n = 0
+        for entry in scn.curves:
+            curve = entry.curve
+            if curve is None:
+                continue
+            cfg = curve.bbt_curve
+            impose = ROLES.get(cfg.role, ROLES["dirt_path"]).get("family") == "impose"
+            if not (cfg.do_terrain or cfg.do_material or cfg.do_scatter or (cfg.do_water and impose)):
+                continue
+            cfg.banks_from_erosion = False
+            _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
+            if cfg.do_water and impose:
+                _build_water(curve)
+            _sync_curve_params(context, curve)
+            n += 1
+        context.view_layer.update()
+        scn.erode_summary = "reverted to clean terrain"
+        self.report({"INFO"}, f"Reverted {terrain.name} to clean + re-imposed {n} curve(s)")
         return {"FINISHED"}
 
 
@@ -1097,7 +1196,12 @@ class BBT_PT_paths(Panel):
             box.prop(scn, "erode_strength", slider=True)
             box.prop(scn, "erode_scope")
             box.prop(scn, "erode_deposit")
-            box.operator("bob_blender_tools.curve_bake_erode", icon="MATFLUID")
+            row = box.row(align=True)
+            row.operator("bob_blender_tools.curve_bake_erode", icon="MATFLUID")
+            # Revert only makes sense once an erode has recorded a clean source.
+            rev = row.row(align=True)
+            rev.enabled = bool(terrain.get("bbt_heightmap_clean"))
+            rev.operator("bob_blender_tools.curve_revert_erode", text="", icon="LOOP_BACK")
             note = box.row()
             note.enabled = False
             note.label(text=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
@@ -1139,23 +1243,45 @@ class BBT_PT_paths_active(Panel):
         tip.enabled = False
         tip.label(text="Reeds on the banks: a Scatter layer, Curve = Verge (path edge)", icon="INFO")
 
+        # Warn if the curve was dragged off the terrain: the drape clips off-terrain points, so a
+        # partly-off curve carves only its on-terrain part and a fully-off one does nothing.
+        if _curve_off_terrain(curve, _terrain(context)):
+            warn = layout.row()
+            warn.alert = True
+            warn.label(text="Curve leaves the terrain; off-terrain points are ignored", icon="ERROR")
+
         # Shape (live): one owner on bbt_curve, synced to BOTH the carve overlay and the water ribbon
         # as you drag. Editing Depth re-carves the terrain and repositions the water together.
         layout.separator()
         layout.label(text="Shape (live)", icon="MODIFIER")
         col = layout.column(align=True)
         col.prop(cfg, "width")
-        col.prop(cfg, "depth")
+        # After Bake & Erode the banks come from the eroded terrain: the overlay carves only a shallow
+        # guarantee bed, so Depth and every Banks knob are forced and dragging them does nothing.
+        # Show them disabled with a note instead of as live-but-inert sliders (Build re-imposes them).
+        eroded_banks = cfg.banks_from_erosion
+        drow = col.row()
+        drow.enabled = not eroded_banks
+        drow.prop(cfg, "depth")
         col.prop(cfg, "falloff")
         col.prop(cfg, "taper")
 
         layout.label(text="Banks")
+        if eroded_banks:
+            note = layout.row()
+            note.enabled = False
+            note.label(text="Shaped banks come from erosion; Build to re-impose the graded channel",
+                       icon="INFO")
         col = layout.column(align=True)
-        col.prop(cfg, "shoulder")
+        # bank_slope still sets the water reach in eroded mode, so it stays live; the graded-embankment
+        # knobs (shoulder/bias/height) are forced to 0 there, so grey just those.
         col.prop(cfg, "bank_slope")
-        col.prop(cfg, "bank_bias")
+        graded = col.column(align=True)
+        graded.enabled = not eroded_banks
+        graded.prop(cfg, "shoulder")
+        graded.prop(cfg, "bank_bias")
         if impose:
-            col.prop(cfg, "bank_height")
+            graded.prop(cfg, "bank_height")
 
         if impose:
             layout.label(text="Water", icon="MATFLUID")
@@ -1170,6 +1296,7 @@ class BBT_PT_paths_active(Panel):
             col.prop(cfg, "wave_amp")
             col.prop(cfg, "wave_len")
             col.prop(cfg, "wave_steep")
+            col.prop(cfg, "wave_speed")
             col.prop(cfg, "wave_chop")
 
 
@@ -1183,6 +1310,7 @@ CLASSES = (
     BBT_OT_curve_build,
     BBT_OT_curve_build_all,
     BBT_OT_curve_bake_erode,
+    BBT_OT_curve_revert_erode,
     BBT_UL_curves,
     BBT_PT_paths,
     BBT_PT_paths_active,

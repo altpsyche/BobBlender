@@ -51,14 +51,12 @@ LAYER_TYPES = {
         "desc": "Upright, sparse; pulls back further from a path",
         "knobs": {"density": 3.0, "distance_min": 1.1, "min_normal_z": 0.6,
                   "min_scale": 0.8, "max_scale": 1.3},
-        "path_width": 4.0,
     },
     "rocks": {
         "label": "Rocks", "icon": "MESH_ICOSPHERE", "align": "normal",
         "desc": "Tilted to the surface, allows slopes",
         "knobs": {"density": 2.0, "distance_min": 0.7, "min_normal_z": 0.25,
                   "min_scale": 0.4, "max_scale": 1.2},
-        "path_width": 2.0,
     },
     "plants": {
         "label": "Plants", "icon": "MESH_CIRCLE", "align": "normal",
@@ -66,7 +64,6 @@ LAYER_TYPES = {
         "knobs": {"density": 8.0, "distance_min": 0.35, "min_normal_z": 0.4,
                   "min_scale": 0.6, "max_scale": 1.1,
                   "noise_strength": 0.35, "noise_scale": 0.12, "noise_contrast": 0.5},
-        "path_width": 2.5,
     },
     "grass": {
         "label": "Grass", "icon": "MESH_PLANE", "align": "normal",
@@ -74,13 +71,11 @@ LAYER_TYPES = {
         "knobs": {"density": 24.0, "distance_min": 0.12, "min_normal_z": 0.35,
                   "min_scale": 0.5, "max_scale": 1.0,
                   "noise_strength": 0.55, "noise_scale": 0.22, "noise_contrast": 0.6},
-        "path_width": 2.0,
     },
     "empty": {
         "label": "Empty", "icon": "DOT", "align": "up",
         "desc": "Recipe defaults, no assets (bring your own collection)",
         "knobs": {},
-        "path_width": 3.0,
     },
 }
 

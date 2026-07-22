@@ -64,11 +64,22 @@ Fix: clip the curve polyline to the terrain footprint (|x|,|y| <= size/2) BEFORE
 Verified headless (repro2.py): endpoint at x=800/3000 -> bed stays -6.3m (was -14.7 / -58.5), terrain
 std ~= the clean 4.44, relief intact; erode stays contained. Scripts: scratchpad repro.py, repro2.py.
 
+## ERODE QoL (final-polish P2, UNCOMMITTED)
+- Revert to Clean (BBT_OT_curve_revert_erode, splines_panel.py): swaps the terrain back to
+  bbt_heightmap_clean, clears the clean key + banks_from_erosion, and re-imposes every curve with the
+  full graded channel. A small LOOP_BACK button next to Bake & Erode, enabled only once an erode has
+  recorded a clean source. Verified headless: terrain z restored exactly, clean key cleared.
+- Bake & Erode now emits flow/wetness SIBLING maps on the eroded PNG (_run_host_bake maps=True ->
+  <stem>_eroded_flow.png / _wetness.png). The terrain material discovers them by the sibling
+  convention (materials._terrain_maps), so after a material rebuild the riverbed layer keys off the
+  ERODED drainage, not the clean base. Verified headless: both sibling maps written.
+
 ## STILL TODO (next)
+- Water W5: DONE (final-polish P1). Depth absorption + depth opacity + soft shoreline in S_WaterMaster
+  v5, keyed to a per-vertex bbt_depth on the ribbon. See WATER-SHADER-HANDOVER.md.
 - Hand the LOOK to Siva in Blender (EEVEE + Cycles): run Bake & Erode on a river scene, judge the
-  eroded banks + contained water + the new floodplain/bars. Tune erode_strength (deeper valleys),
-  erode_deposit on/off, deposit amount / _guarantee_depth to taste.
-- Water pass W5 (depth absorption + soft shoreline). Pairs with the eroded-floor water now in place.
+  eroded banks + contained water + the new floodplain/bars + the W5 depth-tinted water. Tune
+  erode_strength (deeper valleys), erode_deposit on/off, deposit amount / _guarantee_depth to taste.
 
 ## Where we are
 - Water shader look pass: COMMITTED ("improved water", bc56537). Gerstner geometry waves, EEVEE

@@ -431,6 +431,35 @@ curve.
   `S_GROUP_VER` bump handles it). The ripple animation needs playback / a frame change to move.
 - **C6 (optional, baked)**: venv `carve` op + flow/wetness bias + "Bake curve into terrain".
 
+### Final polish pass (P0-P5) -- DONE 2026-07-22, headless-verified
+A hardening + finishing sweep after the feature phases. Grounded in a code audit; each item is small.
+- **P0 robustness**: curve_build now errors + returns when no terrain is picked (was: fell through
+  into misleading material/water messages and built water on an undraped curve); drape_curve/make_path
+  guard the heightmap path exists; make_path requires >= 2 points (a 1-point NURBS is degenerate);
+  _build_curve_overlay only reports "draped" when the drape actually succeeded; scatter_along caps the
+  instance count (_MAX_ALONG, guards a 0.01 Spacing on a long curve); curve_overlay Path Depth clamps
+  min 0.
+- **P1 water W5** (see WATER-SHADER-HANDOVER.md): per-vertex bbt_depth on the ribbon + Beer-Lambert
+  depth colour/opacity + soft shoreline in S_WaterMaster (v5).
+- **P2 erode QoL**: "Revert to Clean" operator (BBT_OT_curve_revert_erode) swaps the terrain back to
+  bbt_heightmap_clean and re-imposes the full graded channel; Bake & Erode now emits flow/wetness
+  sibling maps on the eroded PNG so the riverbed material keys off the ERODED drainage. (Eroded-banks
+  realism -- channel_seed + drainage prior + noise-warped thermal + a deposition/point-bar pass -- and
+  the off-terrain-point flatten fix landed alongside; see EROSION-BANKS-HANDOVER.md.)
+- **P3 UX clarity**: the Banks/Depth knobs are greyed with a note after Bake & Erode (they are forced,
+  so dragging them was a silent no-op); the previously-unreachable Wave Speed is exposed on bbt_curve +
+  synced; Remove/Duplicate report their result and Remove rebuilds scatter + finds its overlay on ANY
+  terrain (not just the current pick, so a changed terrain pick cannot orphan it); the Active Path
+  panel warns when a curve leaves the terrain.
+- **P4 dead code + validation**: deleted the vestigial `path_width` from scatter LAYER_TYPES (C4
+  retired the proximity path); scatter_along's asset-pick / scale / random-yaw seed streams are
+  decorrelated (were all on the raw Seed, so the biggest rock always faced the same way).
+- **P5 verify**: headless sweep of all five roles (build; impose roles also erode + water containment +
+  bbt_depth) passes; venv heightfield tests 43/43.
+Out of scope (features, a separate track, not polish): a sea/ocean/lake surface; bridges/culverts where
+a road crosses a river (R6 take-lower sinks the road into the water); tributary networks and
+width-from-flow-accumulation; a true eroded-channel water re-fit (the bigger erosion bet).
+
 ### Polish pass (R1-R5) -- DONE, static-gated, awaiting Blender verify
 
 Broad-sweep refinements to the shipped follow-terrain family (no new channel). Static-gated
