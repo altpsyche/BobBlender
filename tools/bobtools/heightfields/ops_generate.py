@@ -86,22 +86,24 @@ def dunes(h, xp, seed=0, wind=35.0, frequency=7.0, sharpness=0.5, warp=0.12,
 
 
 def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.97,
-           mix="replace", amount=1.0):
+           smooth=2.0, mix="replace", amount=1.0):
     """Flat-lying layered rock strata: the mesa/plateau base (real strata, not a terrace filter over
     ridged noise). A broad, near-flat uplifted surface quantised into `layers` genuinely flat benches
     with near-vertical risers; the risers become cliffs once scarp (ops_erode.scarp) erodes the
     field. `dissection` > 1 lowers the midtones so the top strata survive only in patches -> isolated
     mesas/buttes; near 1 it keeps a continuous tableland (plateau). `sharpness` in [0, 1) sets how
-    thin/steep the riser is (0.97 ~ near-vertical). Distinct from ops_filter.terrace, which shapes an
-    EXISTING field; strata GENERATES the flat-layered plateau from scratch."""
+    thin/steep the riser is (0.97 ~ near-vertical). `smooth` (gaussian sigma, cells) merges small high
+    spots BEFORE quantising so they do not survive as isolated full-height spires/pyramids -- raise it
+    for a cleaner plateau (canyon rims), lower it for more scattered buttes. Distinct from
+    ops_filter.terrace, which shapes an EXISTING field; strata GENERATES the flat-layered plateau."""
     from . import ops_erode
     n = h.shape[0]
     u = (xp.arange(n, dtype=xp.float64) + 0.5) / n
     x, y = xp.meshgrid(u, u)
     surf = (0.6 * _value_noise(xp, x, y, float(base_freq), seed + 1)
             + 0.4 * _value_noise(xp, x, y, float(base_freq) * 2.1, seed + 7))
-    # de-spike so no single-cell peak survives quantising into a stray cone
-    surf = ops_erode._ndimage(xp).gaussian_filter(surf, 2.0, mode="nearest")
+    # de-spike so no small high patch survives quantising into a stray spire/pyramid
+    surf = ops_erode._ndimage(xp).gaussian_filter(surf, max(float(smooth), 1e-3), mode="nearest")
     surf = (surf - surf.min()) / (surf.max() - surf.min() + 1e-9)
     surf = surf ** float(dissection)
     L = max(float(layers), 1.0)

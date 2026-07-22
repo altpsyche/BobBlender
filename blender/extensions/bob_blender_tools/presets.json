@@ -65,6 +65,14 @@
       "relief_ratio": 0.18,
       "sea_level": 0.05
     },
+    "canyon": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "relief_ratio": 0.22,
+      "sea_level": 0.1
+    },
     "dunes": {
       "relief": 0.5,
       "detail": 0.5,
@@ -308,6 +316,43 @@
         "talus": 0.14,
         "factor": 0.5,
         "iterations": 1
+      }
+    ],
+    "canyon": [
+      {
+        "kind": "strata",
+        "layers": 3,
+        "dissection": 1.0,
+        "base_freq": 1.7,
+        "smooth": 5.0
+      },
+      {
+        "kind": "scarp",
+        "iterations": 6,
+        "cap_slope": 0.12,
+        "undercut": 0.003,
+        "talus": 0.12,
+        "open_size": 8
+      },
+      {
+        "kind": "fluvial",
+        "sp_m": 0.5,
+        "sp_n": 1.0,
+        "recompute": 20,
+        "fill_iters": 700,
+        "acc_iters": 700,
+        "thermal_iters": 1,
+        "max_delta": 0.03,
+        "iterations": 120,
+        "k": 0.024,
+        "diffusion": 0.03,
+        "talus": 0.005
+      },
+      {
+        "kind": "thermal",
+        "talus": 0.02,
+        "factor": 0.5,
+        "iterations": 2
       }
     ],
     "dunes": [

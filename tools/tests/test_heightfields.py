@@ -289,6 +289,26 @@ def test_mesa_reads_as_tableland():
     assert m_cliff > a_cliff               # yet has steeper cliff faces than the mountains
 
 
+def test_canyon_incises_a_plateau():
+    # Canyon's landform signature: flat plateau RIMS (unlike mountains/hills) that are DEEPLY INCISED
+    # below the rim by confined channels (unlike a solid mesa cap). Gates the canyon generator
+    # (strata plateau + fluvial hero); a diagnostic, render-verified, not a stat on its own.
+    bk = backend.select("auto")
+    def flat_deep(name):
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5), bk, seed=5)
+        gy, gx = np.gradient(h)
+        flat = (np.hypot(gx, gy) < 0.0015).mean()
+        deep = (h < np.percentile(h, 85) - 0.25).mean()   # floor well below the rim level
+        return flat, deep
+    c_flat, c_deep = flat_deep("canyon")
+    m_flat, m_deep = flat_deep("mesa")
+    a_flat, _ = flat_deep("alpine")
+    assert c_flat > 0.2, c_flat            # real flat rims (mountains/hills sit near 0.02)
+    assert c_flat > 5.0 * a_flat           # far more rim than graded mountains
+    assert c_deep > 0.6, c_deep            # deeply incised below the rim
+    assert c_deep > m_deep                 # cuts deeper below its rim than a mesa cap
+
+
 @pytest.mark.parametrize("name", presets.PRESETS)
 def test_presets_expand(name):
     p = presets.get(name)

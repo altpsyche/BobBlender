@@ -13,18 +13,19 @@ stack exactly as written here. Presets are grouped into families:
 
   Mountains       alpine, glacial, foothills
   Lowlands        hills, plains, coastal, islands
-  Tablelands      mesa
+  Canyons         mesa, canyon
   Dunes           dunes, sand_sea
 
 The mountain stacks pair ridged-multifractal noise with stream-power fluvial erosion
 (see heightfields/ops_erode.fluvial); the lowlands use gentler versions of the same, with
-falloff shaping coastal and islands. Mesa uses its OWN process -- flat layered strata
-(ops_generate.strata) dissected by cap-rock scarp retreat (ops_erode.scarp) -- not eroded
-noise. Keep these plain and few.
+falloff shaping coastal and islands. The Canyons family uses its OWN processes -- flat layered
+strata (ops_generate.strata) dissected by cap-rock scarp retreat (ops_erode.scarp) for mesa, and
+the stream-power hero incising a smoothed strata PLATEAU for canyon -- not eroded noise. Keep
+these plain and few.
 
 The old Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07 because the
-single noise-plus-fluvial engine could only make them look like eroded hills. Mesa is now back
-with a real generator; canyon, badlands and plateau return as their own generators land.
+single noise-plus-fluvial engine could only make them look like eroded hills. Mesa and canyon are
+now back with real generators; badlands and plateau return as their own generators land.
 See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
 """
 
@@ -88,13 +89,22 @@ STACKS = {
                  fill_iters=600, acc_iters=600),
         {"kind": "thermal", "talus": 0.005, "factor": 0.4, "iterations": 2},
     ],
-    # --- Tablelands (real strata + cap-rock scarp retreat, not eroded noise) ---
+    # --- Canyons & mesas (real strata + cap-rock scarp / plateau incision, not eroded noise) ---
     "mesa": [   # flat-topped tables and buttes: layered strata dissected by cliff retreat into
                 # isolated caps with near-vertical sides and talus aprons. NOT dendritic fluvial.
         {"kind": "strata", "layers": 5, "dissection": 1.4, "base_freq": 3.0},
         {"kind": "scarp", "iterations": 12, "cap_slope": 0.10, "undercut": 0.0015,
          "talus": 0.14, "open_size": 6},
         {"kind": "thermal", "talus": 0.14, "factor": 0.5, "iterations": 1},
+    ],
+    "canyon": [   # dendritic canyons incised into a high layered PLATEAU: flat rims survive, the
+                  # stream-power hero cuts confined steep-walled channels, strata show in the walls.
+                  # A near-flat plateau base (smoothed strata) instead of the old ridged-noise hill.
+        {"kind": "strata", "layers": 3, "dissection": 1.0, "base_freq": 1.7, "smooth": 5.0},
+        {"kind": "scarp", "iterations": 6, "cap_slope": 0.12, "undercut": 0.003,
+         "talus": 0.12, "open_size": 8},
+        _fluvial(iterations=120, k=0.024, diffusion=0.03, talus=0.005),
+        {"kind": "thermal", "talus": 0.02, "factor": 0.5, "iterations": 2},
     ],
     # --- Dunes ---
     "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so
@@ -138,6 +148,7 @@ DISPLAY = {
     "coastal":   {"relief": 0.05,  "sea_level": 0.34},
     "islands":   {"relief": 0.08,  "sea_level": 0.34},
     "mesa":      {"relief": 0.18,  "sea_level": 0.05},
+    "canyon":    {"relief": 0.22,  "sea_level": 0.10},
     "dunes":     {"relief": 0.012, "sea_level": 0.0},
     "sand_sea":  {"relief": 0.019, "sea_level": 0.0},
 }
@@ -152,7 +163,7 @@ _RELIEF_CEIL_FRAC = 0.6
 FAMILIES = {
     "Mountains": ["alpine", "glacial", "foothills"],
     "Lowlands": ["hills", "plains", "coastal", "islands"],
-    "Tablelands": ["mesa"],
+    "Canyons": ["mesa", "canyon"],
     "Dunes": ["dunes", "sand_sea"],
 }
 
