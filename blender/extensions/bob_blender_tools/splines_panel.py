@@ -280,11 +280,15 @@ def _build_curve_overlay(terrain, curve, carve=True):
         curve.data.resolution_u = _CURVE_RES
     role = ROLES.get(curve.bbt_curve.role, ROLES["dirt_path"])
     draped = False
+    off_terrain = False
     if _has_bake(terrain):
         # role["drape"] adds the monotonic downhill solve for a river/stream (empty for a path).
-        _apply([{"op": "drape_curve", "name": curve.name,
-                 **_drape_params(terrain), **role.get("drape", {})}])
+        res = _apply([{"op": "drape_curve", "name": curve.name,
+                       **_drape_params(terrain), **role.get("drape", {})}])
         draped = True
+        # drape_curve clips points dragged off the terrain (else a river's monotonic solve carves a
+        # runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back on.
+        off_terrain = bool(res and res[0].get("dropped"))
     server._ensure_path()
     from bbmcp.geonodes import build_geonodes_on_object
 
@@ -312,7 +316,10 @@ def _build_curve_overlay(terrain, curve, carve=True):
     # did). Tag both so the graph relinks and the overlay re-evaluates the current curve.
     curve.update_tag()
     terrain.update_tag()
-    return "draped" if draped else "curve Z"
+    note = "draped" if draped else "curve Z"
+    if off_terrain:
+        note += ", clipped off-terrain points"
+    return note
 
 
 def _apply_curve_material(terrain, role):
@@ -414,10 +421,31 @@ def _clear_scatter(context):
 _syncing = False  # suppress the per-prop sync while _seed_role_params sets a whole role at once
 
 
+def _guarantee_depth(cfg):
+    """Depth (m) of the SHALLOW wet bed the overlay carves in banks-from-erosion mode: a fraction of
+    the authored depth, clamped, so it guarantees a containing trough at the eroded valley floor
+    without re-imposing the full graded channel. Verified headless to hold water at 0% float."""
+    return min(max(cfg.depth * 0.4, 0.2), 0.6)
+
+
 def _derived_water(cfg):
     """(fill_width, water_depth) for the ribbon, from the shape params. water_depth is metres below
-    the rim (path_z); the water fills to where the bank crosses the waterline (reach) plus a small
-    tuck, so it spans the bed and meets the banks with no gap."""
+    path_z; the water fills to where the bank crosses the waterline (reach) plus a small tuck, so it
+    spans the bed and meets the banks with no gap.
+
+    In banks-from-erosion mode the drape samples the ERODED channel floor (path_z == floor, the
+    overlay only carves the shallow guarantee bed), so the fill is keyed to the guarantee depth, not
+    the authored depth, and the width is just the channel plus a tuck (the eroded banks, not a graded
+    shoulder, hold the water; the shader shore fade hides the exact edge)."""
+    if cfg.banks_from_erosion:
+        g = _guarantee_depth(cfg)
+        water_depth = g * (1.0 - cfg.water_level)
+        # Reach the ribbon out to where the shallow guarantee bed's wall crosses the waterline (same
+        # by-construction containment as the graded path, scaled to the guarantee depth), so the edge
+        # sits at the waterline on the eroded bank, not low in the channel.
+        reach = (g * cfg.water_level) / max(cfg.bank_slope, 0.05)
+        fill = cfg.width + 2.0 * reach + 2.0 * _WATER_TUCK
+        return fill, water_depth
     water_depth = cfg.depth * (1.0 - cfg.water_level)
     reach = (cfg.depth * cfg.water_level) / max(cfg.bank_slope, 0.05)
     fill = cfg.width + 2.0 * cfg.shoulder + 2.0 * reach + 2.0 * _WATER_TUCK
@@ -435,10 +463,20 @@ def _sync_curve_params(context, curve):
     terrain = _terrain(context)
     ov = _overlay_mod(terrain, curve)
     if ov is not None:
-        for name, val in (("Path Width", cfg.width * 0.5), ("Path Depth", cfg.depth),
-                          ("Path Falloff", cfg.falloff), ("End Taper", cfg.taper),
-                          ("Shoulder Width", cfg.shoulder), ("Bank Slope", cfg.bank_slope),
-                          ("Bank Bias", cfg.bank_bias), ("Bank Height", cfg.bank_height)):
+        if cfg.banks_from_erosion:
+            # Banks come from the eroded heightfield: the overlay carves only a shallow wet bed
+            # (guarantee depth) with the graded shoulder/bank dropped, so no smooth swept embankment
+            # is re-imposed on top of the erosion.
+            inputs = (("Path Width", cfg.width * 0.5), ("Path Depth", _guarantee_depth(cfg)),
+                      ("Path Falloff", cfg.falloff), ("End Taper", cfg.taper),
+                      ("Shoulder Width", 0.0), ("Bank Slope", cfg.bank_slope),
+                      ("Bank Bias", 0.0), ("Bank Height", 0.0))
+        else:
+            inputs = (("Path Width", cfg.width * 0.5), ("Path Depth", cfg.depth),
+                      ("Path Falloff", cfg.falloff), ("End Taper", cfg.taper),
+                      ("Shoulder Width", cfg.shoulder), ("Bank Slope", cfg.bank_slope),
+                      ("Bank Bias", cfg.bank_bias), ("Bank Height", cfg.bank_height))
+        for name, val in inputs:
             _set_mod_input(ov, name, val)
         terrain.update_tag()  # a modifier-input write does not always flush; tag so it re-carves live
     water = _water_obj(curve)
@@ -513,6 +551,11 @@ class BBT_Curve(PropertyGroup):
         name="Water surface", default=True,
         description="Lay a water-surface ribbon in the carved channel (river / stream roles only), "
                     "shaded as a water BobShader; ignored by the follow-terrain roles")
+
+    # Set by Bake & Erode, cleared by a fresh Build: when on, the channel banks are shaped by the
+    # eroded heightfield (not the swept overlay embankment), so the overlay only carves a SHALLOW wet
+    # bed to guarantee containment and the graded shoulder/bank is dropped. See _sync_curve_params.
+    banks_from_erosion: BoolProperty(default=False)
 
     # Shape params (live; synced to the overlay + water ribbon by _sync_cb).
     width: FloatProperty(
@@ -599,6 +642,11 @@ class BBT_CurvesProps(PropertyGroup):
                ("global", "Whole terrain", "Re-erode the entire terrain with the channels present, "
                 "so rivers cut natural valleys and tributaries (dramatic; the base landform shifts)")],
         description="Erode only the channel band, or re-erode the whole terrain")
+    erode_deposit: BoolProperty(
+        name="Deposit bars", default=True,
+        description="After incision, settle sediment where the flow slackens (high drainage, low "
+                    "slope): alluviates the valley floor into a flatter floodplain and grows gentle "
+                    "point bars on the inner bends, so the channel is not a bare cut V")
     erode_summary: StringProperty(default="")
 
 
@@ -709,6 +757,7 @@ class BBT_OT_curve_build(Operator):
         impose = role.get("family") == "impose"
         terrain = _terrain(context)
         did = []
+        cfg.banks_from_erosion = False  # a fresh build re-imposes the graded channel (until Erode)
 
         # Any channel needs the overlay's masks; build it once (carve only when the Terrain channel
         # is on, else it is a mask-only overlay driving material/scatter/verge/water). A water-only
@@ -771,6 +820,7 @@ class BBT_OT_curve_build_all(Operator):
             if curve is None:
                 continue
             cfg = curve.bbt_curve
+            cfg.banks_from_erosion = False  # a fresh build re-imposes the graded channel (until Erode)
             impose = ROLES.get(cfg.role, ROLES["dirt_path"]).get("family") == "impose"
             built_any = False
             if cfg.do_terrain or cfg.do_material or cfg.do_scatter or (cfg.do_water and impose):
@@ -823,24 +873,32 @@ class BBT_OT_curve_build_all(Operator):
 
 
 def _curve_band_spec(curve, terrain, cap=300):
-    """One curve's centreline as terrain-UV points [[u, v], ...] plus its channel width, for the
-    erosion `path` band mask. Reuses path_curve._ordered_polyline_xy (the same order-robust wire walk
-    the drape uses) so the band tracks the channel exactly. u = x/size + 0.5; v = 0.5 - y/size (the
-    PNG is top-row-first while Blender samples it V-up). Returns None for a degenerate curve."""
+    """One curve's centreline as terrain-UV points [[u, v], ...] plus its channel width and a
+    normalised seed depth, for the erosion band mask / drainage prior / channel seed. Reuses
+    path_curve._ordered_polyline_xy (the same order-robust wire walk the drape uses) so the band
+    tracks the channel exactly. u = x/size + 0.5; v = 0.5 - y/size (the PNG is top-row-first while
+    Blender samples it V-up). `depth` is the authored channel depth mapped into the heightfield's
+    normalised [0,1] range (metres / terrain height), so the seed carve matches the intended channel.
+    Returns None for a degenerate curve."""
     _apply_curve_transform(curve)  # origin assumption: the curve XY IS the terrain sample point
     server._ensure_path()
     from bbmcp import path_curve
+    size = float(terrain.get("bbt_terrain_size", 90.0)) or 1.0
+    height = float(terrain.get("bbt_terrain_height", 22.0)) or 1.0
     xy = path_curve._ordered_polyline_xy(curve)
+    # Clip off-terrain points (a point dragged off the terrain) BEFORE mapping to UV. Clamping them
+    # to the [0,1] edge instead would smear the seed/drainage-prior/band along the terrain rim; the
+    # channel_seed + fluvial prior must only track the on-terrain path (mirrors the drape clip).
+    xy = path_curve._clip_xy_to_terrain(xy, size)
     if len(xy) > cap:
         xy = path_curve._resample_xy(xy, cap)
     if len(xy) < 2:
         return None
-    size = float(terrain.get("bbt_terrain_size", 90.0)) or 1.0
     cfg = curve.bbt_curve
-    return {"points": [[min(max(x / size + 0.5, 0.0), 1.0), min(max(0.5 - y / size, 0.0), 1.0)]
-                       for x, y in xy],
+    return {"points": [[x / size + 0.5, 0.5 - y / size] for x, y in xy],
             "width": max(cfg.width * 0.5, 0.01) / size,
-            "falloff": max(cfg.falloff, 0.1) / size}
+            "falloff": max(cfg.falloff, 0.1) / size,
+            "depth": min(max(cfg.depth / height, 0.005), 0.2)}
 
 
 class BBT_OT_curve_bake_erode(Operator):
@@ -891,20 +949,48 @@ class BBT_OT_curve_bake_erode(Operator):
             self.report({"WARNING"}, "No curves with a channel to erode + re-impose")
             return {"CANCELLED"}
 
-        # Erosion stack (NO baked carve): thermal slump + fluvial incision, scaled by strength. Band
-        # scope masks it to the curve corridor (weather along the channels), global erodes everything.
-        # The channel itself is re-imposed live afterwards, so bed/banks/water re-derive against the
-        # eroded terrain and the water stays contained (the C5 by-construction harmony, re-established).
+        # Erosion stack: the SPLINE SEEDS the channel, then erosion SHAPES the banks (it no longer
+        # re-imposes a smooth swept embankment). Per curve, channel_seed cuts a shallow bed along the
+        # centreline so the fluvial solver has a slope + depression to amplify; fluvial then incises
+        # with a DRAINAGE PRIOR (flow_prior boosts the drainage area on the spline, so the solver cuts
+        # the valley where the river is) and thermal slumps the banks at a NOISE-WARPED repose angle
+        # (talus_warp), so they read as natural weathered slopes, not one uniform ruled bank. The
+        # channel is a shallow bed guarantee afterwards; the visible banks are this eroded terrain.
         s = float(scn.erode_strength)
-        thermal = {"kind": "thermal", "talus": 0.010 - 0.006 * s, "iterations": int(6 + 20 * s)}
-        fluvial = {"kind": "fluvial", "iterations": int(12 + 40 * s), "k": 2e-4 + 5e-4 * s,
-                   "diffusion": 0.1}
+        curve_specs = [{"points": c["points"]} for c in specs]
+        seed_ops = [{"kind": "channel_seed", "curves": [{"points": c["points"]}],
+                     "width": c["width"], "falloff": c["falloff"], "depth": c["depth"]}
+                    for c in specs]
+        thermal = {"kind": "thermal", "talus": 0.010 - 0.006 * s, "iterations": int(6 + 20 * s),
+                   "talus_warp": 0.4 + 0.3 * s, "talus_freq": 5.0}
+        fluvial = {"kind": "fluvial", "iterations": int(12 + 45 * s), "k": 2e-4 + 5e-4 * s,
+                   "diffusion": 0.1, "talus_warp": 0.4 + 0.3 * s, "talus_freq": 5.0}
+        if curve_specs:
+            band_w = max(c["width"] for c in specs)
+            band_f = max(c["falloff"] for c in specs)
+            fluvial["flow_prior"] = {"curves": curve_specs, "width": band_w,
+                                     "falloff": band_f + 0.01, "gain": 3000.0 + 5000.0 * s}
+        # Deposition pass (Erosion2-style): settle sediment where the flow slackens so the incised V
+        # alluviates into a flatter floodplain with gentle inner-bend bars, not a bare cut. Always
+        # masked to the corridor (bars belong in the river band, whatever the erode scope), and the
+        # overlay re-carves the shallow wet-bed guarantee afterwards, so filling the floor here cannot
+        # push the water out. Amount scales with erode_strength.
+        deposit = None
+        if scn.erode_deposit and curve_specs:
+            deposit = {"kind": "deposit", "amount": 0.006 + 0.012 * s, "iterations": int(3 + 3 * s),
+                       "talus_warp": 0.4 + 0.3 * s, "talus_freq": 5.0}
         if scn.erode_scope == "band" and specs:
             band = max(c["width"] + c["falloff"] for c in specs) * 2.0
-            mask = {"kind": "path", "curves": specs, "width": band, "falloff": max(band, 0.05)}
+            mask = {"kind": "path", "curves": curve_specs, "width": band, "falloff": max(band, 0.05)}
             thermal["mask"] = mask
             fluvial["mask"] = mask  # same spec; the mask is read-only, so one dict serves both ops
-        stack = [thermal, fluvial]
+        if deposit is not None:
+            dband = max(c["width"] + c["falloff"] for c in specs) * 1.5
+            deposit["mask"] = {"kind": "path", "curves": curve_specs,
+                               "width": dband, "falloff": max(dband, 0.04)}
+        stack = [*seed_ops, thermal, fluvial]
+        if deposit is not None:
+            stack.append(deposit)
 
         stem = os.path.splitext(os.path.basename(clean_src))[0]
         out_abs = os.path.join(os.path.dirname(clean_src), f"{stem}_eroded.png")
@@ -926,12 +1012,16 @@ class BBT_OT_curve_bake_erode(Operator):
         terrain["bbt_heightmap"] = out_abs
         terrain["bbt_heightmap_clean"] = clean_src
 
-        # Re-impose every curve on the eroded terrain: re-drape + carve the channel/banks, rebuild the
-        # water ribbon, push the live params. Bed, banks and water all re-derive from the eroded
-        # path_z, so they stay in harmony and the water is contained (no gap). Mirrors Build All.
+        # Re-impose every curve on the eroded terrain: re-drape, rebuild the water ribbon, push the
+        # live params. For a Terrain curve the channel now LIVES IN the eroded heightfield (seed +
+        # drainage prior carved it), so banks_from_erosion makes the overlay carve only a shallow wet
+        # bed to guarantee containment -- the graded swept embankment is NOT re-imposed, so the eroded
+        # banks show. Bed, banks and water re-derive from the eroded path_z (the eroded floor), so they
+        # stay in harmony and the water is contained (0% float, verified headless).
         for curve in curves:
             cfg = curve.bbt_curve
             impose = ROLES.get(cfg.role, ROLES["dirt_path"]).get("family") == "impose"
+            cfg.banks_from_erosion = cfg.do_terrain  # eroded-channel curves keep only a shallow bed
             _build_curve_overlay(terrain, curve, carve=cfg.do_terrain)
             if cfg.do_water and impose:
                 _build_water(curve)
@@ -1006,6 +1096,7 @@ class BBT_PT_paths(Panel):
             box.label(text="Naturalise landscape (Bake & Erode)", icon="MODIFIER")
             box.prop(scn, "erode_strength", slider=True)
             box.prop(scn, "erode_scope")
+            box.prop(scn, "erode_deposit")
             box.operator("bob_blender_tools.curve_bake_erode", icon="MATFLUID")
             note = box.row()
             note.enabled = False

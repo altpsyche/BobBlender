@@ -84,6 +84,20 @@ def _ordered_polyline_xy(obj):
     return [verts[i] for i in order]
 
 
+def _clip_xy_to_terrain(pts, size, margin=0.0):
+    """Keep only the polyline points within the terrain footprint (|x|, |y| <= size/2 + margin).
+
+    A control point dragged OFF the terrain in the viewport otherwise poisons the river solve: the
+    off-terrain excursion inflates the arc length so `_monotonic_descend`'s min-slope ceiling
+    (`running - min_slope * seg`) drops the bed by metres-per-metre of stray distance, driving the
+    whole downstream channel arbitrarily deep, and the impose overlay then carves the terrain down to
+    that runaway bed (the "everything flattens to the ground" report). It also wastes the resample
+    budget off-grid, leaving the on-terrain path crude. Clipping to the footprint first keeps the
+    solve honest. Returns the in-bounds points in order (a contiguous run for a normal river)."""
+    lim = 0.5 * float(size) + float(margin)
+    return [p for p in pts if -lim <= p[0] <= lim and -lim <= p[1] <= lim]
+
+
 def _resample_xy(pts, n):
     """Resample an ordered (x, y) polyline to n points evenly spaced by arc length."""
     if len(pts) < 2 or n < 2:
@@ -227,12 +241,22 @@ def drape_curve(op: dict) -> dict:
 
     # Densify path (rivers): resample the shape, solve at high resolution, rebuild as one NURBS.
     if monotonic and densify >= 2:
-        xy = _resample_xy(_ordered_polyline_xy(obj), densify)
+        raw = _ordered_polyline_xy(obj)
+        clipped = _clip_xy_to_terrain(raw, size)
+        dropped = len(raw) - len(clipped)
+        if len(clipped) < 2:
+            # The whole curve sits off the terrain; draping it would carve a runaway trench. Leave
+            # the curve as-is and report so the caller can warn the artist to pull it back on.
+            return {"op": "drape_curve", "created": [obj.name], "dropped": dropped,
+                    "info": f"curve {name!r} lies outside the terrain; not draped"}
+        xy = _resample_xy(clipped, densify)
         draped = _monotonic_descend([(x, y, sz(x, y)) for x, y in xy], min_slope, to_sea)
         _rebuild_nurbs(obj, draped)
         obj.data.update_tag()
-        return {"op": "drape_curve", "created": [obj.name],
-                "info": f"draped {len(draped)} points (river, densified)"}
+        note = f"draped {len(draped)} points (river, densified)"
+        if dropped:
+            note += f"; clipped {dropped} off-terrain point(s)"
+        return {"op": "drape_curve", "created": [obj.name], "dropped": dropped, "info": note}
 
     n = 0
     for spline in obj.data.splines:

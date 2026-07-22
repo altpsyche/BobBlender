@@ -53,3 +53,14 @@ def _profile(dist, width, falloff, xp):
     """1.0 within `width` of the polyline, easing to 0 over `falloff` beyond it."""
     f = max(float(falloff), 1e-6)
     return _smoothstep((float(width) + f - dist) / f, xp)
+
+
+def channel_seed(h, xp, curves=(), width=0.006, falloff=0.02, depth=0.03):
+    """Shallow bed seed along the spline: lower h by `depth * profile` so the fluvial solver has an
+    initial channel (a slope + a depression) to amplify via its drainage prior. This is a SEED, not
+    the final channel -- erosion deepens it and shapes the banks from here (the graded cross-section
+    is deliberately NOT stamped back on). Runs before fluvial in the stack."""
+    if not curves:
+        return h
+    dist = _distance_uv(h.shape, curves, xp, _ndimage(xp))
+    return h - float(depth) * _profile(dist, width, falloff, xp)

@@ -37,14 +37,43 @@ def _sh(xp, a, dy, dx):
     return p[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
 
 
-def thermal(h, xp, talus=0.006, factor=0.5, iterations=8, cell=1.0):
+def _fbm01(xp, size, freq, seed, octaves=3, persistence=0.8):
+    """High-persistence multi-octave value noise in [0, 1] over the normalised grid. Persistence
+    near 1 keeps the coarse octaves dominant so the field varies over large patches (what warps
+    the talus angle into natural regions, not per-pixel hash) -- Cordonnier 2016's recipe."""
+    from . import ops_generate
+    u = (xp.arange(int(size), dtype=xp.float64) + 0.5) / int(size)
+    x, y = xp.meshgrid(u, u)
+    n = xp.zeros_like(x)
+    amp, f, norm = 1.0, float(freq), 0.0
+    for o in range(int(octaves)):
+        n = n + amp * ops_generate._value_noise(xp, x, y, f, int(seed) + 7 * o)
+        norm += amp
+        amp *= float(persistence)
+        f *= 2.0
+    return n / max(norm, 1e-9)
+
+
+def thermal(h, xp, talus=0.006, factor=0.5, iterations=8, cell=1.0,
+            talus_warp=0.0, talus_freq=5.0, talus_seed=0):
     """Slump material down 4-neighbour slopes steeper than the talus angle (keeps canyon
     walls at a believable repose angle, removes stair-stepping). Mass-conserving: outflow
-    edge-clamps (nothing leaves off-grid), reinjection zero-pads (nothing arrives off-grid)."""
+    edge-clamps (nothing leaves off-grid), reinjection zero-pads (nothing arrives off-grid).
+
+    `talus_warp` > 0 makes the repose angle a per-cell field modulated by high-persistence
+    noise (roughly talus*(1 +/- talus_warp)) instead of one constant, so banks and valley walls
+    hold different angles in different places and stop reading as a single uniform ruled slope --
+    the fix for artificially regular geometric valleys (Cordonnier 2016)."""
+    t = talus
+    if talus_warp > 0.0:
+        n = _fbm01(xp, h.shape[0], talus_freq, talus_seed)
+        t = talus * (1.0 + float(talus_warp) * (2.0 * n - 1.0))
+        t = xp.clip(t, talus * 0.15, None)  # never let a cell's repose angle collapse to ~flat
+    tc = t * cell
     for _ in range(int(iterations)):
         for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             diff = h - _sh(xp, h, dy, dx)
-            move = xp.clip((diff - talus * cell) * factor, 0.0, None)
+            move = xp.clip((diff - tc) * factor, 0.0, None)
             h = h - move
             # reinjection: material from the (-dy,-dx) source cell; zero-padded at the border
             p = xp.pad(move, ((1, 1), (1, 1)), mode="constant")
@@ -104,21 +133,44 @@ def _slope(h, xp, cell):
     return xp.sqrt(gx * gx + gy * gy)
 
 
+def _flow_prior_field(shape, xp, spec):
+    """A drainage-area boost field from a river spline: `gain` along the polyline, easing to 0
+    over its band. Added to the computed accumulation so stream-power incision cuts the valley
+    where the river is authored -- the spline is a DRAINAGE PRIOR, not a carved cross-section.
+    The valley and its banks then EMERGE from erosion (Cordonnier 2016), rather than being
+    stamped on as a smooth swept profile."""
+    from . import ops_carve
+    curves = spec.get("curves") or ()
+    if not curves:
+        return None
+    dist = ops_carve._distance_uv(shape, curves, xp, _ndimage(xp))
+    prof = ops_carve._profile(dist, spec.get("width", 0.01), spec.get("falloff", 0.02), xp)
+    return float(spec.get("gain", 3000.0)) * prof
+
+
 def fluvial(h, xp, *, iterations=40, k=5e-4, sp_m=0.5, sp_n=1.0, diffusion=0.12,
             talus=0.006, thermal_factor=0.5, thermal_iters=1, cell=1.0, max_delta=0.03,
-            recompute=40, fill_iters=1200, acc_iters=1200, fill_eps=1e-4, mfd_p=1.4):
+            recompute=40, fill_iters=1200, acc_iters=1200, fill_eps=1e-4, mfd_p=1.4,
+            flow_prior=None, talus_warp=0.0, talus_freq=5.0, talus_seed=0):
     """Flow-accumulation stream-power fluvial erosion -- the canyon/dendritic-network carver.
 
     Each step incises `k * A^sp_m * slope^sp_n` (drainage area A from _mfd_accum on the
     depression-filled surface), then relaxes with hillslope diffusion + thermal so walls hold a
     repose angle. The drainage network is recomputed every `recompute` steps (it is stable, so
-    this bounds cost). Fully vectorised on `xp` (GPU or CPU); deterministic."""
+    this bounds cost). Fully vectorised on `xp` (GPU or CPU); deterministic.
+
+    `flow_prior` ({curves, width, falloff, gain}) boosts the drainage area along a river spline so
+    the solver incises the valley there and the banks emerge from erosion instead of a swept
+    profile. `talus_warp` spatially varies the thermal repose angle (see thermal)."""
     h = xp.asarray(h, dtype=xp.float64)
+    prior = _flow_prior_field(h.shape, xp, flow_prior) if flow_prior else None
     acc = None
     for it in range(int(iterations)):
         if it % int(recompute) == 0:
             filled = _pd_fill(h, xp, fill_iters, fill_eps)
             acc = _mfd_accum(filled, xp, acc_iters, mfd_p, cell)
+            if prior is not None:
+                acc = acc + prior
         s = _slope(h, xp, cell)
         h = h - xp.minimum(k * (acc ** sp_m) * (s ** sp_n), max_delta)
         if diffusion > 0.0:
@@ -126,8 +178,43 @@ def fluvial(h, xp, *, iterations=40, k=5e-4, sp_m=0.5, sp_n=1.0, diffusion=0.12,
                    + _sh(xp, h, 0, -1) + _sh(xp, h, 0, 1) - 4.0 * h)
             h = h + diffusion * lap
         if thermal_iters > 0:
-            h = thermal(h, xp, talus, thermal_factor, thermal_iters, cell)
+            h = thermal(h, xp, talus, thermal_factor, thermal_iters, cell,
+                        talus_warp=talus_warp, talus_freq=talus_freq, talus_seed=talus_seed)
         h = xp.clip(h, 0.0, None)
+    return h
+
+
+def deposit(h, xp, *, amount=0.012, iterations=4, cell=1.0,
+            fill_iters=800, acc_iters=800, mfd_p=1.4, recompute=4,
+            flow_m=0.6, slope_n=1.5, flow_floor=0.15,
+            settle_talus=0.004, settle_iters=2, settle_factor=0.5,
+            talus_warp=0.0, talus_freq=5.0, talus_seed=0):
+    """Fluvial deposition pass (Erosion2-style sediment settling): raise the bed where flowing water
+    loses the capacity to carry sediment -- high drainage area but low slope. That alluviates the
+    incised valley floor into a flatter floodplain and grows gentle point bars on the slack inner-bend
+    margins -- the deposition that pure stream-power incision (fluvial) lacks, which is why an eroded
+    channel otherwise reads as a bare cut V. Monotone per step (only adds material), then slumps the
+    fresh sediment to a gentle repose so bars read rounded, not blocky.
+
+    `flow_floor` gates deposition to cells whose drainage (normalised to the field max) is above the
+    floor, so only the wet channels alluviate and low-slope UPLANDS are left alone. Mask it to the
+    channel band (path selector) to restrict alluviation to the river corridor. Deterministic,
+    vectorised on `xp`."""
+    h = xp.asarray(h, dtype=xp.float64)
+    acc = None
+    for it in range(int(iterations)):
+        if it % int(recompute) == 0:
+            filled = _pd_fill(h, xp, fill_iters, 1e-4)
+            acc = _mfd_accum(filled, xp, acc_iters, mfd_p, cell)
+            acc = acc / xp.maximum(acc.max(), 1e-9)
+        s = _slope(h, xp, cell)
+        s = s / xp.maximum(s.max(), 1e-9)
+        wet = xp.clip((acc - flow_floor) / max(1.0 - float(flow_floor), 1e-6), 0.0, 1.0)
+        dep = amount * (wet ** flow_m) * (xp.clip(1.0 - s, 0.0, 1.0) ** slope_n)
+        h = h + dep
+        if settle_iters > 0:
+            h = thermal(h, xp, settle_talus, settle_factor, settle_iters, cell,
+                        talus_warp=talus_warp, talus_freq=talus_freq, talus_seed=talus_seed)
     return h
 
 

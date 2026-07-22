@@ -131,6 +131,96 @@ def test_engine_unknown_op_raises():
         engine.run_stack(np.zeros((16, 16)), [{"kind": "nope"}], backend.select("cpu"))
 
 
+def _diag_river_curve(n=128):
+    """A simple diagonal river polyline in terrain UV, plus a base with relief to erode."""
+    u = np.linspace(0, 1, n)
+    x, y = np.meshgrid(u, u)
+    base = np.clip(0.3 + 0.4 * x + 0.06 * np.sin(y * 8.0), 0.0, 1.0)
+    vs = np.linspace(0.05, 0.95, 40)
+    us = 0.5 + 0.12 * np.sin(vs * 6.283)
+    curves = [{"points": [[float(a), float(b)] for a, b in zip(us, vs)]}]
+    return base, curves
+
+
+def test_channel_seed_lowers_only_the_band():
+    # The seed carve must lower height along the spline and leave the rest of the field alone.
+    bk = backend.select("cpu")
+    base, curves = _diag_river_curve()
+    seeded = engine.run_stack(
+        base, [{"kind": "channel_seed", "curves": curves, "width": 0.006,
+                "falloff": 0.02, "depth": 0.04}], bk, normalize=False)
+    drop = base - seeded
+    assert drop.max() > 0.02          # the band was lowered
+    assert (drop > 1e-4).mean() < 0.2  # but only a thin corridor, not the whole map
+    assert np.isfinite(seeded).all()
+
+
+def test_flow_prior_concentrates_incision_on_the_path():
+    # The drainage prior must make fluvial incise MORE along the authored spline than a run
+    # with no prior -- the spline is a drainage prior, not a cosmetic carve.
+    bk = backend.select("cpu")
+    base, curves = _diag_river_curve()
+    from bobtools.heightfields import ops_carve, ops_erode
+    xp = bk.xp
+    dist = ops_carve._distance_uv(base.shape, curves, xp, ops_erode._ndimage(xp))
+    onpath = bk.asnumpy(ops_carve._profile(dist, 0.008, 0.02, xp)) > 0.5
+    seed = {"kind": "channel_seed", "curves": curves, "width": 0.006, "falloff": 0.02, "depth": 0.02}
+    common = dict(iterations=40, k=6e-4, diffusion=0.08, recompute=20,
+                  fill_iters=200, acc_iters=200)
+    no_prior = engine.run_stack(base, [seed, {"kind": "fluvial", **common}], bk, normalize=False)
+    band = {"curves": curves, "width": 0.008, "falloff": 0.03, "gain": 8000.0}
+    with_prior = engine.run_stack(
+        base, [seed, {"kind": "fluvial", "flow_prior": band, **common}], bk, normalize=False)
+    incised_no = (base - no_prior)[onpath].mean()
+    incised_yes = (base - with_prior)[onpath].mean()
+    assert incised_yes > incised_no * 1.3   # the prior deepens the authored channel
+    assert np.isfinite(with_prior).all()
+
+
+def test_talus_warp_makes_bank_angle_nonuniform():
+    # A warped repose angle must produce a spatially varying result vs the constant-talus run,
+    # so valley walls stop reading as one uniform ruled slope.
+    bk = backend.select("cpu")
+    base = generate.generate_base(128, seed=4)
+    plain = engine.run_stack(
+        base, [{"kind": "thermal", "talus": 0.01, "iterations": 8}], bk, normalize=False)
+    warped = engine.run_stack(
+        base, [{"kind": "thermal", "talus": 0.01, "iterations": 8,
+                "talus_warp": 0.6, "talus_freq": 5.0}], bk, normalize=False)
+    assert not np.allclose(plain, warped)   # the warp actually changed the slump
+    assert np.isfinite(warped).all()
+
+
+def test_deposit_adds_material_in_channels():
+    # Deposition must RAISE the bed (add sediment), unlike incision, and concentrate in the wet
+    # channel: a run with a seeded groove must gain more mass on-path than off-path.
+    bk = backend.select("cpu")
+    base, curves = _diag_river_curve()
+    from bobtools.heightfields import ops_carve, ops_erode
+    xp = bk.xp
+    dist = ops_carve._distance_uv(base.shape, curves, xp, ops_erode._ndimage(xp))
+    onpath = bk.asnumpy(ops_carve._profile(dist, 0.01, 0.03, xp)) > 0.5
+    seed = {"kind": "channel_seed", "curves": curves, "width": 0.006, "falloff": 0.02, "depth": 0.03}
+    seeded = engine.run_stack(base, [seed], bk, normalize=False)
+    filled = engine.run_stack(
+        base, [seed, {"kind": "deposit", "amount": 0.02, "iterations": 4,
+                      "fill_iters": 200, "acc_iters": 200}], bk, normalize=False)
+    gain = filled - seeded
+    assert gain.sum() > 0.0                       # net material was added
+    assert gain[onpath].mean() > gain[~onpath].mean()  # alluviation favours the wet channel
+    assert np.isfinite(filled).all()
+
+
+def test_deposit_deterministic():
+    # Same input + params -> byte-identical output (pure stencils, backs a reproducible bake).
+    bk = backend.select("cpu")
+    base = generate.generate_base(96, seed=7)
+    op = [{"kind": "deposit", "amount": 0.015, "iterations": 3, "fill_iters": 150, "acc_iters": 150}]
+    a = engine.run_stack(base, op, bk, normalize=False)
+    b = engine.run_stack(base, op, bk, normalize=False)
+    assert np.array_equal(a, b)
+
+
 def test_erosion_changes_field():
     bk = backend.select("cpu")
     base = generate.generate_base(96, seed=3)
