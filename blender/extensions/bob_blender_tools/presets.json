@@ -57,6 +57,14 @@
       "relief_ratio": 0.08,
       "sea_level": 0.34
     },
+    "mesa": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "relief_ratio": 0.18,
+      "sea_level": 0.05
+    },
     "dunes": {
       "relief": 0.5,
       "detail": 0.5,
@@ -278,6 +286,28 @@
         "talus": 0.005,
         "factor": 0.4,
         "iterations": 2
+      }
+    ],
+    "mesa": [
+      {
+        "kind": "strata",
+        "layers": 5,
+        "dissection": 1.4,
+        "base_freq": 3.0
+      },
+      {
+        "kind": "scarp",
+        "iterations": 12,
+        "cap_slope": 0.1,
+        "undercut": 0.0015,
+        "talus": 0.14,
+        "open_size": 6
+      },
+      {
+        "kind": "thermal",
+        "talus": 0.14,
+        "factor": 0.5,
+        "iterations": 1
       }
     ],
     "dunes": [

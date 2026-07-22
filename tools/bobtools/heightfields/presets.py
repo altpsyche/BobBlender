@@ -9,20 +9,23 @@ family its character.
 These are the neutral, as-authored looks. The five curated global knobs
 (Relief / Detail / Erosion / Warp / Seed) modulate a COPY of the active stack at
 bake time -- see params.resolve_stack -- with every knob at 0.5 reproducing the
-stack exactly as written here. Presets are grouped into three families:
+stack exactly as written here. Presets are grouped into families:
 
   Mountains       alpine, glacial, foothills
   Lowlands        hills, plains, coastal, islands
+  Tablelands      mesa
   Dunes           dunes, sand_sea
 
 The mountain stacks pair ridged-multifractal noise with stream-power fluvial erosion
 (see heightfields/ops_erode.fluvial); the lowlands use gentler versions of the same, with
-falloff shaping coastal and islands. Keep these plain and few.
+falloff shaping coastal and islands. Mesa uses its OWN process -- flat layered strata
+(ops_generate.strata) dissected by cap-rock scarp retreat (ops_erode.scarp) -- not eroded
+noise. Keep these plain and few.
 
-The Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07: the single
-noise-plus-fluvial engine could not make them read as their landforms, only as look-alike
-eroded hills. They come back when they have real generators (strata, cap-rock, scarp
-retreat). See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
+The old Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07 because the
+single noise-plus-fluvial engine could only make them look like eroded hills. Mesa is now back
+with a real generator; canyon, badlands and plateau return as their own generators land.
+See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
 """
 
 # fluvial defaults shared by the mountain and lowland stacks, so each states only what
@@ -85,6 +88,14 @@ STACKS = {
                  fill_iters=600, acc_iters=600),
         {"kind": "thermal", "talus": 0.005, "factor": 0.4, "iterations": 2},
     ],
+    # --- Tablelands (real strata + cap-rock scarp retreat, not eroded noise) ---
+    "mesa": [   # flat-topped tables and buttes: layered strata dissected by cliff retreat into
+                # isolated caps with near-vertical sides and talus aprons. NOT dendritic fluvial.
+        {"kind": "strata", "layers": 5, "dissection": 1.4, "base_freq": 3.0},
+        {"kind": "scarp", "iterations": 12, "cap_slope": 0.10, "undercut": 0.0015,
+         "talus": 0.14, "open_size": 6},
+        {"kind": "thermal", "talus": 0.14, "factor": 0.5, "iterations": 1},
+    ],
     # --- Dunes ---
     "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so
                  # the tile carries a dozen crests, not two soft mounds; the trailing thermal is a
@@ -126,6 +137,7 @@ DISPLAY = {
     "plains":    {"relief": 0.015, "sea_level": 0.32},
     "coastal":   {"relief": 0.05,  "sea_level": 0.34},
     "islands":   {"relief": 0.08,  "sea_level": 0.34},
+    "mesa":      {"relief": 0.18,  "sea_level": 0.05},
     "dunes":     {"relief": 0.012, "sea_level": 0.0},
     "sand_sea":  {"relief": 0.019, "sea_level": 0.0},
 }
@@ -140,6 +152,7 @@ _RELIEF_CEIL_FRAC = 0.6
 FAMILIES = {
     "Mountains": ["alpine", "glacial", "foothills"],
     "Lowlands": ["hills", "plains", "coastal", "islands"],
+    "Tablelands": ["mesa"],
     "Dunes": ["dunes", "sand_sea"],
 }
 

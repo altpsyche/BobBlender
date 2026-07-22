@@ -33,7 +33,7 @@ _DEFAULT_KNOBS = dict(
 
 # Generators that take a procedural seed. Each is offset so the Seed knob varies
 # every generator in a stack independently (two noise ops do not move in lockstep).
-_SEED_OPS = ("noise", "dunes", "voronoi", "warp")
+_SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp")
 
 
 def default_knobs() -> dict:

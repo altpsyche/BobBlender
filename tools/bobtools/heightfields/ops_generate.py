@@ -85,6 +85,40 @@ def dunes(h, xp, seed=0, wind=35.0, frequency=7.0, sharpness=0.5, warp=0.12,
     return _mix(h, field, mix, amount)
 
 
+def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.97,
+           mix="replace", amount=1.0):
+    """Flat-lying layered rock strata: the mesa/plateau base (real strata, not a terrace filter over
+    ridged noise). A broad, near-flat uplifted surface quantised into `layers` genuinely flat benches
+    with near-vertical risers; the risers become cliffs once scarp (ops_erode.scarp) erodes the
+    field. `dissection` > 1 lowers the midtones so the top strata survive only in patches -> isolated
+    mesas/buttes; near 1 it keeps a continuous tableland (plateau). `sharpness` in [0, 1) sets how
+    thin/steep the riser is (0.97 ~ near-vertical). Distinct from ops_filter.terrace, which shapes an
+    EXISTING field; strata GENERATES the flat-layered plateau from scratch."""
+    from . import ops_erode
+    n = h.shape[0]
+    u = (xp.arange(n, dtype=xp.float64) + 0.5) / n
+    x, y = xp.meshgrid(u, u)
+    surf = (0.6 * _value_noise(xp, x, y, float(base_freq), seed + 1)
+            + 0.4 * _value_noise(xp, x, y, float(base_freq) * 2.1, seed + 7))
+    # de-spike so no single-cell peak survives quantising into a stray cone
+    surf = ops_erode._ndimage(xp).gaussian_filter(surf, 2.0, mode="nearest")
+    surf = (surf - surf.min()) / (surf.max() - surf.min() + 1e-9)
+    surf = surf ** float(dissection)
+    L = max(float(layers), 1.0)
+    scaled = surf * L
+    base = xp.floor(scaled)
+    frac = scaled - base
+    k = min(max(float(sharpness), 0.0), 0.999)
+    w = max(1.0 - k, 1e-3)
+    riser = xp.clip((frac - (1.0 - w)) / w, 0.0, 1.0)   # LINEAR riser: a straight cliff face
+    field = (base + riser) / L
+    if mix == "add":
+        return h + amount * field
+    if mix == "max":
+        return xp.maximum(h, field)
+    return field
+
+
 def voronoi(h, xp, seed=0, cells=8.0, pattern="mesa", jitter=0.85, mix="multiply", amount=0.7):
     """Jittered-grid Voronoi (Worley) cellular structure. pattern='mesa' gives flat-topped cells
     (plateaus/tablelands); pattern='crack' gives the ridged cell borders (cracked hardpan, joints)."""
