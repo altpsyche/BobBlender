@@ -1,5 +1,11 @@
 # BobShaders plan
 
+Update (2026-07-22, docs/BIOME-BLOCKOUT-REDESIGN.md): the image-based texture-set feature described
+below (library/textures jpg maps, triplanar sampling, anti-tiling, the surface/terrain Texture pickers)
+was REMOVED. Surfaces and terrain layers are solid-tint now (plus the procedural macro break-up, the
+baked flow/wetness drainage maps, snow coverage, and per-instance variation, all kept). env.weather is
+confirmed live, not inert: it drives every BobShader's wetness through materials.env_state_group.
+
 Forward-looking design for the surface-materials capability, not the current state.
 `ARCHITECTURE.md` describes what is built today; this describes where authored surface
 shading is going: strong, art-directable master materials, and the world-driven weather

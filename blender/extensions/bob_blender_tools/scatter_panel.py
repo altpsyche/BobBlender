@@ -22,7 +22,6 @@ re-entrancy). build_geonodes is non-destructive and restores the live knobs by
 socket name, so a structural rebuild preserves tuned values.
 """
 
-import os
 import random
 
 import bpy
@@ -91,36 +90,6 @@ def _apply(ops):
 
 def _assets_name(kind):
     return f"BOB_Assets_{kind.capitalize()}"
-
-
-# Biome enum: folders under library/models/<name>/ that carry a manifest.json (a real CC0 asset
-# set). The item list is cached module-side so Blender does not GC the enum strings (the same
-# pitfall the shader texture-set enum guards against), with a stable id per biome.
-_BIOME_ITEMS = [("NONE", "None", "No biomes in library/models", "", 0)]
-_BIOME_IDS = {"NONE": 0}
-
-
-def _models_root():
-    return os.path.join(os.path.dirname(server._repo_blender_dir()), "library", "models")
-
-
-def _biomes():
-    root = _models_root()
-    if not os.path.isdir(root):
-        return []
-    return sorted(n for n in os.listdir(root)
-                  if os.path.isfile(os.path.join(root, n, "manifest.json")))
-
-
-def _biome_items(self, context):
-    global _BIOME_ITEMS
-    items = []
-    for n in _biomes():
-        if n not in _BIOME_IDS:
-            _BIOME_IDS[n] = len(_BIOME_IDS)  # next unused id, fixed for this session
-        items.append((n, n.replace("_", " ").title(), f"Import the {n} asset set", "", _BIOME_IDS[n]))
-    _BIOME_ITEMS = items or [("NONE", "None", "No biomes in library/models", "", 0)]
-    return _BIOME_ITEMS
 
 
 # Biome-scatter enum: biomes whose manifest carries a scatter recipe, so a whole layer stack can
@@ -353,36 +322,6 @@ class BBT_OT_scatter_make_proxies(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_scatter_import_biome(Operator):
-    bl_idname = "bob_blender_tools.scatter_import_biome"
-    bl_label = "Import Real Assets"
-    bl_description = ("Fill the shared BOB_Assets_* collections with real CC0 meshes from one "
-                      "geographic scan set (library/models/<name>), replacing the block-out "
-                      "proxies. Layers instance those collections, so any layer already set to "
-                      "BOB_Assets_<kind> shows the real assets at once")
-    bl_options = {"REGISTER", "UNDO"}
-
-    biome: EnumProperty(name="Asset set", items=_biome_items)
-
-    def execute(self, context):
-        server._ensure_path()
-        from bbmcp import assets
-
-        if not self.biome or self.biome == "NONE":
-            self.report({"ERROR"}, "No asset set found in library/models")
-            return {"CANCELLED"}
-        base = assets.biome_dir(self.biome)
-        if not os.path.isfile(os.path.join(base, "manifest.json")):
-            self.report({"ERROR"}, f"No assets at library/models/{self.biome} (manifest.json missing)")
-            return {"CANCELLED"}
-        # Populate the shared collections only (same scope as Make Proxies). populate reuses each
-        # BOB_Assets_<kind> collection in place, so layers instancing it update live, no rebuild.
-        counts = assets.populate_scatter_assets(self.biome)
-        summary = ", ".join(f"{k}:{n}" for k, n in counts.items())
-        self.report({"INFO"}, f"Imported {self.biome} -> {summary}")
-        return {"FINISHED"}
-
-
 def _biome_layer_params(kind, cfg):
     """Merge a biome scatter cfg onto the recipe's knob params over the LAYER_TYPES defaults.
 
@@ -436,8 +375,8 @@ class BBT_OT_scatter_biome_scatter(Operator):
             if kind not in LAYER_TYPES or kind == "empty":
                 continue
             spec = LAYER_TYPES[kind]
-            # Ensure the shared asset collection exists: make_proxies only fills an EMPTY
-            # collection, so a prior Import Biome's real meshes are kept, not clobbered.
+            # Ensure the shared asset collection exists (make_proxies only fills an EMPTY
+            # collection, so re-running is idempotent).
             _apply([{"op": "make_proxies", "kinds": [kind]}])
             asset_coll = bpy.data.collections.get(_assets_name(kind))
             knobs, align = _biome_layer_params(kind, cfg)
@@ -668,7 +607,7 @@ class BBT_PT_scatter(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 3  # pipeline stage 3, after Paths (docs/UX-REDESIGN.md section 4, docs/SPLINES.md 5)
+    bl_order = 4  # pipeline stage: Scatter, after Paths (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -688,14 +627,11 @@ class BBT_PT_scatter(Panel):
         layout.prop(scn, "camera")
 
         # Asset source: the shared BOB_Assets_* collections that layers instance. Block-out
-        # proxies to start, or import a real scan set to replace them (Scatter is the asset home).
+        # proxies supply the geometry (Scatter is the asset home).
         col = layout.column(align=True)
         col.label(text="Assets (shared, for layers to use)")
-        row = col.row(align=True)
-        row.operator("bob_blender_tools.scatter_make_proxies", text="Make Proxies",
+        col.operator("bob_blender_tools.scatter_make_proxies", text="Make Proxies",
                      icon="OUTLINER_OB_GROUP_INSTANCE")
-        row.operator_menu_enum("bob_blender_tools.scatter_import_biome", "biome",
-                               text="Import Real", icon="IMPORT")
 
         coll = _active_coll(context)
         if emitter is None:
@@ -848,7 +784,6 @@ CLASSES = (
     BBT_ScatterLayer,
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
-    BBT_OT_scatter_import_biome,
     BBT_OT_scatter_biome_scatter,
     BBT_OT_scatter_add,
     BBT_OT_scatter_remove,

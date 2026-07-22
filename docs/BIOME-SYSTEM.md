@@ -1,5 +1,12 @@
 # Biome system: asset-quality fixes and a manifest v2 plan
 
+SUPERSEDED (2026-07-22) by docs/BIOME-BLOCKOUT-REDESIGN.md. The verdant_trail biome and the whole
+real-glTF import path (import_gltf, populate_scatter_assets, biome_models) described below were
+removed; the canonical biome is now the procedural block-out biome (proxies + solid terrain, no
+external assets). The manifest v2 schema and the Biome Scatter / Biome Terrain operators still stand.
+The text below is kept as the historical record of that track; read the redesign doc for current
+behaviour.
+
 Status: IMPLEMENTED (2026-07-20), all phases A-G done and verified headless. Scope: fix the
 concrete quality issues in the verdant_trail biome, and evolve the biome manifest from "models +
 terrain" into a self-describing biome that stands up a coherent scene (terrain + scatter + world)

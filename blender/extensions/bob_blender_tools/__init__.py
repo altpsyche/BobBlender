@@ -66,13 +66,15 @@ def _preset_items(self, context):
     return [(k, k.replace("_", " ").title(), f"Load the {k} landscape") for k in _HF_PRESETS]
 
 
-def _apply_preset(self, context):
-    """Reset the sliders to the chosen preset's neutral look (update callback)."""
-    values = _HF_PRESETS.get(self.preset)
+def _apply_hf_preset(hf):
+    """Load the chosen preset's neutral slider values onto the heightfield props. Staged: run by
+    the Apply Preset button, not a property callback, so picking a preset only stages it (the
+    same stage-then-Apply idiom the World Sky Look uses)."""
+    values = _HF_PRESETS.get(hf.preset)
     if not values:
         return
     for key, val in values.items():
-        setattr(self, key, val)
+        setattr(hf, key, val)
 
 
 def _load_preview(png_path):
@@ -346,8 +348,9 @@ class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
     # No Material picker (docs/UX-REDESIGN.md decision D): a terrain gets its material by
     # selecting it in the Shaders panel (New BobShader -> Terrain), the one native path.
-    preset: EnumProperty(name="Preset", items=_preset_items, update=_apply_preset,
-                         description="Load a set of slider values")
+    preset: EnumProperty(name="Preset", items=_preset_items,
+                         description="A landscape family to stage; press Apply Preset to load its "
+                                     "starting slider values")
     backend: EnumProperty(
         name="Backend",
         items=[("auto", "Auto", "Use the GPU when present, else CPU"),
@@ -478,6 +481,20 @@ def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, 
         return (json.loads(lines[-1]) if lines else {}), None
     except ValueError:
         return {}, None
+
+
+class BBT_OT_hf_apply_preset(Operator):
+    bl_idname = "bob_blender_tools.hf_apply_preset"
+    bl_label = "Apply Preset"
+    bl_description = ("Load the staged landscape preset's starting slider values. Then sculpt "
+                      "with the knobs and Bake + Build")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        _apply_hf_preset(hf)
+        self.report({"INFO"}, f"Loaded {hf.preset} preset")
+        return {"FINISHED"}
 
 
 class BBT_OT_detect_backends(Operator):
@@ -713,7 +730,7 @@ class BBT_PT_panel(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 6
+    bl_order = 7
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -738,7 +755,7 @@ class BBT_PT_heightfield(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 1  # pipeline stage 1 (Terrain); see BBT_PT_panel comment
+    bl_order = 2  # pipeline stage: Terrain (Biome panel is 1); see BBT_PT_panel comment
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -752,7 +769,9 @@ class BBT_PT_heightfield(Panel):
         ui_helpers.context_header(layout, "Terrain object", hf.target, icon="OUTLINER_OB_MESH")
         col = layout.column(align=True)
         col.prop(hf, "target")
-        layout.prop(hf, "preset")
+        ui_helpers.staged_preset_row(layout, hf, "preset",
+                                     "bob_blender_tools.hf_apply_preset", text="Preset",
+                                     note="loads a starting set of slider values")
 
         row = layout.row(align=True)
         row.prop(hf, "backend", expand=True)
@@ -878,6 +897,7 @@ _CLASSES = (
     BBT_OT_stop,
     BBT_OT_reload,
     BBT_OT_random_seed,
+    BBT_OT_hf_apply_preset,
     BBT_OT_detect_backends,
     BBT_OT_bake_terrain,
     BBT_OT_terrain_op_add,

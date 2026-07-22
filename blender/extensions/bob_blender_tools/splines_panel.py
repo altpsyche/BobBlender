@@ -1165,7 +1165,7 @@ class BBT_PT_paths(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 2  # pipeline stage 2: after Terrain, before Scatter (docs/SPLINES.md 5)
+    bl_order = 3  # pipeline stage: Paths, after Terrain, before Scatter (docs/SPLINES.md 5)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

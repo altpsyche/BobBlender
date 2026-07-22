@@ -34,36 +34,68 @@ WEATHER = (
 )
 
 
+# Geographic-change hook registry. A consumer (BobFirmament) subscribes fn(scene) to react when a
+# time/place field changes, so the sun re-places live on the edit. This mirrors the world-applier
+# registry pattern but lives here because it must sit on the bbt_env property update callbacks: the
+# registry keeps env.py the acyclic root (it never imports the consumer; the consumer subscribes).
+_geo_hooks = []
+
+
+def register_geo_hook(fn):
+    """Subscribe fn(scene) to run when a geographic field (time/date/place) changes. Idempotent."""
+    if fn not in _geo_hooks:
+        _geo_hooks.append(fn)
+
+
+def unregister_geo_hook(fn):
+    if fn in _geo_hooks:
+        _geo_hooks.remove(fn)
+
+
+def _on_geo_change(self, context):
+    """Update callback on the geographic fields: run every subscribed hook. A hook that errors
+    never blocks the others (a consumer's edit must not break a slider drag)."""
+    scene = getattr(context, "scene", None) or getattr(bpy.context, "scene", None)
+    for fn in list(_geo_hooks):
+        try:
+            fn(scene)
+        except Exception as exc:
+            print(f"[bbmcp.env] geo hook failed: {exc}")
+
+
 class BBT_EnvProps(PropertyGroup):
     """The canonical world state.
 
     Continuous values (wind, snow, cloud_cover) feed live via drivers, so moving a
-    slider moves the built effect with no rebuild. A change of season drives structural
-    swaps applied by an explicit operator (Apply Season), not a property callback, to
-    avoid the re-entrancy the scatter rebuilds hit.
+    slider moves the built effect with no rebuild. The geographic fields (time/date/place)
+    place the sun; they carry an update callback (_on_geo_change) so a consumer can re-place
+    the sun live, since the sun position is a nonlinear solar calc and cannot be a driver.
+    A change of season drives structural swaps applied by an explicit operator (Apply Season),
+    not a property callback, to avoid the re-entrancy the scatter rebuilds hit.
 
-    Some fields are authored here but read by consumers not yet built: weather,
-    temperature, and wetness are context BobShaders will read (wet ground, frost, dust);
-    until then they are set (by presets / Apply Season) but have no structural effect.
-    cloud_cover is live-driven onto the cloud layer's Coverage by BobFirmament itself.
+    Some fields are authored here but read by consumers not yet built: temperature is context
+    BobShaders will read (frost, dust). weather and wetness ARE live: env.weather and env.wetness
+    drive every BobShader's ground wetness through materials.env_state_group (rain/storm wet the
+    ground). cloud_cover is live-driven onto the cloud layer's Coverage by BobFirmament itself.
     """
 
-    # Time and place: what the geographic sun is computed from.
+    # Time and place: what the geographic sun is computed from. update=_on_geo_change re-places
+    # the sun live (see the registry above).
     time_of_day: FloatProperty(
         name="Time of Day", default=12.0, min=0.0, max=24.0,
-        description="Local clock time in hours (13.5 is 13:30)")
-    year: IntProperty(name="Year", default=2026, min=1, max=9999)
-    month: IntProperty(name="Month", default=6, min=1, max=12)
-    day: IntProperty(name="Day", default=21, min=1, max=31)
+        description="Local clock time in hours (13.5 is 13:30)", update=_on_geo_change)
+    year: IntProperty(name="Year", default=2026, min=1, max=9999, update=_on_geo_change)
+    month: IntProperty(name="Month", default=6, min=1, max=12, update=_on_geo_change)
+    day: IntProperty(name="Day", default=21, min=1, max=31, update=_on_geo_change)
     utc_offset: FloatProperty(
         name="UTC Offset", default=0.0, min=-14.0, max=14.0,
-        description="Hours from UTC, east positive")
+        description="Hours from UTC, east positive", update=_on_geo_change)
     latitude: FloatProperty(
         name="Latitude", default=45.0, min=-90.0, max=90.0,
-        description="Degrees north")
+        description="Degrees north", update=_on_geo_change)
     longitude: FloatProperty(
         name="Longitude", default=0.0, min=-180.0, max=180.0,
-        description="Degrees east")
+        description="Degrees east", update=_on_geo_change)
 
     season: EnumProperty(name="Season", items=SEASONS, default="summer")
     weather: EnumProperty(name="Weather", items=WEATHER, default="clear")

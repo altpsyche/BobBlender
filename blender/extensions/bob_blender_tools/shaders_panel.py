@@ -25,9 +25,6 @@ bbt_shaders. Coverage has one authority: read the snow_cover attribute on the te
 the pinned fallback formula everywhere else (Use Attribute picks).
 """
 
-import json
-import os
-
 import bpy
 from bpy.props import (
     BoolProperty,
@@ -40,14 +37,6 @@ from bpy.types import Operator, Panel, PropertyGroup
 
 from . import server, ui_helpers, world_panel
 
-# Enum item lists must be kept alive or Blender garbage-collects the strings (a known enum
-# pitfall), so the texture-set item builder caches its result here. Each set also gets a STABLE
-# integer id (assigned once per name and never reused), so a stored selection keeps pointing at
-# the same set even when the library folder list changes order or membership between draws (the
-# dynamic-enum reindex footgun).
-_TEXSET_ITEMS = [("NONE", "None", "Solid colour, no texture set", "", 0)]
-_TEXSET_IDS = {"NONE": 0}
-
 # The bbmcp modules, imported at register and held so unregister uses the same objects
 # even after Reload Builders purges bbmcp. _env_owned records whether BobShaders had to
 # register the shared world itself (standalone), so it only unregisters what it owns.
@@ -57,14 +46,6 @@ _env_owned = False
 # Live knobs drawn per sub-panel, by socket name on the wrapper's Master group node.
 _SURFACE_KNOBS = ["Base Color", "Roughness", "Metallic", "Variation"]
 _MACRO_KNOBS = ["Macro Amount", "Macro Scale"]
-# Texture-set knobs (on the TexSet group node): scale/bump, the two anti-tiling blends, and the
-# near-far distance fade (Fade Near/Far are metres and scale with the shot: close ground ~5/40,
-# a landscape hero ~15/120).
-_TEXSET_KNOBS = ["Scale", "Bump Strength", "Detail Blend", "Macro Amount",
-                 "Distance Fade", "Fade Near", "Fade Far"]
-# The TexSet's Macro Amount breaks up texture TILING; the master's Macro Amount (Macro break-up)
-# modulates base albedo. Distinct sockets, so relabel the TexSet one where they draw adjacently.
-_TEXSET_LABELS = {"Macro Amount": "Tile Macro Amount"}
 _WEATHER_SNOW = ["Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
                  "Altitude", "Altitude Falloff"]
 _WEATHER_WET = ["Wetness Strength", "Wet Pooling"]
@@ -173,50 +154,6 @@ def _materials():
     return materials
 
 
-def _textures_root():
-    return os.path.join(os.path.dirname(server._repo_blender_dir()), "library", "textures")
-
-
-def _texture_sets():
-    """Folder names under library/textures/ that hold at least one image map."""
-    root = _textures_root()
-    if not os.path.isdir(root):
-        return []
-    out = []
-    for name in sorted(os.listdir(root)):
-        d = os.path.join(root, name)
-        if os.path.isdir(d) and _materials()._find_maps(d):
-            out.append(name)
-    return out
-
-
-def _set_items(self, context):
-    """EnumProperty items for the texture-set pickers, rebuilt from the library each draw, with
-    a stable integer id per set so a stored selection survives folder-list changes."""
-    global _TEXSET_ITEMS
-    items = [("NONE", "None", "Solid colour, no texture set", "", 0)]
-    for n in _texture_sets():
-        if n not in _TEXSET_IDS:
-            _TEXSET_IDS[n] = len(_TEXSET_IDS)  # next unused id, fixed for this session
-        items.append((n, n.replace("_", " ").title(), f"Texture set {n}", "", _TEXSET_IDS[n]))
-    _TEXSET_ITEMS = items
-    return _TEXSET_ITEMS
-
-
-def _layer_sets(mat):
-    """The per-layer texture-set mapping stored on a terrain wrapper material."""
-    if mat is None:
-        return {}
-    try:
-        return {int(k): v for k, v in json.loads(mat.get("bbt_layer_sets", "{}")).items()}
-    except (ValueError, TypeError):
-        return {}
-
-
-def _save_layer_sets(mat, mapping):
-    mat["bbt_layer_sets"] = json.dumps({str(k): v for k, v in mapping.items()})
-
-
 # Native identity: the panel acts on the active object's active material slot (no stored name).
 def _active_object(context):
     obj = context.active_object
@@ -298,14 +235,6 @@ def _terrain_node_active(context):
     """The terrain-master node of the active material (the terrain sub-panel's poll guarantees
     the active material is a terrain BobShader, so no build fallback is needed)."""
     return _terrain_node(_active_material(context))
-
-
-def _texset_node(mat, node_name):
-    """A texture-set group node ("TexSet" or "TexSet{i}") in a wrapper, or None."""
-    if mat is None or not mat.use_nodes or mat.node_tree is None:
-        return None
-    n = mat.node_tree.nodes.get(node_name)
-    return n if n is not None and n.type == "GROUP" else None
 
 
 def _named_mod(obj, name):
@@ -472,13 +401,6 @@ class BBT_ShadersProps(PropertyGroup):
         name="Collection", type=bpy.types.Collection,
         description="Batch-convert every material in this collection to a BobShader, e.g. a "
                     "scatter's BOB_Assets_* so the scattered instances weather with the ground")
-    surface_texture: EnumProperty(
-        name="Texture Set", items=_set_items,
-        description="Texture set from library/textures/ to tint the active surface material "
-                    "(None = solid colour); assigned by the button, rebuilds keeping tuned inputs")
-    layer_texture: EnumProperty(
-        name="Layer Texture", items=_set_items,
-        description="Texture set to assign to the active terrain layer")
     asset_material: StringProperty(
         name="Asset Material",
         description="Which material of the active scatter layer's instanced assets the Surface / "
@@ -652,54 +574,6 @@ class BBT_OT_shaders_preset(Operator):
         return {"FINISHED"}
 
 
-class BBT_OT_shaders_surface_set_texture(Operator):
-    bl_idname = "bob_blender_tools.shaders_surface_set_texture"
-    bl_label = "Assign Texture"
-    bl_description = ("Assign the chosen texture set to the active surface material (or None to "
-                      "clear it). Rebuilds the material, keeping tuned inputs")
-
-    def execute(self, context):
-        mats = _materials()
-        mat = _active_material(context)
-        if mats.master_type(mat) != "surface":
-            self.report({"ERROR"}, "Active material is not a surface BobShader")
-            return {"CANCELLED"}
-        scn = context.scene.bbt_shaders
-        tex = None if scn.surface_texture == "NONE" else scn.surface_texture
-        mats.surface_material(mat.name, texture_set=tex)  # get-or-create, rebuilds in place
-        _feed_env(context.scene)
-        self.report({"INFO"}, f"Surface texture: {scn.surface_texture}")
-        return {"FINISHED"}
-
-
-class BBT_OT_shaders_terrain_set_texture(Operator):
-    bl_idname = "bob_blender_tools.shaders_terrain_set_texture"
-    bl_label = "Assign Layer Texture"
-    bl_description = ("Assign the chosen texture set to the active terrain layer (or None to "
-                      "clear it). Rebuilds the material, keeping tuned inputs")
-
-    def execute(self, context):
-        scn = context.scene.bbt_shaders
-        mats = _materials()
-        mat = _active_material(context)
-        if mats.master_type(mat) != "terrain":
-            self.report({"ERROR"}, "Active material is not a terrain BobShader")
-            return {"CANCELLED"}
-        mapping = _layer_sets(mat)
-        i = scn.terrain_active
-        if scn.layer_texture == "NONE":
-            mapping.pop(i, None)
-        else:
-            mapping[i] = scn.layer_texture
-        mat = mats.terrain_material_for(_active_object(context), layer_sets=mapping,
-                                        mat_name=mat.name)
-        _save_layer_sets(mat, mapping)
-        _assign(_active_object(context), mat)
-        _feed_env(context.scene)
-        self.report({"INFO"}, f"Layer {i}: {scn.layer_texture}")
-        return {"FINISHED"}
-
-
 class BBT_OT_shaders_terrain_add(Operator):
     bl_idname = "bob_blender_tools.shaders_terrain_add"
     bl_label = "Add Layer"
@@ -813,8 +687,8 @@ class BBT_OT_shaders_biome_terrain(Operator):
     bl_idname = "bob_blender_tools.shaders_biome_terrain"
     bl_label = "Biome Terrain"
     bl_description = ("Build a terrain material for a biome on the active mesh: the biome's layer "
-                      "stack (placement masks) plus its matching library texture sets, so the "
-                      "ground comes with the right look. Get-or-create, keeps tuned inputs")
+                      "stack (solid tints blended by placement masks), so the ground comes with "
+                      "the right look. Get-or-create, keeps tuned inputs")
     bl_options = {"REGISTER", "UNDO"}
 
     biome: EnumProperty(name="Biome", items=_biome_terrain_items)
@@ -833,13 +707,10 @@ class BBT_OT_shaders_biome_terrain(Operator):
             return {"CANCELLED"}
         mats = _materials()
         layers = spec["layers"]
-        # Texture set per layer index (only layers that name one).
-        mapping = {i: L["texture"] for i, L in enumerate(layers) if L.get("texture")}
         # Update the active terrain material in place if there is one, else a per-object M_<obj>.
         active = _active_material(context)
         name = active.name if mats.master_type(active) == "terrain" else obj.name
-        mat = mats.terrain_material_for(obj, layer_sets=mapping, mat_name=name)
-        _save_layer_sets(mat, mapping)
+        mat = mats.terrain_material_for(obj, mat_name=name)
         node = _terrain_node(mat)
         if node is None:
             self.report({"ERROR"}, "Could not build the terrain material")
@@ -853,8 +724,6 @@ class BBT_OT_shaders_biome_terrain(Operator):
                 key = layers[i].get("layer")
                 if key in TERRAIN_LAYER_PRESETS:
                     _set_layer(node, i, TERRAIN_LAYER_PRESETS[key]["knobs"])
-                if layers[i].get("texture"):  # let the texture read at face value (white tint)
-                    _set_layer(node, i, {"Base Color": (1.0, 1.0, 1.0, 1.0), "Roughness": 1.0})
             else:
                 en.default_value = 0.0
         _assign(obj, mat)
@@ -942,7 +811,7 @@ class BBT_PT_shaders(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 4  # pipeline stage 4 (docs/UX-REDESIGN.md section 4, docs/SPLINES.md 5)
+    bl_order = 5  # pipeline stage: Shaders (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1103,23 +972,15 @@ class BBT_PT_shaders_surface(Panel):
             return
         ui_helpers.preset_row(layout, "bob_blender_tools.shaders_preset")
         _draw_inputs(layout, node, _SURFACE_KNOBS)
-        # The library texture-set assign is for wrapper materials; a scattered asset already
-        # carries its own maps (they feed the master's map inputs), so the tint/rough/variation
-        # above modulate them and the assign row is hidden.
+        # A scattered asset shades through its instanced collection, not its own slot, so the
+        # tint/rough/variation above are all it exposes here.
         if _is_scatter_object(_active_object(context)):
             cap = layout.row()
             cap.enabled = False
-            cap.label(text="asset brings its own textures; above tints/modulates them")
+            cap.label(text="scattered asset: above tints/modulates its look")
             return
-        row = layout.row(align=True)
-        row.prop(scn, "surface_texture", text="Texture")
-        row.operator("bob_blender_tools.shaders_surface_set_texture", text="Assign")
-        ts = _texset_node(mat, "TexSet")
-        if ts is not None:
-            layout.label(text="Triplanar / anti-tiling", icon="TEXTURE")
-            _draw_inputs(layout, ts, _TEXSET_KNOBS, labels=_TEXSET_LABELS)
-        # Macro break-up modulates the base albedo off a low-frequency world noise, so it reads on
-        # a solid-colour surface too (not only when a texture is assigned). Amount 0 = off.
+        # Macro break-up modulates the base albedo off a low-frequency world noise, so the solid
+        # colour surface does not read as one flat sheet. Amount 0 = off.
         layout.label(text="Macro break-up", icon="MOD_NOISE")
         _draw_inputs(layout, node, _MACRO_KNOBS)
 
@@ -1184,7 +1045,6 @@ class BBT_PT_shaders_terrain(Panel):
         # colour. The stacking order is by Height Bias (not slot order), so no reorder needed.
         box = layout.box()
         active = scn.terrain_active
-        sets = _layer_sets(mat)
         for i in range(_materials().MAX_TERRAIN_LAYERS):
             en = node.inputs.get(f"L{i} Enable")
             if en is None:
@@ -1197,9 +1057,8 @@ class BBT_PT_shaders_terrain(Panel):
             col = node.inputs.get(f"L{i} Base Color")
             if col is not None:
                 row.prop(col, "default_value", text="")
-            label = f"Layer {i}" + (f"  [{sets[i]}]" if i in sets else "")
             sel = row.operator("bob_blender_tools.shaders_select",
-                               text=label, depress=(i == active))
+                               text=f"Layer {i}", depress=(i == active))
             sel.target = "layer"
             sel.index = i
         row = box.row(align=True)
@@ -1212,17 +1071,6 @@ class BBT_PT_shaders_terrain(Panel):
         ui_helpers.preset_row(layout, "bob_blender_tools.shaders_terrain_layer_preset",
                               text="Layer Preset")
         _draw_layer_inputs(layout, node, i, _LAYER_SURFACE)
-
-        # Per-layer texture set (triplanar, tinted by the layer's base colour).
-        row = layout.row(align=True)
-        row.prop(scn, "layer_texture", text="Texture")
-        row.operator("bob_blender_tools.shaders_terrain_set_texture", text="Assign")
-        ts = _texset_node(mat, f"TexSet{i}")
-        if ts is not None:
-            _draw_inputs(layout, ts, _TEXSET_KNOBS, labels=_TEXSET_LABELS)
-        # Detail Height scales this layer's texture displacement into the blended height (0 = flat,
-        # the default). Only bites once a texture set feeds the layer a height map.
-        _draw_layer_inputs(layout, node, i, ["Detail Height"])
 
 
 class BBT_PT_shaders_terrain_masks(Panel):
@@ -1314,8 +1162,6 @@ CLASSES = (
     BBT_OT_shaders_convert,
     BBT_OT_shaders_select,
     BBT_OT_shaders_preset,
-    BBT_OT_shaders_surface_set_texture,
-    BBT_OT_shaders_terrain_set_texture,
     BBT_OT_shaders_terrain_add,
     BBT_OT_shaders_terrain_remove,
     BBT_OT_shaders_terrain_toggle,

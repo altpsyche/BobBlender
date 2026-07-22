@@ -1,5 +1,13 @@
 # BobBlenderTools suite UX redesign: problem statement and plan
 
+Update (2026-07-22, docs/BIOME-BLOCKOUT-REDESIGN.md): the World "Set up a look" section below was
+reworked. It is now three layers: World now (live conditions), Season (the one seasonal lever, Apply
+Season), and Sky Look (a STAGED atmosphere preset that no longer touches season/snow/wetness/temp).
+Biome World + Apply Biome moved out of the World panel into a new top-level Biome panel (Build Biome).
+The "Import Real" asset control and its verdant_trail glTF set were removed (block-out proxies are the
+one asset source). Both presets in the suite (Sky Look, heightfield landscape) now use the staged
+`ui_helpers.staged_preset_row` idiom instead of instant apply.
+
 Status: COMPLETE (design 2026-07-20; implemented 2026-07-20, phases 0-6). Scope: the driving
 UX, flow, information architecture, and shared abstractions of the WHOLE BobBlenderTools N-panel
 suite (MCP Bridge, Heightfield Terrain, Scatter, Firmament, Shaders). This is not a change to any

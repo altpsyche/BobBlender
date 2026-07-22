@@ -27,6 +27,7 @@ from . import solar
 
 WORLD_NAME = "BOB_World"
 SUN_NAME = "BOB_Sun"
+SKY_NODE = "BOB_Sky"  # the ShaderNodeTexSky; named so the live sun drivers can target it
 
 
 def _get(params, key, default):
@@ -67,6 +68,7 @@ def _build_world_nodes(world, sky_kw, world_strength):
     output.location = (600, 0)
 
     sky = tree.nodes.new("ShaderNodeTexSky")
+    sky.name = sky.label = SKY_NODE
     # Blender 5.2 replaced the old NISHITA sky with SINGLE/MULTIPLE_SCATTERING
     # physical models (probed empirically). MULTIPLE_SCATTERING is the higher
     # quality successor. Its knobs are air_density, ozone_density, turbidity, and

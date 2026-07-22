@@ -209,6 +209,13 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   moves terrain, scatter, and props together with no rebuild. Measured budget: a 1080p Final
   full-stack frame (layered terrain + weathered scatter + clouds/fog/rain) is ~190s on the dev
   5080. BobShaders core is S1-S5 complete.
+- Biome system (blockout rethink, 2026-07-22, docs/BIOME-BLOCKOUT-REDESIGN.md): the real-glTF import
+  path (`import_gltf`, `populate_scatter_assets`, `biome_models`) and the `verdant_trail` biome were
+  removed, along with the image texture-set feature (terrain layers are solid tints). The canonical
+  biome is a procedural block-out (`library/models/blockout`, `meta.proxy=true`): proxy props from
+  `bbmcp.proxies`, solid terrain, no external files. "Build a whole biome" moved to its own top-level
+  Biome panel; the World panel now separates live conditions, a Season lever, and a staged Sky Look.
+  The manifest-reader description below still holds, minus the glTF-import and texture-set details.
 - Biome system (manifest v2, 2026-07-20): a biome folder (`library/models/<biome>/manifest.json`)
   is a self-describing scene, read through one normalizing reader `assets.biome_manifest()` that
   returns `{meta, models, terrain, scatter, world}` and maps a v1 flat manifest ({kind:[files]})
