@@ -25,38 +25,6 @@
       "height": 13.0,
       "sea_level": 0.3
     },
-    "canyon": {
-      "relief": 0.5,
-      "detail": 0.5,
-      "erosion": 0.5,
-      "warp": 0.5,
-      "height": 20.0,
-      "sea_level": 0.14
-    },
-    "mesa": {
-      "relief": 0.5,
-      "detail": 0.5,
-      "erosion": 0.5,
-      "warp": 0.5,
-      "height": 15.0,
-      "sea_level": 0.2
-    },
-    "badlands": {
-      "relief": 0.5,
-      "detail": 0.5,
-      "erosion": 0.5,
-      "warp": 0.5,
-      "height": 15.0,
-      "sea_level": 0.25
-    },
-    "plateau": {
-      "relief": 0.5,
-      "detail": 0.5,
-      "erosion": 0.5,
-      "warp": 0.5,
-      "height": 16.0,
-      "sea_level": 0.22
-    },
     "hills": {
       "relief": 0.5,
       "detail": 0.5,
@@ -94,7 +62,7 @@
       "detail": 0.5,
       "erosion": 0.5,
       "warp": 0.5,
-      "height": 7.0,
+      "height": 8.0,
       "sea_level": 0.0
     },
     "sand_sea": {
@@ -187,142 +155,6 @@
       {
         "kind": "smooth",
         "sigma": 0.8
-      }
-    ],
-    "canyon": [
-      {
-        "kind": "noise",
-        "ridged": 0.5,
-        "detail_strength": 0.6,
-        "octaves": 6,
-        "warp": 60
-      },
-      {
-        "kind": "fluvial",
-        "sp_m": 0.5,
-        "sp_n": 1.0,
-        "recompute": 20,
-        "fill_iters": 700,
-        "acc_iters": 700,
-        "thermal_iters": 1,
-        "max_delta": 0.03,
-        "iterations": 100,
-        "k": 0.02,
-        "diffusion": 0.05,
-        "talus": 0.004
-      }
-    ],
-    "mesa": [
-      {
-        "kind": "noise",
-        "ridged": 0.28,
-        "detail_strength": 0.35,
-        "octaves": 4,
-        "warp": 50
-      },
-      {
-        "kind": "voronoi",
-        "cells": 5.0,
-        "pattern": "mesa",
-        "mix": "multiply",
-        "amount": 0.85
-      },
-      {
-        "kind": "terrace",
-        "steps": 5,
-        "sharpness": 0.9,
-        "mask": {
-          "kind": "height",
-          "low": 0.42,
-          "high": 1.0,
-          "falloff": 0.1
-        }
-      },
-      {
-        "kind": "fluvial",
-        "sp_m": 0.5,
-        "sp_n": 1.0,
-        "recompute": 25,
-        "fill_iters": 600,
-        "acc_iters": 600,
-        "thermal_iters": 1,
-        "max_delta": 0.03,
-        "iterations": 40,
-        "k": 0.014,
-        "diffusion": 0.05
-      },
-      {
-        "kind": "thermal",
-        "talus": 0.012,
-        "factor": 0.5,
-        "iterations": 3
-      }
-    ],
-    "badlands": [
-      {
-        "kind": "noise",
-        "ridged": 0.42,
-        "detail_strength": 0.65,
-        "octaves": 7,
-        "warp": 65
-      },
-      {
-        "kind": "fluvial",
-        "sp_m": 0.5,
-        "sp_n": 1.1,
-        "recompute": 20,
-        "fill_iters": 700,
-        "acc_iters": 700,
-        "thermal_iters": 1,
-        "max_delta": 0.03,
-        "iterations": 120,
-        "k": 0.02,
-        "diffusion": 0.03,
-        "talus": 0.003
-      },
-      {
-        "kind": "thermal",
-        "talus": 0.006,
-        "factor": 0.4,
-        "iterations": 2
-      }
-    ],
-    "plateau": [
-      {
-        "kind": "noise",
-        "ridged": 0.28,
-        "detail_strength": 0.4,
-        "octaves": 5,
-        "warp": 50
-      },
-      {
-        "kind": "curve",
-        "gamma": 0.7,
-        "contrast": 0.25
-      },
-      {
-        "kind": "terrace",
-        "steps": 4,
-        "sharpness": 0.8,
-        "mask": {
-          "kind": "height",
-          "low": 0.45,
-          "high": 1.0,
-          "falloff": 0.15
-        }
-      },
-      {
-        "kind": "fluvial",
-        "sp_m": 0.5,
-        "sp_n": 1.0,
-        "recompute": 25,
-        "fill_iters": 600,
-        "acc_iters": 600,
-        "thermal_iters": 1,
-        "max_delta": 0.03,
-        "iterations": 50,
-        "k": 0.016,
-        "diffusion": 0.05
       }
     ],
     "hills": [
@@ -452,25 +284,25 @@
       {
         "kind": "dunes",
         "wind": 35,
-        "frequency": 12,
-        "sharpness": 2.2,
+        "frequency": 8,
+        "sharpness": 0.62,
         "warp": 0.14,
         "variation": 0.5,
         "mix": "replace"
       },
       {
         "kind": "thermal",
-        "talus": 0.02,
+        "talus": 0.06,
         "factor": 0.5,
-        "iterations": 3
+        "iterations": 1
       }
     ],
     "sand_sea": [
       {
         "kind": "dunes",
         "wind": 22,
-        "frequency": 7,
-        "sharpness": 2.6,
+        "frequency": 5,
+        "sharpness": 0.66,
         "warp": 0.2,
         "variation": 0.6,
         "mix": "replace"
@@ -482,13 +314,13 @@
         "octaves": 4,
         "warp": 100,
         "mix": "add",
-        "amount": 0.12
+        "amount": 0.1
       },
       {
         "kind": "thermal",
-        "talus": 0.025,
+        "talus": 0.06,
         "factor": 0.5,
-        "iterations": 2
+        "iterations": 1
       }
     ]
   }
