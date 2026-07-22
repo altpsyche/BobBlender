@@ -291,11 +291,16 @@ class BBT_PT_world(Panel):
         # One-line pipeline overview (decision E): the N-panel teaches the sequence.
         layout.label(text="World, Terrain, Paths, Scatter, Shaders, Atmosphere", icon="INFO")
 
-        # Scene-wide masters.
+        # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
+        # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
+        firmament_off = _env is None or _env.get_env(context.scene) is None
         row = layout.row(align=True)
+        row.enabled = not firmament_off
         row.prop(world, "quality", expand=True)
-        layout.prop(world, "live_env", icon="FORCE_WIND")
-        if _env is None or _env.get_env(context.scene) is None:
+        le = layout.row()
+        le.enabled = not firmament_off
+        le.prop(world, "live_env", icon="FORCE_WIND")
+        if firmament_off:
             layout.label(text="Firmament off: world present but no atmosphere", icon="INFO")
 
         # -- World now: time/place (feeds the sun) + the live conditions --
@@ -344,7 +349,7 @@ class BBT_PT_world(Panel):
             row = box.row(align=True)
             if _has_biome_world():
                 row.operator_menu_enum("bob_blender_tools.world_biome_world", "biome",
-                                       text="Biome World", icon="WORLD")
+                                       text="Biome World", icon=ui_helpers.STRUCTURAL_ICON)
             row.operator_menu_enum("bob_blender_tools.world_apply_biome", "biome",
                                    text="Apply Biome", icon=ui_helpers.STRUCTURAL_ICON)
             cap = box.row()

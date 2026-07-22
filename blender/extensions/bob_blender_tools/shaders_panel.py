@@ -62,6 +62,9 @@ _MACRO_KNOBS = ["Macro Amount", "Macro Scale"]
 # a landscape hero ~15/120).
 _TEXSET_KNOBS = ["Scale", "Bump Strength", "Detail Blend", "Macro Amount",
                  "Distance Fade", "Fade Near", "Fade Far"]
+# The TexSet's Macro Amount breaks up texture TILING; the master's Macro Amount (Macro break-up)
+# modulates base albedo. Distinct sockets, so relabel the TexSet one where they draw adjacently.
+_TEXSET_LABELS = {"Macro Amount": "Tile Macro Amount"}
 _WEATHER_SNOW = ["Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
                  "Altitude", "Altitude Falloff"]
 _WEATHER_WET = ["Wetness Strength", "Wet Pooling"]
@@ -114,6 +117,10 @@ _LAYER_SLOPE = ["Min Normal Z", "Max Normal Z", "Slope Strength"]
 _LAYER_ALT = ["Height Min", "Height Max", "Height Falloff", "Height Strength"]
 _LAYER_NOISE = ["Noise Scale", "Noise Contrast", "Noise Seed", "Noise Strength"]
 _LAYER_OTHER = ["Paint Strength", "Curvature Strength"]
+# Flow band keys off the baked drainage-flow map (a riverbed/gravel layer); Curve band keys off
+# the curve overlay's baked mask (a path/road layer), both channels plus their hard-edge toggle.
+_LAYER_FLOW = ["Flow Strength", "Flow Threshold"]
+_LAYER_CURVE = ["Curve Strength", "Curve Hard", "Curve B Strength", "Curve B Hard"]
 
 # Terrain layer presets: a surface plus the masks that place it, applied to the active slot.
 # The masks reuse the scatter vocabulary (slope band, altitude band, noise), so a rock layer
@@ -384,6 +391,13 @@ def _remove_env_drivers():
 
 def _has_env(scene):
     return _env is not None and _env.get_env(scene) is not None
+
+
+def _env_note(context, layout):
+    """The "Firmament off: no live weather" hint, shown wherever weather-driven knobs live so the
+    warning is not stranded on the root panel away from the inert knobs (the Weather sub-panel)."""
+    if not _has_env(context.scene):
+        layout.label(text="Firmament off: no live weather", icon="INFO")
 
 
 def _live_env_on(scene):
@@ -717,8 +731,10 @@ class BBT_OT_shaders_terrain_remove(Operator):
         i = context.scene.bbt_shaders.terrain_active
         sock = node.inputs.get(f"L{i} Enable") if node else None
         if sock is None:
+            self.report({"WARNING"}, "No terrain layer to remove")
             return {"CANCELLED"}
         sock.default_value = 0.0
+        self.report({"INFO"}, f"Disabled layer {i}")
         return {"FINISHED"}
 
 
@@ -887,18 +903,23 @@ class BBT_OT_shaders_snow_shell_remove(Operator):
         surface = _active_object(context)
         mod = _named_mod(surface, SNOW_SHELL_MOD)
         if mod is None:
+            self.report({"WARNING"}, "No snow shell to remove")
             return {"CANCELLED"}
         surface.modifiers.remove(mod)
+        self.report({"INFO"}, "Removed snow shell")
         return {"FINISHED"}
 
 
-def _draw_inputs(layout, node, names):
-    """Draw the wrapper Master node's input sockets by name (live, no rebuild)."""
+def _draw_inputs(layout, node, names, labels=None):
+    """Draw the wrapper Master node's input sockets by name (live, no rebuild). labels overrides
+    the row text for specific sockets, so a socket whose name collides with another node's (e.g.
+    the TexSet's Macro Amount next to the master's) can read distinctly."""
+    labels = labels or {}
     col = layout.column(align=True)
     for nm in names:
         sock = node.inputs.get(nm)
         if sock is not None:
-            col.prop(sock, "default_value", text=nm)
+            col.prop(sock, "default_value", text=labels.get(nm, nm))
 
 
 def _draw_layer_inputs(layout, node, i, names):
@@ -940,14 +961,14 @@ class BBT_PT_shaders(Panel):
         # not viewport-selectable. Edit those materials here, through the (selectable) layer.
         if _is_scatter_object(obj):
             self._draw_scatter_assets(context, layout, obj)
-            self._env_note(context, layout)
+            _env_note(context, layout)
             return
 
         slots = obj.material_slots
         if len(slots) == 0:
             layout.label(text="Materials: (none)")
             self._draw_new_shader(layout)
-            self._env_note(context, layout)
+            _env_note(context, layout)
             self._draw_more_convert(context, layout)
             return
 
@@ -991,7 +1012,7 @@ class BBT_PT_shaders(Panel):
         else:
             layout.label(text=f"{active_mat.name}: plain, Convert above", icon="INFO")
 
-        self._env_note(context, layout)
+        _env_note(context, layout)
         self._draw_more_convert(context, layout)
 
     @staticmethod
@@ -1004,7 +1025,7 @@ class BBT_PT_shaders(Panel):
                                text="New BobShader", icon="ADD")
         if _has_biome_terrain():
             row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
-                                   text="Biome Terrain", icon="WORLD")
+                                   text="Biome Terrain", icon=ui_helpers.STRUCTURAL_ICON)
 
     @staticmethod
     def _draw_more_convert(context, layout):
@@ -1061,12 +1082,6 @@ class BBT_PT_shaders(Panel):
         cap.enabled = False
         cap.label(text="pick a material, then tune it in Surface / Weather below")
 
-    @staticmethod
-    def _env_note(context, layout):
-        if not _has_env(context.scene):
-            layout.label(text="Firmament off: no live weather", icon="INFO")
-
-
 class BBT_PT_shaders_surface(Panel):
     bl_label = "Surface"
     bl_idname = "BBT_PT_shaders_surface"
@@ -1102,8 +1117,11 @@ class BBT_PT_shaders_surface(Panel):
         ts = _texset_node(mat, "TexSet")
         if ts is not None:
             layout.label(text="Triplanar / anti-tiling", icon="TEXTURE")
-            _draw_inputs(layout, ts, _TEXSET_KNOBS)
-            _draw_inputs(layout, node, _MACRO_KNOBS)
+            _draw_inputs(layout, ts, _TEXSET_KNOBS, labels=_TEXSET_LABELS)
+        # Macro break-up modulates the base albedo off a low-frequency world noise, so it reads on
+        # a solid-colour surface too (not only when a texture is assigned). Amount 0 = off.
+        layout.label(text="Macro break-up", icon="MOD_NOISE")
+        _draw_inputs(layout, node, _MACRO_KNOBS)
 
 
 class BBT_PT_shaders_water(Panel):
@@ -1159,7 +1177,7 @@ class BBT_PT_shaders_terrain(Panel):
                               text="Stack Preset")
         if _has_biome_terrain():
             row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
-                                   text="Biome Terrain", icon="WORLD")
+                                   text="Biome Terrain", icon=ui_helpers.STRUCTURAL_ICON)
         _draw_inputs(layout, node, _TERRAIN_GLOBAL)
 
         # Layer slots: one row each, an enable toggle plus a select button showing the base
@@ -1201,7 +1219,10 @@ class BBT_PT_shaders_terrain(Panel):
         row.operator("bob_blender_tools.shaders_terrain_set_texture", text="Assign")
         ts = _texset_node(mat, f"TexSet{i}")
         if ts is not None:
-            _draw_inputs(layout, ts, _TEXSET_KNOBS)
+            _draw_inputs(layout, ts, _TEXSET_KNOBS, labels=_TEXSET_LABELS)
+        # Detail Height scales this layer's texture displacement into the blended height (0 = flat,
+        # the default). Only bites once a texture set feeds the layer a height map.
+        _draw_layer_inputs(layout, node, i, ["Detail Height"])
 
 
 class BBT_PT_shaders_terrain_masks(Panel):
@@ -1229,6 +1250,13 @@ class BBT_PT_shaders_terrain_masks(Panel):
         _draw_layer_inputs(layout, node, i, _LAYER_NOISE)
         layout.label(text="Paint / curvature", icon="BRUSH_DATA")
         _draw_layer_inputs(layout, node, i, _LAYER_OTHER)
+        # Flow / curve bands: place a layer in the drainage channels or along a path/road. Both
+        # need their source baked (Paths Bake & Erode for curve, terrain flow for flow); default
+        # Strength 0 leaves the layer untouched, so an unbaked scene is unchanged.
+        layout.label(text="Flow band (drainage channels)", icon="MATFLUID")
+        _draw_layer_inputs(layout, node, i, _LAYER_FLOW)
+        layout.label(text="Curve band (path / road)", icon="CURVE_DATA")
+        _draw_layer_inputs(layout, node, i, _LAYER_CURVE)
 
 
 class BBT_PT_shaders_weather(Panel):
@@ -1250,6 +1278,9 @@ class BBT_PT_shaders_weather(Panel):
         node = _master_node(mat)
         if node is None:
             return
+        # The weather knobs below are the ones the live world drives; repeat the env-off warning
+        # here (it also shows on the root) so it sits with the inert knobs, not a panel away.
+        _env_note(context, layout)
         layout.label(text="Snow (whitens by coverage)", icon="FREEZE")
         layout.label(text="Use Attribute: 0 computed, 1 terrain snow_cover")
         _draw_inputs(layout, node, _WEATHER_SNOW)

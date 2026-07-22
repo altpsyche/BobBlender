@@ -33,6 +33,14 @@ def _live_env_on(scene):
     default on when World is absent (standalone verify)."""
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
+
+def _env_owned_note(layout):
+    """A muted one-liner under a greyed knob group: the Live Environment driver owns these,
+    so an edit here would be overwritten. Shown only when Live Environment is on."""
+    cap = layout.row()
+    cap.enabled = False
+    cap.label(text="Live Environment drives this; turn it off on World to edit")
+
 # The bbmcp.env module, imported and registered at addon register time and held so
 # unregister uses the same object even after Reload Builders purges bbmcp.
 _env = None
@@ -44,7 +52,7 @@ _CLOUD_LAYER = ["Layer Size", "Thickness", "Height"]
 _CLOUD_WIND = ["Wind Direction", "Wind Speed"]
 
 # Live fog knobs, grouped for the panel.
-_FOG_SHAPE = ["Density", "Fog Noise", "Fog Scale", "Softness", "Warp"]
+_FOG_SHAPE = ["Density", "Fog Noise", "Fog Scale", "Fog Detail", "Softness", "Warp"]
 _FOG_LOOK = ["Fog Color", "Anisotropy"]
 _FOG_LAYER = ["Layer Size", "Thickness", "Height", "Fog Top", "Falloff"]
 _FOG_GROUND = ["Terrain Size", "Terrain Height", "Sea Level", "Ground Thickness"]
@@ -225,14 +233,16 @@ def _input(obj, socket_name):
     return getattr(mod.properties.inputs, ident, None) if ident else None
 
 
-def _draw_knobs(layout, obj, names):
-    """Draw each present modifier input by socket name (live, no rebuild)."""
+def _draw_knobs(layout, obj, names, enabled=True):
+    """Draw each present modifier input by socket name (live, no rebuild). enabled=False greys
+    the row (a live driver owns the input, so an edit would be silently overwritten)."""
     mod = _nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
            if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
     col = layout.column(align=True)
+    col.enabled = enabled
     for nm in names:
         ident = ids.get(nm)
         inp = getattr(mod.properties.inputs, ident, None) if ident else None
@@ -257,13 +267,15 @@ def _input_of(mod, socket_name):
     return getattr(mod.properties.inputs, ident, None) if ident else None
 
 
-def _draw_knobs_mod(layout, mod, names):
-    """Draw each present input of a specific modifier by socket name (live)."""
+def _draw_knobs_mod(layout, mod, names, enabled=True):
+    """Draw each present input of a specific modifier by socket name (live). enabled=False greys
+    the row (a live driver owns the input)."""
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
            if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
     col = layout.column(align=True)
+    col.enabled = enabled
     for nm in names:
         ident = ids.get(nm)
         inp = getattr(mod.properties.inputs, ident, None) if ident else None
@@ -1001,7 +1013,8 @@ class BBT_PT_firmament_sky(Panel):
         col.prop(fm, "turbidity")
         col.prop(fm, "ground_albedo")
 
-        layout.operator("bob_blender_tools.firmament_build_sky", icon="LIGHT_SUN")
+        ui_helpers.structural_action(layout, "bob_blender_tools.firmament_build_sky",
+                                     note="builds: the sky world shader + sun")
 
 
 class BBT_PT_firmament_clouds(Panel):
@@ -1020,9 +1033,9 @@ class BBT_PT_firmament_clouds(Panel):
         box = layout.box()
         box.prop(fm, "cloud_object")
         box.prop(fm, "cloud_shadows")
-        row = box.row(align=True)
-        row.operator("bob_blender_tools.firmament_build_clouds", icon="OUTLINER_OB_VOLUME")
-        ui_helpers.preset_row(row, "bob_blender_tools.firmament_cloud_preset")
+        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_clouds",
+                                     note="builds: the cloud volume object")
+        ui_helpers.preset_row(box, "bob_blender_tools.firmament_cloud_preset")
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.cloud_object)
@@ -1030,12 +1043,16 @@ class BBT_PT_firmament_clouds(Panel):
             layout.label(text="Build to edit cloud knobs", icon="INFO")
             return
 
+        live = _live_env_on(context.scene)
         col = layout.column(align=True)
         col.label(text="Shape", icon="MOD_NOISE")
-        _draw_knobs(col, obj, _CLOUD_SHAPE)
+        # Coverage is driven from bbt_env.cloud_cover when Live Environment is on; grey it so
+        # the edit does not read as live (Cloud Scale / Warp are always author-owned).
+        _draw_knobs(col, obj, ["Coverage"], enabled=not live)
+        _draw_knobs(col, obj, _CLOUD_SHAPE[1:])
         seed = _input(obj, "Cloud Seed")
         if seed is not None:
-            ui_helpers.seed_row(col, seed, "bob_blender_tools.firmament_randomize_seed",
+            ui_helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                 text="Cloud Seed",
                                 op_props={"object_name": fm.cloud_object,
                                           "seed_input": "Cloud Seed"})
@@ -1051,10 +1068,12 @@ class BBT_PT_firmament_clouds(Panel):
         if wind is not None:
             col.prop(wind, "value", text="Wind Drift")
             if wind.value:
-                _draw_knobs(col, obj, _CLOUD_WIND)
-                # Only meaningful when Live Environment is off; with it on a driver
-                # owns these inputs and would immediately overwrite the copied value.
-                if not _live_env_on(context.scene):
+                _draw_knobs(col, obj, _CLOUD_WIND, enabled=not live)
+                # A driver owns wind when Live Environment is on: grey the knobs and drop the
+                # copy-from-env button (it would be overwritten), else offer the one-shot copy.
+                if live:
+                    _env_owned_note(col)
+                else:
                     op = col.operator("bob_blender_tools.firmament_wind_from_env",
                                       icon="TRACKING_FORWARDS")
                     op.object_name = fm.cloud_object
@@ -1078,9 +1097,9 @@ class BBT_PT_firmament_fog(Panel):
         box.prop(fm, "fog_mode")
         if fm.fog_mode == "ground_fog":
             box.prop(fm, "fog_heightmap")
-        row = box.row(align=True)
-        row.operator("bob_blender_tools.firmament_build_fog", icon="OUTLINER_OB_VOLUME")
-        ui_helpers.preset_row(row, "bob_blender_tools.firmament_fog_preset")
+        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_fog",
+                                     note="builds: the fog volume object")
+        ui_helpers.preset_row(box, "bob_blender_tools.firmament_fog_preset")
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.fog_object)
@@ -1093,7 +1112,7 @@ class BBT_PT_firmament_fog(Panel):
         _draw_knobs(col, obj, _FOG_SHAPE)
         seed = _input(obj, "Fog Seed")
         if seed is not None:
-            ui_helpers.seed_row(col, seed, "bob_blender_tools.firmament_randomize_seed",
+            ui_helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                 text="Fog Seed",
                                 op_props={"object_name": fm.fog_object,
                                           "seed_input": "Fog Seed"})
@@ -1118,8 +1137,11 @@ class BBT_PT_firmament_fog(Panel):
         if wind is not None:
             col.prop(wind, "value", text="Wind Drift")
             if wind.value:
-                _draw_knobs(col, obj, _FOG_WIND)
-                if not _live_env_on(context.scene):  # a live driver owns these inputs when on
+                live = _live_env_on(context.scene)
+                _draw_knobs(col, obj, _FOG_WIND, enabled=not live)
+                if live:  # a live driver owns these inputs when on
+                    _env_owned_note(col)
+                else:
                     op = col.operator("bob_blender_tools.firmament_wind_from_env",
                                       icon="TRACKING_FORWARDS")
                     op.object_name = fm.fog_object
@@ -1145,19 +1167,22 @@ class BBT_PT_firmament_weather(Panel):
         # Rain (streak mode).
         box = layout.box()
         box.label(text="Rain", icon="OUTLINER_OB_FORCE_FIELD")
-        row = box.row(align=True)
-        row.operator("bob_blender_tools.firmament_build_rain", icon="MOD_FLUIDSIM")
-        ui_helpers.preset_row(row, "bob_blender_tools.firmament_rain_preset")
+        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_rain",
+                                     note="builds: falling rain streaks")
+        ui_helpers.preset_row(box, "bob_blender_tools.firmament_rain_preset")
         rain = bpy.data.objects.get(fm.rain_object)
         if rain is not None and _nodes_mod(rain) is not None:
             box.prop(rain, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, rain, _RAIN_KNOBS)
             seed = _input(rain, "Seed")
             if seed is not None:
-                ui_helpers.seed_row(box, seed, "bob_blender_tools.firmament_randomize_seed",
+                ui_helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                     op_props={"object_name": fm.rain_object})
-            _draw_knobs(box, rain, _RAIN_WIND)
-            if not _live_env_on(context.scene):  # a live driver owns Wind when on
+            live = _live_env_on(context.scene)
+            _draw_knobs(box, rain, _RAIN_WIND, enabled=not live)
+            if live:  # a live driver owns Wind when on
+                _env_owned_note(box)
+            else:
                 op = box.operator("bob_blender_tools.firmament_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.rain_object
@@ -1167,20 +1192,23 @@ class BBT_PT_firmament_weather(Panel):
         # Motes (dust / amber / falling snow, all mote mode).
         box = layout.box()
         box.label(text="Motes (Dust / Amber / Snow)", icon="PARTICLES")
-        row = box.row(align=True)
-        row.operator("bob_blender_tools.firmament_build_motes", icon="OUTLINER_OB_POINTCLOUD")
-        ui_helpers.preset_row(row, "bob_blender_tools.firmament_mote_preset")
+        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_motes",
+                                     note="builds: floating motes (dust / amber / snow)")
+        ui_helpers.preset_row(box, "bob_blender_tools.firmament_mote_preset")
         motes = bpy.data.objects.get(fm.mote_object)
         if motes is not None and _nodes_mod(motes) is not None:
             box.prop(motes, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, motes, _MOTE_KNOBS)
             seed = _input(motes, "Seed")
             if seed is not None:
-                ui_helpers.seed_row(box, seed, "bob_blender_tools.firmament_randomize_seed",
+                ui_helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                     op_props={"object_name": fm.mote_object})
             _draw_knobs(box, motes, _MOTE_LOOK)
-            _draw_knobs(box, motes, _MOTE_WIND)
-            if not _live_env_on(context.scene):  # a live driver owns Wind when on
+            live = _live_env_on(context.scene)
+            _draw_knobs(box, motes, _MOTE_WIND, enabled=not live)
+            if live:  # a live driver owns Wind when on
+                _env_owned_note(box)
+            else:
                 op = box.operator("bob_blender_tools.firmament_wind_from_env",
                                   icon="TRACKING_FORWARDS")
                 op.object_name = fm.mote_object
@@ -1190,12 +1218,19 @@ class BBT_PT_firmament_weather(Panel):
         box = layout.box()
         box.label(text="Snow Coverage", icon="OUTLINER_DATA_SURFACE")
         box.prop(fm, "snow_surface")
-        box.operator("bob_blender_tools.firmament_build_snow_cover", icon="FREEZE")
+        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_snow_cover",
+                                     note="builds: the terrain snow-cover pass")
         surface = fm.snow_surface or context.active_object
         snow_mod = _named_mod(surface, "BOB_Snow")
         if snow_mod is not None:
-            _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS)
-            if not _live_env_on(context.scene):  # a live driver owns Snow when on
+            live = _live_env_on(context.scene)
+            # Only the Snow amount is driven from bbt_env.snow; the slope/altitude bands stay
+            # author-owned, so grey just Snow when Live Environment is on.
+            _draw_knobs_mod(box, snow_mod, ["Snow"], enabled=not live)
+            _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS[1:])
+            if live:  # a live driver owns Snow when on
+                _env_owned_note(box)
+            else:
                 box.operator("bob_blender_tools.firmament_snow_from_env", icon="TRACKING_FORWARDS")
         else:
             box.label(text="Writes snow_cover for BobShaders to read", icon="INFO")
