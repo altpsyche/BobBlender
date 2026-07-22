@@ -460,6 +460,27 @@ Out of scope (features, a separate track, not polish): a sea/ocean/lake surface;
 a road crosses a river (R6 take-lower sinks the road into the water); tributary networks and
 width-from-flow-accumulation; a true eroded-channel water re-fit (the bigger erosion bet).
 
+### Water organic pass (issues 1-3) -- DONE 2026-07-22, headless-verified (look awaits Siva)
+Siva's three water complaints (see WATER-SHADER-HANDOVER.md KNOWN ISSUES): the ribbon read as an
+unorganic parallel strip; End Taper faded the carve smoothly but HARD-clipped the water; and the water
+had no texture (no UV, so no flow-aligned normal). All three landed; the fixes interlock through a
+single shared width model.
+- **Shared width model.** New `blocks.width_multiplier(ng, near, width_var)` -- a two-octave centreline
+  noise -> a 1 +/- Width Variation multiplier -- is called by BOTH `curve_water` (widens the swept
+  ribbon about the centreline) and `curve_overlay` (scales the carved bench `inner`), so the bed and the
+  water surface meander in lockstep. New live knob `Width Variation` on `bbt_curve` (seeded river 0.35 /
+  stream 0.30 / 0 elsewhere), synced to both modifiers, drawn under Shape.
+- **End Taper unified.** `curve_water` no longer deletes ribbon verts; the width is pulled smoothly to 0
+  over End Taper (the same `smooth_falloff` the carve uses), so the surface tapers to a point in step
+  with the embankment fade.
+- **Shore is now width-independent**: from the captured across-width profile factor, not the world
+  distance, so the width variation cannot distort the shore/foam/depth gradients.
+- **Flow-space UV + texture.** The ribbon stores `bbt_water_uv` (U = arc length, V = across-width);
+  `S_WaterMaster` v6 samples a scrolled multi-scale detail normal in that UV space (new `Surface
+  Texture` knob), flow-aligned without the world-space combing that killed the earlier advected bump.
+Still open (features, not this pass): width-from-flow-accumulation; widen-at-the-mouth; a per-vertex
+broken bank EDGE (the width wanders, but each cross-section is still a straight profile line).
+
 ### Polish pass (R1-R5) -- DONE, static-gated, awaiting Blender verify
 
 Broad-sweep refinements to the shipped follow-terrain family (no new channel). Static-gated

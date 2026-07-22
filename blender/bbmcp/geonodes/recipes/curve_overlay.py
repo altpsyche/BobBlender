@@ -31,7 +31,8 @@ the terrain for editing.
 
 import bpy
 
-from ..blocks import curve_field, displace_z, math_node, mix_float, position, smooth_falloff
+from ..blocks import (curve_field, displace_z, math_node, mix_float, position, smooth_falloff,
+                       width_multiplier)
 from ..scaffold import add_input
 from . import recipe
 
@@ -103,6 +104,12 @@ def build(ng, out, params: dict):
     add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.5)), 0.0)
     add_input(ng, "Path Depth", "NodeSocketFloat", float(params.get("path_depth", 0.3)), 0.0)
     add_input(ng, "End Taper", "NodeSocketFloat", float(params.get("end_taper", 0.0)), 0.0)
+    # Width Variation: fraction the bench half-width wanders along the spline (0 = constant width, the
+    # old behaviour). A low-frequency noise sampled at the centreline scales the inner bench width, so
+    # the carved channel meanders in lockstep with the water ribbon (curve_water uses the SAME
+    # construction and WIDTH_NOISE_SCALE). Seeded > 0 only for the river/stream roles; 0 elsewhere.
+    add_input(ng, "Width Variation", "NodeSocketFloat",
+              float(params.get("width_var", 0.0)), 0.0, 0.95)
     # Cross-section shape (R4): a flat shoulder extends the bench; the embankment beyond it is
     # slope-aware; Bank Bias skews it to one side of the curve.
     add_input(ng, "Shoulder Width", "NodeSocketFloat", float(params.get("shoulder_width", 0.0)), 0.0)
@@ -148,7 +155,12 @@ def build(ng, out, params: dict):
     # #11): a deeper cut/fill (|diff|) needs a wider run to hold Bank Slope (rise/run), so a bench on
     # a slope ramps out instead of cliffing. Bank Bias skews the embankment to one side (side -1/+1).
     # The extra width is capped at 3x Path Falloff so the band stays bounded on far/steep ground.
-    inner = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Shoulder Width"], (-600, 320))
+    # Inner bench half-width, scaled by the shared width-variation noise so the carved channel wanders
+    # in lockstep with the water ribbon (curve_water widens its swept profile by the same wmul). Width
+    # Variation 0 -> wmul 1 -> the exact old constant-width bench, so non-river roles are unaffected.
+    inner_base = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Shoulder Width"], (-780, 320))
+    wmul = width_multiplier(ng, near, gi.outputs["Width Variation"], (-2400, 520))
+    inner = math_node(ng, "MULTIPLY", inner_base, wmul, (-420, 380))
     cut_depth = math_node(ng, "ABSOLUTE", diff, None, (-600, 200))
     emb_raw = math_node(ng, "DIVIDE", cut_depth, gi.outputs["Bank Slope"], (-420, 200))
     cap = math_node(ng, "MULTIPLY", gi.outputs["Path Falloff"], 3.0, (-420, 100))

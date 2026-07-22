@@ -363,6 +363,46 @@ def smooth_falloff(ng, value, inner, outer, location=(0, 0)):
     return node.outputs["Result"]
 
 
+WIDTH_NOISE_SCALE = 0.05  # base meander frequency (cycles/m) for the shared river width variation
+
+
+def width_multiplier(ng, near, width_var, location=(0, 0)):
+    """The shared width-variation multiplier for a river channel (docs/SPLINES.md 7, issue 1):
+    1 +/- `width_var`, from a two-octave low-frequency noise sampled at the centreline `near`
+    (whose Z is 0, so the noise is planar). Used by BOTH curve_water (to widen the swept water
+    ribbon) and curve_overlay (to widen the carved bench) so the bed and the surface meander in
+    LOCKSTEP -- the width model is shared, not cosmetic on the ribbon. `width_var` 0 -> a constant
+    multiplier of 1 (the old dead-parallel strip), so non-river roles are unaffected.
+
+    A plain Perlin Fac hugs 0.5, so the raw swing is weak; the two octaves are centred to [-1, 1],
+    blended 0.7 / 0.3 (a slow meander plus a finer width wobble that breaks the ruled bank), then a
+    contrast gain pushes the signal toward the extremes and clamps, so `width_var` reads as a true
+    fraction. Floored at 0.15 so the channel never collapses or inverts."""
+    lx, ly = location
+
+    def _octave(scale, y):
+        n = ng.nodes.new("ShaderNodeTexNoise")
+        n.location = (lx, y)
+        ng.links.new(near, n.inputs["Vector"])
+        n.inputs["Scale"].default_value = scale
+        c = math_node(ng, "SUBTRACT", math_node(ng, "MULTIPLY", n.outputs["Fac"], 2.0, (lx + 180, y)),
+                      1.0, (lx + 360, y))  # centre Fac 0..1 to [-1, 1]
+        return c
+
+    o1 = _octave(WIDTH_NOISE_SCALE, ly)
+    o2 = _octave(WIDTH_NOISE_SCALE * 3.3, ly - 220)
+    mixed = math_node(ng, "ADD", math_node(ng, "MULTIPLY", o1, 0.7, (lx + 540, ly)),
+                      math_node(ng, "MULTIPLY", o2, 0.3, (lx + 540, ly - 220)), (lx + 720, ly - 110))
+    clamp = ng.nodes.new("ShaderNodeClamp")
+    clamp.location = (lx + 1080, ly - 110)
+    ng.links.new(math_node(ng, "MULTIPLY", mixed, 2.2, (lx + 900, ly - 110)), clamp.inputs["Value"])
+    clamp.inputs["Min"].default_value = -1.0
+    clamp.inputs["Max"].default_value = 1.0
+    scaled = math_node(ng, "MULTIPLY", width_var, clamp.outputs["Result"], (lx + 1260, ly - 40))
+    return math_node(ng, "MAXIMUM", math_node(ng, "ADD", 1.0, scaled, (lx + 1440, ly)), 0.15,
+                     (lx + 1620, ly))
+
+
 def random_value(ng, data_type, min_value, max_value, seed=None, location=(0, 0)):
     """A Random Value node. Setting data_type reduces the sockets to that type,
     so Min, Max, Value, and Seed are unambiguous by name."""

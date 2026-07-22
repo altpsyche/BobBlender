@@ -93,8 +93,43 @@ complaints (flow, waves, foam, freeze, depth) + EEVEE refraction are addressed. 
 reload (restart / F3 Reload Scripts); then rebuild the river's water (or delete the S_WaterMaster
 node group) so the v3 group + new defaults take. Judge the LOOK in EEVEE (refraction) AND Cycles.
 
-## KNOWN ISSUES (Siva, 2026-07-22) -- open, next work
-Grounded at file:line; do not relitigate whether they are real, they are Siva's direct feedback.
+## KNOWN ISSUES (Siva, 2026-07-22) -- ALL THREE RESOLVED 2026-07-22 (headless-verified; LOOK awaits Siva)
+The three issues below were Siva's direct feedback. All three are now addressed in code and measured
+headless; the LOOK is still Siva's call in EEVEE + Cycles. DEPLOY: Advanced > Reload Builders (bbmcp
+curve_water/curve_overlay/blocks), full addon reload / F3 (splines_panel/shaders_panel), then DELETE
+the S_WaterMaster node group (or rebuild the river's water) so the v6 group + new sockets take, and
+REBUILD the river so the ribbon carries the new bbt_water_uv attribute + varied width.
+
+What landed (the shared width model is the crux tying #1 and #2 together):
+- **New shared block `blocks.width_multiplier(ng, near, width_var)`**: a two-octave low-frequency noise
+  sampled at the centreline (near, z=0) -> a 1 +/- Width Variation multiplier, centred + contrast-gained
+  so a plain Perlin (which hugs 0.5) still reads as a true fraction, floored at 0.15. ONE helper, called
+  by BOTH curve_water (widens the swept ribbon) and curve_overlay (widens the carved bench), so bed and
+  surface meander in LOCKSTEP by construction -- not two hand-matched copies. `WIDTH_NOISE_SCALE = 0.05`.
+- **curve_water reworked** (the ribbon): shore now comes from the captured across-width PROFILE FACTOR
+  (`abs(2*vfac-1)`), so it is WIDTH-INDEPENDENT (the width variation + end taper cannot distort the
+  shore/foam/depth gradients). The swept ribbon is scaled laterally about the centreline by
+  `wmul = width_multiplier * end_taper`. A captured arc-length U + the profile V are stored as
+  `bbt_water_uv` (FLOAT_VECTOR) for the shader (#3). curve_field's `near` (was unused) drives the widen.
+- **New synced input `Width Variation`** on curve_water AND curve_overlay; on `bbt_curve.width_var`
+  (0..0.95), pushed to both modifiers by `_sync_curve_params`, seeded per role (river 0.35, stream 0.30,
+  paths/road 0.0 -> the exact old constant-width bench), drawn under Shape in the Paths panel.
+- **S_WaterMaster v6** (`_GROUP_VER_OVERRIDE` 5 -> 6): a UV-space multi-scale detail normal sampled in
+  bbt_water_uv (U = arc length downstream, V stretched x6 so it varies across width too), scrolled along
+  U by frame time -- flow-aligned, no world-space advection, so no combing. New `Surface Texture` knob
+  (default 0.6) in the Shaders Water > Flow group; faded out as it freezes; a pre-batch-1 ribbon reads
+  the attribute as 0 -> flat (safe no-op).
+
+Measured headless (scripts in the session scratchpad: verify_width.py, verify_contain.py, verify_v6.py):
+- width VARIES organically with width_var 0.35 (half-width 5.8..7.8, smooth meander) and is DEAD FLAT at
+  0.0 (6.83..6.89) -- roads unaffected; end taper pulls width -> ~0 at both tips with NO verts deleted
+  (the DeleteGeometry hard-clip is gone); shore 0..1 from vfac; bbt_depth intact; bbt_water_uv U=0..arc,
+  V=0..1. Containment after erode is IDENTICAL to width_var=0 baseline (both ~2% marginal float, maxgap
+  ~0.4m) -- the width variation is containment-neutral. All five roles still build; S_WaterMaster builds
+  fresh at v6 with the Surface Texture socket, a node reading bbt_water_uv, and all Principled inputs
+  linked. The carved bench reaches the same ~7m as the ribbon (shared helper).
+
+Original reports (kept for reference; the file:line anchors are PRE-rework):
 
 1. **The water ribbon is an unorganic strip.** `curve_water.py:147-153`: Width is a single constant
    scalar and the swept profile line is `[-half,0,0]..[half,0,0]`, identical along the whole curve, so

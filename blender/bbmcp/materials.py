@@ -679,7 +679,7 @@ S_GROUP_VER = 3
 #   S_WaterMaster v5 (W5): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
 #   sockets; reads the ribbon's bbt_depth (water-column metres) for Beer-Lambert colour + opacity and
 #   a soft shoreline. New interface, so rebuild the water group (terrain/surface tuning untouched).
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 5}
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 6}
 
 
 def _cached_group(name):
@@ -1455,6 +1455,10 @@ def water_master_group():
     _gin(g, "Ripple Strength", "NodeSocketFloat", 0.10, 0.0, 2.0)
     _gin(g, "Ripple Scale", "NodeSocketFloat", 1.8, 0.0)
     _gin(g, "Wave Detail", "NodeSocketFloat", 0.5, 0.0, 1.0)
+    # Surface Texture (issue 3): strength of a tiling multi-scale normal sampled in the ribbon's
+    # flow-space UV (bbt_water_uv), scrolled downstream. Gives the surface real detail texture instead
+    # of reading flat; 0 = the old plain procedural look.
+    _gin(g, "Surface Texture", "NodeSocketFloat", 0.6, 0.0, 2.0)
     _gin(g, "Foam Color", "NodeSocketColor", _WATER_FOAM)
     _gin(g, "Foam Amount", "NodeSocketFloat", 1.2, 0.0, 2.0)
     _gin(g, "Shore Foam", "NodeSocketFloat", 0.6, 0.0, 1.0)
@@ -1593,6 +1597,38 @@ def water_master_group():
                           0.3, 0.60, 4.0, 140)
     n_mid = _wave_bump(mid_h, rs, None, (140, 560))
     n_fine = _wave_bump(fine_h, fine_str, n_mid, (400, 320))
+
+    # UV-space detail normal (issue 3): sample a tiling multi-scale noise in the ribbon's flow-space
+    # UV (bbt_water_uv: U = arc length downstream in metres, V = across-width 0..1), scrolled along U
+    # by the frame time so the detail travels DOWNSTREAM in the surface's own frame. Flow-aligned by
+    # construction, not a world-space advection, so it does NOT comb into hair streaks like the earlier
+    # advected bump. V is stretched (x6) so the noise varies across the width too instead of streaking
+    # purely along flow. A pre-batch-1 ribbon reads the attribute as 0 -> flat, a safe no-op. Strength
+    # = Surface Texture, faded out as it freezes.
+    uv_a = _geo_attr("bbt_water_uv", -160)
+    uvsep = g.nodes.new("ShaderNodeSeparateXYZ")
+    uvsep.location = (-1300, -160)
+    g.links.new(uv_a.outputs["Vector"], uvsep.inputs[0])
+    uvcoord = g.nodes.new("ShaderNodeCombineXYZ")
+    uvcoord.location = (-940, -160)
+    g.links.new(_mmath(g, "ADD", uvsep.outputs["X"],
+                       _mmath(g, "MULTIPLY", time, 0.5, (-1120, -100)), (-940, -80)),
+                uvcoord.inputs["X"])
+    g.links.new(_mmath(g, "MULTIPLY", uvsep.outputs["Y"], 6.0, (-1120, -240)), uvcoord.inputs["Y"])
+
+    def _uvnoise(scale, loc):
+        n = g.nodes.new("ShaderNodeTexNoise")
+        n.noise_dimensions = "2D"
+        n.location = loc
+        g.links.new(uvcoord.outputs["Vector"], n.inputs["Vector"])
+        n.inputs["Scale"].default_value = scale
+        n.inputs["Detail"].default_value = 2.0
+        return n.outputs["Fac"]
+
+    uv_h = _mmath(g, "ADD", _mmath(g, "MULTIPLY", _uvnoise(0.5, (-760, -100)), 0.6, (-580, -100)),
+                  _mmath(g, "MULTIPLY", _uvnoise(1.5, (-760, -280)), 0.4, (-580, -280)), (-400, -160))
+    uv_str = _mmath(g, "MULTIPLY", I["Surface Texture"], liquid, (-220, -160))
+    n_fine = _wave_bump(uv_h, uv_str, n_fine, (560, 240))
 
     # Cracked-ice normal: a Voronoi distance-to-edge bump that fades in with `frozen` and chains on
     # top of the (now flat) wave normal. Strength 0 when liquid, so it is a pass-through.
