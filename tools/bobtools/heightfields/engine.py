@@ -15,7 +15,7 @@ acts where the selector says (erode slopes, terrace high ground, deposit in chan
 
 import numpy as np
 
-from . import ops_erode, ops_filter, ops_generate, ops_select
+from . import ops_carve, ops_erode, ops_filter, ops_generate, ops_select
 
 
 def _wrap(fn):
@@ -48,7 +48,9 @@ _OPS = {
     "voronoi": _wrap(ops_generate.voronoi),
     "fluvial": _wrap(ops_erode.fluvial),
     "pipe_hydraulic": _wrap(ops_erode.pipe_hydraulic),
+    "deposit": _wrap(ops_erode.deposit),
     "thermal": _wrap(ops_erode.thermal),
+    "channel_seed": _wrap(ops_carve.channel_seed),
     "terrace": _wrap(ops_filter.terrace),
     "warp": _wrap(ops_filter.warp),
     "curve": _wrap(ops_filter.curve),
