@@ -21,7 +21,8 @@ import numpy as np
 from . import backend as backend_mod
 from . import cache, engine, io, maps
 from . import params as params_mod
-from .params import PREVIEW_SIZE
+from . import presets as presets_mod
+from .params import AMPLIFY_PREVIEW, PREVIEW_SIZE
 
 
 def _stack_for(params: dict) -> list:
@@ -29,6 +30,13 @@ def _stack_for(params: dict) -> list:
     if params.get("stack"):
         return params["stack"]
     return params_mod.build_params(params)["stack"]
+
+
+def _preview_size(params: dict) -> int:
+    """Preview resolution. A preset that amplifies previews at AMPLIFY_PREVIEW (one climb level above
+    the macro base) so the preview is a real PREFIX of the full cascade; anything else at PREVIEW_SIZE."""
+    stack = params["stack"] if params.get("stack") else presets_mod.stack(params["preset"])
+    return AMPLIFY_PREVIEW if params_mod.has_amplify(stack) else PREVIEW_SIZE
 
 
 def _map_path(out_path: str, kind: str) -> str:
@@ -54,8 +62,8 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     resolution-independent, the preview and the full bake are the same landform.
     """
     params = dict(params)
-    if preview:
-        params["size"] = PREVIEW_SIZE
+    if preview and not params.get("base_png"):
+        params["size"] = _preview_size(params)
 
     # base_png: erode an EXISTING baked field in place of generating from zero (the carve-then-erode
     # "Bake & Erode Curves" path). The base sets the resolution, and the result is NOT re-normalised
@@ -98,7 +106,10 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     # reflected margin is needed and no border rim forms. With a base_png the field is
     # the loaded terrain and the result keeps its absolute mapping (normalize=False).
     if base is None:
-        base = np.zeros((size, size), dtype=np.float64)
+        # When the stack amplifies, generate the coarse macro at AMPLIFY_BASE; the amplify op then
+        # climbs it to `size` (see params.macro_size). Otherwise the whole stack runs at `size`.
+        macro = params_mod.macro_size(stack, size)
+        base = np.zeros((macro, macro), dtype=np.float64)
     eroded = engine.run_stack(base, stack, backend, seed=seed, normalize=base_png is None)
     # Optional flow/wetness maps (a drainage solve on the final field) for shading and
     # scatter to key off the terrain's own hydrology; opt-in since they add cost.

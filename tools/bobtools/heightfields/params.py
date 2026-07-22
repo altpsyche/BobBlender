@@ -23,8 +23,16 @@ import copy
 
 from . import presets
 
-PREVIEW_SIZE = 256    # bake(preview=True) resolution
+PREVIEW_SIZE = 256    # bake(preview=True) resolution for a stack WITHOUT amplify
 DEFAULT_SIZE = 768    # a full bake's default resolution
+
+# A stack that ends in an `amplify` op runs its coarse macro at this fixed resolution, then amplify
+# climbs to the bake `size` in resolution-doubling levels. Fixing the macro resolution (instead of
+# running the whole stack at `size`) is what makes a preview a faithful PREFIX of a full bake: both
+# share the identical coarse macro and the same doubling schedule, differing only in how far up they
+# climb. A preview of an amplify preset bakes at AMPLIFY_PREVIEW (one climb level above the base).
+AMPLIFY_BASE = 256
+AMPLIFY_PREVIEW = 512
 
 _DEFAULT_KNOBS = dict(
     preset="alpine", seed=7, size=DEFAULT_SIZE, backend="auto",
@@ -33,7 +41,17 @@ _DEFAULT_KNOBS = dict(
 
 # Generators that take a procedural seed. Each is offset so the Seed knob varies
 # every generator in a stack independently (two noise ops do not move in lockstep).
-_SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp")
+_SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp", "amplify")
+
+
+def has_amplify(stack) -> bool:
+    """True if the stack ends in (or contains) an amplify op -- its macro runs at AMPLIFY_BASE."""
+    return any(op.get("kind") == "amplify" for op in stack)
+
+
+def macro_size(stack, size) -> int:
+    """The resolution the coarse macro runs at: AMPLIFY_BASE if the stack amplifies, else `size`."""
+    return AMPLIFY_BASE if has_amplify(stack) else int(size)
 
 # Ops whose slope-relaxation threshold can be authored as a real repose ANGLE (repose_deg) instead
 # of a hand-picked normalised talus. Maps each op kind to the param name that carries that threshold.
@@ -53,6 +71,18 @@ def _resolve_repose(stack, bake_res, relief_ratio):
             continue
         key = _REPOSE_PARAM.get(op["kind"], "talus")
         op[key] = presets.talus_for_angle(op.pop("repose_deg"), bake_res, relief_ratio)
+    return stack
+
+
+def resolve_amplify_targets(stack, size, relief_ratio):
+    """Set the resolution target and relief ratio on any amplify op, in place (neutral, no knob
+    scaling). The preset+knobs bake path does this inside resolve_stack; the panel stack-editor
+    mirror (gen_panel_presets) calls this directly so a committed editor stack carries a concrete
+    `to`, not None, and its custom-stack bake climbs to the reference resolution."""
+    for op in stack:
+        if op.get("kind") == "amplify":
+            op["to"] = int(size)
+            op.setdefault("relief", float(relief_ratio))
     return stack
 
 
@@ -91,6 +121,7 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
     meander = 0.3 + 1.4 * float(warp)        # 0.3 .. 1.7
     sharp = 0.5 + 1.0 * float(detail)        # 0.5 .. 1.5
     oct_shift = int(round((float(detail) - 0.5) * 4))   # -2 .. +2 octaves
+    relief_ratio = presets.relief(preset)
     for i, op in enumerate(stack):
         kind = op["kind"]
         if kind in _SEED_OPS:
@@ -111,12 +142,19 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["iterations"] = _clampi(op.get("iterations", 4) * erode, 0, 60)
         elif kind == "sharpen":
             op["amount"] = op.get("amount", 0.5) * sharp
+        elif kind == "amplify":
+            # amplify climbs to the bake resolution; the Detail knob scales its detail amplitude,
+            # matching how it scales sharpen. `relief` makes the aeolian repose settle scale-correct.
+            op["to"] = int(size)
+            op["relief"] = relief_ratio
+            op["strength"] = op.get("strength", 0.025) * sharp
         # voronoi / terrace / curve / smooth / falloff keep their preset values;
         # their character is structural, not a global-knob axis.
-    # A repose_deg pass becomes a concrete talus for this bake resolution and the preset's relief
-    # ratio, so the returned stack is engine-ready (no raw angle) and the rendered slope holds the
-    # same physical angle at preview and full bakes.
-    _resolve_repose(stack, int(size), presets.relief(preset))
+    # A repose_deg pass becomes a concrete talus, resolved against the resolution the pass actually
+    # RUNS at: the macro resolution (AMPLIFY_BASE) when the stack amplifies, else the bake size. The
+    # amplify op resolves its own per-level repose internally, so only the macro passes are handled
+    # here. This keeps a physical slope angle correct whether or not a cascade follows.
+    _resolve_repose(stack, macro_size(stack, size), presets.relief(preset))
     return stack
 
 
