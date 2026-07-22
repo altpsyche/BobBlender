@@ -83,7 +83,7 @@ _CURVE_RES = 128
 # The water_level/flow/foam/bank_height keys matter only to the impose family (harmless on paths).
 _SHAPE_KEYS = ("width", "depth", "falloff", "taper", "shoulder", "bank_slope", "bank_bias",
                "bank_height", "water_level", "flow", "foam_bank", "foam_rapids",
-               "wave_amp", "wave_len", "wave_steep", "wave_speed", "wave_chop")
+               "wave_amp", "wave_len", "wave_steep", "wave_speed", "wave_chop", "width_var")
 ROLES = {
     "dirt_path": {
         "label": "Dirt Path", "icon": "IPO_EASE_IN_OUT",
@@ -92,6 +92,7 @@ ROLES = {
         "bank_slope": 1.0, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
         "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
+        "width_var": 0.0,
         "surface": (0.13, 0.10, 0.07, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -102,6 +103,7 @@ ROLES = {
         "bank_slope": 1.2, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
         "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
+        "width_var": 0.0,
         "surface": (0.17, 0.14, 0.10, 1.0), "surface_rough": 0.9, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
     },
@@ -112,6 +114,7 @@ ROLES = {
         "bank_slope": 0.7, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.6, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
         "wave_amp": 0.0, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
+        "width_var": 0.0,
         "surface": (0.22, 0.21, 0.20, 1.0), "surface_rough": 0.8, "surface_hard": 1.0,
         "surface_attr": "bbt_curve_mask_b", "surface_channel": "b",
     },
@@ -123,6 +126,7 @@ ROLES = {
         "bank_slope": 0.9, "bank_bias": 0.0, "bank_height": 0.4,
         "water_level": 0.58, "flow": 1.0, "foam_bank": 0.5, "foam_rapids": 1.0,
         "wave_amp": 0.10, "wave_len": 4.5, "wave_steep": 0.4, "wave_speed": 0.6, "wave_chop": 0.7,
+        "width_var": 0.35,
         "surface": (0.12, 0.11, 0.09, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         # densify: solve the descent from the terrain sampled DENSELY along the curve so the water
@@ -138,6 +142,7 @@ ROLES = {
         "bank_slope": 1.1, "bank_bias": 0.0, "bank_height": 0.25,
         "water_level": 0.56, "flow": 1.4, "foam_bank": 0.4, "foam_rapids": 1.2,
         "wave_amp": 0.06, "wave_len": 2.5, "wave_steep": 0.45, "wave_speed": 0.6, "wave_chop": 0.8,
+        "width_var": 0.30,
         "surface": (0.14, 0.12, 0.10, 1.0), "surface_rough": 0.85, "surface_hard": 0.0,
         "surface_attr": "", "surface_channel": "a",
         "drape": {"monotonic": True, "min_slope": 0.03, "to_sea": False, "densify": 48},
@@ -488,11 +493,13 @@ def _sync_curve_params(context, curve):
             # is re-imposed on top of the erosion.
             inputs = (("Path Width", cfg.width * 0.5), ("Path Depth", _guarantee_depth(cfg)),
                       ("Path Falloff", cfg.falloff), ("End Taper", cfg.taper),
+                      ("Width Variation", cfg.width_var),
                       ("Shoulder Width", 0.0), ("Bank Slope", cfg.bank_slope),
                       ("Bank Bias", 0.0), ("Bank Height", 0.0))
         else:
             inputs = (("Path Width", cfg.width * 0.5), ("Path Depth", cfg.depth),
                       ("Path Falloff", cfg.falloff), ("End Taper", cfg.taper),
+                      ("Width Variation", cfg.width_var),
                       ("Shoulder Width", cfg.shoulder), ("Bank Slope", cfg.bank_slope),
                       ("Bank Bias", cfg.bank_bias), ("Bank Height", cfg.bank_height))
         for name, val in inputs:
@@ -507,7 +514,7 @@ def _sync_curve_params(context, curve):
         # banks-from-erosion mode the containing trough is the shallow guarantee, so use that.
         bed_depth = _guarantee_depth(cfg) if cfg.banks_from_erosion else cfg.depth
         for name, val in (("Width", fill), ("Water Depth", water_depth), ("Bed Depth", bed_depth),
-                          ("End Taper", cfg.taper),
+                          ("End Taper", cfg.taper), ("Width Variation", cfg.width_var),
                           ("Flow Base", cfg.flow), ("Foam Bank", cfg.foam_bank),
                           ("Foam Rapids", cfg.foam_rapids), ("Wave Amplitude", cfg.wave_amp),
                           ("Wave Length", cfg.wave_len), ("Wave Steepness", cfg.wave_steep),
@@ -638,6 +645,11 @@ class BBT_Curve(PropertyGroup):
         name="Wave Chop", default=0.7, min=0.0, max=1.0, update=_sync_cb,
         description="River/stream: how much the crests meander (breaks the regular wave lattice "
                     "into natural chop); 0 = clean parallel swells")
+    width_var: FloatProperty(
+        name="Width Variation", default=0.0, min=0.0, max=0.95, update=_sync_cb,
+        description="How much the channel width wanders along the spline (0 = a dead-parallel strip). "
+                    "A slow meander widens and narrows the bed AND the water ribbon together, so the "
+                    "banks read as a natural river instead of a ruled band")
 
 
 class BBT_CurveEntry(PropertyGroup):
@@ -1265,6 +1277,7 @@ class BBT_PT_paths_active(Panel):
         drow.prop(cfg, "depth")
         col.prop(cfg, "falloff")
         col.prop(cfg, "taper")
+        col.prop(cfg, "width_var", text="Width Variation", slider=True)
 
         layout.label(text="Banks")
         if eroded_banks:
