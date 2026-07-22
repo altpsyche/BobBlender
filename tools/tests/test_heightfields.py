@@ -271,11 +271,29 @@ def test_seed_knob_varies_generators():
     assert a != b
 
 
+def test_mesa_reads_as_tableland():
+    # Mesa's landform signature: a large near-flat CAP fraction sitting above steep CLIFFS -- distinct
+    # from mountains (steep but not flat-capped) and hills (gentle, no cliffs). This gates the mesa
+    # generator (strata + scarp); it is a diagnostic, backed by a 3D render in review, never a stat
+    # asserted on its own.
+    bk = backend.select("auto")
+    def flat_cliff(name):
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5), bk, seed=5)
+        gy, gx = np.gradient(h)
+        s = np.hypot(gx, gy)
+        return (s < 0.0015).mean(), (s > 0.02).mean()
+    m_flat, m_cliff = flat_cliff("mesa")
+    a_flat, a_cliff = flat_cliff("alpine")
+    assert m_flat > 0.5, m_flat            # broad flat caps/benches dominate
+    assert m_flat > 5.0 * a_flat           # far flatter-capped than graded mountains
+    assert m_cliff > a_cliff               # yet has steeper cliff faces than the mountains
+
+
 @pytest.mark.parametrize("name", presets.PRESETS)
 def test_presets_expand(name):
     p = presets.get(name)
     kinds = [op["kind"] for op in p["stack"]]
-    assert kinds[0] in ("noise", "dunes", "voronoi")   # a generator establishes the base
+    assert kinds[0] in ("noise", "dunes", "voronoi", "strata")   # a generator establishes the base
     assert len(kinds) >= 2                              # plus at least one shaping op
     assert presets.display(name).keys() >= {"relief", "sea_level"}
     assert presets.height_for(name, 512.0) > 0.0   # real-world metre relief derives cleanly

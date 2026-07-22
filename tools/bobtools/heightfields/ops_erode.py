@@ -184,6 +184,32 @@ def fluvial(h, xp, *, iterations=40, k=5e-4, sp_m=0.5, sp_n=1.0, diffusion=0.12,
     return h
 
 
+def scarp(h, xp, *, iterations=12, cap_slope=0.10, undercut=0.0015, talus=0.14,
+          talus_iters=1, cell=1.0, open_size=3):
+    """Cap-rock scarp-retreat erosion -- the mesa/plateau carver, paired with ops_generate.strata.
+
+    Flat caps and benches (slope < `cap_slope`) are RESISTANT and barely erode; steep faces are
+    undercut and recede laterally, with a talus apron settling to a steep repose (`talus`) below
+    them. Over `iterations` this dissects a layered plateau into flat-topped mesas with near-vertical
+    sides -- the cliff-retreat process that dendritic fluvial (which rounds everything toward a graded
+    profile) cannot produce. `talus` is high on purpose: cap rock holds a near-vertical face, so the
+    thermal pass must NOT relax cliffs down to a hillslope. `open_size` > 0 applies a grey-opening at
+    the end to shave narrow spires/cones (a butte eroded to a CG point) while preserving wide flat
+    caps. Vectorised on `xp`, deterministic."""
+    h = xp.asarray(h, dtype=xp.float64)
+    for _ in range(int(iterations)):
+        s = _slope(h, xp, cell)
+        # cap-rock protection: erosion weight ~0 on flat caps, rising on steep faces
+        w = xp.clip((s - cap_slope) / max(float(cap_slope), 1e-6), 0.0, 1.0)
+        h = h - float(undercut) * w                 # undercut the face -> cliff retreats
+        if talus_iters > 0:                          # talus apron settles to a steep repose
+            h = thermal(h, xp, talus, 0.5, int(talus_iters), cell)
+        h = xp.clip(h, 0.0, None)
+    if int(open_size) > 0:
+        h = _ndimage(xp).grey_opening(h, size=int(open_size), mode="nearest")
+    return h
+
+
 def deposit(h, xp, *, amount=0.012, iterations=4, cell=1.0,
             fill_iters=800, acc_iters=800, mfd_p=1.4, recompute=4,
             flow_m=0.6, slope_n=1.5, flow_floor=0.15,

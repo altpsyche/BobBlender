@@ -181,8 +181,10 @@ _OP_META = {
     "noise": ("Noise (base)", "RNDCURVE"),
     "dunes": ("Dunes", "FORCE_WIND"),
     "voronoi": ("Voronoi (cells)", "MESH_ICOSPHERE"),
+    "strata": ("Strata (plateau)", "SEQ_STRIP_META"),
     "fluvial": ("Fluvial erosion", "MOD_FLUIDSIM"),
     "pipe_hydraulic": ("Hydraulic erosion", "MOD_OCEAN"),
+    "scarp": ("Scarp retreat", "MOD_BEVEL"),
     "deposit": ("Deposit (sediment)", "MOD_PARTICLES"),
     "thermal": ("Thermal slump", "MOD_SMOOTH"),
     "terrace": ("Terrace", "ALIGN_FLUSH"),
@@ -198,8 +200,10 @@ _OP_PARAMS = {
     "noise": ["ridged", "detail_strength", "octaves", "warp", "mix", "amount"],
     "dunes": ["wind", "frequency", "sharpness", "variation", "mix", "amount"],
     "voronoi": ["cells", "pattern", "mix", "amount"],
+    "strata": ["layers", "dissection", "base_freq", "sharpness"],
     "fluvial": ["iterations", "k", "diffusion"],
     "pipe_hydraulic": ["iterations", "rain", "incision"],
+    "scarp": ["iterations", "cap_slope", "undercut", "talus", "open_size"],
     "deposit": ["amount", "iterations", "flow_floor"],
     "thermal": ["talus", "iterations"],
     "terrace": ["steps", "sharpness"],
@@ -218,6 +222,9 @@ _OP_ADD_DEFAULTS = {
     "dunes": {"wind": 35.0, "frequency": 3.0, "sharpness": 0.5, "variation": 0.5,
               "mix": "replace", "amount": 0.5},
     "voronoi": {"cells": 6.0, "pattern": "mesa", "mix": "multiply", "amount": 0.8},
+    "strata": {"layers": 5, "dissection": 1.4, "base_freq": 3.0, "sharpness": 0.97},
+    "scarp": {"iterations": 12, "cap_slope": 0.10, "undercut": 0.0015, "talus": 0.14,
+              "open_size": 6, "_raw": {"talus_iters": 1}},
     "fluvial": {"iterations": 60, "k": 0.015, "diffusion": 0.08,
                 "_raw": {"sp_m": 0.5, "sp_n": 1.0, "recompute": 20, "fill_iters": 700,
                          "acc_iters": 700, "thermal_iters": 1, "max_delta": 0.03,
@@ -292,7 +299,20 @@ class BBT_TerrainOp(PropertyGroup):
     diffusion: FloatProperty(name="Diffusion", default=0.08, min=0.0, max=0.4, precision=3)
     rain: FloatProperty(name="Rain", default=0.012, min=0.0, max=0.2, precision=4)
     incision: FloatProperty(name="Incision", default=0.4, min=0.0, max=2.0)
-    talus: FloatProperty(name="Talus", default=0.01, min=0.0, max=0.06, precision=4)
+    talus: FloatProperty(name="Talus", default=0.01, min=0.0, max=0.2, precision=4)
+    # strata (plateau generator) + scarp (cap-rock cliff retreat)
+    layers: IntProperty(name="Layers", default=5, min=1, max=24,
+                        description="Strata: number of flat rock benches")
+    dissection: FloatProperty(name="Dissection", default=1.4, min=0.5, max=4.0,
+                              description="Strata: >1 isolates mesas/buttes; ~1 keeps a continuous plateau")
+    base_freq: FloatProperty(name="Base Freq", default=3.0, min=0.5, max=12.0,
+                             description="Strata: plateau feature frequency (higher = more, smaller mesas)")
+    cap_slope: FloatProperty(name="Cap Slope", default=0.10, min=0.01, max=0.5, precision=3,
+                             description="Scarp: slopes below this are resistant flat cap; steeper faces erode")
+    undercut: FloatProperty(name="Undercut", default=0.0015, min=0.0, max=0.05, precision=4,
+                            description="Scarp: per-iteration cliff-face retreat rate")
+    open_size: IntProperty(name="Despire", default=6, min=0, max=16,
+                           description="Scarp: shave spires/cones narrower than this while keeping flat caps")
     flow_floor: FloatProperty(
         name="Flow Floor", default=0.15, min=0.0, max=1.0,
         description="Deposit: only alluviate cells whose drainage is above this fraction of the max "
