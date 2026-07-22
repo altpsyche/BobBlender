@@ -442,6 +442,11 @@ class BBT_HeightfieldProps(PropertyGroup):
     height: FloatProperty(name="Height", default=22.0,
                           description="Vertical relief in metres. Derived from the preset's relief "
                                       "ratio x Size; override for a taller or flatter look")
+    vert_exag: FloatProperty(
+        name="Exaggeration", default=1.0, min=0.05, soft_max=8.0, max=50.0,
+        description="Vertical-exaggeration multiplier on Height, like a GIS 2x/3x relief. Keeps the "
+                    "real-world Height honest while punching up relief for a diorama or a small tile. "
+                    "1.0 is true scale; the baked terrain uses Height x Exaggeration")
     sea_level: FloatProperty(name="Sea Level", default=0.22, min=0.0, max=1.0)
     last_bake: StringProperty(name="Last bake", default="")
     # P4 filter-stack editor: an editable op stack. When use_custom_stack is on and
@@ -633,11 +638,19 @@ class BBT_OT_bake_terrain(Operator):
         # for the silhouette. Matching verts to texels built 0.6M-4.2M verts and stalled the
         # viewport. Cap at the bake size so a low-res preview is not needlessly dense.
         grid_res = min(int(hf.mesh_res), bake_size)
+        # Height is the honest real-world relief; Exaggeration is a separate GIS-style multiplier so
+        # a diorama or a small tile can punch up relief without lying about the base Height (exag 1.0
+        # is true scale). The recipe only sees the product.
+        eff_height = hf.height * hf.vert_exag
         tparams = {"heightmap": out_abs, "size": hf.terrain_size, "resolution": grid_res,
-                   "height": hf.height, "sea_level": hf.sea_level}
+                   "height": eff_height, "sea_level": hf.sea_level}
         # No material here (decision D): the terrain is shaded from the Shaders panel.
+        # reset=True: Height and Sea Level are panel-authoritative (derived from relief ratio x Size),
+        # so a re-bake must take them from params. Without it, build_geonodes preserves the old live
+        # modifier values by socket name (the knob-restore meant for hand-tuned subsystems) and the
+        # panel's Height silently does nothing -- a stale tall value then squashes/inflates the rebuild.
         apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain",
-                  "name": hf.target, "params": tparams})
+                  "name": hf.target, "params": tparams, "reset": True})
 
         # Record the heightmap + size on the object so a Terrain BobShader can locate the sibling
         # flow/wetness maps and sample them at the right scale. Reload the maps too (a re-bake
@@ -651,7 +664,7 @@ class BBT_OT_bake_terrain(Operator):
             # the grid density actually built (structural), so it must be exact; height and
             # sea level snapshot-restore on rebuild but are stored as the seed fallback.
             obj["bbt_terrain_res"] = int(grid_res)
-            obj["bbt_terrain_height"] = float(hf.height)
+            obj["bbt_terrain_height"] = float(eff_height)   # exaggerated relief, so a path rebuild matches
             obj["bbt_terrain_sea"] = float(hf.sea_level)
         if hf.emit_maps:
             base, ext = os.path.splitext(out_abs)
@@ -899,15 +912,21 @@ class BBT_PT_hf_displace(Panel):
         layout = self.layout
         layout.prop(hf, "terrain_size")
         layout.prop(hf, "height")
+        layout.prop(hf, "vert_exag")
         layout.prop(hf, "sea_level")
         layout.prop(hf, "mesh_res")
         # Real-world scale readout (1 unit = 1 m): peak-above-sea relief and the ground texel size,
-        # so the artist knows a dropped 1.8 m character or 6 m house will read correctly.
-        peak = hf.height * (1.0 - hf.sea_level)
+        # so the artist knows a dropped 1.8 m character or 6 m house will read correctly. Peak folds
+        # in Exaggeration (what the terrain actually builds at); the true-scale peak is shown when it
+        # differs so the honest relief stays visible behind the diorama multiplier.
+        peak = hf.height * hf.vert_exag * (1.0 - hf.sea_level)
         texel = hf.terrain_size / max(int(hf.mesh_res), 1)
         box = layout.box()
         box.scale_y = 0.7
         box.label(text=f"Scale: {hf.terrain_size:.0f} m tile, {peak:.1f} m peak", icon="EMPTY_ARROWS")
+        if abs(hf.vert_exag - 1.0) > 1e-3:
+            true_peak = hf.height * (1.0 - hf.sea_level)
+            box.label(text=f"Exaggeration {hf.vert_exag:.1f}x (true {true_peak:.1f} m)", icon="FULLSCREEN_ENTER")
         box.label(text=f"Mesh texel: {texel:.2f} m/vert", icon="MESH_GRID")
 
 

@@ -309,6 +309,36 @@ def test_canyon_incises_a_plateau():
     assert c_deep > m_deep                 # cuts deeper below its rim than a mesa cap
 
 
+def test_talus_for_angle_inverts_slope():
+    # talus_for_angle must be the inverse of the render slope model tan(theta)=talus*ratio*res, so a
+    # requested repose angle round-trips to the talus that produces it.
+    for ang in (30.0, 34.0, 45.0):
+        for res, ratio in ((256, 0.012), (768, 0.019)):
+            t = presets.talus_for_angle(ang, res, ratio)
+            assert np.degrees(np.arctan(t * ratio * res)) == pytest.approx(ang, abs=1e-6)
+
+
+def _face_angle_topdec(name, res):
+    # Real slope in degrees of the steep faces (top decile) of a baked preset, via the same render
+    # model: tan(theta) = per-cell normalised rise * relief_ratio * bake_res.
+    bk = backend.select("auto")
+    p = params.build_params({"preset": name, "size": res, "seed": 7})
+    h = engine.run_stack(np.zeros((res, res)), p["stack"], bk, seed=p["seed"])
+    gy, gx = np.gradient(h)
+    ang = np.degrees(np.arctan(np.hypot(gx, gy) * presets.relief(name) * res))
+    return ang[ang > np.percentile(ang, 90)].mean()
+
+
+def test_repose_clamp_is_resolution_consistent():
+    # The repose clamp's whole point: a dune slip face must render at the SAME physical angle at
+    # preview and full bake resolutions. A fixed talus (the old behaviour) clipped at a different
+    # angle per resolution; repose_deg -> talus_for_angle removes that. Diagnostic, render-verified.
+    for name in ("dunes", "sand_sea"):
+        lo = _face_angle_topdec(name, 256)
+        hi = _face_angle_topdec(name, 768)
+        assert abs(lo - hi) < 2.0, (name, lo, hi)   # was ~5 deg apart with a fixed talus
+
+
 @pytest.mark.parametrize("name", presets.PRESETS)
 def test_presets_expand(name):
     p = presets.get(name)

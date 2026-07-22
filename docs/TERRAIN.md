@@ -68,18 +68,38 @@ use, so terrain SHAPE, SCATTER, and TEXTURING key off the same masks and stay co
 
 ## Preset families
 
-Thirteen presets, each a tuned stack, across four families:
+Eleven presets, each a tuned stack, across four families:
 
 - Mountains: `alpine`, `glacial`, `foothills`
-- Canyons: `canyon` (dendritic stream-power), `mesa`, `badlands`, `plateau`
 - Lowlands: `hills`, `plains`, `coastal`, `islands`
+- Canyons: `mesa` (strata + cap-rock scarp retreat), `canyon` (strata plateau incised by the
+  stream-power hero) -- real generators, not eroded noise
 - Dunes: `dunes`, `sand_sea`
 
 Presets live in `presets.STACKS` (the op stacks) and `presets.DISPLAY` (per-family
-Blender displacement defaults: metres of height, sea-level fraction). `presets.py` is
-the single source of truth; `tools/scripts/gen_panel_presets.py` regenerates the
+Blender displacement defaults: a relief RATIO and a sea-level fraction, see below). `presets.py`
+is the single source of truth; `tools/scripts/gen_panel_presets.py` regenerates the
 committed `blender/extensions/bob_blender_tools/presets.json` (knob table + raw
 stacks) that the panel reads, and a drift test fails if it goes stale.
+
+## Real-world scale and repose
+
+1 Blender unit = 1 metre. A preset does not store a fixed metre height; it stores a scale-invariant
+relief RATIO (typical relief / tile width) in `presets.DISPLAY`, and `presets.height_for(name, size)`
+derives the metre height from the artist's tile size (clamped so a preset can be neither a flat sheet
+nor a taller-than-wide wall). So the same preset stays proportioned at any size: a 120 m dune field
+gets ~1.4 m dunes, a 4 km alpine range gets ~1.2 km of relief, and a 1.8 m character or 6 m house
+dropped on either reads correctly.
+
+Slope-relaxation passes (`thermal`, and the talus inside `scarp` / `fluvial`) can be authored by a
+real angle of repose instead of a hand-picked talus: an op carries `repose_deg` and
+`params.resolve_stack` converts it to the concrete talus for the bake resolution via
+`presets.talus_for_angle` (`talus = tan(angle) / (relief_ratio * bake_res)`). Because relief is a
+ratio, the rendered angle is independent of tile size, and because the talus tracks the bake
+resolution, a preview and a full bake hold the SAME physical angle (a fixed talus clipped at a
+different angle per resolution). Dune slip faces use `repose_deg` 34 (dry sand's angle of repose);
+`presets.REPOSE` lists the physical targets. Structural near-vertical faces (cap-rock cliffs in
+`scarp`) still take a raw talus on purpose.
 
 ## Global knobs
 
