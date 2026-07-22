@@ -21,6 +21,14 @@ from . import recipe
 
 @recipe("heightmap_terrain")
 def build(ng, out, params: dict):
+    # Real-world scale: 1 Blender unit == 1 metre. Size and Height are metres, so the terrain,
+    # a 1.8 m character and a 6 m house all share one honest scale. Enforce metric here (the single
+    # choke point for this recipe) so a stray scene-unit scale can never silently squash proportions.
+    scene = bpy.context.scene
+    if scene is not None:
+        scene.unit_settings.system = "METRIC"
+        scene.unit_settings.scale_length = 1.0
+
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-1200, 0)
 

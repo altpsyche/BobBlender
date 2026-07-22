@@ -29,12 +29,19 @@ OUT = (pathlib.Path(__file__).resolve().parents[2]
 
 
 def build_panel_presets() -> dict:
-    """The slider values the panel loads per preset: neutral global knobs + display."""
+    """The slider values the panel loads per preset: neutral global knobs + display.
+
+    Display carries `relief_ratio` (relief / tile width) and `sea_level`. The panel derives the
+    metre Height from relief_ratio * terrain_size at apply/resize time (real-world scale, 1 unit =
+    1 m). NOTE the ratio is emitted as `relief_ratio`, NOT `relief`, so it does not collide with the
+    `relief` global knob the panel also loads."""
     defaults = params.default_knobs()
     out = {}
     for name in presets.PRESETS:
         row = {k: defaults[k] for k in PANEL_KNOBS}
-        row.update(presets.display(name))  # height, sea_level
+        d = presets.display(name)
+        row["relief_ratio"] = d["relief"]
+        row["sea_level"] = d["sea_level"]
         out[name] = row
     return out
 

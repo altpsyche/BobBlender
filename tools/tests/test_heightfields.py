@@ -277,7 +277,8 @@ def test_presets_expand(name):
     kinds = [op["kind"] for op in p["stack"]]
     assert kinds[0] in ("noise", "dunes", "voronoi")   # a generator establishes the base
     assert len(kinds) >= 2                              # plus at least one shaping op
-    assert presets.display(name).keys() >= {"height", "sea_level"}
+    assert presets.display(name).keys() >= {"relief", "sea_level"}
+    assert presets.height_for(name, 512.0) > 0.0   # real-world metre relief derives cleanly
 
 
 def test_panel_presets_json_in_sync():
