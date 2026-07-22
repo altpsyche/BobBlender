@@ -27,7 +27,6 @@ the pinned fallback formula everywhere else (Use Attribute picks).
 
 import bpy
 from bpy.props import (
-    BoolProperty,
     EnumProperty,
     IntProperty,
     PointerProperty,
@@ -232,9 +231,11 @@ def _terrain_node(mat):
 
 
 def _terrain_node_active(context):
-    """The terrain-master node of the active material (the terrain sub-panel's poll guarantees
-    the active material is a terrain BobShader, so no build fallback is needed)."""
-    return _terrain_node(_active_material(context))
+    """The terrain-master node of the EDITING material (C1: keyed on _editing_material like the
+    Surface / Water / Weather siblings, so on a scatter object the terrain sub-panel and its
+    operators track the same material the panel edits, not the object's own active slot). The
+    terrain sub-panel's poll guarantees that material is a terrain BobShader, so no fallback."""
+    return _terrain_node(_editing_material(context))
 
 
 def _named_mod(obj, name):
@@ -323,8 +324,9 @@ def _has_env(scene):
 
 
 def _env_note(context, layout):
-    """The "Firmament off: no live weather" hint, shown wherever weather-driven knobs live so the
-    warning is not stranded on the root panel away from the inert knobs (the Weather sub-panel)."""
+    """The "Firmament off: no live weather" hint. S9: drawn only on the Weather sub-panel, where
+    the weather-driven knobs it warns about live. It used to also draw on the Shaders root, so a
+    user with both open saw it twice; the root copy is gone."""
     if not _has_env(context.scene):
         layout.label(text="Firmament off: no live weather", icon="INFO")
 
@@ -392,6 +394,7 @@ class BBT_ShadersProps(PropertyGroup):
     convert_scope: EnumProperty(
         name="Scope",
         items=[("active", "Active material", "Convert the active object's active material"),
+               ("all", "All slots", "Convert every material slot of the active object"),
                ("selected", "Selected objects", "Convert every material on the selected meshes"),
                ("collection", "Collection", "Convert every material in the chosen collection "
                                              "(for the unlinked scatter asset collections, which "
@@ -433,17 +436,17 @@ class BBT_OT_shaders_new(Operator):
             self.report({"ERROR"}, "Select a mesh first")
             return {"CANCELLED"}
         mats = _materials()
-        # Never destroy an existing look. If the active slot already holds a material, convert it
-        # in place (keeps its textures) rather than replacing it with a fresh solid material.
+        # A7: New creates on an empty/new slot; it never silently converts. A slot that already
+        # holds a plain material is turned into a BobShader with Convert (which keeps its textures
+        # and is surfaced per-row in the panel), so New and Convert stay distinct actions.
         existing = obj.active_material
         if existing is not None:
             if mats.master_type(existing) is not None:
                 self.report({"INFO"}, f"{existing.name} is already a BobShader")
                 return {"CANCELLED"}
-            mats.bobshade_material(existing)
-            _feed_env(context.scene)
-            self.report({"INFO"}, f"Converted {existing.name} to a BobShader (kept its textures)")
-            return {"FINISHED"}
+            self.report({"ERROR"}, f"{existing.name} is a plain material; use Convert to keep its "
+                                   f"textures (New only fills an empty slot)")
+            return {"CANCELLED"}
         # A scatter object shows its assets' materials through instances; a New solid material
         # would override them all (via the Set-Material modifier). Convert the assets instead.
         if _is_scatter_object(obj):
@@ -468,11 +471,10 @@ class BBT_OT_shaders_convert(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     index: IntProperty(default=-1)          # a specific slot of the active object (per-row)
-    all_slots: BoolProperty(default=False)  # every slot of the active object (Convert all)
     scope: EnumProperty(
         name="Scope",
-        items=[("active", "Active material", ""), ("selected", "Selected objects", ""),
-               ("collection", "Collection", "")],
+        items=[("active", "Active material", ""), ("all", "All slots", ""),
+               ("selected", "Selected objects", ""), ("collection", "Collection", "")],
         default="active")
     coll_name: StringProperty(default="")   # collection scope: this named collection, else the picker
 
@@ -488,7 +490,7 @@ class BBT_OT_shaders_convert(Operator):
         if self.index >= 0:
             if obj is not None and self.index < len(obj.material_slots):
                 add(obj.material_slots[self.index].material)
-        elif self.all_slots:
+        elif self.scope == "all":
             if obj is not None:
                 for s in obj.material_slots:
                     add(s.material)
@@ -592,23 +594,6 @@ class BBT_OT_shaders_terrain_add(Operator):
         _set_layer(node, nxt, TERRAIN_LAYER_PRESETS[_ADD_ORDER[nxt]]["knobs"])
         context.scene.bbt_shaders.terrain_active = nxt
         self.report({"INFO"}, f"Added terrain layer {nxt}")
-        return {"FINISHED"}
-
-
-class BBT_OT_shaders_terrain_remove(Operator):
-    bl_idname = "bob_blender_tools.shaders_terrain_remove"
-    bl_label = "Remove Layer"
-    bl_description = "Disable the active terrain layer slot"
-
-    def execute(self, context):
-        node = _terrain_node_active(context)
-        i = context.scene.bbt_shaders.terrain_active
-        sock = node.inputs.get(f"L{i} Enable") if node else None
-        if sock is None:
-            self.report({"WARNING"}, "No terrain layer to remove")
-            return {"CANCELLED"}
-        sock.default_value = 0.0
-        self.report({"INFO"}, f"Disabled layer {i}")
         return {"FINISHED"}
 
 
@@ -830,14 +815,12 @@ class BBT_PT_shaders(Panel):
         # not viewport-selectable. Edit those materials here, through the (selectable) layer.
         if _is_scatter_object(obj):
             self._draw_scatter_assets(context, layout, obj)
-            _env_note(context, layout)
             return
 
         slots = obj.material_slots
         if len(slots) == 0:
             layout.label(text="Materials: (none)")
             self._draw_new_shader(layout)
-            _env_note(context, layout)
             self._draw_more_convert(context, layout)
             return
 
@@ -845,31 +828,25 @@ class BBT_PT_shaders(Panel):
         active_idx = obj.active_material_index
         box = layout.box()
         box.label(text="Materials on this mesh:")
-        any_plain = False
         for i, slot in enumerate(slots):
             m = slot.material
             mt = mats.master_type(m) if m is not None else None
             row = box.row(align=True)
-            sel = row.operator("bob_blender_tools.shaders_select",
-                               text=m.name if m is not None else "(empty)",
-                               depress=(i == active_idx),
-                               icon="RADIOBUT_ON" if i == active_idx else "RADIOBUT_OFF")
-            sel.target = "slot"
-            sel.index = i
+            ui_helpers.select_row(row, "bob_blender_tools.shaders_select",
+                                  m.name if m is not None else "(empty)", i == active_idx,
+                                  op_props={"target": "slot", "index": i})
             if m is None:
                 row.label(text="empty")
             elif mt in _MASTER_TAG:
                 ic, lbl = _MASTER_TAG[mt]
                 row.label(text=f"BobShader: {lbl}", icon=ic)
             else:
-                any_plain = True
                 op = row.operator("bob_blender_tools.shaders_convert", text="Convert",
                                   icon="NODE_MATERIAL")
                 op.index = i
-        if any_plain:
-            op = box.operator("bob_blender_tools.shaders_convert", text="Convert all",
-                              icon="NODE_MATERIAL")
-            op.all_slots = True
+        # A7: no "Convert all" button here. Whole-object convert is now the "All slots" option of
+        # the scope dropdown below, so Convert lives in exactly two places: per-row (targeted) and
+        # the scope dropdown (all slots / selected / collection).
 
         # Adaptive action for the active slot (P5): New when empty, else the editing header.
         active_mat = slots[active_idx].material if active_idx < len(slots) else None
@@ -881,20 +858,17 @@ class BBT_PT_shaders(Panel):
         else:
             layout.label(text=f"{active_mat.name}: plain, Convert above", icon="INFO")
 
-        _env_note(context, layout)
         self._draw_more_convert(context, layout)
 
     @staticmethod
     def _draw_new_shader(layout):
-        # The one "create a shader here" affordance: New BobShader, plus Biome Terrain when a
-        # biome is available. Shared by the no-materials and empty-active-slot cases so it is
-        # authored once rather than as two identical blocks.
+        # The one "create a shader here" affordance: New BobShader. Shared by the no-materials and
+        # empty-active-slot cases so it is authored once rather than as two identical blocks.
+        # Biome Terrain lives only in the Terrain Layers sub-panel (its real home, where the layer
+        # stack is authored); it was removed from here to kill the duplicate entry point.
         row = layout.row(align=True)
         row.operator_menu_enum("bob_blender_tools.shaders_new", "master",
                                text="New BobShader", icon="ADD")
-        if _has_biome_terrain():
-            row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
-                                   text="Biome Terrain", icon=ui_helpers.STRUCTURAL_ICON)
 
     @staticmethod
     def _draw_more_convert(context, layout):
@@ -931,11 +905,8 @@ class BBT_PT_shaders(Panel):
         for m in asset_mats:
             mt = mats.master_type(m)
             row = box.row(align=True)
-            b = row.operator("bob_blender_tools.shaders_select",
-                             text=m.name, depress=(m.name == sel),
-                             icon="RADIOBUT_ON" if m.name == sel else "RADIOBUT_OFF")
-            b.target = "asset"
-            b.name = m.name
+            ui_helpers.select_row(row, "bob_blender_tools.shaders_select", m.name, m.name == sel,
+                                  op_props={"target": "asset", "name": m.name})
             if mt in _MASTER_TAG:
                 ic, lbl = _MASTER_TAG[mt]
                 row.label(text=lbl, icon=ic)
@@ -998,15 +969,51 @@ class BBT_PT_shaders_water(Panel):
         return _materials().master_type(_editing_material(context)) == "water"
 
     def draw(self, context):
+        # A2: the root shows the depth/optics look (the default view). Flow+foam and Freeze moved
+        # to DEFAULT_CLOSED child sub-panels below, the way Firmament splits its subsystems, so the
+        # 23-knob wall is no longer one flat scroll.
         layout = self.layout
         node = _master_node(_editing_material(context))
         if node is None:
             return
         layout.label(text="Depth colour + optics", icon="MATFLUID")
         _draw_inputs(layout, node, _WATER_LOOK)
-        layout.label(text="Flow + foam (animated, needs playback)", icon="FORCE_FORCE")
+
+
+class BBT_PT_shaders_water_flow(Panel):
+    bl_label = "Flow and foam"
+    bl_idname = "BBT_PT_shaders_water_flow"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_shaders_water"
+    bl_options = {"DEFAULT_CLOSED"}  # animated, needs playback: not the default view
+
+    def draw(self, context):
+        layout = self.layout
+        node = _master_node(_editing_material(context))
+        if node is None:
+            return
+        cap = layout.row()
+        cap.enabled = False
+        cap.label(text="animated, needs playback", icon="FORCE_FORCE")
         _draw_inputs(layout, node, _WATER_FLOW)
-        layout.label(text="Freeze", icon="FREEZE")
+
+
+class BBT_PT_shaders_water_freeze(Panel):
+    bl_label = "Freeze"
+    bl_idname = "BBT_PT_shaders_water_freeze"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_shaders_water"
+    bl_options = {"DEFAULT_CLOSED"}  # deliberate action, folded so it reads as one
+
+    def draw(self, context):
+        layout = self.layout
+        node = _master_node(_editing_material(context))
+        if node is None:
+            return
         _draw_inputs(layout, node, _WATER_FREEZE)
         cap = layout.row()
         cap.enabled = False
@@ -1023,12 +1030,12 @@ class BBT_PT_shaders_terrain(Panel):
 
     @classmethod
     def poll(cls, context):
-        return _materials().master_type(_active_material(context)) == "terrain"
+        return _materials().master_type(_editing_material(context)) == "terrain"
 
     def draw(self, context):
         scn = context.scene.bbt_shaders
         layout = self.layout
-        mat = _active_material(context)
+        mat = _editing_material(context)
         node = _terrain_node(mat)
         if node is None:
             return
@@ -1039,31 +1046,38 @@ class BBT_PT_shaders_terrain(Panel):
         if _has_biome_terrain():
             row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
                                    text="Biome Terrain", icon=ui_helpers.STRUCTURAL_ICON)
+            cap = layout.row()
+            cap.enabled = False
+            cap.label(text="terrain layers only; the Biome panel builds the whole scene",
+                      icon="INFO")
         _draw_inputs(layout, node, _TERRAIN_GLOBAL)
 
-        # Layer slots: one row each, an enable toggle plus a select button showing the base
-        # colour. The stacking order is by Height Bias (not slot order), so no reorder needed.
-        box = layout.box()
+        # Layer slots (S3-layers/A3): draw only the ENABLED slots, not a fixed six-row stack, so
+        # the box shows the depth actually in use. One disable model: the per-row checkbox turns a
+        # layer off (it drops out of the list); Add Layer below is the sole add affordance. The old
+        # Remove Layer button was a second way to do the checkbox's job, so it is gone. Stacking is
+        # by Height Bias (not slot order), so no reorder is needed.
+        maxn = _materials().MAX_TERRAIN_LAYERS
         active = scn.terrain_active
-        for i in range(_materials().MAX_TERRAIN_LAYERS):
-            en = node.inputs.get(f"L{i} Enable")
-            if en is None:
-                continue
+        enabled = [i for i in range(maxn)
+                   if (en := node.inputs.get(f"L{i} Enable")) is not None and en.default_value > 0.5]
+        box = layout.box()
+        cap = box.row()
+        cap.enabled = False
+        cap.label(text=f"{len(enabled)} of {maxn} layers", icon="RENDERLAYERS")
+        for i in enabled:
             row = box.row(align=True)
-            on = en.default_value > 0.5
             op = row.operator("bob_blender_tools.shaders_terrain_toggle", text="",
-                              icon="CHECKBOX_HLT" if on else "CHECKBOX_DEHLT")
+                              icon="CHECKBOX_HLT")
             op.index = i
             col = node.inputs.get(f"L{i} Base Color")
             if col is not None:
                 row.prop(col, "default_value", text="")
-            sel = row.operator("bob_blender_tools.shaders_select",
-                               text=f"Layer {i}", depress=(i == active))
-            sel.target = "layer"
-            sel.index = i
-        row = box.row(align=True)
-        row.operator("bob_blender_tools.shaders_terrain_add", icon="ADD")
-        row.operator("bob_blender_tools.shaders_terrain_remove", icon="REMOVE")
+            ui_helpers.select_row(row, "bob_blender_tools.shaders_select", f"Layer {i}",
+                                  i == active, radio=False,
+                                  op_props={"target": "layer", "index": i})
+        if len(enabled) < maxn:
+            box.operator("bob_blender_tools.shaders_terrain_add", icon="ADD")
 
         # Active layer: surface + a layer preset, then the placement masks.
         i = max(0, min(active, _materials().MAX_TERRAIN_LAYERS - 1))
@@ -1085,7 +1099,7 @@ class BBT_PT_shaders_terrain_masks(Panel):
     def draw(self, context):
         scn = context.scene.bbt_shaders
         layout = self.layout
-        node = _terrain_node(_active_material(context))
+        node = _terrain_node(_editing_material(context))
         if node is None:
             return
         i = max(0, min(scn.terrain_active, _materials().MAX_TERRAIN_LAYERS - 1))
@@ -1148,6 +1162,14 @@ class BBT_PT_shaders_weather(Panel):
         box.label(text="Snow Accumulation Shell", icon="MOD_SMOOTH")
         surface = _active_object(context)
         shell = _named_mod(surface, SNOW_SHELL_MOD)
+        # A4: the shell reads the surface's snow_cover pass for its thickness. Say so inline, before
+        # the Add press, rather than only in a post-click warning, so the dependency is visible up
+        # front (the coverage pass is built in Atmosphere > Snow Coverage).
+        if _named_mod(surface, "BOB_Snow") is None:
+            cap = box.row()
+            cap.enabled = False
+            cap.label(text="needs a coverage pass: Atmosphere > Snow Coverage (reads 0 until then)",
+                      icon="INFO")
         row = box.row(align=True)
         if shell is None:
             row.operator("bob_blender_tools.shaders_snow_shell_add", icon="ADD")
@@ -1163,7 +1185,6 @@ CLASSES = (
     BBT_OT_shaders_select,
     BBT_OT_shaders_preset,
     BBT_OT_shaders_terrain_add,
-    BBT_OT_shaders_terrain_remove,
     BBT_OT_shaders_terrain_toggle,
     BBT_OT_shaders_terrain_layer_preset,
     BBT_OT_shaders_terrain_stack_preset,
@@ -1173,6 +1194,8 @@ CLASSES = (
     BBT_PT_shaders,
     BBT_PT_shaders_surface,
     BBT_PT_shaders_water,
+    BBT_PT_shaders_water_flow,
+    BBT_PT_shaders_water_freeze,
     BBT_PT_shaders_terrain,
     BBT_PT_shaders_terrain_masks,
     BBT_PT_shaders_weather,

@@ -63,11 +63,13 @@ def _on_world_change(self, context):
 
 # Biome enums for the World panel: biomes carrying a world block (Biome World) and biomes with any
 # applicable section (Apply Biome). Cached module-side with a stable id per biome (the enum-GC /
-# reindex guard the other panels' dynamic enums use).
+# reindex guard the other panels' dynamic enums use). Ids start at 0 for the first real biome so a
+# fresh property resolves to a real item, not the NONE fallback (S2: no more blank first pick). The
+# NONE placeholder only appears when there are no biomes at all, and then it is the sole item.
 _BIOME_WORLD_ITEMS = [("NONE", "None", "No biome world", "", 0)]
-_BIOME_WORLD_IDS = {"NONE": 0}
+_BIOME_WORLD_IDS = {}
 _BIOME_APPLY_ITEMS = [("NONE", "None", "No biome", "", 0)]
-_BIOME_APPLY_IDS = {"NONE": 0}
+_BIOME_APPLY_IDS = {}
 
 
 def _assets():
@@ -106,6 +108,13 @@ def _biome_apply_items(self, context):
                       _BIOME_APPLY_IDS[n]))
     _BIOME_APPLY_ITEMS = items or [("NONE", "None", "No biome in library/models", "", 0)]
     return _BIOME_APPLY_ITEMS
+
+
+def _sky_built():
+    """True when a sky+sun has been built. BobFirmament's build_sky creates the BOB_Sun
+    object (bbmcp/world.py SUN_NAME), so its presence is the "a sky exists" marker the
+    World first-build affordance and the Time-and-place caption key off."""
+    return bpy.data.objects.get("BOB_Sun") is not None
 
 
 def _has_biome_world():
@@ -204,7 +213,6 @@ def _apply_target(context):
 
 class BBT_OT_world_apply_biome(Operator):
     bl_idname = "bob_blender_tools.world_apply_biome"
-    bl_label = "Apply Biome"
     bl_label = "Build Biome"
     bl_description = ("Stand up a whole biome on one terrain mesh: build its terrain material, "
                       "scatter its proxy layers, and set the world - each section that the "
@@ -298,7 +306,7 @@ class BBT_PT_biome(Panel):
         # P1: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
         target = _apply_target(context)
         ui_helpers.context_header(
-            layout, "Terrain object", target.name if target else None,
+            layout, "Active mesh", target.name if target else None,
             icon="OUTLINER_OB_MESH",
             empty="Set a Scatter emitter or select a terrain mesh to build on")
 
@@ -340,6 +348,9 @@ class BBT_PT_world(Panel):
 
         # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
         # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
+        # A8: in the shipped single addon this branch never fires (firmament_panel.register always
+        # registers bbt_env at load). It is kept deliberately for the planned polyrepo split, where
+        # World can ship without Firmament and bbt_env is then genuinely absent.
         firmament_off = _env is None or _env.get_env(context.scene) is None
         row = layout.row(align=True)
         row.enabled = not firmament_off
@@ -350,23 +361,17 @@ class BBT_PT_world(Panel):
         if firmament_off:
             layout.label(text="Firmament off: world present but no atmosphere", icon="INFO")
 
-        # -- World now: time/place (feeds the sun) + the live conditions --
-        box = layout.box()
-        box.label(text="World now", icon="WORLD")
-        col = box.column(align=True)
-        col.prop(env, "time_of_day")
-        row = col.row(align=True)
-        row.prop(env, "year")
-        row.prop(env, "month")
-        row.prop(env, "day")
-        col.prop(env, "utc_offset")
-        col = box.column(align=True)
-        col.prop(env, "latitude")
-        col.prop(env, "longitude")
-        cap = box.row()
-        cap.enabled = False
-        cap.label(text="time and place drive the sun live once a sky is built (Atmosphere > Build Sky)")
+        # First-build affordance (F2): before a sky exists, offer Build Sky here so the artist
+        # can set the time/place (Time and place sub-panel) and build from the top panel on the
+        # first pass, not hunt for it in Atmosphere. Self-limiting: it vanishes once a sky is built.
+        if not firmament_off and not _sky_built():
+            ui_helpers.structural_action(
+                layout, "bob_blender_tools.firmament_build_sky", text="Build Sky",
+                note="no sky yet; builds the sky + sun from the time and place below")
 
+        # -- World now: the live conditions. Time/place (the set-once sun geo inputs) moved to the
+        # collapsed "Time and place" sub-panel below, so this first screen is the day-to-day knobs. --
+        box = layout.box()
         col = box.column(align=True)
         col.label(text="Conditions (live)", icon="FORCE_WIND")
         col.prop(env, "weather")
@@ -401,12 +406,40 @@ class BBT_PT_world(Panel):
                 note="rebuilds the atmosphere subsystems; does not touch the season")
 
 
+class BBT_PT_world_time(Panel):
+    bl_label = "Time and place"
+    bl_idname = "BBT_PT_world_time"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_world"
+    bl_options = {"DEFAULT_CLOSED"}  # set-once sun geo inputs, folded so World opens on the live knobs
+
+    def draw(self, context):
+        env = context.scene.bbt_env
+        layout = self.layout
+        col = layout.column(align=True)
+        col.prop(env, "time_of_day")
+        row = col.row(align=True)
+        row.prop(env, "year")
+        row.prop(env, "month")
+        row.prop(env, "day")
+        col.prop(env, "utc_offset")
+        col = layout.column(align=True)
+        col.prop(env, "latitude")
+        col.prop(env, "longitude")
+        cap = layout.row()
+        cap.enabled = False
+        cap.label(text="drives the sun live once a sky is built (Atmosphere > Build Sky)")
+
+
 CLASSES = (
     BBT_WorldProps,
     BBT_OT_world_biome_world,
     BBT_OT_world_apply_biome,
     BBT_PT_biome,
     BBT_PT_world,
+    BBT_PT_world_time,  # child of BBT_PT_world; registered after its parent
 )
 
 

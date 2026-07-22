@@ -1213,10 +1213,12 @@ class BBT_PT_paths(Panel):
             ui_helpers.structural_action(
                 box, "bob_blender_tools.curve_bake_erode",
                 note=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
-            # Revert only makes sense once an erode has recorded a clean source.
-            rev = box.row(align=True)
-            rev.enabled = bool(terrain.get("bbt_heightmap_clean"))
-            rev.operator("bob_blender_tools.curve_revert_erode", icon=ui_helpers.STRUCTURAL_ICON)
+            # Revert is structural too (it rewrites the baked heightfield), so route it through
+            # structural_action like its Bake & Erode sibling (S6) rather than a hand-rolled row
+            # with the marker icon. Enabled only once an erode has recorded a clean source.
+            ui_helpers.structural_action(
+                box, "bob_blender_tools.curve_revert_erode",
+                enabled=bool(terrain.get("bbt_heightmap_clean")))
         elif scn.curves and terrain is not None:
             # The box needs a baked heightfield; say so rather than vanishing without a hint.
             layout.label(text="Bake the terrain (Terrain panel) to naturalise the carves",
@@ -1244,7 +1246,9 @@ class BBT_PT_paths_active(Panel):
 
         # Structural group (P3): role + channels apply on a Build, not from a callback.
         box = layout.box()
-        box.label(text="Structural (Build to apply)", icon=ui_helpers.STRUCTURAL_ICON)
+        # S7: no STRUCTURAL_ICON on the caption; the structural_action button in this box carries
+        # it, so it would show twice.
+        box.label(text="Structural (Build to apply)")
         box.prop(cfg, "role")
         box.prop(cfg, "do_terrain", text="Carve channel" if impose else "Terrain shape")
         box.prop(cfg, "do_material", text="Damp bed" if impose else "Material band")
