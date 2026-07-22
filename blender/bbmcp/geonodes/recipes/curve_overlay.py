@@ -101,7 +101,7 @@ def build(ng, out, params: dict):
     ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     add_input(ng, "Path Width", "NodeSocketFloat", float(params.get("path_width", 2.4)), 0.0)
     add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.5)), 0.0)
-    add_input(ng, "Path Depth", "NodeSocketFloat", float(params.get("path_depth", 0.3)))
+    add_input(ng, "Path Depth", "NodeSocketFloat", float(params.get("path_depth", 0.3)), 0.0)
     add_input(ng, "End Taper", "NodeSocketFloat", float(params.get("end_taper", 0.0)), 0.0)
     # Cross-section shape (R4): a flat shoulder extends the bench; the embankment beyond it is
     # slope-aware; Bank Bias skews it to one side of the curve.

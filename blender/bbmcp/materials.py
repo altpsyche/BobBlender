@@ -676,7 +676,10 @@ S_GROUP_VER = 3
 #   S_WaterMaster v4: geometry Gerstner waves in curve_water made the shader's low-frequency flow
 #   bump redundant -- it now carries only a subtle high-frequency detail normal (the old one combed
 #   into hair-like streaks). Graph + default change, same interface, so water-only rebuild.
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 4}
+#   S_WaterMaster v5 (W5): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
+#   sockets; reads the ribbon's bbt_depth (water-column metres) for Beer-Lambert colour + opacity and
+#   a soft shoreline. New interface, so rebuild the water group (terrain/surface tuning untouched).
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 5}
 
 
 def _cached_group(name):
@@ -1432,6 +1435,17 @@ def water_master_group():
     _gin(g, "Shallow Color", "NodeSocketColor", _WATER_SHALLOW)
     _gin(g, "Deep Color", "NodeSocketColor", _WATER_DEEP)
     _gin(g, "Depth", "NodeSocketFloat", 1.5, 0.0)
+    # W5 depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of water column):
+    # Absorption is the Beer-Lambert extinction per metre (deep water reads darker/deeper-coloured),
+    # Depth Opacity fades the transmission out with depth (deep = more opaque, so the bed hides),
+    # Shoreline Fade is the metres of water column over which the edge dissolves to transparent (a
+    # soft waterline instead of a hard cut). All degrade gracefully to the old shore look at depth 0.
+    _gin(g, "Depth Absorption", "NodeSocketFloat", 0.5, 0.0)
+    _gin(g, "Depth Opacity", "NodeSocketFloat", 0.5, 0.0, 1.0)
+    # Shoreline Fade: fraction of the half-width (from the bank inward) over which the surface fades to
+    # transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present, so a
+    # pre-W5 ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon vanish).
+    _gin(g, "Shoreline Fade", "NodeSocketFloat", 0.15, 0.0, 1.0)
     _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
     _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
     _gin(g, "Transmission", "NodeSocketFloat", 0.92, 0.0, 1.0)
@@ -1491,6 +1505,16 @@ def water_master_group():
     flow = _geo_attr("bbt_flow", 380)
     foam_a = _geo_attr("bbt_foam", 240)
     shore_a = _geo_attr("bbt_shore", 100)
+    depth_a = _geo_attr("bbt_depth", -40)  # metres of water column (W5); 0 on pre-W5 ribbons
+
+    # Beer-Lambert depth extinction: depth_fac 0 at the shoreline (bbt_depth 0) rising toward 1 in
+    # deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity below.
+    depth_fac = _mmath(g, "SUBTRACT", 1.0,
+                       _mmath(g, "EXPONENT",
+                              _mmath(g, "MULTIPLY", -1.0,
+                                     _mmath(g, "MULTIPLY", I["Depth Absorption"],
+                                            depth_a.outputs["Fac"], (-1720, -40)), (-1560, -40)),
+                              None, (-1400, -40)), (-1240, -40))
 
     # Frame-driven time (mirrors _install_env_drivers, but `frame` is a built-in driver variable so
     # no scene target is needed): waves scroll without a bake. Installed once on the fresh group.
@@ -1581,16 +1605,17 @@ def water_master_group():
     ice_str = _mmath(g, "MULTIPLY", frozen, 0.35, (500, 40))
     normal = _wave_bump(voro.outputs["Distance"], ice_str, n_fine, (680, 200))
 
-    # Depth colour: deep mid-channel (shore 0), shallow near the banks (shore 1). deepness * Depth,
-    # clamped, so a higher Depth pushes the deep colour further out toward the banks.
-    deepness = _mmath(g, "SUBTRACT", 1.0, shore_a.outputs["Fac"], (-1000, -260))
-    dt = g.nodes.new("ShaderNodeMath")
-    dt.operation = "MULTIPLY"
-    dt.use_clamp = True
-    dt.location = (-820, -260)
-    g.links.new(deepness, dt.inputs[0])
-    g.links.new(I["Depth"], dt.inputs[1])
-    col = _mixcol(g, dt.outputs["Value"], I["Shallow Color"], I["Deep Color"], (-620, -300))
+    # Depth colour: shallow near the shoreline, deep in the body. On a W5 ribbon the driver is the
+    # real Beer-Lambert depth_fac (metres of column); the old shore proxy (1-shore)*Depth is kept as a
+    # floor so a pre-W5 ribbon (bbt_depth 0 everywhere) still reads with the shore gradient it had.
+    shore_deep = g.nodes.new("ShaderNodeMath")
+    shore_deep.operation = "MULTIPLY"
+    shore_deep.use_clamp = True
+    shore_deep.location = (-1000, -260)
+    g.links.new(_mmath(g, "SUBTRACT", 1.0, shore_a.outputs["Fac"], (-1180, -260)), shore_deep.inputs[0])
+    g.links.new(I["Depth"], shore_deep.inputs[1])
+    deepness = _mmath(g, "MAXIMUM", depth_fac, shore_deep.outputs["Value"], (-820, -260))
+    col = _mixcol(g, deepness, I["Shallow Color"], I["Deep Color"], (-620, -300))
 
     # Foam (W3). Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise breaks
     # it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam Crispness.
@@ -1632,13 +1657,25 @@ def water_master_group():
                  "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
 
-    # Transmission collapses to opaque as it freezes; IOR passes through; Alpha optionally fades the
-    # ribbon toward the banks (Edge Fade, default off), but frozen ice is fully opaque.
-    trans = _mmath(g, "MULTIPLY", I["Transmission"], liquid, (980, -1120))
+    # Transmission collapses to opaque as it freezes; IOR passes through. Depth Opacity fades the
+    # transmission out with depth (deep water -> less see-through, so the bed hides under a river);
+    # frozen ice is fully opaque regardless.
+    depth_op = _mmath(g, "SUBTRACT", 1.0,
+                      _mmath(g, "MULTIPLY", I["Depth Opacity"], depth_fac, (800, -1120)), (980, -1120))
+    trans = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", I["Transmission"], depth_op, (1160, -1120)),
+                   liquid, (1340, -1120))
+    # Alpha: a soft shoreline (W5) fades the surface to transparent over the outer Shoreline Fade
+    # fraction of the half-width (shore 1 = bank), so the waterline dissolves into the bank instead of
+    # cutting a hard line. Keyed to bbt_shore so a pre-W5 ribbon stays visible. The old lateral Edge
+    # Fade still composes. Frozen ice is fully opaque.
+    shore_fade = _mrange(g, shore_a.outputs["Fac"],
+                         _mmath(g, "SUBTRACT", 1.0, I["Shoreline Fade"], (800, -1300)), 1.0,
+                         1.0, 0.0, (980, -1300))
     edge = _mmath(g, "SUBTRACT", 1.0,
-                  _mmath(g, "MULTIPLY", shore_a.outputs["Fac"], I["Edge Fade"], (980, -1300)),
-                  (1160, -1300))
-    alpha = _lerp(g, edge, 1.0, frozen, (1160, -1180))
+                  _mmath(g, "MULTIPLY", shore_a.outputs["Fac"], I["Edge Fade"], (980, -1440)),
+                  (1160, -1440))
+    alpha = _mmath(g, "MULTIPLY", edge, shore_fade, (1340, -1360))
+    alpha = _lerp(g, alpha, 1.0, frozen, (1520, -1300))
 
     g.links.new(weather.outputs["Base Color"], O["Base Color"])
     g.links.new(weather.outputs["Roughness"], O["Roughness"])

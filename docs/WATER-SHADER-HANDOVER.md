@@ -71,12 +71,59 @@ landed, by phase:
   NOTE existing tuned materials keep their old stored values on the in-place group rebuild; only a
   freshly built water material picks up the new defaults (delete S_WaterMaster to force it).
 
-REMAINING: W5 (true depth interaction / caustics) is still the lateral bbt_shore gradient only, not a
-scene-depth read. The Flow/Foam knob-overlap consolidation (W6 second half) was left as-is. Both are
-optional next steps; the four headline complaints (flow, waves, foam, freeze) + EEVEE refraction are
-addressed. DEPLOY for Siva: bbmcp change -> Advanced > Reload Builders; panel change -> full addon
+## UPDATE 2026-07-22 (W5 landed): real depth interaction
+W5 shipped (static-gated + headless-verified). The water now reads by REAL per-vertex depth, not just
+the lateral bbt_shore proxy:
+- curve_water stores `bbt_depth` (metres of water column = Bed Depth - Water Depth mid-channel,
+  thinning to 0 at the banks). New `Bed Depth` ribbon input, synced from bbt_curve.depth by
+  splines_panel._sync_curve_params (the guarantee depth in banks-from-erosion mode).
+- water_master_group (S_WaterMaster v5, _GROUP_VER_OVERRIDE bumped 4 -> 5) reads bbt_depth for:
+  Beer-Lambert depth colour (deep = deep colour, driven by 1 - exp(-Depth Absorption * depth), with
+  the old shore gradient kept as a floor so a pre-W5 ribbon still reads); depth opacity (deep water
+  fades transmission out via Depth Opacity, so the bed hides under a river); and a soft shoreline
+  (Shoreline Fade, a width fraction keyed to bbt_shore -- NOT bbt_depth, so a mis-paired old ribbon
+  stays visible instead of vanishing). New knobs Depth Absorption / Depth Opacity / Shoreline Fade in
+  the Shaders Water sub-panel (_WATER_LOOK). Verified headless: bbt_depth 0 at banks -> ~0.7 mid, all
+  Principled inputs linked, group builds fresh at v5. LOOK still Siva's call (EEVEE + Cycles).
+
+REMAINING: caustics + a true scene-depth read (EEVEE-Next specific) are still not done (bbt_depth is a
+geometric column depth, which covers absorption/opacity/shoreline but not what is BEHIND the surface).
+The Flow/Foam knob-overlap consolidation (W6 second half) was left as-is. Both optional; the headline
+complaints (flow, waves, foam, freeze, depth) + EEVEE refraction are addressed. DEPLOY for Siva: bbmcp change -> Advanced > Reload Builders; panel change -> full addon
 reload (restart / F3 Reload Scripts); then rebuild the river's water (or delete the S_WaterMaster
 node group) so the v3 group + new defaults take. Judge the LOOK in EEVEE (refraction) AND Cycles.
+
+## KNOWN ISSUES (Siva, 2026-07-22) -- open, next work
+Grounded at file:line; do not relitigate whether they are real, they are Siva's direct feedback.
+
+1. **The water ribbon is an unorganic strip.** `curve_water.py:147-153`: Width is a single constant
+   scalar and the swept profile line is `[-half,0,0]..[half,0,0]`, identical along the whole curve, so
+   the banks are perfectly parallel with a hard straight edge. Real rivers vary width and wander. Fix
+   directions: modulate the half-width per point (a width-from-flow / width-from-distance-to-source
+   ramp, or a low-freq noise along the spline), break the bank edge with noise, and/or widen at the
+   mouth. The ribbon's `bbt_shore`/`bbt_depth` and the overlay's carved bench must track whatever width
+   model is chosen (they read `dist`/Width today), so width variation has to be shared, not just
+   cosmetic on the ribbon.
+
+2. **End Taper is not consistent between the ribbon and the terrain.** The carve/embankment tapers
+   SMOOTHLY: `curve_overlay.py:169-171` fades the band by `smooth_falloff(end_dist, 0, End Taper)` (a
+   gradual amplitude ramp over the last End Taper metres); the water ribbon instead HARD-clips its
+   length: `curve_water.py:335-339` deletes verts where `end_dist < End Taper` (a binary cut). Same End
+   Taper value therefore produces a gradual carve fade but an abrupt water cut -- "different ratios".
+   Also the carve tapers band WIDTH+DEPTH while the water only clips LENGTH, so their footprints do not
+   match near the ends. Fix: give the water the SAME smooth end profile as the carve (e.g. pull the
+   ribbon width -> 0 over End Taper via the same smooth_falloff, instead of DeleteGeometry), so bed and
+   surface taper together.
+
+3. **The water has no texture.** `water_master_group` drives only procedural `ShaderNodeTexNoise`
+   ripples (Ripple Strength default 0.10, subtle) plus foam; there is no water normal/detail texture
+   and the ribbon (`curve_water.py`) stores NO UV map, so a UV-based or flow-aligned surface texture
+   cannot be applied. It reads flat/plain. Fix directions: store a flow-space UV on the ribbon (arc
+   length along the curve as U, across-width as V, or advect by `bbt_flow`) and/or add a proper water
+   normal (a tiling detail-normal texture or stronger multi-scale procedural normal) sampled in that
+   space; consider a scrolling normal map advected along `bbt_flow` (the earlier flow-advected-bump
+   approach, but as a texture in UV space, avoiding the combing that killed the shader-normal version
+   -- see the round-2 note above).
 
 ## Current state (GROUNDED, measured headless 2026-07-22 -- read before changing anything)
 

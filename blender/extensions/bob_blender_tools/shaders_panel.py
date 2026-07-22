@@ -72,8 +72,8 @@ SNOW_SHELL_MOD = "BOB_SnowShell"
 
 # Water master knobs (BobSplines C5.3, look pass W1-W6), split colour/optics from the flow/foam
 # animation, with the freeze slider on its own so it reads as the deliberate action it is.
-_WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Water Roughness", "IOR",
-               "Transmission", "Edge Fade"]
+_WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Depth Absorption", "Depth Opacity",
+               "Shoreline Fade", "Water Roughness", "IOR", "Transmission", "Edge Fade"]
 _WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Wave Detail",
                "Foam Color", "Foam Amount", "Shore Foam", "Foam Crispness"]
 _WATER_FREEZE = ["Frozen"]

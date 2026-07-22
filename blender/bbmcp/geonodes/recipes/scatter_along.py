@@ -27,6 +27,7 @@ from . import recipe
 TAU = 6.283185307179586
 DEG2RAD = 0.017453292519943295
 _LIFT = 10000.0  # raycast the projection from well above any terrain, straight down
+_MAX_ALONG = 10000  # hard cap on along-curve instance count (guards a tiny Spacing on a long curve)
 
 
 def _vadd(ng, a, b, loc):
@@ -76,7 +77,10 @@ def build(ng, out, params: dict):
     links.new(curve_geo, clen.inputs["Curve"])
     count = math_node(ng, "DIVIDE", clen.outputs["Length"], gi.outputs["Spacing"], (-640, 420))
     count = math_node(ng, "FLOOR", count, None, (-480, 420))
-    count = math_node(ng, "MAXIMUM", count, 1.0, (-320, 420))
+    count = math_node(ng, "MAXIMUM", count, 1.0, (-400, 420))
+    # Cap the instance count so a tiny Spacing on a long curve (Spacing min is 0.01) cannot request
+    # ~100x the curve length in points and hang the eval. _MAX_ALONG is far above any real fence/row.
+    count = math_node(ng, "MINIMUM", count, float(_MAX_ALONG), (-320, 420))
 
     c2p = nodes.new("GeometryNodeCurveToPoints")
     try:
@@ -148,9 +152,14 @@ def build(ng, out, params: dict):
     domain.location = (1700, -420)
     links.new(coll.outputs["Instances"], domain.inputs["Geometry"])
     max_index = math_node(ng, "SUBTRACT", domain.outputs["Instance Count"], 1, (1880, -420))
-    index = random_value(ng, "INT", 0, max_index, seed, (2060, -420))
+    # Decorrelated seed streams: asset pick, scale, and random spin each shift the seed by a distinct
+    # offset (jitter already uses +11/+23), so the biggest rock does not always take the same scale or
+    # facing. Same base Seed -> reproducible; different streams -> independent.
+    index = random_value(ng, "INT", 0, max_index,
+                         math_node(ng, "ADD", seed, 31, (1880, -520)), (2060, -420))
 
-    scale = random_value(ng, "FLOAT", gi.outputs["Min Scale"], gi.outputs["Max Scale"], seed, (1880, 420))
+    scale = random_value(ng, "FLOAT", gi.outputs["Min Scale"], gi.outputs["Max Scale"],
+                         math_node(ng, "ADD", seed, 43, (1700, 420)), (1880, 420))
 
     # Rotation: UPRIGHT always. align -> yaw about Z to the path heading + the Yaw knob; else a
     # random Z spin. Never Curve to Points' Rotation (it tips uprights onto the path).
@@ -159,7 +168,8 @@ def build(ng, out, params: dict):
         yaw_rad = math_node(ng, "MULTIPLY", gi.outputs["Yaw"], DEG2RAD, (1880, 520))
         angle = math_node(ng, "ADD", heading, yaw_rad, (2060, 600))
     else:
-        angle = random_value(ng, "FLOAT", 0.0, TAU, seed, (2060, 600))
+        angle = random_value(ng, "FLOAT", 0.0, TAU,
+                             math_node(ng, "ADD", seed, 53, (1880, 600)), (2060, 600))
     rot = _zvec(ng, angle, (2240, 560))
 
     inst = nodes.new("GeometryNodeInstanceOnPoints")

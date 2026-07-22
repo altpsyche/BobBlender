@@ -13,6 +13,7 @@ gentle rise and fall without inheriting its fine erosion detail.
 """
 
 import math
+import os
 
 import bpy
 
@@ -224,6 +225,8 @@ def drape_curve(op: dict) -> dict:
     heightmap = op.get("heightmap")
     if not heightmap:
         return {"op": "drape_curve", "info": "no heightmap"}
+    if not os.path.exists(bpy.path.abspath(heightmap)):
+        return {"op": "drape_curve", "info": f"heightmap not found: {heightmap!r}"}
 
     image = bpy.data.images.load(heightmap, check_existing=True)
     width_px, height_px = image.size
@@ -340,8 +343,14 @@ def make_path(op: dict) -> dict:
     name = op.get("name", "Path")
     points = op.get("points") or []
     resolution = int(op.get("resolution", 12))
+    if len(points) < 2:
+        # A NURBS spline needs >= 2 points (order_u >= 2); a 0/1-point curve builds a degenerate
+        # datablock that later drapes/carves to nothing. Fail loud instead.
+        return {"op": "make_path", "info": f"need at least 2 points, got {len(points)}"}
 
     heightmap = op.get("heightmap")
+    if heightmap and not os.path.exists(bpy.path.abspath(heightmap)):
+        return {"op": "make_path", "info": f"heightmap not found: {heightmap!r}"}
     if heightmap and points:
         image = bpy.data.images.load(heightmap, check_existing=True)
         points = _drape_z(

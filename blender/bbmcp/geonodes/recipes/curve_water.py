@@ -103,6 +103,11 @@ def build(ng, out, params: dict):
     # same reference the overlay carves the bed from). Keep it below the overlay's Path Depth so the
     # surface stays above the bed; bigger = a deeper channel showing above the water.
     add_input(ng, "Water Depth", "NodeSocketFloat", float(params.get("water_depth", 0.4)), 0.0)
+    # Bed Depth: the full channel depth below the rim (the overlay's Path Depth). The water COLUMN
+    # thickness is (Bed Depth - Water Depth) mid-channel, thinning to 0 at the banks; stored per vertex
+    # as bbt_depth (metres) so the water shader can absorb/tint by real depth (W5) instead of a lateral
+    # proxy. Synced from bbt_curve.depth alongside Water Depth.
+    add_input(ng, "Bed Depth", "NodeSocketFloat", float(params.get("bed_depth", 1.2)), 0.0)
     add_input(ng, "Flow Base", "NodeSocketFloat", float(params.get("flow_base", 1.0)), 0.0)
     add_input(ng, "Foam Bank", "NodeSocketFloat", float(params.get("foam_bank", 0.5)), 0.0, 1.0)
     add_input(ng, "Foam Rapids", "NodeSocketFloat", float(params.get("foam_rapids", 1.0)), 0.0, 1.0)
@@ -229,6 +234,16 @@ def build(ng, out, params: dict):
     # displacement below, so the shading fields are captured on the flat surface (the displacement
     # only moves geometry; it must not perturb the stored flow/foam/shore).
     geo = _store(ng, geo, "bbt_shore", shore, "FLOAT", (1700, 40))
+
+    # Water-column depth (metres) per vertex: (Bed Depth - Water Depth) mid-channel, thinning to 0 at
+    # the banks (via 1 - shore), clamped >= 0. The shader reads bbt_depth for real Beer-Lambert
+    # absorption + a soft shoreline (W5), so colour/opacity track actual depth, not just lateral
+    # position -- a wide shallow stream and a narrow deep one read differently.
+    col_mid = math_node(ng, "MAXIMUM",
+                        math_node(ng, "SUBTRACT", gi.outputs["Bed Depth"], gi.outputs["Water Depth"],
+                                  (1520, -240)), 0.0, (1700, -240))
+    depth = math_node(ng, "MULTIPLY", col_mid, midfast, (1880, -240))  # midfast = 1 mid, 0 bank
+    geo = _store(ng, geo, "bbt_depth", depth, "FLOAT", (2060, 40))
 
     # ---- Gerstner wave displacement (animated, no bake) ----
     # Sum of _GERSTNER trochoidal waves travelling downstream (heading = down_dir rotated per
