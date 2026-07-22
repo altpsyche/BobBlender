@@ -71,15 +71,17 @@ def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
 
 
-def seed_row(layout, seed_input, op_idname, text="Seed", op_props=None):
+def seed_row(layout, data, prop, op_idname, text="Seed", op_props=None):
     """The one seed idiom: the seed value and a reshuffle button on one row, marked with
     SEED_ICON so a reshuffle reads distinctly from a structural rebuild.
 
-    seed_input: the resolved socket/input whose `.value` holds the seed.
+    data / prop: the thing holding the seed and the property name to draw. A modifier input
+    socket passes (socket, "value"); a scene/PropertyGroup passes (props, "seed"). Generalised
+    from a hardcoded `.value` socket so both a scene IntProperty and a socket route through here.
     op_props: fields to set on the reshuffle operator (e.g. {"object_name": name}).
     """
     row = layout.row(align=True)
-    row.prop(seed_input, "value", text=text)
+    row.prop(data, prop, text=text)
     op = row.operator(op_idname, text="", icon=SEED_ICON)
     if op_props:
         for key, val in op_props.items():

@@ -355,7 +355,7 @@ class BBT_OT_scatter_make_proxies(Operator):
 
 class BBT_OT_scatter_import_biome(Operator):
     bl_idname = "bob_blender_tools.scatter_import_biome"
-    bl_label = "Import Assets"
+    bl_label = "Import Real Assets"
     bl_description = ("Fill the shared BOB_Assets_* collections with real CC0 meshes from one "
                       "geographic scan set (library/models/<name>), replacing the block-out "
                       "proxies. Layers instance those collections, so any layer already set to "
@@ -529,11 +529,14 @@ class BBT_OT_scatter_remove(Operator):
         scn = context.scene.bbt_scatter
         obj = _active_layer(context)
         if obj is None:
+            self.report({"WARNING"}, "No active layer to remove")
             return {"CANCELLED"}
+        name = obj.name
         bpy.data.objects.remove(obj, do_unlink=True)
         coll = _active_coll(context)
         if coll is not None:
             scn.active = max(0, min(scn.active, len(coll.objects) - 1))
+        self.report({"INFO"}, f"Removed {name}")
         return {"FINISHED"}
 
 
@@ -548,6 +551,7 @@ class BBT_OT_scatter_duplicate(Operator):
         src = _active_layer(context)
         coll = _active_coll(context)
         if src is None or coll is None:
+            self.report({"WARNING"}, "No active layer to duplicate")
             return {"CANCELLED"}
         dup = src.copy()
         dup.data = src.data.copy()
@@ -557,6 +561,7 @@ class BBT_OT_scatter_duplicate(Operator):
         dup.name = _unique_object_name(src.name.rsplit(".", 1)[0])
         coll.objects.link(dup)
         scn.active = list(coll.objects).index(dup)
+        self.report({"INFO"}, f"Duplicated to {dup.name}")
         return {"FINISHED"}
 
 
@@ -606,9 +611,13 @@ class BBT_OT_scatter_random_seed(Operator):
     bl_label = "Randomize Seed"
     bl_description = "Reshuffle the active layer with a new seed"
 
+    # Which seed socket to reshuffle. Defaults to the placement Seed; the noise clumping "Noise
+    # Seed" passes its own name so it can be reshuffled too (was unreachable from the UI).
+    socket: StringProperty(default="Seed", options={"HIDDEN"})
+
     def execute(self, context):
         obj = _active_layer(context)
-        seed = _live_input(obj, "Seed") if obj else None
+        seed = _live_input(obj, self.socket) if obj else None
         if seed is None:
             return {"CANCELLED"}
         seed.value = random.randint(0, 99999)
@@ -617,23 +626,29 @@ class BBT_OT_scatter_random_seed(Operator):
 
 
 # UI
-def _draw_knobs(layout, obj, names, seed_btn=False):
-    """Draw each present socket's live value, by name. Skips absent sockets."""
+_SEED_KNOBS = ("Seed", "Noise Seed")  # knobs that get a reshuffle button, each targeting its socket
+
+
+def _draw_knobs(layout, obj, names, enabled=True):
+    """Draw each present socket's live value, by name. Skips absent sockets. A seed knob (placement
+    Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
+    enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
     mod = _nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
     ids = _socket_ids(mod.node_group)
     col = layout.column(align=True)
+    col.enabled = enabled
     for nm in names:
         ident = ids.get(nm)
         inp = getattr(mod.properties.inputs, ident, None) if ident else None
         if inp is None:
             continue
-        row = col.row(align=True)
-        row.prop(inp, "value", text=nm)
-        if seed_btn and nm == "Seed":
-            row.operator("bob_blender_tools.scatter_random_seed", text="",
-                         icon=ui_helpers.SEED_ICON)
+        if nm in _SEED_KNOBS:
+            ui_helpers.seed_row(col, inp, "value", "bob_blender_tools.scatter_random_seed",
+                                text=nm, op_props={"socket": nm})
+        else:
+            col.row(align=True).prop(inp, "value", text=nm)
 
 
 class BBT_UL_scatter_layers(UIList):
@@ -761,7 +776,7 @@ class BBT_PT_scatter_layer(Panel):
             layout.label(text="No scatter modifier", icon="ERROR")
             return
         layout.label(text="Live knobs (instant)")
-        _draw_knobs(layout, obj, _ALONG_KNOBS if along else list(_CORE_KNOBS), seed_btn=True)
+        _draw_knobs(layout, obj, _ALONG_KNOBS if along else list(_CORE_KNOBS))
 
 
 class BBT_PT_scatter_masks(Panel):
@@ -782,10 +797,17 @@ class BBT_PT_scatter_masks(Panel):
         if obj.bbt_scatter_layer.curve_mode == "along":
             layout.label(text="Not used for an along-curve layer", icon="INFO")
             return
+        # A band does nothing until its Strength is above 0. Keep the Strength knob live and grey
+        # the dependent knobs when it is 0 (the same "grey the inert knob" idiom Paths uses).
+        def _on(socket):
+            inp = _live_input(obj, socket)
+            return inp is not None and inp.value > 0.0
         layout.label(text="Altitude")
-        _draw_knobs(layout, obj, _HEIGHT_KNOBS)
+        _draw_knobs(layout, obj, _HEIGHT_KNOBS[:1])
+        _draw_knobs(layout, obj, _HEIGHT_KNOBS[1:], enabled=_on("Height Strength"))
         layout.label(text="Noise / clumping")
-        _draw_knobs(layout, obj, _NOISE_KNOBS)
+        _draw_knobs(layout, obj, _NOISE_KNOBS[:1])
+        _draw_knobs(layout, obj, _NOISE_KNOBS[1:], enabled=_on("Noise Strength"))
         # Paint Strength exists only when the layer has a mask group set + Built.
         if _live_input(obj, "Paint Strength") is not None:
             layout.label(text="Paint")

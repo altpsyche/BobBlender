@@ -1172,11 +1172,11 @@ class BBT_PT_paths(Panel):
         scn = context.scene.bbt_curves
         layout = self.layout
 
+        # Name only in the header: the role is shown by the list-row icon and again (with its
+        # label) in the Active Path sub-panel, so repeating it here just duplicates. Matches the
+        # Scatter header, which names the layer and leaves the kind to the Active Layer sub-panel.
         curve = _active_curve(context)
-        hdr = None
-        if curve is not None:
-            spec = ROLES.get(curve.bbt_curve.role, ROLES["dirt_path"])
-            hdr = f"{curve.name} ({spec['label']})"
+        hdr = curve.name if curve is not None else None
         ui_helpers.context_header(layout, "Path", hdr, icon="CURVE_DATA",
                                   empty="Add a curve to shape a path.")
 
@@ -1208,15 +1208,19 @@ class BBT_PT_paths(Panel):
             box.prop(scn, "erode_strength", slider=True)
             box.prop(scn, "erode_scope")
             box.prop(scn, "erode_deposit")
-            row = box.row(align=True)
-            row.operator("bob_blender_tools.curve_bake_erode", icon="MATFLUID")
+            # Both are structural (they rewrite the baked heightfield), so mark them like Build
+            # All (P3) rather than as raw buttons.
+            ui_helpers.structural_action(
+                box, "bob_blender_tools.curve_bake_erode",
+                note=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
             # Revert only makes sense once an erode has recorded a clean source.
-            rev = row.row(align=True)
+            rev = box.row(align=True)
             rev.enabled = bool(terrain.get("bbt_heightmap_clean"))
-            rev.operator("bob_blender_tools.curve_revert_erode", text="", icon="LOOP_BACK")
-            note = box.row()
-            note.enabled = False
-            note.label(text=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
+            rev.operator("bob_blender_tools.curve_revert_erode", icon=ui_helpers.STRUCTURAL_ICON)
+        elif scn.curves and terrain is not None:
+            # The box needs a baked heightfield; say so rather than vanishing without a hint.
+            layout.label(text="Bake the terrain (Terrain panel) to naturalise the carves",
+                         icon="INFO")
 
 
 class BBT_PT_paths_active(Panel):

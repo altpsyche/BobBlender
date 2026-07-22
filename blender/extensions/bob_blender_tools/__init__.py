@@ -154,6 +154,7 @@ _OP_META = {
     "voronoi": ("Voronoi (cells)", "MESH_ICOSPHERE"),
     "fluvial": ("Fluvial erosion", "MOD_FLUIDSIM"),
     "pipe_hydraulic": ("Hydraulic erosion", "MOD_OCEAN"),
+    "deposit": ("Deposit (sediment)", "MOD_PARTICLES"),
     "thermal": ("Thermal slump", "MOD_SMOOTH"),
     "terrace": ("Terrace", "ALIGN_FLUSH"),
     "warp": ("Domain warp", "MOD_WARP"),
@@ -170,6 +171,7 @@ _OP_PARAMS = {
     "voronoi": ["cells", "pattern", "mix", "amount"],
     "fluvial": ["iterations", "k", "diffusion"],
     "pipe_hydraulic": ["iterations", "rain", "incision"],
+    "deposit": ["amount", "iterations", "flow_floor"],
     "thermal": ["talus", "iterations"],
     "terrace": ["steps", "sharpness"],
     "warp": ["frequency", "amount"],
@@ -195,6 +197,10 @@ _OP_ADD_DEFAULTS = {
                        "_raw": {"dt": 0.1, "capacity": 0.3, "dissolve": 0.25,
                                 "deposit": 0.3, "evaporate": 0.02, "min_slope": 0.03,
                                 "sp_m": 1.0, "sp_n": 1.2}},
+    "deposit": {"amount": 0.012, "iterations": 4, "flow_floor": 0.15,
+                "_raw": {"recompute": 4, "fill_iters": 800, "acc_iters": 800, "mfd_p": 1.4,
+                         "flow_m": 0.6, "slope_n": 1.5, "settle_talus": 0.004, "settle_iters": 2,
+                         "settle_factor": 0.5}},
     "thermal": {"talus": 0.01, "iterations": 4, "_raw": {"factor": 0.5}},
     "terrace": {"steps": 6, "sharpness": 0.8},
     "warp": {"frequency": 3.0, "amount": 0.04},
@@ -212,6 +218,18 @@ _MASK_ITEMS = [
     ("flow", "Flow", "Only in channels that collect drainage"),
     ("noise", "Noise", "A noise-broken region"),
 ]
+
+# Per-mask-kind (BBT_TerrainOp field, engine selector key). Drives emit (_op_to_dict), load
+# (_load_op), and draw together, so all three match each selector's REAL signature (ops_select.py):
+# height/slope take low/high/falloff, but curvature/flow/noise take their own params. Emitting
+# low/high/falloff for those kinds TypeErrored the bake, and they drew no controls.
+_MASK_PARAMS = {
+    "height": [("mask_low", "low"), ("mask_high", "high"), ("mask_falloff", "falloff")],
+    "slope": [("mask_low", "low"), ("mask_high", "high"), ("mask_falloff", "falloff")],
+    "curvature": [("mask_mode", "mode"), ("mask_strength", "strength")],
+    "flow": [("mask_threshold", "threshold")],
+    "noise": [("mask_frequency", "frequency"), ("mask_seed", "seed"), ("mask_contrast", "contrast")],
+}
 
 
 class BBT_TerrainOp(PropertyGroup):
@@ -246,6 +264,10 @@ class BBT_TerrainOp(PropertyGroup):
     rain: FloatProperty(name="Rain", default=0.012, min=0.0, max=0.2, precision=4)
     incision: FloatProperty(name="Incision", default=0.4, min=0.0, max=2.0)
     talus: FloatProperty(name="Talus", default=0.01, min=0.0, max=0.06, precision=4)
+    flow_floor: FloatProperty(
+        name="Flow Floor", default=0.15, min=0.0, max=1.0,
+        description="Deposit: only alluviate cells whose drainage is above this fraction of the max "
+                    "(the wet channel), so uplands are left alone")
     # filters
     steps: IntProperty(name="Steps", default=6, min=1, max=24)
     gamma: FloatProperty(name="Gamma", default=1.0, min=0.2, max=3.0)
@@ -260,9 +282,19 @@ class BBT_TerrainOp(PropertyGroup):
     power: FloatProperty(name="Power", default=2.0, min=0.2, max=6.0)
     # per-op mask (a selector that gates where the op applies)
     mask_kind: EnumProperty(name="Mask", items=_MASK_ITEMS, default="none")
-    mask_low: FloatProperty(name="Low", default=0.0, min=0.0, max=1.0)
+    mask_low: FloatProperty(name="Low", default=0.0, min=0.0, max=1.0)       # height / slope
     mask_high: FloatProperty(name="High", default=1.0, min=0.0, max=1.0)
     mask_falloff: FloatProperty(name="Falloff", default=0.1, min=0.0, max=1.0)
+    mask_mode: EnumProperty(name="Curvature", default="convex",              # curvature
+                            items=[("convex", "Convex", "Ridges and rims"),
+                                   ("concave", "Concave", "Valleys and hollows")])
+    mask_strength: FloatProperty(name="Strength", default=1.0, min=0.0, max=2.0)
+    mask_threshold: FloatProperty(                                           # flow
+        name="Threshold", default=0.02, min=0.0, max=1.0, precision=3,
+        description="Drainage fraction of the max above which a cell counts as a channel")
+    mask_frequency: FloatProperty(name="Frequency", default=6.0, min=0.5, max=40.0)  # noise
+    mask_seed: IntProperty(name="Noise Seed", default=0, min=0)
+    mask_contrast: FloatProperty(name="Contrast", default=0.5, min=0.0, max=1.0)
 
 
 def _op_to_dict(op):
@@ -275,8 +307,10 @@ def _op_to_dict(op):
     for key in _OP_PARAMS.get(op.kind, []):
         d[key] = getattr(op, key)
     if op.mask_kind and op.mask_kind != "none":
-        d["mask"] = {"kind": op.mask_kind, "low": op.mask_low,
-                     "high": op.mask_high, "falloff": op.mask_falloff}
+        m = {"kind": op.mask_kind}
+        for field, key in _MASK_PARAMS.get(op.mask_kind, []):
+            m[key] = getattr(op, field)
+        d["mask"] = m
     else:
         d.pop("mask", None)
     return d
@@ -292,9 +326,9 @@ def _load_op(op, d):
     mask = d.get("mask")
     if mask:
         op.mask_kind = mask.get("kind", "none")
-        op.mask_low = mask.get("low", 0.0)
-        op.mask_high = mask.get("high", 1.0)
-        op.mask_falloff = mask.get("falloff", 0.1)
+        for field, key in _MASK_PARAMS.get(op.mask_kind, []):
+            if key in mask:
+                setattr(op, field, mask[key])
     else:
         op.mask_kind = "none"
     op.raw = json.dumps({k: v for k, v in d.items()
@@ -693,7 +727,9 @@ class BBT_PT_panel(Panel):
         row = layout.row(align=True)
         row.operator("bob_blender_tools.start", icon="PLAY", text="Start")
         row.operator("bob_blender_tools.stop", icon="PAUSE", text="Stop")
-        layout.operator("bob_blender_tools.reload_builders", icon="FILE_REFRESH")
+        # A dev reload, not a datablock rebuild: keep it off the shared STRUCTURAL_ICON
+        # (FILE_REFRESH) so that marker stays meaningful for real builds.
+        layout.operator("bob_blender_tools.reload_builders", icon="CONSOLE")
 
 
 class BBT_PT_heightfield(Panel):
@@ -747,20 +783,25 @@ class BBT_PT_hf_shape(Panel):
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
     bl_parent_id = "BBT_PT_heightfield"
-    bl_options = {"DEFAULT_CLOSED"}
+    # Sculpt is Terrain's primary tuning panel, so it opens by default like each other system's
+    # primary sub-panel; Displace and the advanced Filter Stack stay DEFAULT_CLOSED.
 
     def draw(self, context):
         hf = context.scene.bbt_hf
         layout = self.layout
-        row = layout.row(align=True)
-        row.prop(hf, "seed")
-        row.operator("bob_blender_tools.random_seed", text="", icon=ui_helpers.SEED_ICON)
-        # The five curated global knobs modulate the chosen landscape preset.
+        ui_helpers.seed_row(layout, hf, "seed", "bob_blender_tools.random_seed")
+        # The four curated global knobs modulate the chosen landscape preset. A custom Filter
+        # Stack bakes its own ops instead (seed still applies), so grey them when it is on.
         col = layout.column(align=True)
+        col.enabled = not hf.use_custom_stack
         col.prop(hf, "relief")
         col.prop(hf, "detail")
         col.prop(hf, "erosion")
         col.prop(hf, "warp")
+        if hf.use_custom_stack:
+            cap = layout.row()
+            cap.enabled = False
+            cap.label(text="Custom stack on: these preset knobs are bypassed")
 
 
 class BBT_PT_hf_displace(Panel):
@@ -821,9 +862,12 @@ class BBT_PT_hf_stack(Panel):
             for key in _OP_PARAMS.get(op.kind, []):
                 box.prop(op, key)
             box.prop(op, "mask_kind")
-            if op.mask_kind in ("height", "slope"):
-                sub = box.row(align=True)
-                sub.prop(op, "mask_low"); sub.prop(op, "mask_high"); sub.prop(op, "mask_falloff")
+            mps = _MASK_PARAMS.get(op.mask_kind, [])
+            if mps:
+                sub = box.row(align=True) if op.mask_kind in ("height", "slope") \
+                    else box.column(align=True)
+                for field, _key in mps:
+                    sub.prop(op, field)
 
 
 _CLASSES = (
