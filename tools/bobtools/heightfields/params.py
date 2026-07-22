@@ -35,6 +35,26 @@ _DEFAULT_KNOBS = dict(
 # every generator in a stack independently (two noise ops do not move in lockstep).
 _SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp")
 
+# Ops whose slope-relaxation threshold can be authored as a real repose ANGLE (repose_deg) instead
+# of a hand-picked normalised talus. Maps each op kind to the param name that carries that threshold.
+_REPOSE_PARAM = {"thermal": "talus", "scarp": "talus", "fluvial": "talus", "deposit": "settle_talus"}
+
+
+def _resolve_repose(stack, bake_res, relief_ratio):
+    """Turn any op's `repose_deg` into a resolution-correct talus, in place.
+
+    A preset may author a slope-relaxation pass by real angle (`repose_deg`) so the rendered slope
+    holds that PHYSICAL angle at any bake resolution or tile size; here, once the bake resolution and
+    the preset's relief ratio are known, that becomes the concrete normalised talus the engine op
+    takes (see presets.talus_for_angle). Ops still take a raw `talus` when a structural, non-repose
+    slope is wanted (cap-rock cliffs), so the two are not mutually exclusive."""
+    for op in stack:
+        if "repose_deg" not in op:
+            continue
+        key = _REPOSE_PARAM.get(op["kind"], "talus")
+        op[key] = presets.talus_for_angle(op.pop("repose_deg"), bake_res, relief_ratio)
+    return stack
+
 
 def default_knobs() -> dict:
     """A copy of the knob defaults, so callers can start from a known baseline."""
@@ -55,12 +75,15 @@ def _preset_salt(name: str) -> int:
     return s % 9973
 
 
-def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed=7):
-    """Copy a preset stack and modulate it by the five global knobs.
+def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed=7,
+                  size=DEFAULT_SIZE):
+    """Copy a preset stack and modulate it by the five global knobs, returning an engine-ready stack.
 
     All knobs at 0.5 reproduce the preset exactly (every factor is 1.0, no octave
     shift, only the seed is injected). Factors are centred on 0.5 so a knob reads
-    the same way on any preset."""
+    the same way on any preset. `size` is the bake resolution any `repose_deg` pass is resolved
+    against (see _resolve_repose), so the returned stack carries a concrete talus the engine op takes,
+    never a raw angle; callers that bake at a non-default resolution pass their size."""
     stack = copy.deepcopy(presets.stack(preset))
     salt = _preset_salt(preset)
     rugged = 0.4 + 1.2 * float(relief)       # 0.4 .. 1.6  (x1.0 at 0.5)
@@ -90,6 +113,10 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["amount"] = op.get("amount", 0.5) * sharp
         # voronoi / terrace / curve / smooth / falloff keep their preset values;
         # their character is structural, not a global-knob axis.
+    # A repose_deg pass becomes a concrete talus for this bake resolution and the preset's relief
+    # ratio, so the returned stack is engine-ready (no raw angle) and the rendered slope holds the
+    # same physical angle at preview and full bakes.
+    _resolve_repose(stack, int(size), presets.relief(preset))
     return stack
 
 
@@ -97,7 +124,7 @@ def build_params(knobs: dict | None = None) -> dict:
     """Expand flat knobs (preset + globals) into a bake params dict with a resolved stack."""
     k = {**_DEFAULT_KNOBS, **(knobs or {})}
     stack = resolve_stack(k["preset"], relief=k["relief"], detail=k["detail"],
-                          erosion=k["erosion"], warp=k["warp"], seed=k["seed"])
+                          erosion=k["erosion"], warp=k["warp"], seed=k["seed"], size=int(k["size"]))
     return {
         "size": int(k["size"]), "seed": int(k["seed"]), "backend": k["backend"],
         "preset": k["preset"], "stack": stack,

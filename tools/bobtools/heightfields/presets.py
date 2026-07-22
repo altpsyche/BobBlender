@@ -29,6 +29,8 @@ now back with real generators; badlands and plateau return as their own generato
 See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
 """
 
+import math
+
 # fluvial defaults shared by the mountain and lowland stacks, so each states only what
 # differs. fill_iters/acc_iters are drainage-propagation counts; 600-700 covers the
 # longest flow paths at these sizes (the network is resolution-stable, verified by
@@ -114,14 +116,16 @@ STACKS = {
                  # blob (the old talus=0.02, 3 iters did exactly that).
         {"kind": "dunes", "wind": 35, "frequency": 8, "sharpness": 0.62, "warp": 0.14,
          "variation": 0.5, "mix": "replace"},
-        {"kind": "thermal", "talus": 0.06, "factor": 0.5, "iterations": 1},
+        # settle the lee to the real sand slip-face repose (~34 deg) at ANY bake resolution: talus is
+        # derived from repose_deg, not a fixed value that would clip at a different angle per size.
+        {"kind": "thermal", "repose_deg": 34, "factor": 0.5, "iterations": 1},
     ],
     "sand_sea": [   # broader, lower dunes over a large erg with faint underlying sand-sheet noise.
         {"kind": "dunes", "wind": 22, "frequency": 5, "sharpness": 0.66, "warp": 0.2,
          "variation": 0.6, "mix": "replace"},
         {"kind": "noise", "ridged": 0.1, "detail_strength": 0.25, "octaves": 4, "warp": 100,
          "mix": "add", "amount": 0.1},
-        {"kind": "thermal", "talus": 0.06, "factor": 0.5, "iterations": 1},
+        {"kind": "thermal", "repose_deg": 34, "factor": 0.5, "iterations": 1},
     ],
 }
 
@@ -158,6 +162,30 @@ DISPLAY = {
 # stretched tile cannot become a cliff-cube.
 _RELIEF_MIN_M = 0.5
 _RELIEF_CEIL_FRAC = 0.6
+
+# Real angles of repose, degrees. An op may carry `repose_deg` instead of a hand-picked `talus`;
+# params.build_params converts it to the resolution-correct talus (see talus_for_angle) so the
+# rendered slope holds the same PHYSICAL angle at any bake resolution and tile size. Dry sand and
+# dune slip faces sit near 34 deg; loose rock talus/scree 30-37 deg. These are the physical targets a
+# thermal/scarp/fluvial pass relaxes a slope down to.
+REPOSE = {"sand": 34.0, "dune_slip": 34.0, "scree": 35.0, "talus_rock": 33.0}
+
+
+def talus_for_angle(angle_deg, bake_res, relief_ratio):
+    """The normalised per-cell `talus` threshold that renders as a real slope of `angle_deg`.
+
+    The heightfield is normalised [0, 1] and displaced at build time by height = relief_ratio * tile
+    over a tile of `bake_res` cells, so one cell of normalised rise `t` renders as a real slope
+    tan(theta) = t * relief_ratio * bake_res. Inverting gives the talus that produces `angle_deg`:
+
+        talus = tan(angle) / (relief_ratio * bake_res)
+
+    Because relief is a scale-invariant ratio of tile width, this depends only on the bake
+    resolution, not on the absolute tile size -- so a preset holds the same repose angle whether it
+    is a 90 m patch or a 4 km range. It DOES scale with bake_res (a fixed talus would clip at a
+    different real angle at preview vs full resolution), which is the resolution bug this fixes."""
+    t = math.tan(math.radians(float(angle_deg)))
+    return t / max(float(relief_ratio) * float(bake_res), 1e-9)
 
 # Family grouping, for the panel dropdown ordering and docs.
 FAMILIES = {

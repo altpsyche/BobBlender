@@ -367,9 +367,9 @@
       },
       {
         "kind": "thermal",
-        "talus": 0.06,
         "factor": 0.5,
-        "iterations": 1
+        "iterations": 1,
+        "talus": 0.07318885816432581
       }
     ],
     "sand_sea": [
@@ -393,9 +393,9 @@
       },
       {
         "kind": "thermal",
-        "talus": 0.06,
         "factor": 0.5,
-        "iterations": 1
+        "iterations": 1,
+        "talus": 0.04622454199852157
       }
     ]
   }
