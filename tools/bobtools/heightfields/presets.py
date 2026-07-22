@@ -104,21 +104,37 @@ STACKS = {
     ],
 }
 
-# Blender-side displacement defaults per preset: metres of vertical relief and the
-# sea-level fraction that suit each family. These are NOT heightfield params (the
-# field is always normalised [0,1]); they live here so presets.py stays the single
-# source of truth for the panel's per-preset table (see gen_panel_presets.py).
+# Blender-side displacement defaults per preset. Scale is REAL-WORLD: 1 Blender unit = 1 metre.
+# The vertical relief is NOT a fixed metre value -- it is a RELIEF RATIO (typical relief / tile
+# width) that is roughly scale-invariant for a landform, so the metre height is derived from the
+# artist's tile size at build time (see height_for). This keeps a preset physically proportioned at
+# ANY tile size: a 90 m patch of alpine gets ~27 m of relief, a 4 km alpine range gets ~1.2 km, and
+# a 1.8 m character or a 6 m house dropped on either reads correctly. sea_level is the fraction of
+# the normalised field taken as water/base. The field itself is always normalised [0, 1]; relief and
+# sea_level live here so presets.py stays the single source of truth for the panel table
+# (see gen_panel_presets.py).
+#
+# Ratios are physically grounded, not visually exaggerated: dunes are deliberately subtle on a small
+# tile (a real 90 m dune field has ~1 m dunes) -- big dunes come from a big tile, not from inflating
+# the height. Dune/sand_sea ratios are set so the transverse slip face lands near the ~34 deg angle
+# of repose at the authored crest frequency.
 DISPLAY = {
-    "alpine":    {"height": 22.0, "sea_level": 0.22},
-    "glacial":   {"height": 18.0, "sea_level": 0.24},
-    "foothills": {"height": 13.0, "sea_level": 0.30},
-    "hills":     {"height": 9.0,  "sea_level": 0.30},
-    "plains":    {"height": 5.0,  "sea_level": 0.32},
-    "coastal":   {"height": 12.0, "sea_level": 0.34},
-    "islands":   {"height": 14.0, "sea_level": 0.34},
-    "dunes":     {"height": 8.0,  "sea_level": 0.0},
-    "sand_sea":  {"height": 9.0,  "sea_level": 0.0},
+    "alpine":    {"relief": 0.30,  "sea_level": 0.22},
+    "glacial":   {"relief": 0.22,  "sea_level": 0.24},
+    "foothills": {"relief": 0.12,  "sea_level": 0.30},
+    "hills":     {"relief": 0.05,  "sea_level": 0.30},
+    "plains":    {"relief": 0.015, "sea_level": 0.32},
+    "coastal":   {"relief": 0.05,  "sea_level": 0.34},
+    "islands":   {"relief": 0.08,  "sea_level": 0.34},
+    "dunes":     {"relief": 0.012, "sea_level": 0.0},
+    "sand_sea":  {"relief": 0.019, "sea_level": 0.0},
 }
+
+# Absolute guardrails on derived relief (metres): never a degenerate flat sheet, never a vertical
+# wall wider-than-tall nonsense. The ceiling (0.6 * size) caps overall grade near ~31 degrees so a
+# stretched tile cannot become a cliff-cube.
+_RELIEF_MIN_M = 0.5
+_RELIEF_CEIL_FRAC = 0.6
 
 # Family grouping, for the panel dropdown ordering and docs.
 FAMILIES = {
@@ -137,9 +153,28 @@ def stack(name):
     return [dict(op) for op in STACKS[name]]
 
 
+_DEFAULT_DISPLAY = {"relief": 0.08, "sea_level": 0.30}
+
+
 def display(name):
-    """Return the Blender displacement defaults (height, sea_level) for a preset."""
-    return dict(DISPLAY.get(name, {"height": 14.0, "sea_level": 0.30}))
+    """Return the Blender displacement defaults (relief ratio, sea_level) for a preset."""
+    return dict(DISPLAY.get(name, _DEFAULT_DISPLAY))
+
+
+def relief(name):
+    """The relief ratio (typical relief / tile width) for a preset. Scale-invariant."""
+    return float(DISPLAY.get(name, _DEFAULT_DISPLAY)["relief"])
+
+
+def height_for(name, size):
+    """Derive real-world vertical relief in METRES for a preset at a given tile size (metres).
+
+    height = relief_ratio * size, clamped to [_RELIEF_MIN_M, _RELIEF_CEIL_FRAC * size] so a preset
+    is neither a flat sheet nor a taller-than-wide wall. With 1 Blender unit = 1 m this is the
+    Height fed to heightmap_terrain, so a preset stays physically proportioned at any tile size."""
+    size = float(size)
+    h = relief(name) * size
+    return max(_RELIEF_MIN_M, min(h, _RELIEF_CEIL_FRAC * size))
 
 
 def get(name):

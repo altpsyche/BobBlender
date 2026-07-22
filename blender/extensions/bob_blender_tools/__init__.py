@@ -66,16 +66,42 @@ def _preset_items(self, context):
     return [(k, k.replace("_", " ").title(), f"Load the {k} landscape") for k in _HF_PRESETS]
 
 
+# Real-world scale (1 Blender unit = 1 m). A preset stores a relief RATIO (relief / tile width),
+# not a fixed metre height, so the metre Height is derived from the artist's tile size and the
+# landform stays physically proportioned at any size. Mirrors presets.height_for in the venv
+# (which the panel cannot import); keep the two in sync.
+_RELIEF_MIN_M = 0.5
+_RELIEF_CEIL_FRAC = 0.6
+
+
+def _height_from_ratio(ratio, size):
+    """Derive metre Height from a relief ratio and tile size, clamped sane (see presets.height_for)."""
+    h = float(ratio) * float(size)
+    return max(_RELIEF_MIN_M, min(h, _RELIEF_CEIL_FRAC * float(size)))
+
+
+def _on_terrain_size_update(self, context):
+    """Resizing the tile rescales the derived Height so relief tracks size (real-world scale)."""
+    self.height = _height_from_ratio(self.relief_ratio, self.terrain_size)
+
+
 def _apply_hf_preset(hf):
     """Load the chosen preset's neutral slider values onto the heightfield props. Instant (A6):
     this only loads slider values (light, fully reversible, no rebuild until Bake + Build), so it
     uses the instant preset_row idiom like the other look presets, not the staged idiom reserved
-    for the heavy rebuilds (Sky Look, Build Biome, Biome World)."""
+    for the heavy rebuilds (Sky Look, Build Biome, Biome World).
+
+    `relief_ratio` is stored, then Height is DERIVED from it and the current tile size (real-world
+    scale); every other key maps straight onto its prop."""
     values = _HF_PRESETS.get(hf.preset)
     if not values:
         return
     for key, val in values.items():
-        setattr(hf, key, val)
+        if key == "relief_ratio":
+            hf.relief_ratio = val
+            hf.height = _height_from_ratio(val, hf.terrain_size)
+        else:
+            setattr(hf, key, val)
 
 
 def _load_preview(png_path):
@@ -386,8 +412,16 @@ class BBT_HeightfieldProps(PropertyGroup):
                            description="Incision: higher carves deeper valleys and channels")
     warp: FloatProperty(name="Warp", default=0.5, min=0.0, max=1.0,
                         description="Meander: higher distorts the domain for a more organic look")
-    terrain_size: FloatProperty(name="Size m", default=90.0, min=1.0)
-    height: FloatProperty(name="Height", default=22.0)
+    terrain_size: FloatProperty(name="Size m", default=90.0, min=1.0,
+                                update=_on_terrain_size_update,
+                                description="Tile width in metres (1 unit = 1 m). Height tracks it "
+                                            "so the landform stays proportioned at any size")
+    # Relief RATIO (relief / tile width) from the preset; drives the derived metre Height. Hidden:
+    # the artist edits Size and (optionally) Height, not this.
+    relief_ratio: FloatProperty(name="Relief ratio", default=0.08, min=0.0, max=1.0)
+    height: FloatProperty(name="Height", default=22.0,
+                          description="Vertical relief in metres. Derived from the preset's relief "
+                                      "ratio x Size; override for a taller or flatter look")
     sea_level: FloatProperty(name="Sea Level", default=0.22, min=0.0, max=1.0)
     last_bake: StringProperty(name="Last bake", default="")
     # P4 filter-stack editor: an editable op stack. When use_custom_stack is on and
@@ -847,6 +881,14 @@ class BBT_PT_hf_displace(Panel):
         layout.prop(hf, "height")
         layout.prop(hf, "sea_level")
         layout.prop(hf, "mesh_res")
+        # Real-world scale readout (1 unit = 1 m): peak-above-sea relief and the ground texel size,
+        # so the artist knows a dropped 1.8 m character or 6 m house will read correctly.
+        peak = hf.height * (1.0 - hf.sea_level)
+        texel = hf.terrain_size / max(int(hf.mesh_res), 1)
+        box = layout.box()
+        box.scale_y = 0.7
+        box.label(text=f"Scale: {hf.terrain_size:.0f} m tile, {peak:.1f} m peak", icon="EMPTY_ARROWS")
+        box.label(text=f"Mesh texel: {texel:.2f} m/vert", icon="MESH_GRID")
 
 
 class BBT_PT_hf_stack(Panel):
