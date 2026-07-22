@@ -1218,12 +1218,12 @@ def _terrain_maps(obj):
     return flow, wet, size
 
 
-def terrain_material_for(obj, layer_sets=None, mat_name=None):
+def terrain_material_for(obj, mat_name=None):
     """terrain_material for a built terrain OBJECT: gathers its baked flow/wetness maps and size
-    so a rebuild (assigning a texture set, adding a layer) keeps the drainage wiring instead of
-    dropping it. mat_name preserves the existing material's identity when rebuilding in place."""
+    so a rebuild (adding a layer) keeps the drainage wiring instead of dropping it. mat_name
+    preserves the existing material's identity when rebuilding in place."""
     flow, wet, size = _terrain_maps(obj)
-    return terrain_material(mat_name or obj.name, layer_sets=layer_sets,
+    return terrain_material(mat_name or obj.name,
                             flow_image=flow, wetness_image=wet, terrain_size=size)
 
 
@@ -1333,34 +1333,16 @@ def apply_curve_wet(mat, wetness=0.6):
     return True
 
 
-def surface_material(mat_name, texture_set=None):
-    """A single-surface wrapper (S_SurfaceMaster), optionally with a texture set assigned.
-
-    Solid colour by default; when a set is given the wrapper links its triplanar maps into the
-    master's Albedo/Roughness/Metallic map inputs (colour still tints: albedo = Base Color *
-    map) and the bump normal into the Principled. On the transition solid->textured the tint
-    defaults to white and Roughness to 1 so the map reads at face value; a retexture keeps the
-    tuned values."""
+def surface_material(mat_name):
+    """A single-surface wrapper (S_SurfaceMaster): a solid-tint BobShader whose look comes from
+    the master's procedural terms (colour/roughness/metallic + the weather layer). No image
+    texture path."""
     master = surface_master_group()
-    sig = "surface|" + (texture_set or "")
 
     def wire(nt, grp, bsdf, old_sig):
-        if not texture_set:
-            return
-        ts = nt.nodes.new("ShaderNodeGroup")
-        ts.name = "TexSet"
-        ts.node_tree = texture_set_group(texture_set)
-        ts.location = (-500, -260)
-        nt.links.new(ts.outputs["Base Color"], grp.inputs["Albedo Map"])
-        nt.links.new(ts.outputs["Roughness"], grp.inputs["Roughness Map"])
-        nt.links.new(ts.outputs["Metallic"], grp.inputs["Metallic Map"])
-        nt.links.new(ts.outputs["Normal"], bsdf.inputs["Normal"])
-        if old_sig is None or old_sig.endswith("|"):  # was solid -> show the map at face value
-            grp.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-            grp.inputs["Roughness"].default_value = 1.0
-            grp.inputs["Metallic"].default_value = 0.0
+        return
 
-    return _build_wrapper(mat_name, master, sig, wire)
+    return _build_wrapper(mat_name, master, "surface|", wire)
 
 
 # BobShaders water master (S_WaterMaster, BobSplines C5.3). The third BobShader kind, for the river
@@ -2053,25 +2035,18 @@ def terrain_master_group():
     return g
 
 
-def terrain_material(mat_name, layer_sets=None, flow_image=None, wetness_image=None,
+def terrain_material(mat_name, flow_image=None, wetness_image=None,
                      terrain_size=None):
-    """A multi-layer terrain wrapper (S_TerrainMaster), optionally with per-layer texture sets
-    and the baked flow/wetness maps.
-
-    layer_sets maps a layer index to a texture-set name. Each set's triplanar maps feed that
-    layer's Albedo/Roughness map inputs and its detail height; the blended detail height across
-    all layers drives one Bump node into the Principled normal (a single terrain normal, no
-    per-layer tangent problem). Colour still tints; a newly textured layer defaults to a white
-    tint and Roughness 1 so its map reads at face value.
+    """A multi-layer terrain wrapper (S_TerrainMaster): solid per-layer tints plus the baked
+    flow/wetness maps. Each layer's look is its solid Base Color (no image texture path).
 
     flow_image / wetness_image are the baked drainage maps (siblings of the heightmap). When
     given, they are sampled per-terrain by object-space XY (UV = pos.xy/size + 0.5, matching the
     heightmap_terrain displacement) and fed into the master's Flow Map / Wetness Map inputs, so a
     layer's Flow mask and the terrain wetness key off the terrain's own drainage."""
     master = terrain_master_group()
-    ls = layer_sets or {}
     size = float(terrain_size or 90.0)
-    sig = ("terrain|" + ",".join(f"{i}:{ls[i]}" for i in sorted(ls))
+    sig = ("terrain|"
            + ("|flow" if flow_image is not None else "")
            + ("|wet" if wetness_image is not None else ""))
 
@@ -2093,24 +2068,6 @@ def terrain_material(mat_name, layer_sets=None, flow_image=None, wetness_image=N
         return uvw.outputs["Vector"]
 
     def wire(nt, grp, bsdf, old_sig):
-        prev = old_sig or ""
-        for i in sorted(ls):
-            ts = nt.nodes.new("ShaderNodeGroup")
-            ts.name = f"TexSet{i}"
-            ts.node_tree = texture_set_group(ls[i])
-            ts.location = (-520, -180 - i * 240)
-            nt.links.new(ts.outputs["Base Color"], grp.inputs[f"L{i} Albedo Map"])
-            nt.links.new(ts.outputs["Roughness"], grp.inputs[f"L{i} Roughness Map"])
-            nt.links.new(ts.outputs["Height"], grp.inputs[f"L{i} Detail Height"])
-            if f"{i}:{ls[i]}" not in prev:  # newly textured -> show the map at face value
-                grp.inputs[f"L{i} Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-                grp.inputs[f"L{i} Roughness"].default_value = 1.0
-        if ls:  # one bump from the blended detail height drives the terrain normal
-            bump = nt.nodes.new("ShaderNodeBump")
-            bump.location = (80, -260)
-            bump.inputs["Strength"].default_value = 0.3
-            nt.links.new(grp.outputs["Height"], bump.inputs["Height"])
-            nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
         # Baked drainage maps: sample by the shared object-space UV and feed the master.
         if flow_image is not None or wetness_image is not None:
             uv = _map_uv(nt)
@@ -2182,213 +2139,6 @@ def assign_material(obj, mat):
         # leaves snow_cover and the geometry untouched, it only tags the faces.
         obj.modifiers.move(list(obj.modifiers).index(mod), len(obj.modifiers) - 1)
     return True
-
-
-# BobShaders texture sets (S3). A texture set is a folder under library/textures/<name>/ with
-# conventionally named maps (*_basecolor, *_roughness, *_normal, *_height, *_ao, *_metallic).
-# The default surface is still a solid tint; a set is optional and layers on top. Triplanar
-# is Blender's built-in BOX projection on the Image Texture node (world-projected, no UVs, so
-# it works on terrain), and the surface normal comes from a Bump node fed by the height map
-# (robust on un-UV'd meshes, unlike a tangent-space normal map). Colour is a tint: the master
-# multiplies Base Color into the albedo map, so white leaves the texture unchanged.
-TEXTURE_SET_PREFIX = "S_TextureSet_"
-_TRIPLANAR_BLEND = 0.3  # BOX projection_blend: 0 sharp seams, 1 soft (build-time property)
-# Anti-tiling (F1): a triplanar repeat betrays itself two ways over a big terrain - the pattern
-# repeats at a distance (far), and the exact same tile reads up close (near). Two build-time
-# frequencies fix both: a DETAIL sample of every map at a lower frequency (bigger features) is
-# blended with the base sample (Detail Blend), so no single repeat dominates near or mid; and a
-# low-frequency world MACRO noise modulates the albedo brightness (Macro Amount) so the far field
-# stops reading as one flat tiled sheet. Both are live knobs, default on but gentle.
-_DETAIL_SCALE = 0.28  # the detail sample's relative frequency (lower = bigger, slower-repeating)
-_MACRO_SCALE = 0.08   # the macro brightness noise frequency (low = large patches)
-_FAR_SCALE = 0.008    # the distant sample's relative frequency (very low: ~no repeat far off)
-
-# role -> filename suffix aliases (matched case-insensitively against the file stem).
-_ROLE_SUFFIX = {
-    "basecolor": ("basecolor", "albedo", "diffuse", "diff", "color", "col"),
-    "roughness": ("roughness", "rough"),
-    "metallic": ("metallic", "metalness", "metal"),
-    "normal": ("normal", "nor_gl", "nor"),
-    "height": ("height", "displacement", "disp"),
-    "ao": ("ao", "ambientocclusion", "occlusion"),
-}
-_IMG_EXT = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff")
-_DATA_ROLES = ("roughness", "metallic", "normal", "height")  # Non-Color
-
-
-def _find_maps(directory):
-    """Map role -> absolute file path for the maps present in a texture-set folder."""
-    found = {}
-    if not directory or not os.path.isdir(directory):
-        return found
-    files = [f for f in os.listdir(directory)
-             if os.path.splitext(f)[1].lower() in _IMG_EXT]
-    for role, suffixes in _ROLE_SUFFIX.items():
-        for f in files:
-            stem = os.path.splitext(f)[0].lower()
-            # Require the documented `<name>_<map>` separator (or the bare map name), so a short
-            # alias like "col"/"nor"/"ao" can't mid-match an unrelated filename.
-            if any(stem.endswith("_" + s) or stem == s for s in suffixes):
-                found[role] = os.path.join(directory, f)
-                break
-    return found
-
-
-def texture_set_dir(name):
-    """The library/textures/<name> folder, resolved from this file's repo location."""
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(repo, "library", "textures", name)
-
-
-def texture_set_group(name, directory=None):
-    """A cached per-set group that triplanar-samples the set's maps and outputs Base Color
-    (albedo * AO), Roughness, Metallic, Normal (bump from height), and Height. Cached by name
-    (the images are node properties, not sockets, so the group is per set, like the ground-fog
-    material). Scale is a live knob (Mapping scale); the triplanar blend is a build property."""
-    gname = TEXTURE_SET_PREFIX + name
-    g, _fresh = _cached_group(gname)
-    if not _fresh:
-        return g
-    maps = _find_maps(directory if directory is not None else texture_set_dir(name))
-    _gin(g, "Scale", "NodeSocketFloat", 1.0, 0.0)
-    _gin(g, "Bump Strength", "NodeSocketFloat", 0.3, 0.0, 10.0)
-    _gin(g, "Detail Blend", "NodeSocketFloat", 0.4, 0.0, 1.0)  # anti-tiling detail-scale mix
-    _gin(g, "Macro Amount", "NodeSocketFloat", 0.3, 0.0, 1.0)  # anti-tiling macro brightness
-    # Near-far anti-tiling: ramp the de-tile with camera distance (0 = off).
-    _gin(g, "Distance Fade", "NodeSocketFloat", 0.7, 0.0, 1.0)
-    _gin(g, "Fade Near", "NodeSocketFloat", 15.0, 0.0)
-    _gin(g, "Fade Far", "NodeSocketFloat", 120.0, 0.0)
-    _gout(g, "Base Color", "NodeSocketColor")
-    _gout(g, "Roughness", "NodeSocketFloat")
-    _gout(g, "Metallic", "NodeSocketFloat")
-    _gout(g, "Normal", "NodeSocketVector")
-    _gout(g, "Height", "NodeSocketFloat")
-    gi = g.nodes.new("NodeGroupInput")
-    gi.location = (-1000, 0)
-    go = g.nodes.new("NodeGroupOutput")
-    go.location = (700, 0)
-    I, O = gi.outputs, go.inputs
-
-    geo = g.nodes.new("ShaderNodeNewGeometry")
-    geo.location = (-1000, 300)
-    cs = g.nodes.new("ShaderNodeCombineXYZ")
-    cs.location = (-800, 120)
-    for ax in ("X", "Y", "Z"):
-        g.links.new(I["Scale"], cs.inputs[ax])
-    mapping = g.nodes.new("ShaderNodeMapping")
-    mapping.location = (-620, 260)
-    g.links.new(geo.outputs["Position"], mapping.inputs["Vector"])
-    g.links.new(cs.outputs["Vector"], mapping.inputs["Scale"])
-
-    # A second, lower-frequency mapping for the anti-tiling detail sample (Scale * _DETAIL_SCALE).
-    dscale = _mmath(g, "MULTIPLY", I["Scale"], _DETAIL_SCALE, (-800, -220))
-    dcs = g.nodes.new("ShaderNodeCombineXYZ")
-    dcs.location = (-800, -320)
-    for ax in ("X", "Y", "Z"):
-        g.links.new(dscale, dcs.inputs[ax])
-    detail_mapping = g.nodes.new("ShaderNodeMapping")
-    detail_mapping.location = (-620, -320)
-    g.links.new(geo.outputs["Position"], detail_mapping.inputs["Vector"])
-    g.links.new(dcs.outputs["Vector"], detail_mapping.inputs["Scale"])
-
-    # A third, very-low-frequency mapping for the distant sample (Scale * _FAR_SCALE). Its repeat
-    # period is so large it does not read as a tile across the far field; the near/mid de-tile
-    # still tiles, so we blend TO this only with distance.
-    fscale = _mmath(g, "MULTIPLY", I["Scale"], _FAR_SCALE, (-800, -420))
-    fcs = g.nodes.new("ShaderNodeCombineXYZ")
-    fcs.location = (-800, -460)
-    for ax in ("X", "Y", "Z"):
-        g.links.new(fscale, fcs.inputs[ax])
-    far_mapping = g.nodes.new("ShaderNodeMapping")
-    far_mapping.location = (-620, -460)
-    g.links.new(geo.outputs["Position"], far_mapping.inputs["Vector"])
-    g.links.new(fcs.outputs["Vector"], far_mapping.inputs["Scale"])
-
-    # Near-far de-tiling: a triplanar repeat reads fine up close but betrays itself as an obvious
-    # tiled sheet in the distance. df ramps 0 (near) -> 1 (far) over Fade Near..Fade Far by camera
-    # View Distance; box2 blends the near/mid de-tile toward the very-low-frequency far sample by
-    # df, so the repeat washes out with distance. df = 0 near, so the near field is unchanged.
-    cam = g.nodes.new("ShaderNodeCameraData")
-    cam.location = (-1000, -560)
-    df = _mmath(g, "MULTIPLY",
-                _mrange(g, cam.outputs["View Distance"], I["Fade Near"], I["Fade Far"],
-                        0.0, 1.0, (-800, -560)),
-                I["Distance Fade"], (-620, -560))
-    eff_macro = _lerp(g, I["Macro Amount"], 0.85, df, (-440, -640))
-
-    def _sample(path, role, loc, map_node):
-        img = bpy.data.images.load(path, check_existing=True)
-        if role in _DATA_ROLES:
-            img.colorspace_settings.name = "Non-Color"
-        t = g.nodes.new("ShaderNodeTexImage")
-        t.image = img
-        t.projection = "BOX"
-        t.projection_blend = _TRIPLANAR_BLEND
-        t.extension = "REPEAT"
-        t.location = loc
-        g.links.new(map_node.outputs["Vector"], t.inputs["Vector"])
-        return t
-
-    def box(path, role, loc):
-        """A single base-scale triplanar sample (node)."""
-        return _sample(path, role, loc, mapping)
-
-    def box2(path, role, loc):
-        """A de-tiled sample (socket): the base-scale sample blended with a lower-frequency
-        detail-scale sample by Detail Blend (near/mid de-tile), then blended toward a very-low-
-        frequency far sample by the camera-distance factor df (so the far field stops tiling)."""
-        base = _sample(path, role, loc, mapping).outputs["Color"]
-        detail = _sample(path, role, (loc[0], loc[1] + 150), detail_mapping).outputs["Color"]
-        near = _mixcol(g, I["Detail Blend"], base, detail, (loc[0] + 200, loc[1] + 40))
-        far = _sample(path, role, (loc[0], loc[1] + 300), far_mapping).outputs["Color"]
-        return _mixcol(g, df, near, far, (loc[0] + 380, loc[1] + 20))
-
-    def const_col(rgb, loc):
-        n = g.nodes.new("ShaderNodeRGB")
-        n.outputs[0].default_value = (*rgb, 1.0)
-        n.location = loc
-        return n.outputs[0]
-
-    def const_val(v, loc):
-        n = g.nodes.new("ShaderNodeValue")
-        n.outputs[0].default_value = v
-        n.location = loc
-        return n.outputs[0]
-
-    # Albedo * AO, de-tiled, then macro brightness break-up (AO folded in here; anti-tiling F1).
-    if "basecolor" in maps:
-        albedo = box2(maps["basecolor"], "basecolor", (-300, 400))
-        if "ao" in maps:
-            ao = box(maps["ao"], "ao", (-300, 200)).outputs["Color"]
-            albedo = _vmul(g, albedo, ao, (-60, 380))
-        albedo = _macro_break(g, albedo, eff_macro, _MACRO_SCALE, (140, 400))
-    else:
-        albedo = const_col((1.0, 1.0, 1.0), (-60, 400))
-    g.links.new(albedo, O["Base Color"])
-
-    # Roughness / Metallic: a Color->Float link auto-converts (the maps are greyscale). Roughness
-    # is de-tiled like the albedo; metallic is usually flat, so a single sample is enough.
-    rough = box2(maps["roughness"], "roughness", (-300, 40)) \
-        if "roughness" in maps else const_val(1.0, (-60, 40))
-    g.links.new(rough, O["Roughness"])
-    metal = box(maps["metallic"], "metallic", (-300, -140)).outputs["Color"] \
-        if "metallic" in maps else const_val(1.0, (-60, -140))
-    g.links.new(metal, O["Metallic"])
-
-    # Height and the bump-derived normal (works without UVs/tangents). De-tiling the height also
-    # de-tiles the bump normal, so the surface relief stops repeating in step with the albedo.
-    if "height" in maps:
-        h = box2(maps["height"], "height", (-300, -320))
-        g.links.new(h, O["Height"])
-        bump = g.nodes.new("ShaderNodeBump")
-        bump.location = (300, -260)
-        g.links.new(I["Bump Strength"], bump.inputs["Strength"])
-        g.links.new(h, bump.inputs["Height"])
-        g.links.new(bump.outputs["Normal"], O["Normal"])
-    else:
-        g.links.new(const_val(0.0, (-60, -320)), O["Height"])
-        g.links.new(geo.outputs["Normal"], O["Normal"])
-    return g
 
 
 def _vmul(g, a, b, loc):

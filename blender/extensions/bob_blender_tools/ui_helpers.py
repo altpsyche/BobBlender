@@ -71,6 +71,26 @@ def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
 
 
+def staged_preset_row(layout, data, prop, op_idname, text="Preset", note=None,
+                      icon=STRUCTURAL_ICON, apply_text=None):
+    """A stage-then-Apply preset (P3/P4): a dropdown that only STAGES the choice on `data.prop`,
+    and a separate Apply button that commits it. The honest idiom for a heavy preset (one that
+    rebuilds subsystems), so nothing fires on the pick alone: pick, then press Apply.
+
+    Contrast preset_row (operator_menu_enum), which fires instantly on the pick. The operator
+    reads the staged value from `data.prop` itself, so it takes no enum argument here.
+    apply_text overrides the button label (defaults to "Apply <text>").
+    """
+    col = layout.column(align=True)
+    col.prop(data, prop, text=text)
+    op = col.operator(op_idname, text=apply_text or f"Apply {text}", icon=icon)
+    if note:
+        cap = col.row()
+        cap.enabled = False
+        cap.label(text=note)
+    return op
+
+
 def seed_row(layout, data, prop, op_idname, text="Seed", op_props=None):
     """The one seed idiom: the seed value and a reshuffle button on one row, marked with
     SEED_ICON so a reshuffle reads distinctly from a structural rebuild.

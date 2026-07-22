@@ -155,55 +155,53 @@ SEASON_APPLY = {
                "build_snow": True},
 }
 
-# Whole-scene presets: one pick sets the shared world state (bbt_env) and seeds each
-# named subsystem, building any that are missing (at the current quality, so a Preview
-# pick stays cheap). A subsystem set to None is left alone, not deleted. `fog` is
+# Sky Looks: one pick sets the SKY/atmosphere mood only (time of day, weather, cloud cover,
+# wind) and seeds each named subsystem, building any that are missing (at the current quality,
+# so a Preview pick stays cheap). A subsystem set to None is left alone, not deleted. `fog` is
 # (mode, preset); the others are a preset key.
+#
+# A Sky Look deliberately does NOT touch season/snow/wetness/temperature: those are the
+# seasonal state owned solely by Season + Apply Season (SEASON_APPLY above). Ground wetting for
+# a rainy/stormy look comes from the `weather` enum, which drives every BobShader's wetness
+# live (materials.env_state_group), so a Look sets the mood and Season owns the ground.
 SCENE_PRESETS = {
     "clear_day": {
         "label": "Clear Day", "desc": "High midday sun, a few thin clouds",
-        "env": {"time_of_day": 13.0, "weather": "clear", "season": "summer",
-                "cloud_cover": 0.15, "snow": 0.0, "wetness": 0.0,
-                "temperature": 24.0, "wind_direction": 90.0, "wind_strength": 1.5},
+        "env": {"time_of_day": 13.0, "weather": "clear",
+                "cloud_cover": 0.15, "wind_direction": 90.0, "wind_strength": 1.5},
         "clouds": "clear", "fog": None, "rain": None, "motes": None},
     "golden_hour": {
         "label": "Golden Hour", "desc": "Low warm sun, scattered cloud, amber motes",
-        "env": {"time_of_day": 18.5, "weather": "clear", "season": "summer",
-                "cloud_cover": 0.30, "snow": 0.0, "wetness": 0.0,
-                "temperature": 20.0, "wind_direction": 120.0, "wind_strength": 1.0},
+        "env": {"time_of_day": 18.5, "weather": "clear",
+                "cloud_cover": 0.30, "wind_direction": 120.0, "wind_strength": 1.0},
         "clouds": "scattered", "fog": None, "rain": None, "motes": "amber"},
     "overcast": {
         "label": "Overcast", "desc": "Flat grey blanket, still air",
-        "env": {"time_of_day": 12.0, "weather": "overcast", "season": "autumn",
-                "cloud_cover": 0.85, "snow": 0.0, "wetness": 0.20,
-                "temperature": 12.0, "wind_direction": 200.0, "wind_strength": 2.0},
+        "env": {"time_of_day": 12.0, "weather": "overcast",
+                "cloud_cover": 0.85, "wind_direction": 200.0, "wind_strength": 2.0},
         "clouds": "overcast", "fog": None, "rain": None, "motes": None},
     "storm": {
         "label": "Storm", "desc": "Dark deep cloud, heavy rain, strong wind",
-        "env": {"time_of_day": 16.0, "weather": "storm", "season": "autumn",
-                "cloud_cover": 0.95, "snow": 0.0, "wetness": 0.9,
-                "temperature": 9.0, "wind_direction": 210.0, "wind_strength": 7.0},
+        "env": {"time_of_day": 16.0, "weather": "storm",
+                "cloud_cover": 0.95, "wind_direction": 210.0, "wind_strength": 7.0},
         "clouds": "storm", "fog": ("height_fog", "valley"),
         "rain": "downpour", "motes": None},
     "foggy_dawn": {
         "label": "Foggy Dawn", "desc": "Low sun through a valley of fog",
-        "env": {"time_of_day": 6.5, "weather": "fog", "season": "autumn",
-                "cloud_cover": 0.40, "snow": 0.0, "wetness": 0.30,
-                "temperature": 7.0, "wind_direction": 160.0, "wind_strength": 0.5},
+        "env": {"time_of_day": 6.5, "weather": "fog",
+                "cloud_cover": 0.40, "wind_direction": 160.0, "wind_strength": 0.5},
         "clouds": "scattered", "fog": ("height_fog", "valley"),
         "rain": None, "motes": None},
     "dust_storm": {
         "label": "Dust Storm", "desc": "Hazy sky, dust driven on a hot wind",
-        "env": {"time_of_day": 15.0, "weather": "cloudy", "season": "summer",
-                "cloud_cover": 0.25, "snow": 0.0, "wetness": 0.0,
-                "temperature": 34.0, "wind_direction": 250.0, "wind_strength": 6.0},
+        "env": {"time_of_day": 15.0, "weather": "cloudy",
+                "cloud_cover": 0.25, "wind_direction": 250.0, "wind_strength": 6.0},
         "clouds": "scattered", "fog": ("noise_fog", "banks"),
         "rain": None, "motes": "dust"},
     "winter": {
-        "label": "Winter", "desc": "Cold overcast, falling snow, white ground",
-        "env": {"time_of_day": 11.0, "weather": "snow", "season": "winter",
-                "cloud_cover": 0.80, "snow": 0.7, "wetness": 0.05,
-                "temperature": -4.0, "wind_direction": 300.0, "wind_strength": 2.5},
+        "label": "Winter", "desc": "Cold overcast sky, falling snow motes",
+        "env": {"time_of_day": 11.0, "weather": "snow",
+                "cloud_cover": 0.80, "wind_direction": 300.0, "wind_strength": 2.5},
         "clouds": "overcast", "fog": None, "rain": None, "motes": "snow"},
 }
 
@@ -417,6 +415,63 @@ def _install_snow_driver(surface, scene):
         surface.update_tag()
 
 
+# --- Live sun: reposition the Sun lamp + sky node from the world state whenever a geographic field
+# (time/date/place, via env's geo-hook) or a sun override (this panel's own props) is edited, so the
+# sun moves with no Build Sky press. The sun position is a nonlinear solar calc, so it cannot be a
+# driver (and a custom-function pydriver breaks on untrusted files); a lightweight reposition runs on
+# each edit instead. No node rebuild: it just sets the sun rotation/energy + the sky node sun angle,
+# the same values a Build Sky would compute. ---
+_solar = None
+
+
+def _reposition_sun(scene):
+    """Aim the existing Sun lamp + set the sky node's sun angle from the current world state
+    (geographic solar model, or the manual override). A no-op when no sun has been built.
+    Cheap: no node-tree rebuild, so it is safe to call on every geographic edit."""
+    import math
+    global _solar
+    server._ensure_path()
+    from bbmcp import world as W
+    if _solar is None:
+        from bbmcp import solar as _s
+        _solar = _s
+    sun = bpy.data.objects.get(W.SUN_NAME)
+    env = getattr(scene, "bbt_env", None)
+    if sun is None or env is None:
+        return
+    fm = getattr(scene, "bbt_firmament", None)
+    if fm is not None and fm.use_override:
+        el, az = fm.override_elevation, fm.override_azimuth
+    else:
+        pos = _solar.sun_position(env.latitude, env.longitude, int(env.year), int(env.month),
+                                  int(env.day), env.time_of_day, utc_offset=env.utc_offset)
+        el, az = pos["elevation"], pos["azimuth"]
+    W._place_sun(sun, el, az,
+                 strength=(fm.sun_strength if fm is not None else 2.0),
+                 angle_deg=(fm.sun_angle if fm is not None else 0.545))
+    world = scene.world
+    tree = world.node_tree if world is not None and world.use_nodes else None
+    sky = tree.nodes.get(W.SKY_NODE) if tree is not None else None
+    if sky is not None:
+        sky.sun_elevation = math.radians(el)
+        sky.sun_rotation = math.radians(az)
+        tree.update_tag()
+    sun.update_tag()
+
+
+def _sun_live_update(scene):
+    """Reposition the sun on a geographic or override edit, when Live Environment is on. The
+    env geo-hook (bbt_env fields) and the override-prop callbacks (this panel) both route here."""
+    if scene is None or not _live_env_on(scene):
+        return
+    _reposition_sun(scene)
+
+
+def _on_sun_override_change(self, context):
+    """Update callback on this panel's sun-override props: re-place the sun live."""
+    _sun_live_update(getattr(context, "scene", None) or getattr(bpy.context, "scene", None))
+
+
 def _firmament_wind_objects(fm):
     """The built clouds, fog, rain, and mote objects (those that exist)."""
     names = (fm.cloud_object, fm.fog_object, fm.rain_object, fm.mote_object)
@@ -433,6 +488,9 @@ def _apply_world(scene):
     if fm is None:
         return
     live = _live_env_on(scene)
+    # Live sun: place it from the current world state now; msgbus keeps it live on later edits.
+    if live:
+        _reposition_sun(scene)
     clouds = bpy.data.objects.get(fm.cloud_object)
     for obj in _firmament_wind_objects(fm):
         extra = _CLOUD_EXTRA if obj is clouds else ()
@@ -452,22 +510,33 @@ def _apply_world(scene):
 class BBT_FirmamentProps(PropertyGroup):
     """Firmament's own UI and subsystem state (not the shared world)."""
 
-    # Sun override on top of the geographic position.
+    # Sky Look: the staged pick for the whole-atmosphere preset (applied by Apply Sky Look, not
+    # on the pick). Owns only sky mood (time/weather/cloud/wind + subsystems), never the season.
+    sky_look: EnumProperty(
+        name="Sky Look",
+        items=[(k, v["label"], v["desc"]) for k, v in SCENE_PRESETS.items()],
+        description="A whole-sky mood to stage; press Apply Sky Look to commit it")
+
+    # Sun override on top of the geographic position. update=_on_sun_override_change re-places
+    # the sun live, matching the geographic fields' live behaviour.
     use_override: BoolProperty(
         name="Manual Sun", default=False,
-        description="Set the sun angle by hand instead of from time and place")
+        description="Set the sun angle by hand instead of from time and place",
+        update=_on_sun_override_change)
     override_elevation: FloatProperty(
         name="Elevation", default=45.0, min=-90.0, max=90.0,
-        description="Degrees above the horizon")
+        description="Degrees above the horizon", update=_on_sun_override_change)
     override_azimuth: FloatProperty(
         name="Azimuth", default=180.0, min=0.0, max=360.0,
-        description="Degrees clockwise from north")
+        description="Degrees clockwise from north", update=_on_sun_override_change)
 
     # Sun light.
-    sun_strength: FloatProperty(name="Sun Strength", default=2.0, min=0.0)
+    sun_strength: FloatProperty(name="Sun Strength", default=2.0, min=0.0,
+                                update=_on_sun_override_change)
     sun_angle: FloatProperty(
         name="Sun Size", default=0.545, min=0.0, max=20.0,
-        description="Angular diameter in degrees; larger softens shadows")
+        description="Angular diameter in degrees; larger softens shadows",
+        update=_on_sun_override_change)
     sun_disc: BoolProperty(
         name="Show Sun Disc", default=False,
         description="Draw the sky's sun disc. Off by default so the lamp lights "
@@ -562,6 +631,9 @@ class BBT_OT_firmament_build_sky(Operator):
             "turbidity": fm.turbidity, "ground_albedo": fm.ground_albedo,
         }
         res = _apply([{"op": "build_sky", "params": params}])
+        # A rebuild recreates the sky node (dropping its drivers) and resets the sun; re-apply the
+        # world so the live sun drivers are reinstalled and time/place stay live from here.
+        world_panel.apply_all(context.scene)
         self.report({"INFO"}, f"Sky: {res[0].get('info', '')}")
         return {"FINISHED"}
 
@@ -932,16 +1004,13 @@ class BBT_OT_firmament_apply_season(Operator):
 
 class BBT_OT_firmament_scene_preset(Operator):
     bl_idname = "bob_blender_tools.firmament_scene_preset"
-    bl_label = "Scene Preset"
-    bl_description = "Set the whole atmosphere in one pick (context plus each subsystem)"
+    bl_label = "Apply Sky Look"
+    bl_description = ("Apply the staged Sky Look: set the sky mood (time, weather, cloud cover, "
+                      "wind) and seed each atmosphere subsystem. Does not touch the season")
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: EnumProperty(
-        name="Preset",
-        items=[(k, v["label"], v["desc"]) for k, v in SCENE_PRESETS.items()])
-
     def execute(self, context):
-        p = SCENE_PRESETS[self.preset]
+        p = SCENE_PRESETS[context.scene.bbt_firmament.sky_look]
         env = _env.get_env(context.scene)
         fm = context.scene.bbt_firmament
         for key, val in p["env"].items():
@@ -973,7 +1042,7 @@ class BBT_PT_firmament(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 5  # after the pipeline stages (docs/UX-REDESIGN.md section 4, docs/SPLINES.md 5)
+    bl_order = 6  # after the pipeline stages (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1262,20 +1331,26 @@ CLASSES = (
 
 
 def register():
-    global _env
+    global _env, _solar
     server._ensure_path()
     from bbmcp import env
     _env = env
+    _solar = None  # rebound lazily by the driver function (survives a Reload Builders)
     env.register()  # BobFirmament owns and registers the shared world state
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_firmament = bpy.props.PointerProperty(type=BBT_FirmamentProps)
+    # Live sun: subscribe the reposition to the shared env's geographic-change hook, so editing
+    # time/date/place re-places the sun (the override props carry their own update callback).
+    _env.register_geo_hook(_sun_live_update)
     # Subscribe the atmosphere applier so the World master toggle / quality drive it (P6 scaling).
     world_panel.register_applier(_apply_world)
 
 
 def unregister():
     world_panel.unregister_applier(_apply_world)
+    if _env is not None:
+        _env.unregister_geo_hook(_sun_live_update)
     del bpy.types.Scene.bbt_firmament
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
