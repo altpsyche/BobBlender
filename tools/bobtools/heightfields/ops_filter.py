@@ -18,10 +18,14 @@ def terrace(h, xp, steps=6.0, sharpness=0.7, tilt=0.0):
     scaled = h * s
     base = xp.floor(scaled)
     frac = scaled - base
-    # smoothstep the riser; sharpness pushes the tread flat
+    # The riser occupies the top (1 - sharpness) fraction of each tread; below it the tread is
+    # FLAT. sharpness=0 -> the riser spans the whole tread (a soft ramp, barely terraced);
+    # sharpness->1 -> a thin sharp riser with a wide flat bench (hard mesas/plateaus).
     k = min(max(float(sharpness), 0.0), 0.999)
-    eased = frac * frac * (3 - 2 * frac)
-    shaped = base + (1.0 - k) * frac + k * eased
+    w = max(1.0 - k, 1e-3)
+    r = xp.clip((frac - (1.0 - w)) / w, 0.0, 1.0)
+    riser = r * r * (3.0 - 2.0 * r)   # smoothstep riser: rounded shoulders, no aliasing
+    shaped = base + riser
     terr = shaped / s
     return (1.0 - tilt) * terr + tilt * h
 

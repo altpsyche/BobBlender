@@ -47,10 +47,15 @@ def _value_noise(xp, x, y, freq, seed):
     return (v00 * (1 - sx) + v10 * sx) * (1 - sy) + (v01 * (1 - sx) + v11 * sx) * sy
 
 
-def dunes(h, xp, seed=0, wind=35.0, frequency=14.0, sharpness=2.0, warp=0.12,
+def dunes(h, xp, seed=0, wind=35.0, frequency=7.0, sharpness=0.5, warp=0.12,
           variation=0.4, mix="add", amount=0.5):
     """Directional wind-formed dunes: parallel asymmetric ridges along the wind direction,
-    warped and amplitude-modulated by low-frequency noise so they meander like a real sand sea."""
+    warped and amplitude-modulated by low-frequency noise so they meander like a real sand sea.
+
+    Profile is a real transverse-dune section: a long gentle windward (stoss) slope rising to a
+    ROUNDED crest, then a short steep lee (slip face). `sharpness` in [0, 1] steepens the whole
+    dune (shrinks the stoss fraction) without ever spiking the crest to a fin -- the crest is
+    smoothstep-rounded, so higher sharpness reads as steeper, taller dunes, not knife-edges."""
     x, y = _coords(xp, h.shape[0])
     a = np.radians(wind)
     # warp the projection so dune crests meander
@@ -58,8 +63,21 @@ def dunes(h, xp, seed=0, wind=35.0, frequency=14.0, sharpness=2.0, warp=0.12,
     wy = _value_noise(xp, x, y, 3.0, seed + 23) - 0.5
     proj = (x + warp * wx) * np.cos(a) + (y + warp * wy) * np.sin(a)
     phase = (proj * frequency) % 1.0
-    # asymmetric crest: gentle stoss, steep lee (sawtooth raised to sharpness)
-    ridge = (1.0 - xp.abs(2.0 * phase - 1.0)) ** sharpness
+    # Real transverse-dune section across one wavelength, downwind:
+    #   [0, stoss)          long gentle windward slope, smoothstep-rounded toe rising to the brink
+    #   [stoss, lee_end)    short STEEP lee (slip face) dropping brink -> 0
+    #   [lee_end, 1)        flat interdune corridor (bare sand between dunes)
+    # `sharpness` in [0, 1] lengthens the windward run and shortens the lee, so a higher value
+    # reads as a steeper, more sculpted dune -- never a symmetric sine wave, never a spike.
+    s = min(1.0, max(0.0, float(sharpness)))
+    stoss = 0.50 + 0.15 * s                     # windward fraction 0.50 .. 0.65
+    lee_w = (1.0 - stoss) * (0.55 - 0.25 * s)   # lee width shrinks with s -> steeper slip face
+    lee_end = stoss + lee_w
+    w = xp.clip(phase / stoss, 0.0, 1.0)
+    windward = w * w * (3.0 - 2.0 * w)          # gentle S-curve up to the brink
+    ll = xp.clip((phase - stoss) / lee_w, 0.0, 1.0)
+    lee = 1.0 - ll * ll * (3.0 - 2.0 * ll)      # steep drop from the brink to the interdune floor
+    ridge = xp.where(phase < stoss, windward, xp.where(phase < lee_end, lee, 0.0))
     envelope = 1.0 - variation + variation * _value_noise(xp, x, y, 2.0, seed + 5)
     field = ridge * envelope
     if mix == "max":

@@ -189,7 +189,7 @@ _OP_PARAMS = {
 _OP_ADD_DEFAULTS = {
     "noise": {"ridged": 0.4, "detail_strength": 0.5, "octaves": 5, "warp": 70.0,
               "mix": "replace", "amount": 1.0},
-    "dunes": {"wind": 35.0, "frequency": 12.0, "sharpness": 2.2, "variation": 0.5,
+    "dunes": {"wind": 35.0, "frequency": 3.0, "sharpness": 0.5, "variation": 0.5,
               "mix": "replace", "amount": 0.5},
     "voronoi": {"cells": 6.0, "pattern": "mesa", "mix": "multiply", "amount": 0.8},
     "fluvial": {"iterations": 60, "k": 0.015, "diffusion": 0.08,

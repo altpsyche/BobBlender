@@ -45,6 +45,16 @@ def _clampi(v, lo, hi):
     return max(lo, min(hi, int(round(v))))
 
 
+def _preset_salt(name: str) -> int:
+    """A stable per-preset seed offset so two presets that share the same base generator
+    (e.g. the noise-first mountain and lowland stacks) do not resolve to the identical macro
+    skeleton at the same Seed. Deterministic (no hashing that varies by run)."""
+    s = 0
+    for ch in name:
+        s = (s * 131 + ord(ch)) & 0x7fffffff
+    return s % 9973
+
+
 def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed=7):
     """Copy a preset stack and modulate it by the five global knobs.
 
@@ -52,6 +62,7 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
     shift, only the seed is injected). Factors are centred on 0.5 so a knob reads
     the same way on any preset."""
     stack = copy.deepcopy(presets.stack(preset))
+    salt = _preset_salt(preset)
     rugged = 0.4 + 1.2 * float(relief)       # 0.4 .. 1.6  (x1.0 at 0.5)
     erode = 0.5 + 1.0 * float(erosion)       # 0.5 .. 1.5
     meander = 0.3 + 1.4 * float(warp)        # 0.3 .. 1.7
@@ -60,14 +71,14 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
     for i, op in enumerate(stack):
         kind = op["kind"]
         if kind in _SEED_OPS:
-            op["seed"] = int(seed) + 17 * i
+            op["seed"] = int(seed) + 17 * i + salt
         if kind == "noise":
             op["detail_strength"] = op.get("detail_strength", 0.6) * rugged
             op["octaves"] = _clampi(op.get("octaves", 6) + oct_shift, 1, 10)
             op["warp"] = op.get("warp", 60.0) * meander
         elif kind == "dunes":
-            op["sharpness"] = op.get("sharpness", 2.0) * (0.6 + 0.8 * float(relief))
-            op["frequency"] = op.get("frequency", 12.0) * (0.7 + 0.6 * float(detail))
+            op["sharpness"] = op.get("sharpness", 0.5) * (0.6 + 0.8 * float(relief))
+            op["frequency"] = op.get("frequency", 3.0) * (0.7 + 0.6 * float(detail))
             op["warp"] = op.get("warp", 0.14) * meander
         elif kind == "warp":
             op["amount"] = op.get("amount", 0.04) * meander

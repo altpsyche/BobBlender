@@ -9,19 +9,23 @@ family its character.
 These are the neutral, as-authored looks. The five curated global knobs
 (Relief / Detail / Erosion / Warp / Seed) modulate a COPY of the active stack at
 bake time -- see params.resolve_stack -- with every knob at 0.5 reproducing the
-stack exactly as written here. Presets are grouped into four families:
+stack exactly as written here. Presets are grouped into three families:
 
   Mountains       alpine, glacial, foothills
-  Canyons/mesas   canyon, mesa, badlands, plateau
-  Hills/coastal   hills, plains, coastal, islands
+  Lowlands        hills, plains, coastal, islands
   Dunes           dunes, sand_sea
 
-The canyon stack is the flow-accumulation stream-power carver proven to produce
-dendritic incised canyons (see heightfields/ops_erode.fluvial); the others are
-tuned around the same engine. Keep these plain and few.
+The mountain stacks pair ridged-multifractal noise with stream-power fluvial erosion
+(see heightfields/ops_erode.fluvial); the lowlands use gentler versions of the same, with
+falloff shaping coastal and islands. Keep these plain and few.
+
+The Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07: the single
+noise-plus-fluvial engine could not make them read as their landforms, only as look-alike
+eroded hills. They come back when they have real generators (strata, cap-rock, scarp
+retreat). See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
 """
 
-# fluvial defaults shared by the incised families, so each stack states only what
+# fluvial defaults shared by the mountain and lowland stacks, so each states only what
 # differs. fill_iters/acc_iters are drainage-propagation counts; 600-700 covers the
 # longest flow paths at these sizes (the network is resolution-stable, verified by
 # corr(256, 768->256)). sp_m=0.5, sp_n=1.0 is the resolution-invariant stream-power
@@ -53,33 +57,6 @@ STACKS = {
                  recompute=25, fill_iters=600, acc_iters=600),
         {"kind": "smooth", "sigma": 0.8},
     ],
-    # --- Canyons / mesas / badlands / plateaus ---
-    "canyon": [   # the proven dendritic-canyon hero
-        {"kind": "noise", "ridged": 0.5, "detail_strength": 0.6, "octaves": 6, "warp": 60},
-        _fluvial(iterations=100, k=0.02, diffusion=0.05, talus=0.004),
-    ],
-    "mesa": [
-        {"kind": "noise", "ridged": 0.28, "detail_strength": 0.35, "octaves": 4, "warp": 50},
-        {"kind": "voronoi", "cells": 5.0, "pattern": "mesa", "mix": "multiply", "amount": 0.85},
-        {"kind": "terrace", "steps": 5, "sharpness": 0.9,
-         "mask": {"kind": "height", "low": 0.42, "high": 1.0, "falloff": 0.1}},
-        _fluvial(iterations=40, k=0.014, diffusion=0.05, recompute=25,
-                 fill_iters=600, acc_iters=600),
-        {"kind": "thermal", "talus": 0.012, "factor": 0.5, "iterations": 3},
-    ],
-    "badlands": [
-        {"kind": "noise", "ridged": 0.42, "detail_strength": 0.65, "octaves": 7, "warp": 65},
-        _fluvial(iterations=120, k=0.02, sp_n=1.1, diffusion=0.03, talus=0.003),
-        {"kind": "thermal", "talus": 0.006, "factor": 0.4, "iterations": 2},
-    ],
-    "plateau": [
-        {"kind": "noise", "ridged": 0.28, "detail_strength": 0.4, "octaves": 5, "warp": 50},
-        {"kind": "curve", "gamma": 0.7, "contrast": 0.25},
-        {"kind": "terrace", "steps": 4, "sharpness": 0.8,
-         "mask": {"kind": "height", "low": 0.45, "high": 1.0, "falloff": 0.15}},
-        _fluvial(iterations=50, k=0.016, diffusion=0.05, recompute=25,
-                 fill_iters=600, acc_iters=600),
-    ],
     # --- Hills / plains / coastal / islands ---
     "hills": [
         {"kind": "noise", "ridged": 0.15, "detail_strength": 0.4, "octaves": 5, "warp": 90},
@@ -109,17 +86,21 @@ STACKS = {
         {"kind": "thermal", "talus": 0.005, "factor": 0.4, "iterations": 2},
     ],
     # --- Dunes ---
-    "dunes": [
-        {"kind": "dunes", "wind": 35, "frequency": 12, "sharpness": 2.2, "warp": 0.14,
+    "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so
+                 # the tile carries a dozen crests, not two soft mounds; the trailing thermal is a
+                 # single high-talus clip that only knocks off single-pixel spikes and lets the slip
+                 # face settle toward the repose angle -- it must NOT round the whole lee back to a
+                 # blob (the old talus=0.02, 3 iters did exactly that).
+        {"kind": "dunes", "wind": 35, "frequency": 8, "sharpness": 0.62, "warp": 0.14,
          "variation": 0.5, "mix": "replace"},
-        {"kind": "thermal", "talus": 0.02, "factor": 0.5, "iterations": 3},
+        {"kind": "thermal", "talus": 0.06, "factor": 0.5, "iterations": 1},
     ],
-    "sand_sea": [
-        {"kind": "dunes", "wind": 22, "frequency": 7, "sharpness": 2.6, "warp": 0.2,
+    "sand_sea": [   # broader, lower dunes over a large erg with faint underlying sand-sheet noise.
+        {"kind": "dunes", "wind": 22, "frequency": 5, "sharpness": 0.66, "warp": 0.2,
          "variation": 0.6, "mix": "replace"},
         {"kind": "noise", "ridged": 0.1, "detail_strength": 0.25, "octaves": 4, "warp": 100,
-         "mix": "add", "amount": 0.12},
-        {"kind": "thermal", "talus": 0.025, "factor": 0.5, "iterations": 2},
+         "mix": "add", "amount": 0.1},
+        {"kind": "thermal", "talus": 0.06, "factor": 0.5, "iterations": 1},
     ],
 }
 
@@ -131,22 +112,17 @@ DISPLAY = {
     "alpine":    {"height": 22.0, "sea_level": 0.22},
     "glacial":   {"height": 18.0, "sea_level": 0.24},
     "foothills": {"height": 13.0, "sea_level": 0.30},
-    "canyon":    {"height": 20.0, "sea_level": 0.14},
-    "mesa":      {"height": 15.0, "sea_level": 0.20},
-    "badlands":  {"height": 15.0, "sea_level": 0.25},
-    "plateau":   {"height": 16.0, "sea_level": 0.22},
     "hills":     {"height": 9.0,  "sea_level": 0.30},
     "plains":    {"height": 5.0,  "sea_level": 0.32},
     "coastal":   {"height": 12.0, "sea_level": 0.34},
     "islands":   {"height": 14.0, "sea_level": 0.34},
-    "dunes":     {"height": 7.0,  "sea_level": 0.0},
+    "dunes":     {"height": 8.0,  "sea_level": 0.0},
     "sand_sea":  {"height": 9.0,  "sea_level": 0.0},
 }
 
 # Family grouping, for the panel dropdown ordering and docs.
 FAMILIES = {
     "Mountains": ["alpine", "glacial", "foothills"],
-    "Canyons": ["canyon", "mesa", "badlands", "plateau"],
     "Lowlands": ["hills", "plains", "coastal", "islands"],
     "Dunes": ["dunes", "sand_sea"],
 }
