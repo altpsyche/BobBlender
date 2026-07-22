@@ -244,6 +244,107 @@ def deposit(h, xp, *, amount=0.012, iterations=4, cell=1.0,
     return h
 
 
+def _upsample(h, xp, res):
+    """Bilinear resample to res x res. Preserves the macro shape (cliffs, ridges, flat caps) that the
+    coarse stack established, so amplify ADDS finer structure onto it rather than regenerating it."""
+    return _ndimage(xp).zoom(h, res / h.shape[0], order=1, mode="nearest")
+
+
+def _iso_band(xp, res, freq0, seed, octaves=3):
+    """Isotropic Perlin fbm detail band in [-0.5, 0.5], world-sampled. Isotropic gradient noise (not
+    axis-aligned value noise) so the seeded detail does not comb into grid-aligned stripes. Computed
+    in numpy (generate.py is numpy-only) and moved to the backend module by the caller."""
+    from . import generate
+    u = (np.arange(int(res)) + 0.5) / int(res)
+    x, y = np.meshgrid(u, u)
+    n = generate._fbm(x, y, generate._perm(int(seed)), int(octaves), 0.5, float(freq0), ridged=0.0)
+    return xp.asarray(n - 0.5, dtype=xp.float64)
+
+
+def _ripple(h, xp, res, wind_deg, seed):
+    """Wind ripples plus secondary dunelets: two transverse waves along the wind, gently warped so the
+    crest trains meander. The aeolian analogue of the fluvial detail seed; returns ~[-0.5, 0.5]."""
+    from . import ops_generate
+    u = (xp.arange(int(res), dtype=xp.float64) + 0.5) / int(res)
+    x, y = xp.meshgrid(u, u)
+    a = np.radians(float(wind_deg))
+    wx = ops_generate._value_noise(xp, x, y, 4.0, seed + 3) - 0.5
+    wy = ops_generate._value_noise(xp, x, y, 4.0, seed + 9) - 0.5
+    proj = (x + 0.05 * wx) * np.cos(a) + (y + 0.05 * wy) * np.sin(a)
+    ripple = xp.sin(2.0 * np.pi * proj * (res / 12.0))    # ~1 m wavelength on a 90 m tile
+    dunelet = xp.sin(2.0 * np.pi * proj * (res / 40.0))   # superimposed secondary crests
+    return 0.5 * (0.7 * ripple + 0.35 * dunelet)
+
+
+def _slope01(h, xp):
+    """Slope normalised by its 90th percentile, clipped to [0, 1]. Scale-relative so it reads the same
+    at any level of the cascade."""
+    s = _slope(h, xp, 1.0 / h.shape[0])
+    return xp.clip(s / xp.maximum(xp.percentile(s, 90), 1e-9), 0.0, 1.0)
+
+
+def amplify(h, xp, *, mode="fluvial", to=None, strength=0.025, iterations=22, seed=0,
+            wind=30.0, repose=34.0, relief=0.1, cell=1.0, despike=0, diffusion=0.0):
+    """Multi-scale terrain amplification (Schott et al. 2024): grow a coarse field to `to` in
+    resolution-doubling levels, adding erosion-consistent fine detail at each level. Because every
+    level builds deterministically on the previous, a bake to a lower `to` is a faithful low-detail
+    PREFIX of a bake to a higher `to` -- a preview and a full bake register (preview == final).
+
+    Two process modes, so the added detail matches how the landform actually erodes:
+
+      fluvial  upsample, seed an isotropic detail band on slopes, then PURE stream-power incision
+               (no diffusion, no thermal) so rills and gullies emerge while the macro cliffs and
+               ridges stay crisp. For mountains, canyons, mesas, hills.
+      aeolian  upsample, add windward transverse ripples and dunelets, then settle to the sand angle
+               of repose. No stream-power (sand has no rivers). For dunes and sand seas.
+
+    Runs from the field's incoming resolution (the coarse macro) up to `to`; if `to` is None or not
+    larger, the field is returned unchanged. `relief` (the preset's relief ratio) makes the repose
+    settle resolution-correct; `strength` is the detail amplitude in normalised height, decaying per
+    level. `diffusion` > 0 adds hillslope diffusion to the fluvial incision so its channels relax into
+    smooth swales instead of knife-thin notches -- 0 for cliff terrain (mesa, canyon) whose steep
+    faces must stay crisp, a small value for soft lowlands (hills, plains) that have no cliffs to
+    protect. `despike` > 0 runs a small grey-closing at the end to fill any one-cell incision notches
+    that remain."""
+    h = xp.asarray(h, dtype=xp.float64)
+    if to is None or int(to) <= h.shape[0]:
+        return h
+    # normalise the incoming macro to a unit range so `strength` is a consistent fraction of relief
+    h = h - h.min()
+    h = h / xp.maximum(h.max(), 1e-9)
+    res = h.shape[0]
+    lvl = 0
+    while res < int(to):
+        res = min(res * 2, int(to))
+        h = _upsample(h, xp, res)
+        amp = float(strength) * (0.6 ** lvl)
+        if mode == "aeolian":
+            mask = xp.clip(1.0 - _slope01(h, xp) / 0.8, 0.0, 1.0)   # gentle windward, not slip faces
+            h = h + amp * _ripple(h, xp, res, wind, int(seed) + 31 * lvl) * mask
+            h = xp.clip(h, 0.0, None)
+            talus = _talus_for_angle(repose, res, relief)
+            h = thermal(h, xp, talus=talus, factor=0.5, iterations=int(iterations), cell=cell)
+        else:  # fluvial
+            band = _iso_band(xp, res, res / 8.0, int(seed) + 31 * lvl)
+            h = h + amp * band * _slope01(h, xp)
+            h = xp.clip(h, 0.0, None)
+            h = fluvial(h, xp, iterations=int(iterations), k=0.012, sp_m=0.5, sp_n=1.0,
+                        diffusion=float(diffusion), thermal_iters=0, cell=cell, max_delta=0.02,
+                        recompute=max(6, int(iterations) // 2), fill_iters=400, acc_iters=400)
+        lvl += 1
+    if int(despike) > 0:
+        h = _ndimage(xp).grey_closing(h, size=int(despike), mode="nearest")
+    return h
+
+
+def _talus_for_angle(angle_deg, bake_res, relief_ratio):
+    """Local mirror of presets.talus_for_angle (kept here to avoid ops_erode importing presets):
+    the normalised per-cell talus that renders as `angle_deg` at this cascade level's resolution."""
+    import math
+    t = math.tan(math.radians(float(angle_deg)))
+    return t / max(float(relief_ratio) * float(bake_res), 1e-9)
+
+
 def pipe_hydraulic(h, xp, *, iterations=120, rain=0.012, dt=0.12, gravity=9.81,
                    pipe_area=1.0, pipe_len=1.0, cell=1.0,
                    capacity=0.35, dissolve=0.35, deposit=0.35, evaporate=0.05,

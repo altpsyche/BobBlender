@@ -117,6 +117,14 @@
         "kind": "sharpen",
         "amount": 0.35,
         "radius": 1.5
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.025,
+        "iterations": 22,
+        "to": 768,
+        "relief": 0.3
       }
     ],
     "glacial": [
@@ -144,6 +152,14 @@
       {
         "kind": "smooth",
         "sigma": 2.0
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.02,
+        "iterations": 20,
+        "to": 768,
+        "relief": 0.22
       }
     ],
     "foothills": [
@@ -171,6 +187,15 @@
       {
         "kind": "smooth",
         "sigma": 0.8
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.02,
+        "iterations": 20,
+        "diffusion": 0.06,
+        "to": 768,
+        "relief": 0.12
       }
     ],
     "hills": [
@@ -197,6 +222,15 @@
       {
         "kind": "smooth",
         "sigma": 1.0
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.014,
+        "iterations": 16,
+        "diffusion": 0.12,
+        "to": 768,
+        "relief": 0.05
       }
     ],
     "plains": [
@@ -227,6 +261,15 @@
       {
         "kind": "smooth",
         "sigma": 1.2
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.01,
+        "iterations": 12,
+        "diffusion": 0.14,
+        "to": 768,
+        "relief": 0.015
       }
     ],
     "coastal": [
@@ -260,6 +303,15 @@
       {
         "kind": "smooth",
         "sigma": 0.8
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.015,
+        "iterations": 16,
+        "diffusion": 0.12,
+        "to": 768,
+        "relief": 0.05
       }
     ],
     "islands": [
@@ -294,6 +346,15 @@
         "talus": 0.005,
         "factor": 0.4,
         "iterations": 2
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.016,
+        "iterations": 18,
+        "diffusion": 0.1,
+        "to": 768,
+        "relief": 0.08
       }
     ],
     "mesa": [
@@ -316,6 +377,14 @@
         "talus": 0.14,
         "factor": 0.5,
         "iterations": 1
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.025,
+        "iterations": 20,
+        "to": 768,
+        "relief": 0.18
       }
     ],
     "canyon": [
@@ -353,6 +422,14 @@
         "talus": 0.02,
         "factor": 0.5,
         "iterations": 2
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.022,
+        "iterations": 22,
+        "to": 768,
+        "relief": 0.22
       }
     ],
     "dunes": [
@@ -370,6 +447,15 @@
         "factor": 0.5,
         "iterations": 1,
         "talus": 0.07318885816432581
+      },
+      {
+        "kind": "amplify",
+        "mode": "aeolian",
+        "strength": 0.03,
+        "wind": 35,
+        "iterations": 2,
+        "to": 768,
+        "relief": 0.012
       }
     ],
     "sand_sea": [
@@ -396,6 +482,15 @@
         "factor": 0.5,
         "iterations": 1,
         "talus": 0.04622454199852157
+      },
+      {
+        "kind": "amplify",
+        "mode": "aeolian",
+        "strength": 0.03,
+        "wind": 22,
+        "iterations": 2,
+        "to": 768,
+        "relief": 0.019
       }
     ]
   }

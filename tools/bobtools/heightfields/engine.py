@@ -52,6 +52,7 @@ _OPS = {
     "scarp": _wrap(ops_erode.scarp),
     "deposit": _wrap(ops_erode.deposit),
     "thermal": _wrap(ops_erode.thermal),
+    "amplify": _wrap(ops_erode.amplify),
     "channel_seed": _wrap(ops_carve.channel_seed),
     "terrace": _wrap(ops_filter.terrace),
     "warp": _wrap(ops_filter.warp),

@@ -20,7 +20,7 @@ from scipy.ndimage import zoom
 
 from bobtools import heightfields as hf
 from bobtools.heightfields import (
-    backend, engine, erode, generate, io, maps, params, pipeline, presets,
+    backend, engine, erode, generate, io, maps, ops_erode, params, pipeline, presets,
 )
 
 DATA = pathlib.Path(__file__).parent / "data"
@@ -278,7 +278,9 @@ def test_mesa_reads_as_tableland():
     # asserted on its own.
     bk = backend.select("auto")
     def flat_cliff(name):
-        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5), bk, seed=5)
+        # size=256 keeps this a MACRO diagnostic (amplify.to == run resolution, so the cascade
+        # no-ops): the mesa signature is a property of the strata+scarp generator, not the detail pass.
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
         gy, gx = np.gradient(h)
         s = np.hypot(gx, gy)
         return (s < 0.0015).mean(), (s > 0.02).mean()
@@ -295,7 +297,8 @@ def test_canyon_incises_a_plateau():
     # (strata plateau + fluvial hero); a diagnostic, render-verified, not a stat on its own.
     bk = backend.select("auto")
     def flat_deep(name):
-        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5), bk, seed=5)
+        # size=256 keeps this a MACRO diagnostic (the amplify cascade no-ops at the run resolution).
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
         gy, gx = np.gradient(h)
         flat = (np.hypot(gx, gy) < 0.0015).mean()
         deep = (h < np.percentile(h, 85) - 0.25).mean()   # floor well below the rim level
@@ -307,6 +310,87 @@ def test_canyon_incises_a_plateau():
     assert c_flat > 5.0 * a_flat           # far more rim than graded mountains
     assert c_deep > 0.6, c_deep            # deeply incised below the rim
     assert c_deep > m_deep                 # cuts deeper below its rim than a mesa cap
+
+
+# --- Amplification (Schott et al. 2024 multi-scale erosion): the amplify op and its two modes. ---
+
+def _amp_macro(n=96, seed=0):
+    """A synthetic coarse macro: a broad drainable slope with roughness plus a genuinely flat cap, so
+    the amplify tests can check flats survive, detail is added, and only the fluvial mode channelises."""
+    rng = np.random.default_rng(seed)
+    _, xx = np.mgrid[0:n, 0:n]
+    h = 0.7 - 0.5 * (xx / n) + 0.02 * rng.standard_normal((n, n))
+    h[:, : n // 3] = 0.7                       # a flat cap, zero slope
+    return np.clip(h, 0.0, None)
+
+
+def _flat_frac(a, thr=0.002):
+    gy, gx = np.gradient(a)
+    return float((np.hypot(gx, gy) < thr).mean())
+
+
+def _detail_std(a):
+    lap = a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2] - 4 * a[1:-1, 1:-1]
+    return float(lap.std())
+
+
+def _nrm(a):
+    a = a - a.min()
+    return a / max(a.max(), 1e-9)
+
+
+def test_amplify_preview_is_prefix_of_final():
+    # The point of the cascade: a lower-resolution bake is a faithful low-detail PREFIX of a higher
+    # one (preview == final), because each doubling level builds on the previous. Render-verified.
+    bk = backend.select("auto"); xp = bk.xp
+    h = xp.asarray(_amp_macro(64, seed=2))
+    kw = dict(mode="fluvial", strength=0.03, iterations=12, seed=1, relief=0.2)
+    prev = _nrm(bk.asnumpy(ops_erode.amplify(h, xp, to=128, **kw)))
+    fin = _nrm(bk.asnumpy(ops_erode.amplify(h, xp, to=256, **kw)))
+    down = _nrm(zoom(fin, 128 / 256, order=1, mode="nearest"))
+    assert float(np.sqrt(np.mean((down - prev) ** 2))) < 0.05
+
+
+def test_amplify_fluvial_preserves_flats_and_adds_detail():
+    # Fluvial amplify ADDS fine drainage detail on slopes while leaving flat caps flat: a preserve-
+    # and-incise pass, not a smoother or a regenerator. Render-verified on mesa and canyon.
+    bk = backend.select("auto"); xp = bk.xp
+    macro = _amp_macro(96, seed=3)
+    up = zoom(macro, 2, order=1, mode="nearest")
+    out = bk.asnumpy(ops_erode.amplify(xp.asarray(macro), xp, mode="fluvial", to=192,
+                                       strength=0.03, iterations=16, seed=1, relief=0.2))
+    assert _flat_frac(out) > 0.9 * _flat_frac(up)          # the flat cap survives
+    assert _detail_std(out) > 2.0 * _detail_std(up)        # fine detail is added
+
+
+def test_amplify_aeolian_does_not_channelise():
+    # Aeolian amplify (dunes) must NOT carve drainage channels the way fluvial does -- sand has no
+    # rivers. On the same drainable slope, fluvial incises far more below the macro surface than
+    # aeolian. Render-verified: fluvial scarred the dune slip faces, aeolian did not.
+    bk = backend.select("auto"); xp = bk.xp
+    macro = _amp_macro(96, seed=4)
+    up = _nrm(zoom(macro, 2, order=1, mode="nearest"))
+    def scar(mode, it):
+        o = _nrm(bk.asnumpy(ops_erode.amplify(xp.asarray(macro), xp, mode=mode, to=192, strength=0.02,
+                                              iterations=it, seed=1, relief=0.2, wind=30)))
+        return float((o < up - 0.05).mean())
+    assert scar("fluvial", 30) > 2.0 * scar("aeolian", 2)
+
+
+def test_amplify_wiring_macro_and_preview_sizes():
+    # A preset that amplifies runs its macro at AMPLIFY_BASE and previews at AMPLIFY_PREVIEW (a real
+    # climb level, so the preview is a prefix of the full bake); a preset that does not keeps its
+    # whole stack at the bake size and previews at PREVIEW_SIZE.
+    amp_stack = params.build_params({"preset": "alpine", "size": 768})["stack"]
+    assert params.has_amplify(amp_stack)
+    assert params.macro_size(amp_stack, 768) == params.AMPLIFY_BASE
+    assert pipeline._preview_size({"preset": "alpine"}) == params.AMPLIFY_PREVIEW
+    # a stack without amplify runs whole at the bake size and previews at PREVIEW_SIZE (every preset
+    # amplifies now, so the negative case is an explicit non-amplify stack, e.g. a carve-then-erode).
+    plain = [{"kind": "noise"}, {"kind": "fluvial", "iterations": 10}]
+    assert not params.has_amplify(plain)
+    assert params.macro_size(plain, 768) == 768
+    assert pipeline._preview_size({"stack": plain}) == params.PREVIEW_SIZE
 
 
 def test_talus_for_angle_inverts_slope():
@@ -369,7 +453,10 @@ def test_resolution_independence_through_erosion():
     # corr -0.56). Uses a light preset so it runs quickly on CPU.
     bk = backend.select("auto")
     def bake(N):
-        return engine.run_stack(np.zeros((N, N)), params.resolve_stack("hills", seed=5),
+        # size=N pins amplify.to to the run resolution so the cascade no-ops: this asserts the MACRO
+        # is resolution-independent (the property the amplify cascade relies on to register a preview
+        # against a full bake). preview==final of the cascade itself is test_amplify_preview_*.
+        return engine.run_stack(np.zeros((N, N)), params.resolve_stack("hills", seed=5, size=N),
                                 bk, seed=5)
     lo, hi = bake(96), bake(288)
     hi_ds = zoom(hi, 96 / 288, order=1)[:96, :96]

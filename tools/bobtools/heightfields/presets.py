@@ -50,18 +50,25 @@ STACKS = {
         {"kind": "noise", "ridged": 0.62, "detail_strength": 0.7, "octaves": 6, "warp": 70},
         _fluvial(iterations=90, k=0.018, sp_n=1.05, diffusion=0.045, talus=0.004),
         {"kind": "sharpen", "amount": 0.35, "radius": 1.5},
+        # multi-scale amplification: the coarse peaks run cheap at AMPLIFY_BASE, then this climbs to
+        # the bake resolution adding drainage-consistent rills on the faces (preview == final).
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 22},
     ],
     "glacial": [
         {"kind": "noise", "ridged": 0.35, "detail_strength": 0.4, "octaves": 4, "warp": 80},
         _fluvial(iterations=55, k=0.011, diffusion=0.15, talus=0.008, max_delta=0.022,
                  recompute=25, fill_iters=600, acc_iters=600),
         {"kind": "smooth", "sigma": 2.0},
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20},
     ],
     "foothills": [
         {"kind": "noise", "ridged": 0.35, "detail_strength": 0.5, "octaves": 5, "warp": 85},
         _fluvial(iterations=55, k=0.013, diffusion=0.08, talus=0.005,
                  recompute=25, fill_iters=600, acc_iters=600),
         {"kind": "smooth", "sigma": 0.8},
+        # a touch of diffusion: foothills' moderate relief has no cliffs to keep crisp, so relax the
+        # incision so it reads as drainage valleys, not sharp notches.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20, "diffusion": 0.06},
     ],
     # --- Hills / plains / coastal / islands ---
     "hills": [
@@ -69,6 +76,10 @@ STACKS = {
         _fluvial(iterations=40, k=0.01, diffusion=0.12, max_delta=0.025,
                  recompute=40, fill_iters=500, acc_iters=500),
         {"kind": "smooth", "sigma": 1.0},
+        # gentle amplify for soft lowlands: low strength so the incision reads as fine drainage, and
+        # diffusion > 0 relaxes the channels into smooth swales (no cliffs here to keep crisp) so they
+        # do not read as sharp cracks.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.014, "iterations": 16, "diffusion": 0.12},
     ],
     "plains": [
         {"kind": "noise", "ridged": 0.1, "detail_strength": 0.28, "octaves": 4, "warp": 100},
@@ -76,6 +87,7 @@ STACKS = {
         _fluvial(iterations=30, k=0.008, diffusion=0.16, max_delta=0.02,
                  recompute=30, fill_iters=400, acc_iters=400),
         {"kind": "smooth", "sigma": 1.2},
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.010, "iterations": 12, "diffusion": 0.14},
     ],
     "coastal": [
         {"kind": "noise", "ridged": 0.28, "detail_strength": 0.5, "octaves": 5, "warp": 85},
@@ -83,6 +95,7 @@ STACKS = {
         _fluvial(iterations=55, k=0.013, diffusion=0.08, recompute=25,
                  fill_iters=600, acc_iters=600),
         {"kind": "smooth", "sigma": 0.8},
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.015, "iterations": 16, "diffusion": 0.12},
     ],
     "islands": [
         {"kind": "noise", "ridged": 0.38, "detail_strength": 0.55, "octaves": 5, "warp": 90},
@@ -90,6 +103,7 @@ STACKS = {
         _fluvial(iterations=55, k=0.015, diffusion=0.07, recompute=25,
                  fill_iters=600, acc_iters=600),
         {"kind": "thermal", "talus": 0.005, "factor": 0.4, "iterations": 2},
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.016, "iterations": 18, "diffusion": 0.10},
     ],
     # --- Canyons & mesas (real strata + cap-rock scarp / plateau incision, not eroded noise) ---
     "mesa": [   # flat-topped tables and buttes: layered strata dissected by cliff retreat into
@@ -98,6 +112,8 @@ STACKS = {
         {"kind": "scarp", "iterations": 12, "cap_slope": 0.10, "undercut": 0.0015,
          "talus": 0.14, "open_size": 6},
         {"kind": "thermal", "talus": 0.14, "factor": 0.5, "iterations": 1},
+        # amplify the coarse cliffs into fluted rock faces; flat caps carry no slope so they stay flat.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 20},
     ],
     "canyon": [   # dendritic canyons incised into a high layered PLATEAU: flat rims survive, the
                   # stream-power hero cuts confined steep-walled channels, strata show in the walls.
@@ -107,6 +123,8 @@ STACKS = {
          "talus": 0.12, "open_size": 8},
         _fluvial(iterations=120, k=0.024, diffusion=0.03, talus=0.005),
         {"kind": "thermal", "talus": 0.02, "factor": 0.5, "iterations": 2},
+        # amplify the canyon walls into fine vertical rock fluting; flat rims stay flat.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.022, "iterations": 22},
     ],
     # --- Dunes ---
     "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so
@@ -119,6 +137,10 @@ STACKS = {
         # settle the lee to the real sand slip-face repose (~34 deg) at ANY bake resolution: talus is
         # derived from repose_deg, not a fixed value that would clip at a different angle per size.
         {"kind": "thermal", "repose_deg": 34, "factor": 0.5, "iterations": 1},
+        # aeolian amplification: add windward ripples/dunelets and settle to the sand repose (the op
+        # defaults repose to 34 deg). NOT fluvial -- sand has no rivers, so stream-power incision
+        # would scar the slip faces.
+        {"kind": "amplify", "mode": "aeolian", "strength": 0.03, "wind": 35, "iterations": 2},
     ],
     "sand_sea": [   # broader, lower dunes over a large erg with faint underlying sand-sheet noise.
         {"kind": "dunes", "wind": 22, "frequency": 5, "sharpness": 0.66, "warp": 0.2,
@@ -126,6 +148,7 @@ STACKS = {
         {"kind": "noise", "ridged": 0.1, "detail_strength": 0.25, "octaves": 4, "warp": 100,
          "mix": "add", "amount": 0.1},
         {"kind": "thermal", "repose_deg": 34, "factor": 0.5, "iterations": 1},
+        {"kind": "amplify", "mode": "aeolian", "strength": 0.03, "wind": 22, "iterations": 2},
     ],
 }
 

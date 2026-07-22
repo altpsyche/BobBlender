@@ -59,6 +59,9 @@ def build_panel_stacks() -> dict:
     for name in presets.PRESETS:
         stack = presets.stack(name)
         params._resolve_repose(stack, params.DEFAULT_SIZE, presets.relief(name))
+        # An amplify op needs a concrete resolution target (not None) so the editor's custom-stack
+        # bake climbs to the reference resolution instead of returning the coarse macro.
+        params.resolve_amplify_targets(stack, params.DEFAULT_SIZE, presets.relief(name))
         out[name] = stack
     return out
 
