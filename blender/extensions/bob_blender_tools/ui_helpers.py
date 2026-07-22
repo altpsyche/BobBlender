@@ -65,9 +65,16 @@ def structural_action(layout, op_idname, text=None, note=None, icon=STRUCTURAL_I
 
 
 def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
-    """The one preset idiom (P4): an operator_menu_enum showing the operator enum's per-item
-    label + description. Same control and wording for every preset in the suite (terrain,
-    scatter layer, cloud, fog, surface, stack, scene)."""
+    """The INSTANT preset idiom (P4): an operator_menu_enum showing the operator enum's per-item
+    label + description, firing on the pick. Same control and wording for every light preset in
+    the suite (terrain, scatter layer, cloud, fog, rain, mote, surface, stack).
+
+    The one rule (A6), so the two idioms never diverge again:
+    - preset_row (instant, this): a LIGHT look preset that only sets values, reversible, no
+      rebuild. It must not have a heavy side effect on the pick; gate it behind Build if the
+      subsystem it tunes may not exist yet, so picking it never silently builds.
+    - staged_preset_row (stage-then-Apply): reserved for the genuinely HEAVY rebuilds that stand
+      up or replace subsystems (Sky Look, Build Biome, Biome World)."""
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
 
 
@@ -88,6 +95,22 @@ def staged_preset_row(layout, data, prop, op_idname, text="Preset", note=None,
         cap = col.row()
         cap.enabled = False
         cap.label(text=note)
+    return op
+
+
+def select_row(layout, op_idname, text, selected, op_props=None, radio=True):
+    """One "pick this item" row (S6): an operator button that shows its selected state, the shared
+    idiom for every radio list in the suite (Shaders material slots, scatter-asset materials,
+    terrain layer slots). radio adds the RADIOBUT_ON/OFF marker; pass radio=False for a bare
+    depressed button (the terrain layer rows, which carry a colour swatch instead of the marker).
+    op_props sets the operator's fields (e.g. {"target": "slot", "index": i})."""
+    kw = {"text": text, "depress": selected}
+    if radio:
+        kw["icon"] = "RADIOBUT_ON" if selected else "RADIOBUT_OFF"
+    op = layout.operator(op_idname, **kw)
+    if op_props:
+        for key, val in op_props.items():
+            setattr(op, key, val)
     return op
 
 

@@ -67,9 +67,10 @@ def _preset_items(self, context):
 
 
 def _apply_hf_preset(hf):
-    """Load the chosen preset's neutral slider values onto the heightfield props. Staged: run by
-    the Apply Preset button, not a property callback, so picking a preset only stages it (the
-    same stage-then-Apply idiom the World Sky Look uses)."""
+    """Load the chosen preset's neutral slider values onto the heightfield props. Instant (A6):
+    this only loads slider values (light, fully reversible, no rebuild until Bake + Build), so it
+    uses the instant preset_row idiom like the other look presets, not the staged idiom reserved
+    for the heavy rebuilds (Sky Look, Build Biome, Biome World)."""
     values = _HF_PRESETS.get(hf.preset)
     if not values:
         return
@@ -485,15 +486,18 @@ def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, 
 
 class BBT_OT_hf_apply_preset(Operator):
     bl_idname = "bob_blender_tools.hf_apply_preset"
-    bl_label = "Apply Preset"
-    bl_description = ("Load the staged landscape preset's starting slider values. Then sculpt "
-                      "with the knobs and Bake + Build")
+    bl_label = "Preset"
+    bl_description = ("Load a landscape preset's starting slider values. Then sculpt with the "
+                      "knobs and Bake + Build")
     bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(name="Preset", items=_preset_items)
 
     def execute(self, context):
         hf = context.scene.bbt_hf
+        hf.preset = self.preset  # the picked preset also drives the Bake, so keep it in sync
         _apply_hf_preset(hf)
-        self.report({"INFO"}, f"Loaded {hf.preset} preset")
+        self.report({"INFO"}, f"Loaded {self.preset} preset")
         return {"FINISHED"}
 
 
@@ -765,13 +769,17 @@ class BBT_PT_heightfield(Panel):
         if _preview_coll is not None and _PREVIEW_KEY in _preview_coll:
             layout.template_icon(icon_value=_preview_coll[_PREVIEW_KEY].icon_id, scale=8)
 
-        # P1: the target terrain object the bake builds (or replaces).
-        ui_helpers.context_header(layout, "Terrain object", hf.target, icon="OUTLINER_OB_MESH")
+        # P1: the target mesh the bake builds (or replaces). "Active mesh" is the one suite-wide
+        # noun for the thing a panel acts on (S4), matching World/Biome/Scatter/Shaders.
+        ui_helpers.context_header(layout, "Active mesh", hf.target, icon="OUTLINER_OB_MESH")
         col = layout.column(align=True)
         col.prop(hf, "target")
-        ui_helpers.staged_preset_row(layout, hf, "preset",
-                                     "bob_blender_tools.hf_apply_preset", text="Preset",
-                                     note="loads a starting set of slider values")
+        # A6: instant preset (light: loads slider values, no rebuild until Bake + Build), so it
+        # uses the same instant idiom as the other look presets. The current pick shows below.
+        ui_helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset")
+        cap = layout.row()
+        cap.enabled = False
+        cap.label(text=f"preset: {hf.preset.replace('_', ' ').title()}", icon="PRESET")
 
         row = layout.row(align=True)
         row.prop(hf, "backend", expand=True)

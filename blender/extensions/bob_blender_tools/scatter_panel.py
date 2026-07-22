@@ -94,9 +94,10 @@ def _assets_name(kind):
 
 # Biome-scatter enum: biomes whose manifest carries a scatter recipe, so a whole layer stack can
 # be built from one pick (parallel to the Shaders Biome Terrain enum). Cached module-side with a
-# stable id per biome (the same enum-GC / reindex guard the asset-set enum uses).
+# stable id per biome (the same enum-GC / reindex guard the asset-set enum uses). Ids start at 0
+# for the first real biome so a fresh enum resolves to a real recipe, not the NONE fallback (S2).
 _BIOME_SCATTER_ITEMS = [("NONE", "None", "No biome scatter recipe", "", 0)]
-_BIOME_SCATTER_IDS = {"NONE": 0}
+_BIOME_SCATTER_IDS = {}
 
 
 def _biome_scatter_items(self, context):
@@ -620,19 +621,16 @@ class BBT_PT_scatter(Panel):
         hdr = None
         if emitter is not None:
             hdr = f"{emitter.name} / {layer.name}" if layer is not None else emitter.name
-        ui_helpers.context_header(layout, "Scatter", hdr, icon="OUTLINER_OB_MESH",
+        ui_helpers.context_header(layout, "Active mesh", hdr, icon="OUTLINER_OB_MESH",
                                   empty="Pick an emitter to scatter on.")
 
         layout.prop(scn, "emitter")
         layout.prop(scn, "camera")
 
-        # Asset source: the shared BOB_Assets_* collections that layers instance. Block-out
-        # proxies supply the geometry (Scatter is the asset home).
-        col = layout.column(align=True)
-        col.label(text="Assets (shared, for layers to use)")
-        col.operator("bob_blender_tools.scatter_make_proxies", text="Make Proxies",
-                     icon="OUTLINER_OB_GROUP_INSTANCE")
-
+        # S5: no standalone Make Proxies here. Both scatter_add and scatter_biome_scatter call
+        # make_proxies themselves, so adding a layer or building a biome already creates the shared
+        # BOB_Assets_* proxies. The proxy-only path stays reachable via the scatter_make_proxies
+        # operator for power users; it is just not the first thing on the panel.
         coll = _active_coll(context)
         if emitter is None:
             return  # the context header already showed the hint
@@ -656,6 +654,10 @@ class BBT_PT_scatter(Panel):
             row = layout.row(align=True)
             row.operator_menu_enum("bob_blender_tools.scatter_biome_scatter", "biome",
                                    text="Biome Scatter", icon="WORLD")
+            cap = layout.row()
+            cap.enabled = False
+            cap.label(text="scatter layers only; the Biome panel builds the whole scene",
+                      icon="INFO")
 
         ui_helpers.structural_action(layout, "bob_blender_tools.scatter_build_all",
                                      note="rebuilds every layer of this emitter")
@@ -688,7 +690,9 @@ class BBT_PT_scatter_layer(Panel):
         # Structural group (P3): assets/align/mask/curve apply on a Build (a rebuild), not from a
         # callback. Marked so the split from the live knobs below is explicit.
         box = layout.box()
-        box.label(text="Structural (Build to apply)", icon=ui_helpers.STRUCTURAL_ICON)
+        # S7: no STRUCTURAL_ICON on the caption; the structural_action button in this box already
+        # carries it, so it would show twice a few pixels apart.
+        box.label(text="Structural (Build to apply)")
         # Curve binding (BobSplines C4/R5): clear/keep read the terrain's baked curve mask (all
         # paths at once); along places instances along the chosen curve; verge keeps to ONE path's
         # edge ring -- it needs a curve (empty scatters nothing).
@@ -728,10 +732,11 @@ class BBT_PT_scatter_masks(Panel):
         layout = self.layout
         obj = _active_layer(context)
         if obj is None or _nodes_mod(obj) is None:
-            layout.label(text="No active layer", icon="INFO")
+            layout.label(text="No active layer: add one on the Scatter panel", icon="INFO")
             return
         if obj.bbt_scatter_layer.curve_mode == "along":
-            layout.label(text="Not used for an along-curve layer", icon="INFO")
+            layout.label(text="Along-curve layer: placed by spacing, not masks; use an area "
+                              "layer for masks", icon="INFO")
             return
         # A band does nothing until its Strength is above 0. Keep the Strength knob live and grey
         # the dependent knobs when it is 0 (the same "grey the inert knob" idiom Paths uses).
@@ -766,10 +771,11 @@ class BBT_PT_scatter_camera(Panel):
         layout = self.layout
         obj = _active_layer(context)
         if obj is None or _nodes_mod(obj) is None:
-            layout.label(text="No active layer", icon="INFO")
+            layout.label(text="No active layer: add one on the Scatter panel", icon="INFO")
             return
         if obj.bbt_scatter_layer.curve_mode == "along":
-            layout.label(text="Not used for an along-curve layer", icon="INFO")
+            layout.label(text="Along-curve layer: no camera cull; use an area layer to cull",
+                         icon="INFO")
             return
         if scn.camera is None:
             layout.label(text="Set a Camera on the Scatter panel", icon="INFO")
