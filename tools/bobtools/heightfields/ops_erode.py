@@ -184,6 +184,171 @@ def fluvial(h, xp, *, iterations=40, k=5e-4, sp_m=0.5, sp_n=1.0, diffusion=0.12,
     return h
 
 
+def _downhill_streak(noise, xp, updir, steps):
+    """Smear `noise` along the flow by pulling each cell's value from progressively further UPHILL,
+    keeping the running maximum. A local noise high therefore paints a continuous streak running
+    DOWNHILL from it -- turning isolated bumps into flow-aligned grooves. `updir` is the per-cell unit
+    step toward higher ground (uphill); `steps` is how many cells the streak reaches (its length)."""
+    ndi = _ndimage(xp)
+    n = noise.shape[0]
+    ys, xs = xp.meshgrid(xp.arange(n, dtype=xp.float64), xp.arange(n, dtype=xp.float64), indexing="ij")
+    uy, ux = updir
+    streak = noise
+    for k in range(1, int(steps) + 1):
+        sampled = ndi.map_coordinates(noise, xp.stack([ys + uy * k, xs + ux * k]),
+                                      order=1, mode="nearest")
+        streak = xp.maximum(streak, sampled)
+    return streak
+
+
+def rill(h, xp, *, iterations=8, groove=0.06, spacing=28.0, smear=16,
+         slope_gate=0.35, aspect_sigma=2.0, sharpen=0.25, sharpen_sigma=2.0, despike=4,
+         talus=0.05, thermal_iters=1, cell=1.0, seed=0):
+    """Dense fine-rill / gully erosion -- the badlands carver (anisotropic downslope-groove incision).
+
+    Badlands are a landform stream-power fluvial CANNOT make: closely-spaced, sharp, near-parallel
+    gullies on steep soft slopes at low total relief, with knife-edge divides between them. Stream-power
+    incision (ops_erode.fluvial, and any short-accumulation variant of it) keys erosion to drainage
+    AREA, so it always integrates flow into a FEW graded valleys or dissects the low basins as blotches
+    -- it never rills a slope uniformly (confirmed by render across several tunings). So this op does
+    NOT use flow accumulation. It carves grooves that FOLLOW STEEPEST DESCENT directly:
+
+      1. seed a fine isotropic noise whose wavelength (set by `spacing`, in cells) is the rill spacing;
+      2. compute the per-cell uphill direction from a smoothed copy of the field (`aspect_sigma`);
+      3. smear the noise downhill (`smear` cells) so each noise high paints a continuous groove running
+         down the slope -- this is the anisotropy: grooves align to the flow, not to the grid;
+      4. incise `groove * streak`, gated to real slopes by `slope_gate` so flat caps and basin floors
+         stay smooth; a steep thermal (`talus`, cohesive soft-sediment repose) holds the gully walls.
+
+    Repeating for a few `iterations` lets the grooves deepen and re-align to the freshly incised
+    surface (rills recruit their neighbours into a dense sub-parallel network). A single closing unsharp
+    (`sharpen`) crisps the divides to a knife edge and a grey-opening (`despike`) shaves stray one-cell
+    spires. Deterministic, vectorised on `xp`. A fluvial amplify can sit on top of the macro this
+    produces for sub-rill detail; keep total relief low (badlands are locally steep, not tall)."""
+    h = xp.asarray(h, dtype=xp.float64)
+    res = h.shape[0]
+    ndi = _ndimage(xp)
+    # fixed fine groove seed in [0, 1]; its wavelength sets the rill spacing.
+    noise = _iso_band(xp, res, max(res / max(float(spacing), 1e-3), 1.0), int(seed)) + 0.5
+    noise = xp.clip(noise, 0.0, 1.0)
+    for _ in range(int(iterations)):
+        # uphill unit direction from a smoothed field (stable aspect, not per-cell noise)
+        hs = ndi.gaussian_filter(h, max(float(aspect_sigma), 1e-3), mode="nearest")
+        gx = (_sh(xp, hs, 0, 1) - _sh(xp, hs, 0, -1)) * 0.5
+        gy = (_sh(xp, hs, 1, 0) - _sh(xp, hs, -1, 0)) * 0.5
+        mag = xp.sqrt(gx * gx + gy * gy) + 1e-9
+        updir = (gy / mag, gx / mag)            # step toward higher ground (row, col)
+        streak = _downhill_streak(noise, xp, updir, smear)
+        streak = streak - streak.min()
+        streak = streak / xp.maximum(streak.max(), 1e-9)
+        gate = xp.clip(_slope01(h, xp) / max(float(slope_gate), 1e-6), 0.0, 1.0)
+        h = h - float(groove) * streak * gate
+        if thermal_iters > 0:                   # steep cohesive repose holds the gully walls
+            h = thermal(h, xp, talus, 0.5, int(thermal_iters), cell)
+        h = xp.clip(h, 0.0, None)
+    if sharpen > 0.0:                           # crisp divides to a knife edge (single closing pass)
+        blur = ndi.gaussian_filter(h, max(float(sharpen_sigma), 1e-3), mode="nearest")
+        h = xp.clip(h + float(sharpen) * (h - blur), 0.0, None)
+    if int(despike) > 0:
+        h = ndi.grey_opening(h, size=int(despike), mode="nearest")
+    return h
+
+
+def _norm01(a, xp):
+    a = a - a.min()
+    return a / xp.maximum(a.max(), 1e-9)
+
+
+def _ice_accum(filled, xp, iters, mfd_p, cell, source):
+    """MFD accumulation with a per-cell SOURCE, instead of the uniform 1 the fluvial drainage uses
+    (_mfd_accum). Ice is added only where `source` > 0 (above the snowline) and routed downslope, so
+    the accumulated field is high in the valleys fed by big high catchments and zero on low ground
+    below the ice. Same multiple-flow-direction routing as _mfd_accum, different mass input."""
+    weights, offs = [], []
+    wsum = xp.zeros_like(filled)
+    for (dy, dx), d in _D8:
+        drop = xp.clip((filled - _sh(xp, filled, dy, dx)) / (d * cell), 0.0, None) ** mfd_p
+        weights.append(drop); offs.append((dy, dx)); wsum = wsum + drop
+    wsum = wsum + 1e-12
+    weights = [w / wsum for w in weights]
+    acc = source.copy()
+    for _ in range(int(iters)):
+        inflow = xp.zeros_like(filled)
+        for (dy, dx), w in zip(offs, weights):
+            inflow = inflow + _sh(xp, acc * w, -dy, -dx)
+        acc = source + inflow
+    return acc
+
+
+def glacial(h, xp, *, ela=0.5, iterations=60, erode=1.6, abrasion_n=0.5, kslope=3.0,
+            ice_width=8.0, ice_gamma=0.55, widen=0.9, widen_sigma=6.0, horn=0.28,
+            horn_sigma=3.0, arete_talus=0.02, arete_iters=1, recompute=4, fill_iters=500,
+            acc_iters=300, mfd_p=1.4, cell=1.0, seed=0):
+    """Glacial erosion -- the glaciated-alpine carver (U-valleys, cirques, aretes and horns).
+
+    Glaciers make landforms fluvial erosion CANNOT: broad flat-floored U-shaped troughs (not V
+    notches), rounded overdeepened cirque bowls at the valley heads, and knife-edge aretes with
+    sharp horns on the peaks above the ice. Stream-power fluvial always cuts a V and grades toward a
+    smooth dendritic equilibrium, so a glacial preset built on it just reads as a rugged fluvial
+    mountain (the failure this op fixes). Rather than a stiff time-stepped shallow-ice simulation,
+    this is a robust vectorised approximation that reproduces the SIGNATURE:
+
+      1. ICE FLUX. Ice is sourced only ABOVE an `ela` snowline (accumulation = max(h - ela, 0)) and
+         routed downhill by the same multiple-flow-direction drainage the fluvial op uses
+         (_ice_accum). So flux is high in the valleys fed by the big high catchments, zero below.
+      2. ICE COVER. The thin drainage line is BROADENED by a gaussian of radius `ice_width` (cells)
+         into a valley-width ice tongue: a glacier fills the valley to a width, it is not a thin
+         river, and that breadth is what carves a U instead of a V.
+      3. THICKNESS. `H = ice / (1 + kslope*slope)`, thick where the cover is broad and the slope is
+         gentle (valley floors), thin on the steep headwalls.
+      4. ABRASION. Lower the bed by `erode * H * slope^abrasion_n` (glacial abrasion needs both ice
+         and a driving slope), deepening the trough floors.
+      5. U-WIDENING. Plane the bed flat under thick ice: blend toward a laterally smoothed floor
+         (`widen_sigma`) weighted by `widen * H * (1 - slope)`, so the broad floor flattens into a
+         parabola while the ice-free walls stay steep. Gated by ice thickness and slope only, no
+         elevation gate (an elevation gate bands the planing along contours and leaves ring
+         artifacts in the basins).
+      6. ARETES / HORNS. A steep thermal (`arete_talus`) keeps the divides between glaciated valleys
+         sharp each iteration; a final unsharp on the high ground above the snowline (`horn`) crisps
+         the frost-shattered peaks and ridges into horns and aretes, leaving the planed troughs
+         below untouched.
+
+    Cirques and hanging valleys emerge from the flux field: tributaries carry less ice so their
+    floors are deepened less and hang above the trunk, and overdeepening concentrates at the
+    flux-convergence heads. Deterministic, vectorised on `xp`. Runs at the coarse macro resolution
+    (its widths are in cells); a fluvial `amplify` sits on top for sub-valley rock detail, and a
+    single light thermal after amplify knocks the amplify's undrainable noise beads off the crests."""
+    h = xp.asarray(h, dtype=xp.float64)
+    ndi = _ndimage(xp)
+    step = float(erode) / max(int(iterations), 1)
+    ice = None
+    for it in range(int(iterations)):
+        hn = _norm01(h, xp)
+        if it % int(recompute) == 0:
+            filled = _pd_fill(h, xp, fill_iters, 1e-4)
+            src = xp.clip(hn - float(ela), 0.0, None)       # ice accumulation above the snowline
+            flux = _ice_accum(filled, xp, acc_iters, mfd_p, cell, src)
+            flux = _norm01(flux, xp) ** float(ice_gamma)    # compress range so tongues read broad
+            ice = _norm01(ndi.gaussian_filter(flux, float(ice_width), mode="nearest"), xp)
+        s = _slope(h, xp, cell)
+        s01 = xp.clip(s / xp.maximum(xp.percentile(s, 90), 1e-9), 0.0, 1.0)
+        H = _norm01(ice / (1.0 + float(kslope) * s01), xp)  # ice thickness: broad cover, gentle slope
+        h = h - step * H * (s01 ** float(abrasion_n))       # glacial abrasion deepens the trough
+        if widen > 0.0:                                     # plane the floor flat under thick ice
+            floor = ndi.gaussian_filter(h, float(widen_sigma), mode="nearest")
+            w = float(widen) * H * (1.0 - s01)
+            h = (1.0 - w) * h + w * floor
+        if arete_iters > 0:                                 # keep the divides between valleys sharp
+            h = thermal(h, xp, float(arete_talus), 0.5, int(arete_iters), cell)
+        h = xp.clip(h, 0.0, None)
+    if horn > 0.0:                                          # crisp horns/aretes on the high ground
+        hn = _norm01(h, xp)
+        high = xp.clip((hn - float(ela)) / max(1.0 - float(ela), 1e-6), 0.0, 1.0)
+        blur = ndi.gaussian_filter(h, max(float(horn_sigma), 1e-3), mode="nearest")
+        h = xp.clip(h + float(horn) * high * (h - blur), 0.0, None)
+    return h
+
+
 def scarp(h, xp, *, iterations=12, cap_slope=0.10, undercut=0.0015, talus=0.14,
           talus_iters=1, cell=1.0, open_size=3):
     """Cap-rock scarp-retreat erosion -- the mesa/plateau carver, paired with ops_generate.strata.

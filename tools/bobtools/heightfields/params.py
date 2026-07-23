@@ -41,7 +41,7 @@ _DEFAULT_KNOBS = dict(
 
 # Generators that take a procedural seed. Each is offset so the Seed knob varies
 # every generator in a stack independently (two noise ops do not move in lockstep).
-_SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp", "amplify")
+_SEED_OPS = ("noise", "dunes", "voronoi", "strata", "warp", "amplify", "rill")
 
 
 def has_amplify(stack) -> bool:
@@ -138,6 +138,12 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["amount"] = op.get("amount", 0.04) * meander
         elif kind in ("fluvial", "pipe_hydraulic"):
             op["iterations"] = _clampi(op.get("iterations", 60) * erode, 4, 400)
+        elif kind == "rill":
+            # Erosion knob deepens the dissection by adding groove iterations (more, denser gullies).
+            op["iterations"] = _clampi(op.get("iterations", 10) * erode, 2, 40)
+        elif kind == "glacial":
+            # Erosion knob scales the ice-sculpting passes (more abrasion + planing = deeper troughs).
+            op["iterations"] = _clampi(op.get("iterations", 60) * erode, 12, 160)
         elif kind == "thermal":
             op["iterations"] = _clampi(op.get("iterations", 4) * erode, 0, 60)
         elif kind == "sharpen":

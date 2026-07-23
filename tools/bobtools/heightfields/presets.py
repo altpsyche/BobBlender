@@ -13,20 +13,22 @@ stack exactly as written here. Presets are grouped into families:
 
   Mountains       alpine, glacial, foothills
   Lowlands        hills, plains, coastal, islands
-  Canyons         mesa, canyon
+  Canyons         mesa, canyon, badlands
   Dunes           dunes, sand_sea
 
 The mountain stacks pair ridged-multifractal noise with stream-power fluvial erosion
 (see heightfields/ops_erode.fluvial); the lowlands use gentler versions of the same, with
 falloff shaping coastal and islands. The Canyons family uses its OWN processes -- flat layered
 strata (ops_generate.strata) dissected by cap-rock scarp retreat (ops_erode.scarp) for mesa, and
-the stream-power hero incising a smoothed strata PLATEAU for canyon -- not eroded noise. Keep
+the stream-power hero incising a smoothed strata PLATEAU for canyon -- not eroded noise. badlands
+is its own generator too: anisotropic downslope-groove incision (ops_erode.rill) dissecting a soft
+moderate-relief macro into dense, closely-spaced gullies with knife-edge divides. plateau reuses the
+strata + scarp ops for a continuous cliff-edged tableland (low dissection, no deep fluvial). Keep
 these plain and few.
 
 The old Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07 because the
-single noise-plus-fluvial engine could only make them look like eroded hills. Mesa and canyon are
-now back with real generators; badlands and plateau return as their own generators land.
-See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
+single noise-plus-fluvial engine could only make them look like eroded hills. All four are now back
+with real generators. See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
 """
 
 import math
@@ -54,12 +56,20 @@ STACKS = {
         # the bake resolution adding drainage-consistent rills on the faces (preview == final).
         {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 22},
     ],
-    "glacial": [
-        {"kind": "noise", "ridged": 0.35, "detail_strength": 0.4, "octaves": 4, "warp": 80},
-        _fluvial(iterations=55, k=0.011, diffusion=0.15, talus=0.008, max_delta=0.022,
-                 recompute=25, fill_iters=600, acc_iters=600),
-        {"kind": "smooth", "sigma": 2.0},
-        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20},
+    "glacial": [   # glaciated alpine: ridged peaks sculpted by ICE, not water. The glacial op cuts
+                   # broad flat-floored U-valleys (ice fills the valley to a width and planes the
+                   # floor, unlike the V a river cuts), overdeepened cirque bowls at the valley
+                   # heads, and knife-edge aretes with sharp horns above the snowline. Stream-power
+                   # fluvial can only make a rugged fluvial mountain, so this uses its OWN process
+                   # (ops_erode.glacial). See docs/TERRAIN-CRITIQUE.md.
+        {"kind": "noise", "ridged": 0.5, "detail_strength": 0.55, "octaves": 5, "warp": 70},
+        {"kind": "glacial", "ela": 0.5, "iterations": 60, "erode": 1.6, "widen": 0.9,
+         "ice_width": 8.0, "horn": 0.34, "arete_talus": 0.016},
+        # soft fluvial amplify for sub-valley rock detail on the sculpted macro; low strength +
+        # diffusion so it reads as rock fluting, not sharp notches biting the aretes.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.012, "iterations": 18, "diffusion": 0.08},
+        # knock the amplify's undrainable noise beads off the sharp crests without flattening troughs.
+        {"kind": "thermal", "talus": 0.012, "factor": 0.5, "iterations": 1},
     ],
     "foothills": [
         {"kind": "noise", "ridged": 0.35, "detail_strength": 0.5, "octaves": 5, "warp": 85},
@@ -126,6 +136,34 @@ STACKS = {
         # amplify the canyon walls into fine vertical rock fluting; flat rims stay flat.
         {"kind": "amplify", "mode": "fluvial", "strength": 0.022, "iterations": 22},
     ],
+    "badlands": [   # closely-spaced sharp gullies on steep soft slopes at low total relief: a busy
+                    # moderate-relief soft macro, then the anisotropic downslope-groove hero (rill)
+                    # carves dense flow-aligned gullies with knife-edge divides. NOT stream-power
+                    # fluvial, which coarsens into a few graded valleys and cannot rill a slope.
+        {"kind": "noise", "ridged": 0.42, "detail_strength": 0.85, "octaves": 5, "warp": 48},
+        {"kind": "smooth", "sigma": 0.6},
+        # rill runs at the macro resolution (AMPLIFY_BASE): spacing/smear are in CELLS at that size.
+        {"kind": "rill", "iterations": 10, "groove": 0.065, "spacing": 13.0, "smear": 8,
+         "slope_gate": 0.25, "aspect_sigma": 1.0, "sharpen": 0.25, "sharpen_sigma": 1.5,
+         "despike": 2, "talus": 0.05, "thermal_iters": 1},
+        # light fluvial amplify adds sub-rill detail on the gully walls; low strength so it does not
+        # smother the crisp gullies. diffusion 0 keeps the knife-edge divides from relaxing.
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.014, "iterations": 16, "diffusion": 0.0},
+    ],
+    "plateau": [   # a continuous elevated tableland with cliff edges: layered strata lifted so one
+                   # broad high bench survives across most of the tile (NOT dissected into isolated
+                   # buttes like mesa, NOT deeply incised like canyon), light scarp cutting the rim
+                   # cliffs, then fluvial amplify fluting the cliff faces. Reuses the mesa/canyon ops.
+        {"kind": "strata", "layers": 2, "dissection": 0.55, "base_freq": 1.8, "smooth": 6.0},
+        # push the field toward two flat levels: flattens the table top and turns the lone noise-peak
+        # (the strata riser ramps a point up to the top terrace) into a flat-capped remnant butte
+        # instead of a spurious cone.
+        {"kind": "curve", "contrast": 0.85},
+        {"kind": "scarp", "iterations": 4, "cap_slope": 0.12, "undercut": 0.0015,
+         "talus": 0.13, "open_size": 16},
+        {"kind": "thermal", "talus": 0.13, "factor": 0.5, "iterations": 1},
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20},
+    ],
     # --- Dunes ---
     "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so
                  # the tile carries a dozen crests, not two soft mounds; the trailing thermal is a
@@ -176,6 +214,8 @@ DISPLAY = {
     "islands":   {"relief": 0.08,  "sea_level": 0.34},
     "mesa":      {"relief": 0.18,  "sea_level": 0.05},
     "canyon":    {"relief": 0.22,  "sea_level": 0.10},
+    "badlands":  {"relief": 0.14,  "sea_level": 0.12},
+    "plateau":   {"relief": 0.16,  "sea_level": 0.05},
     "dunes":     {"relief": 0.012, "sea_level": 0.0},
     "sand_sea":  {"relief": 0.019, "sea_level": 0.0},
 }
@@ -214,7 +254,7 @@ def talus_for_angle(angle_deg, bake_res, relief_ratio):
 FAMILIES = {
     "Mountains": ["alpine", "glacial", "foothills"],
     "Lowlands": ["hills", "plains", "coastal", "islands"],
-    "Canyons": ["mesa", "canyon"],
+    "Canyons": ["mesa", "canyon", "badlands", "plateau"],
     "Dunes": ["dunes", "sand_sea"],
 }
 

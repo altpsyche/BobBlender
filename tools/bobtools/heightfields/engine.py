@@ -50,6 +50,8 @@ _OPS = {
     "fluvial": _wrap(ops_erode.fluvial),
     "pipe_hydraulic": _wrap(ops_erode.pipe_hydraulic),
     "scarp": _wrap(ops_erode.scarp),
+    "rill": _wrap(ops_erode.rill),
+    "glacial": _wrap(ops_erode.glacial),
     "deposit": _wrap(ops_erode.deposit),
     "thermal": _wrap(ops_erode.thermal),
     "amplify": _wrap(ops_erode.amplify),
