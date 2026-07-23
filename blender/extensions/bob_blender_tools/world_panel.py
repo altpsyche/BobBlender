@@ -414,6 +414,7 @@ class BBT_PT_world(Panel):
         col.prop(env, "cloud_cover")
         col.prop(env, "wind_direction")
         col.prop(env, "wind_strength")
+        col.prop(env, "frost")  # overall hoar-frost amount; 0 = clean snow, no frost sheet
 
         # -- Sky Look: a staged whole-atmosphere mood (time/weather/cloud/wind + subsystems).
         # Sky only: it never touches the season. Needs Firmament (it rebuilds the atmosphere). --

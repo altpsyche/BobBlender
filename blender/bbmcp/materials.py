@@ -591,6 +591,7 @@ ENV_STATE_DRIVERS = (
     ("env_snow_z_span", "snow_z_span", 20.0),  # terrain relief metres (peak - valley)
     ("env_cloud", "cloud_cover", 0.2),  # for frost: clear sky (low cloud) drives radiative cooling
     ("env_wind", "wind_strength", 1.0),  # for frost: hoar frost needs calm air (wind gives rime)
+    ("env_frost", "frost", 0.6),  # artist dial: overall frost amount (physics still gates it)
 )
 # Below this temperature (C) snow is at full thickness; it ramps in from 0C. Snow has no amount
 # slider -- temperature is the amount, snow_line is the extent.
@@ -608,6 +609,8 @@ _MOSS_COLOR = (0.12, 0.22, 0.06, 1.0)
 _FROST_COLOR = (0.82, 0.87, 0.96, 1.0)
 _FROST_MAX_OPACITY = 0.28   # the cool sheen never fully hides the rock (frost is thin, not a blanket)
 _FROST_SPARKLE_SCALE = 18.0  # crystal glints (world-space noise frequency; fine but not aliasing)
+_FROST_PATCH_SCALE = 0.25    # large-scale world-space noise that breaks frost into patches (low freq)
+_FROST_PATCH_FLOOR = 0.15    # patch mask never fully zeroes, so a frosted region reads varied, not holed
 # The extra S_Weather inputs the masters must expose and pass through (name, default).
 _WEATHER_EXTRA = (
     ("Wetness Strength", 1.0), ("Wet Pooling", 0.0), ("Frost Strength", 1.0),
@@ -690,7 +693,7 @@ def _vscale(g, vec, scalar, loc):
 # thicker). The material reads a snow_occlusion attribute instead of snow_cover. The weather and
 # env-state interfaces both changed, so every embedder (S_SurfaceMaster, S_TerrainMaster,
 # S_WaterMaster) must rebuild in lockstep.
-S_GROUP_VER = 5
+S_GROUP_VER = 6
 
 # Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of every
 # material instancing the group (the new sockets get fresh identifiers, verified), so a global
@@ -709,7 +712,11 @@ S_GROUP_VER = 5
 #   S_WaterMaster v8: S_Weather's interface changed again in the snow-line unify (Use Attribute
 #   dropped). Bumped in lockstep with the global S_GROUP_VER v5 so the water group rebuilds and
 #   re-links the weather node rather than keeping stale links.
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 8}
+#   S_WaterMaster v9: S_EnvState gained a Frost output (the artist frost dial). The water master
+#   embeds S_EnvState directly (its freeze path reads Temperature/Cloud/Wind/Frost), so its internal
+#   links to that group's outputs go stale when the group interface is rebuilt. Bumped in lockstep
+#   with the global S_GROUP_VER v6 so the water group rebuilds and re-links.
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 9}
 
 
 def _cached_group(name):
@@ -759,6 +766,7 @@ def env_state_group():
     _gout(g, "Snow Line Top", "NodeSocketFloat")
     _gout(g, "Cloud", "NodeSocketFloat")  # frost: clear sky (low cloud) = radiative cooling
     _gout(g, "Wind", "NodeSocketFloat")    # frost: calm air = hoar frost (wind gives rime)
+    _gout(g, "Frost", "NodeSocketFloat")   # artist dial: overall frost amount (0 = none)
     go = g.nodes.new("NodeGroupOutput")
     go.location = (600, 0)
     O = go.inputs
@@ -775,6 +783,7 @@ def env_state_group():
     g.links.new(val["env_temperature"], O["Temperature"])
     g.links.new(val["env_cloud"], O["Cloud"])
     g.links.new(val["env_wind"], O["Wind"])
+    g.links.new(val["env_frost"], O["Frost"])
 
     # Snow amount = temperature: 0 above freezing, easing to 1 (full) by SNOW_TEMP_FULL. This is
     # the only thing that turns snow on, so a cold night snows and a warm one never does.
@@ -876,6 +885,7 @@ def weather_group():
     line_hi = env.outputs["Snow Line Top"]  # world-Z top of the transition band
     env_cloud = env.outputs["Cloud"]
     env_wind = env.outputs["Wind"]
+    env_frost = env.outputs["Frost"]  # artist dial (0 = no frost)
 
     # Shader Geometry: world-space normal Z (slope) and position Z (altitude), the same
     # quantities the GN pass reads, so the fallback reproduces it.
@@ -989,7 +999,20 @@ def weather_group():
     bare = _mmath(g, "SUBTRACT", 1.0, sf, (1360, 400))
     cond = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", frost_pt, clear, (1540, 560)),
                   _mmath(g, "MULTIPLY", calm, I["Frost Strength"], (1540, 660)), (1720, 560))
+    # Artist dial: env.frost scales the whole frost look so a cold, clear, calm scene can still be
+    # snow WITHOUT a frost sheet (0 = none). The physics gate above is unchanged; this is amount.
+    cond = _mmath(g, "MULTIPLY", cond, env_frost, (1720, 640))
+    # Patchy break-up: a low-frequency world-space noise so frost forms in patches instead of a
+    # uniform blanket (real hoar frost varies with surface moisture, sky-view, thermal mass). Floored
+    # so a frosted region reads as varied density, not holes.
+    ppatch = g.nodes.new("ShaderNodeTexNoise")
+    ppatch.location = (1360, 300)
+    ppatch.inputs["Detail"].default_value = 2.0
+    _mplug(g, ppatch.inputs["Scale"], _FROST_PATCH_SCALE)
+    g.links.new(geo.outputs["Position"], ppatch.inputs["Vector"])
+    patch = _mrange(g, ppatch.outputs["Fac"], 0.35, 0.6, _FROST_PATCH_FLOOR, 1.0, (1540, 300))
     frost = _mmath(g, "MULTIPLY", cond, _mmath(g, "MULTIPLY", upface_eff, bare, (1540, 400)), (1720, 460))
+    frost = _mmath(g, "MULTIPLY", frost, patch, (1900, 440))
     # Fine crystal sparkle: sparse world-space glints, so frost glitters rather than flatly whitens.
     fnoise = g.nodes.new("ShaderNodeTexNoise")
     fnoise.location = (1540, 800)
@@ -1798,12 +1821,13 @@ def water_master_group():
     frost_pt = _mrange(g, env.outputs["Temperature"], 1.0, -5.0, 0.0, 1.0, (440, -300))
     clear = _mmath(g, "SUBTRACT", 1.0, env.outputs["Cloud"], (440, -420))
     calm = _mrange(g, env.outputs["Wind"], 4.0, 0.5, 0.0, 1.0, (440, -540))
-    # Include Frost Strength: the weather frost cond is frost_pt * clear * calm * Frost Strength, so
-    # the complement must match, else zeroing Frost Strength on water would suppress the frost tint
-    # AND back off the ice tint, leaving a cold river untinted.
+    # Match the weather frost cond exactly (frost_pt * clear * calm * Frost Strength * env.frost) so
+    # the complement is exact: else zeroing Frost Strength OR the env frost dial would suppress the
+    # frost tint AND back off the ice tint, leaving a cold river untinted.
+    fs_frost = _mmath(g, "MULTIPLY", I["Frost Strength"], env.outputs["Frost"], (620, -520))
     frost_active = _mmath(g, "MULTIPLY",
                           _mmath(g, "MULTIPLY", frost_pt, clear, (620, -360)),
-                          _mmath(g, "MULTIPLY", calm, I["Frost Strength"], (620, -480)), (780, -400))
+                          _mmath(g, "MULTIPLY", calm, fs_frost, (620, -480)), (780, -400))
     ice_tint = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", frozen,
                       _mmath(g, "SUBTRACT", 1.0, frost_active, (620, -600)), (800, -540)),
                       0.8, (800, -660))

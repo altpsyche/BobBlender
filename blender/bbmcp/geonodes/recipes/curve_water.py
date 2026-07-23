@@ -157,6 +157,10 @@ def build(ng, out, params: dict):
     # Wave Chop domain-warps the wave phase by a large-scale noise so the crossing sine trains do not
     # lock into a rigid regular lattice (mechanical chevrons); the crests meander like real chop.
     add_input(ng, "Wave Chop", "NodeSocketFloat", float(params.get("wave_chop", 0.7)), 0.0, 1.0)
+    # Freeze (0..1): flattens the wave displacement as the water freezes, so a frozen river is still
+    # ice, not a moving surface. Driven live from bbt_env.temperature by the splines panel (the water
+    # shader freezes the LOOK; this stops the GEOMETRY animating). 0 = liquid, 1 = fully frozen flat.
+    add_input(ng, "Freeze", "NodeSocketFloat", float(params.get("freeze", 0.0)), 0.0, 1.0)
 
     gi = nodes.new("NodeGroupInput")
     gi.location = (-1500, 0)
@@ -332,6 +336,10 @@ def build(ng, out, params: dict):
     ddir = _separate(ng, down_dir, (240, -1440))
     dx, dy = ddir.outputs["X"], ddir.outputs["Y"]
     env = math_node(ng, "MAXIMUM", midfast, 0.0, (240, -1560))  # 1 mid-channel, 0 at the banks
+    # Freeze flattens the waves: envelope *= (1 - Freeze), so the crest displacement dies as the
+    # river freezes and the surface stops animating (the shader freezes the look in lockstep).
+    thaw = math_node(ng, "SUBTRACT", 1.0, gi.outputs["Freeze"], (240, -1620))
+    env = math_node(ng, "MULTIPLY", env, thaw, (240, -1680))
     n_waves = float(len(_GERSTNER))
 
     # Domain warp: offset the position that feeds every component's phase by a large-scale noise, so

@@ -167,6 +167,12 @@ class BBT_EnvProps(PropertyGroup):
     snow_z_span: FloatProperty(name="Snow Z Span", default=20.0, min=0.001,
                                description="Terrain relief in metres the snow line maps over (set "
                                            "by the terrain)")
+    # Hoar-frost dial. The physics still gates frost to freezing + clear sky + calm air on bare,
+    # up-facing surfaces; this scales the overall amount so the artist can turn a cold, clear, calm
+    # scene's frost DOWN or fully off (0) and get clean snow without a frost sheet everywhere. Live.
+    frost: FloatProperty(name="Frost", default=0.6, min=0.0, max=1.0,
+                         description="Overall hoar-frost amount (0 = none). Still gated to freezing, "
+                                     "clear, calm, bare surfaces; this dials the look")
     cloud_cover: FloatProperty(name="Cloud Cover", default=0.2, min=0.0, max=1.0)
     wind_direction: FloatProperty(
         name="Wind Direction", default=0.0, min=0.0, max=360.0,

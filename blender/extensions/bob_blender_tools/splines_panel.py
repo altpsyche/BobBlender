@@ -395,6 +395,37 @@ def _set_mod_input(mod, name, value):
             pass
 
 
+def _drive_water_freeze(water, wmod, scene):
+    """Drive the water ribbon's Freeze input live from bbt_env.temperature, so a cold scene flattens
+    the wave geometry (the shader freezes the look; this stops the mesh animating). Ramp matches the
+    shader's env-cold path: 0 at/above freezing, 1 by -6 C. Reinstalled on each build because a reset
+    rebuild regenerates the socket identifiers. No env, no driver (the default 0 leaves it liquid)."""
+    if water is None or wmod is None or wmod.node_group is None:
+        return
+    if getattr(scene, "bbt_env", None) is None:
+        return
+    ident = _mod_ids(wmod).get("Freeze")
+    inp = getattr(wmod.properties.inputs, ident, None) if ident else None
+    if inp is None:
+        return
+    try:
+        water.driver_remove(inp.path_from_id("value"), -1)
+    except (TypeError, RuntimeError):
+        pass
+    fc = inp.driver_add("value")
+    fc = fc[0] if isinstance(fc, list) else fc
+    drv = fc.driver
+    drv.type = "SCRIPTED"
+    var = drv.variables.new()
+    var.name = "v"
+    var.type = "SINGLE_PROP"
+    tgt = var.targets[0]
+    tgt.id_type = "SCENE"
+    tgt.id = scene
+    tgt.data_path = "bbt_env.temperature"
+    drv.expression = "max(0.0, min(1.0, -v / 6.0))"  # 0 above 0 C, 1 by -6 C (matches the shader)
+
+
 def _build_water(curve):
     """Build (or rebuild) the river/stream water-surface ribbon and shade it as a water BobShader.
 
@@ -417,6 +448,10 @@ def _build_water(curve):
     # EEVEE-Next only refracts the water's Transmission with scene ray tracing on (the material
     # flags are set in water_material); a no-op in Cycles / when already on.
     materials.enable_eevee_refraction(bpy.context.scene)
+    # Drive Freeze from the environment temperature so a frozen river stops animating (the shader
+    # freezes the look; this flattens the wave geometry in lockstep). Reinstalled every build.
+    wmod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    _drive_water_freeze(obj, wmod, bpy.context.scene)
     obj.update_tag()
     return obj
 
