@@ -18,7 +18,7 @@ holds projects, the reusable library, in-house tools, and conventions.
 | `renders/` | Final outputs. Gitignored. |
 | `references/` | Mood boards, math papers, shader references. |
 | `config/` | Studio config Blender can load. |
-| `docs/` | Architecture and conventions. |
+| `docs/` | Architecture, conventions, and per-system references. |
 
 ## First-time setup
 
@@ -57,8 +57,11 @@ cp -r projects/_template projects/<my-piece>
 
 Then follow `projects/_template/README.md`. Naming, output paths, and where
 files go are in `docs/CONVENTIONS.md`. The overall design is in
-`docs/ARCHITECTURE.md`, and the terrain, erosion, and scatter systems with all
-their parameters are in `docs/SYSTEMS.md`.
+`docs/ARCHITECTURE.md`, and the recipe and parameter reference is in
+`docs/SYSTEMS.md`. Each capability has its own doc: `docs/TERRAIN.md` (the
+heightfield engine and presets), `docs/SHADERS.md` (BobShaders surfaces),
+`docs/FIRMAMENT.md` (sky, clouds, fog, weather, snow), `docs/SPLINES.md` (typed
+curves), and `docs/BIOME-SYSTEM.md` (whole-biome assembly).
 
 ## Target
 

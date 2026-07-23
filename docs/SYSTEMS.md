@@ -72,94 +72,77 @@ Tips: raise `ridged` for mountains, `warp` for organic shapes, lower `scale` and
 
 ## Eroded terrain (`bake_heightfield` + recipe `heightmap_terrain`)
 
-Higher quality than the live `terrain`, because erosion is simulated in the venv
-(numpy on CPU, a CuPy CUDA kernel on GPU). Two parts:
+Higher quality than the live `terrain`: the relief is simulated in the venv (numpy
+on CPU, a CuPy CUDA kernel on GPU), baked to a heightmap PNG, then displaced by a
+grid in Blender. Two parts:
 
-1. The venv bakes an eroded heightmap PNG (`bake_heightfield`).
+1. The venv bakes a heightmap PNG (`bake_heightfield`).
 2. `heightmap_terrain` displaces a grid by that image in Blender.
+
+The engine itself (the filter-stack model, the op catalog, the thirteen presets,
+and the five global knobs) is documented in `docs/TERRAIN.md`. This section covers
+the bake tool and the Blender side only.
 
 ### Baking the heightfield (tool: `bake_heightfield`)
 
-`bobtools.heightfields`, a pure venv subpackage (graduated from the old
-`erosion.py`, which stays as a compat shim). Base generation is seeded scipy
-noise (domain warp, ridged blend, shape). Erosion is a list of passes:
-
-- `hydraulic`: droplet erosion with sediment transport and deposition. The GPU
-  track. Carves drainage rills. Erosion spreads over a `radius` brush so valleys
-  stay smooth instead of spiky. Params: `droplets`, `max_steps`, `radius`,
-  `inertia`, `capacity`, `deposition`, `erosion`, `evaporation`, `gravity`,
-  `min_slope`.
-- `thermal`: slumps slopes past a `talus` angle. Params: `talus`, `factor`,
-  `iterations`.
-- `smooth`: gaussian blur, `sigma`. Bracket the hydraulic pass with one (a coarse
-  base pre-smooth and a light final smooth) to keep the result from going gritty.
-- `falloff`: taper the field toward the borders so the edges sink (islands,
-  plateaus). Params: `margin` (fraction of the shorter side eased in), `power`,
-  `floor`. Run it before `hydraulic` so drainage flows out to the sunk rim.
-- `stream_power`: drainage-area incision (CPU, the original pipeline). Params:
-  `iterations`, `erosion`, `m`, `n`, `talus`, `thermal_factor`.
-
-A good recipe: `smooth` (sigma ~1.5) -> `hydraulic` (droplets 1.5-2.5M, radius 4)
--> `thermal` (iterations ~6) -> `smooth` (sigma ~0.8). The presets are built this
-way. `build_params(knobs)` (in `heightfields/params.py`) is the one place that
-expands a flat knob set into this pass list, shared by the presets, the panel, and
-the CLI.
-
-Droplet count is a density: a hydraulic pass may give `density` (the count at
-768px) instead of an absolute `droplets`, and the pipeline scales it to the bake
-resolution, so a preview and a full bake stay consistent instead of the low-res one
-over-eroding.
+`bobtools.heightfields`, a pure venv subpackage. A preset is a filter STACK, an
+ordered op list evaluated by `engine.run_stack`: a generator (noise, dunes,
+voronoi, strata) establishes the base, later ops erode and shape it. Five curated
+global knobs (Relief, Detail, Erosion, Warp, Seed) modulate a copy of the active
+stack at bake time (`params.resolve_stack`), with every knob at 0.5 reproducing the
+stack as authored. Thirteen presets in four families (Mountains, Lowlands, Canyons,
+Dunes); see `TERRAIN.md` for the op and preset reference.
 
 The MCP tool `bake_heightfield(out_file, params, preview, force)` writes a 16-bit
-PNG plus a `<name>.json` sidecar (the full recipe, so the field is reproducible),
+PNG plus a `<name>.json` sidecar (the full params, so the field is reproducible),
 and a params-hash cache skips a re-bake when nothing changed. `preview=True` bakes
-at 256 for a fast look (a real `preview` arg on `bake()`, so agent and CLI runs are
-resolution-independent too, not just the panel); `backend` is `auto` (GPU when
+at a preview resolution for a fast look (a real `preview` arg on `bake()`, so agent
+and CLI runs are resolution-independent); because the stack is resolution-independent,
+the preview and the full bake are the same landform. `backend` is `auto` (GPU when
 present), `cpu`, or `gpu`. The CPU path is the deterministic reference; the GPU path
-is fast but not bit-identical (atomicAdd order).
+is fast but not bit-identical (atomicAdd order). Pass `"maps": true` (or `--maps`
+on the CLI) to also emit flow and wetness sidecar PNGs; off by default.
 
 ```json
-{"op": "bake_heightfield", "out_file": "library/_generated/forest_height.png",
- "params": {"size": 768, "seed": 5, "backend": "gpu",
-   "generate": {"ridged": 0.5, "detail_strength": 0.5, "octaves": 7},
-   "passes": [{"kind": "hydraulic", "droplets": 1200000, "erosion": 0.3,
-               "deposition": 0.4, "max_steps": 72},
-              {"kind": "thermal", "talus": 0.005, "factor": 0.45, "iterations": 8}]}}
+{"op": "bake_heightfield", "out_file": "library/_generated/alpine_height.png",
+ "params": {"preset": "alpine", "size": 768, "seed": 5, "backend": "gpu"}}
 ```
 
-Presets (`foothills`, `alpine`, `badlands`, `rolling`, `canyon`, `mesa`,
-`islands`) are starting points: pass `"preset": "alpine"` in params and override
-fields. Each is a flat knob set (`presets.PRESET_KNOBS`) expanded through
-`build_params`. From a script, `bobtools.heightfields.bake(abs_path, params,
-preview=...)` is the same entry.
+Presets are starting points: pass `"preset": "<name>"` in params and override
+fields. From a script, `bobtools.heightfields.bake(abs_path, params, preview=...)`
+is the same entry; the CLI is `python -m bobtools.heightfields --out X.png
+--params-file p.json` (also `--knobs-file`, `--preview`, `--maps`, `--backends`).
 
 After a re-bake, send a `reload_image` op so the open session picks up the new
 pixels (see below), then rebuild `heightmap_terrain`.
 
 ### From Blender: the Terrain panel
 
-The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Terrain" panel (renamed from
-"Heightfield Terrain" in the 2026-07-20 UX redesign) with a Bake + Build Terrain button. It bakes in the tools venv (so Blender's own Python
-does not need numpy or CuPy), reloads the image, and builds the terrain object in
-place. Preview bakes at 256 for a fast look; turn it off to commit at full
-resolution. The panel is part of the extension, so picking up a code change to it
-means re-enabling the addon or restarting Blender, not Reload Builders.
+The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Terrain" panel
+with a Bake + Build Terrain button. It bakes in the tools venv (so Blender's own
+Python does not need numpy or CuPy), reloads the image, and builds the terrain
+object in place. The panel is part of the extension, so picking up a code change to
+it means re-enabling the addon or restarting Blender, not Reload Builders.
 
 Panel features:
 
 - 2D preview: the baked heightfield PNG is shown top-down above the button, so you
   read height and drainage without orbiting the viewport. It refreshes each bake.
-- Preset dropdown: pick a preset (`foothills`, `alpine`, `badlands`, `rolling`,
-  `canyon`, `mesa`, `islands`) to populate the sliders in one click; `custom`
-  leaves your values alone. The generation knobs are generated from the venv
-  presets into `presets.json` (see `tools/scripts/gen_panel_presets.py`), so the
-  two stay in sync; the panel adds a display height and sea level per preset.
-- Collapsible Shape / Erosion / Displace sub-panels group the knobs.
-- Backend: `auto` (GPU when present, else CPU), `gpu`, or `cpu`. The question-mark
+- Preset dropdown: pick a preset (grouped by family) to populate the sliders in one
+  click; `custom` leaves your values alone. The generation knobs are generated from
+  the venv presets into `presets.json` (see `tools/scripts/gen_panel_presets.py`),
+  so the two stay in sync; the panel adds a display relief and sea level per preset.
+- Collapsible Shape / Displace / Filter Stack (advanced) sub-panels group the
+  knobs; the Filter Stack sub-panel exposes the raw op list for a custom stack.
+- Backend: `auto` (GPU when present, else CPU), `gpu`, or `cpu`. The Check Backends
   button probes the venv and shows what is available; a bake that falls back to CPU
   reports a warning.
 - Material: a real material picker; the chosen material is assigned to the surface.
 - The bake shows a wait cursor and progress while it runs.
+
+There is no Preview (256) checkbox on the panel: every preset amplifies, so the
+panel always bakes at full resolution. The `--preview` CLI flag and
+`bake(preview=True)` are kept for CPU and script runs.
 
 When Blender is launched through Steam it runs inside the Steam pressure-vessel
 container, where the host venv and CUDA are not directly reachable. The operator
@@ -177,21 +160,14 @@ python straight. If the launcher is unavailable, the panel says so.
 | `height` | 14 | yes | Vertical scale. |
 | `sea_level` | 0.3 | yes | Height value mapped to z = 0. |
 | `material` | none | no | Name of a material to assign to the surface. |
-| `path` | none | no | Name of a curve object to grade a level trail along. |
-| `path_width` | 2.4 | yes | Half-width in metres graded fully flat along the trail. |
-| `path_falloff` | 3.5 | yes | Metres over which the grade eases back to natural terrain. |
-| `path_depth` | 0.3 | yes | Metres to recess the trail below the sampled ground. |
 
-### Path grading
+The recipe ships the terrain shade-smooth (a Set Shade Smooth at the end of the
+graph), so a displaced grid reads with continuous normals rather than a field of
+per-quad facets. It also pins the scene to metric, 1 unit = 1 metre.
 
-With `path` set, the recipe levels a trail along the curve. For each grid point
-it reads the draped curve's own height at the nearest curve vertex, then blends
-the terrain toward that level within `path_width`, easing back over
-`path_falloff`. The result is a graded bench that follows the ground up and down
-but stays flat across its width, recessed by `path_depth`. The curve must be
-draped (build it with `make_path` and a `heightmap`, see below) so its smooth Z
-grades the trail; use a curve `resolution` of 64 or more to avoid terraced steps.
-Pair it with a `path` on the scatter layers to clear vegetation off the trail.
+Path grading is no longer inline in this recipe. A curve carves the terrain through
+the standalone `curve_overlay` modifier stacked on the terrain object, so a network
+of paths composes; see `docs/SPLINES.md`.
 
 ## scatter (recipe: `scatter`)
 
@@ -221,9 +197,8 @@ scale and Z rotation. Trees can stand upright; rocks can tilt to the surface.
 | `noise_strength` | 0.0 | yes | Noise mask mix. 0 = off, 1 = full. |
 | `vgroup` | none | no | Emitter vertex group whose weight paints where the layer scatters. |
 | `paint_strength` | 1.0 | yes | Paint mask mix (only when `vgroup` is set). |
-| `path` | none | no | Name of a curve object to clear the scatter along. |
-| `path_width` | 3.0 | yes | Half-width in metres cleared fully (density 0) along the trail. |
-| `path_falloff` | 3.0 | yes | Metres over which density eases back to full. |
+| `curve_mode` | `none` | no | How a terrain curve affects this layer: `clear` removes scatter along it, `keep` scatters only within it, `none` off. |
+| `curve_attr` | `bbt_curve_mask` | no | Which baked curve attribute to read: `bbt_curve_mask` (the whole band) or `bbt_curve_edge` (the shoulder/verge ring). |
 | `camera` | none | no | Name of a camera; the layer culls scatter outside its view. |
 | `camera_distance` | 80.0 | yes | Cull points beyond this distance from the camera. |
 | `camera_cone` | 60.0 | yes | Half-angle (degrees) of the kept view cone; 180 = all around. |
@@ -238,11 +213,15 @@ vertex group through Object Info, so weight-painting the emitter authors exactly
 where a layer grows; because it names a group it is a build-time param, so set the
 group and press Build.
 
-Path clearing: with `path` set, a distance-from-curve mask drives the Density
-Factor, so density falls to zero within `path_width` of the curve and eases back
-over `path_falloff`. Give each layer its own width so trees pull back further than
-the rocks and plants that edge the trail. Use the same curve on the
-`heightmap_terrain` `path` input to grade the ground flat under the clearing.
+Curve band: the scatter reads a terrain curve's baked mask attribute rather than
+re-solving proximity. With `curve_mode` `clear`, the mask multiplies the Density
+Factor by `(1 - mask)`, so density drops to zero along the trail; `keep` scatters
+only within the band. `curve_attr` picks which baked attribute to read: the whole
+band (`bbt_curve_mask`) or the shoulder ring (`bbt_curve_edge`, for a verge). The
+mask is written by the `curve_overlay` modifier on the terrain (BobSplines C4), so
+one curve grades the ground and clears the scatter together. The Scatter panel adds
+`verge` (reads the edge ring) and `along` (uses the `scatter_along` recipe) modes on
+top of these. See `docs/SPLINES.md`.
 
 Camera culling: with `camera` set, points beyond `camera_distance` or outside the
 `camera_cone` forward cone drop out, cutting instance count for viewport and render
@@ -269,16 +248,22 @@ list, and multi-emitter works by construction. Structural config (`kind`, `asset
 `align`) lives on the layer object (`Object.bbt_scatter_layer`); the numeric knobs
 live on the layer modifier's inputs. Two homes, no drift.
 
-- Emitter + path: pick the emitter mesh (or "Use Active"), optionally a curve to
-  clear a trail through every layer.
+- Emitter: pick the emitter mesh (or "Use Active"). A layer's interaction with a
+  trail is per-layer now (the curve mode below), reading the curves built in the
+  Paths panel rather than one scene-wide path.
 - Layers: a list of the emitter's layers with a kind icon and a hide toggle. Add is
   a dropdown of types (Trees, Rocks, Plants, Grass, Empty); each seeds the align and
   knobs and points `assets` at `BOB_Assets_<Kind>`, making the proxies if needed.
   Remove and Duplicate (a copy with its own node group) sit beside it.
 - Live knobs: the Active Layer sub-panel draws Density, Distance Min, Seed, scale
   range, and the slope band straight from the modifier inputs, so editing one
-  updates the scatter live with no rebuild. Path Width / Falloff appear when a path
-  is set. Randomize Seed reshuffles the active layer.
+  updates the scatter live with no rebuild. Randomize Seed reshuffles the active
+  layer.
+- Curve mode: each layer picks how a Paths curve affects it (none, clear, keep,
+  verge, or along); clear/keep/verge read the terrain curve mask the overlay baked,
+  and along switches the layer to the `scatter_along` recipe (instances placed along
+  the curve and projected onto the terrain). A structural edit, so it applies on
+  Build.
 - Masks sub-panel: Altitude (a world-Z band) and Noise (procedural clumping) masks,
   each gated by a strength slider (0 = off), plus Paint Strength when the layer has
   a mask vertex group set. All are live.
@@ -568,6 +553,22 @@ Geometry INPUT socket, so it augments the object's own mesh.
 |-------|---------|------|--------------|
 | `thickness` | 0.3 | yes | Metres the surface lifts along its normal at full coverage. |
 | `smooth` | 3 | yes | Blur iterations on `snow_cover` before displacing (rounded drifts). |
+
+## Curve-driven recipes (BobSplines)
+
+Three recipes back the typed-curve system, driven from the Paths panel rather than
+authored directly here. Full parameters and the curve-type catalog are in
+`docs/SPLINES.md`.
+
+- `curve_overlay`: a per-curve modifier on the terrain object that benches (follow
+  curves) or carves (impose curves) the surface and bakes the curve mask attributes
+  (`bbt_curve_mask`, `bbt_curve_carved`, `bbt_curve_dist`, `bbt_curve_wet`,
+  `bbt_curve_edge`) the scatter and material layers read.
+- `curve_water`: a water-surface ribbon (`BOB_Water_<name>`) along an impose curve
+  (river, stream), with Gerstner waves and shore/flow/foam/depth attributes for the
+  water BobShader.
+- `scatter_along`: places instances along a curve and projects them onto the
+  emitter, the `along` curve mode of a scatter layer.
 
 ## Path (op: `make_path`)
 

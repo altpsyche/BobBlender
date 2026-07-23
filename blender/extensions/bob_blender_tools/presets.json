@@ -398,6 +398,7 @@
         "mode": "fluvial",
         "strength": 0.025,
         "iterations": 20,
+        "diffusion": 0.06,
         "to": 768,
         "relief": 0.18
       }
@@ -514,6 +515,7 @@
         "mode": "fluvial",
         "strength": 0.02,
         "iterations": 20,
+        "diffusion": 0.06,
         "to": 768,
         "relief": 0.16
       }
