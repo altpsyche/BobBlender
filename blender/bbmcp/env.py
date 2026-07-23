@@ -23,6 +23,12 @@ SEASONS = (
     ("winter", "Winter", "Winter"),
 )
 
+# Default snow line, NORMALIZED 0..1 (0 = valley floor / whole map snowed, 1 = above the peaks /
+# snow clears). 0.7 reads as snow on the upper slopes under Conditions alone. The shader turns this
+# into world Z using the terrain's Z bounds (snow_z_base/span), so the same value reads right at any
+# terrain scale. Kept in sync with the matching driver default in materials.ENV_STATE_DRIVERS.
+SNOW_LINE_DEFAULT = 0.7
+
 WEATHER = (
     ("clear", "Clear", "Clear sky"),
     ("cloudy", "Cloudy", "Broken cloud"),
@@ -61,6 +67,20 @@ def _on_geo_change(self, context):
             fn(scene)
         except Exception as exc:
             print(f"[bbmcp.env] geo hook failed: {exc}")
+
+
+def _on_snow_line_change(self, context):
+    """Update callback on snow_line: re-fit the terrain Z bounds from the scene's terrain, so the
+    normalized line maps to the real terrain every time the artist drags it -- even on a terrain
+    built before the bounds were first stamped. Best-effort: the first bbt_terrain_height-stamped
+    mesh; no terrain, no change (defaults hold for a standalone asset)."""
+    scene = getattr(context, "scene", None) or getattr(bpy.context, "scene", None)
+    if scene is None:
+        return
+    terr = next((o for o in scene.objects
+                 if o.type == "MESH" and "bbt_terrain_height" in o), None)
+    if terr is not None:
+        stamp_snow_bounds(scene, terr)
 
 
 class BBT_EnvProps(PropertyGroup):
@@ -106,8 +126,23 @@ class BBT_EnvProps(PropertyGroup):
         name="Temperature", default=15.0, min=-60.0, max=60.0,
         description="Degrees Celsius")
     wetness: FloatProperty(name="Wetness", default=0.0, min=0.0, max=1.0)
-    snow: FloatProperty(name="Snow", default=0.0, min=0.0, max=1.0,
-                        description="Snow level, drives coverage and whitening")
+    # Snow has no amount slider: temperature drives whether it snows (below freezing = snow, colder
+    # = thicker) and snow_line sets how far down it reaches. Two orthogonal controls, no third knob.
+    # Snow line: normalized 0..1 over the terrain relief. Snow sits ABOVE the line, so 0 puts it at
+    # the valley (whole map snowed) and 1 above the peaks (snow clears). Headroom past 0/1 lets the
+    # artist force full or no cover. The shader scales this to world Z with snow_z_base/span.
+    snow_line: FloatProperty(name="Snow Line", default=SNOW_LINE_DEFAULT, min=-0.25, max=1.25,
+                             soft_min=0.0, soft_max=1.0, update=_on_snow_line_change,
+                             description="How far down snow reaches, 0..1 (0 = whole map, 1 = "
+                                         "peaks clear)")
+    # Terrain Z bounds the snow line maps over, stamped on Apply Season / build snow (valley world-Z
+    # and relief in metres). Defaults suit a mid-size terrain so a standalone asset still snows.
+    snow_z_base: FloatProperty(name="Snow Z Base", default=0.0,
+                               description="Valley world-Z the snow line maps from (set by the "
+                                           "terrain)")
+    snow_z_span: FloatProperty(name="Snow Z Span", default=20.0, min=0.001,
+                               description="Terrain relief in metres the snow line maps over (set "
+                                           "by the terrain)")
     cloud_cover: FloatProperty(name="Cloud Cover", default=0.2, min=0.0, max=1.0)
     wind_direction: FloatProperty(
         name="Wind Direction", default=0.0, min=0.0, max=360.0,
@@ -123,6 +158,29 @@ def get_env(scene=None):
     """
     scene = scene or getattr(bpy.context, "scene", None)
     return getattr(scene, "bbt_env", None) if scene is not None else None
+
+
+def stamp_snow_bounds(scene, obj):
+    """Set the snow line's terrain Z bounds (snow_z_base/span) from obj's real world-Z extent, so
+    the normalized snow line (0..1) maps to THIS terrain. Called whenever the terrain is known (on
+    bake, on Apply Season, on build snow). Without it the line maps to defaults (0..20 m) and a
+    terrain that dips below Z=0 or is a different height never fully covers at line 0. Uses the
+    evaluated bounding box (post displacement). Returns True if it stamped."""
+    from mathutils import Vector
+    env = get_env(scene)
+    if env is None or obj is None or getattr(obj, "type", None) != "MESH":
+        return False
+    try:
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = obj.evaluated_get(dg)
+        mw = obj.matrix_world
+        zs = [(mw @ Vector(c)).z for c in ev.bound_box]
+    except (RuntimeError, AttributeError):
+        return False
+    base = min(zs)
+    env.snow_z_base = base
+    env.snow_z_span = max(max(zs) - base, 0.001)
+    return True
 
 
 def sun_params(env):

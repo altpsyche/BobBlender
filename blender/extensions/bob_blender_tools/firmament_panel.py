@@ -122,9 +122,6 @@ _MOTE_KNOBS = ["Count", "Fall Speed", "Drift", "Turbulence", "Size", "Size Varia
 _MOTE_LOOK = ["Color", "Emission"]
 _MOTE_WIND = ["Wind Direction", "Wind Speed"]
 _DOMAIN_KNOBS = ["Domain Size", "Domain Height"]
-_SNOW_KNOBS = ["Snow", "Slope Threshold", "Slope Falloff", "Altitude",
-               "Altitude Falloff", "Occlusion", "Occlusion Distance"]
-
 # Rain presets (streak mode): live knobs set by socket name.
 RAIN_PRESETS = {
     "drizzle": {"label": "Drizzle", "desc": "Light, fine rain",
@@ -160,12 +157,15 @@ MOTE_PRESETS = {
 # snow-coverage pass). Applied by an explicit operator, never a property callback, so
 # it does not hit the scatter re-entrancy. Season deliberately owns only the seasonal
 # state and its own subsystems; it leaves time, place, and wind (the shot setup) alone.
+# snow_line: where Apply Season puts the snow line, NORMALIZED 0..1 over the terrain relief. Winter
+# drops it to the valley (0 = whole map snows); the other seasons push it above the peaks (>1 =
+# snow clears). Apply also stamps the terrain's Z bounds into the env so the value maps to world Z.
 SEASON_APPLY = {
-    "spring": {"snow": 0.0, "wetness": 0.20, "temperature": 12.0},
-    "summer": {"snow": 0.0, "wetness": 0.0, "temperature": 24.0},
-    "autumn": {"snow": 0.0, "wetness": 0.15, "temperature": 10.0},
-    "winter": {"snow": 0.7, "wetness": 0.05, "temperature": -4.0,
-               "build_snow": True},
+    "spring": {"wetness": 0.20, "temperature": 12.0, "snow_line": 1.15},
+    "summer": {"wetness": 0.0, "temperature": 24.0, "snow_line": 1.15},
+    "autumn": {"wetness": 0.15, "temperature": 10.0, "snow_line": 1.15},
+    "winter": {"wetness": 0.05, "temperature": -4.0,
+               "snow_line": 0.0, "build_snow": True},
 }
 
 # Representative mid-season month per season, NORTHERN hemisphere. When "Season sets the date"
@@ -430,19 +430,40 @@ def _remove_wind_drivers(obj, extra=()):
 
 
 def _snow_input(surface):
-    """The Snow input struct of the BOB_Snow coverage pass on a surface, or None."""
+    """The Snow input struct of the BOB_Snow pass on a surface, or None."""
     return _input_of(_named_mod(surface, "BOB_Snow"), "Snow")
 
 
-def _install_snow_driver(surface, scene):
-    """Feed the coverage pass's Snow amount from bbt_env.snow live, so raising the
-    Environment snow level (or an Apply Season -> Winter) drives coverage with no
-    rebuild. The terrain carries two Nodes modifiers, so this targets BOB_Snow by
-    name, not the first modifier."""
-    inp = _snow_input(surface)
-    if inp is not None:
-        _drive_input(surface, inp, scene, "bbt_env.snow")
-        surface.update_tag()
+def _snow_amount(env):
+    """The temperature-driven snow amount (0 above freezing, 1 by SNOW_TEMP_FULL), matching the
+    shader. Snow has no amount slider -- temperature is the amount."""
+    from bbmcp.materials import SNOW_TEMP_FULL
+    t = max(0.0, min(1.0, env.temperature / SNOW_TEMP_FULL))
+    return t * t * (3.0 - 2.0 * t)  # smoothstep, matches the shader MapRange
+
+
+def _world_snow_line(env):
+    """The world-Z snow line (lo) and transition band, mirroring the shader: line 0 covers the
+    whole terrain (transition below the valley), line 1 clears above the peaks. Used to seed the
+    GN pass (the shell) so its coverage tracks the same line the material shades to."""
+    band = 0.12 * env.snow_z_span
+    hi = env.snow_z_base + env.snow_line * (env.snow_z_span + band)
+    return hi - band, band
+
+
+def _sync_snow_pass(surface, env):
+    """Set the GN pass (the shell) from the env: Snow amount from temperature, and the world-Z
+    snow line/band, matching the shader. Snow is temperature-driven with no plain env field to
+    drive live, so the shell is refreshed on build / Apply Season / Use Env Snow, not per-edit."""
+    mod = _named_mod(surface, "BOB_Snow")
+    if mod is None or env is None:
+        return
+    lo, band = _world_snow_line(env)
+    for name, value in (("Snow", _snow_amount(env)), ("Altitude", lo), ("Altitude Falloff", band)):
+        inp = _input_of(mod, name)
+        if inp is not None:
+            inp.value = value
+    surface.update_tag()
 
 
 # --- Live sun: reposition the Sun lamp + sky node from the world state whenever a geographic field
@@ -529,11 +550,13 @@ def _apply_world(scene):
         else:
             _remove_wind_drivers(obj, extra)
     surface = fm.snow_surface or getattr(bpy.context, "active_object", None)
-    if _named_mod(surface, "BOB_Snow") is not None:
-        if live:
-            _install_snow_driver(surface, scene)
-        else:
-            _undrive_input(surface, _snow_input(surface))
+    mod = _named_mod(surface, "BOB_Snow")
+    if mod is not None:
+        # Clear any legacy live driver (older builds drove the pass Snow from bbt_env.snow, now
+        # removed) and refresh the shell from the env, since it is no longer driven live.
+        _undrive_input(surface, _input_of(mod, "Snow"))
+        _undrive_input(surface, _input_of(mod, "Altitude"))
+        _sync_snow_pass(surface, _env.get_env(scene))
     _apply_quality(scene)
 
 
@@ -640,6 +663,9 @@ class BBT_FirmamentProps(PropertyGroup):
     snow_surface: PointerProperty(
         name="Surface", type=bpy.types.Object,
         poll=lambda self, obj: obj.type == "MESH",
+        # Picking the terrain also fits the snow line's Z bounds to it, so the normalized line
+        # reads right immediately (0 = its valley, 1 = its peaks).
+        update=lambda self, ctx: _env.stamp_snow_bounds(ctx.scene, self.snow_surface),
         description="The terrain the snow-coverage pass writes snow_cover onto (BobShaders "
                     "reads that attribute). Defaults to the active mesh")
 
@@ -962,8 +988,9 @@ class BBT_OT_firmament_mote_preset(Operator):
 class BBT_OT_firmament_build_snow_cover(Operator):
     bl_idname = "bob_blender_tools.firmament_build_snow_cover"
     bl_label = "Add Snow Coverage"
-    bl_description = ("Write the snow_cover attribute onto the surface (slope + altitude, "
-                      "seeded from the Environment snow level). BobShaders reads it")
+    bl_description = ("Write the snow_cover + snow_occlusion attributes onto the surface, "
+                      "seeded from the Environment snow level and snow line. The accumulation "
+                      "shell reads snow_cover for thickness; the material reads snow_occlusion")
 
     def execute(self, context):
         fm = context.scene.bbt_firmament
@@ -973,14 +1000,19 @@ class BBT_OT_firmament_build_snow_cover(Operator):
             return {"CANCELLED"}
         env = _env.get_env(context.scene)
         params = {}
-        if env is not None:  # seed the coverage amount from the shared world state
-            params["snow"] = env.snow
+        if env is not None:
+            # Stamp the terrain's Z bounds so the normalized snow line maps to world Z, then seed
+            # the pass (the shell): amount from temperature and the world-Z line/band matching the
+            # shader, so the shell's coverage tracks what the material shades.
+            _env.stamp_snow_bounds(context.scene, surface)
+            lo, band = _world_snow_line(env)
+            params["snow"] = _snow_amount(env)
+            params["altitude"] = lo
+            params["altitude_falloff"] = band
         server._ensure_path()
         from bbmcp.geonodes import build_geonodes_on_object
 
         build_geonodes_on_object(surface, "snow", "BOB_Snow", params)
-        if _live_env_on(context.scene):
-            _install_snow_driver(surface, context.scene)
         self.report({"INFO"}, f"Snow coverage written on {surface.name}")
         return {"FINISHED"}
 
@@ -988,19 +1020,16 @@ class BBT_OT_firmament_build_snow_cover(Operator):
 class BBT_OT_firmament_snow_from_env(Operator):
     bl_idname = "bob_blender_tools.firmament_snow_from_env"
     bl_label = "Use Env Snow"
-    bl_description = "Copy the Environment snow level onto the coverage pass"
+    bl_description = "Refresh the snow pass (the shell) from the Environment temperature and snow line"
 
     def execute(self, context):
         fm = context.scene.bbt_firmament
         env = _env.get_env(context.scene)
         surface = fm.snow_surface or context.active_object
-        mod = _named_mod(surface, "BOB_Snow")
-        snow = _input_of(mod, "Snow")
-        if env is None or snow is None:
+        if env is None or _named_mod(surface, "BOB_Snow") is None:
             return {"CANCELLED"}
-        snow.value = env.snow
-        surface.update_tag()
-        self.report({"INFO"}, "Snow coverage synced from Environment")
+        _sync_snow_pass(surface, env)
+        self.report({"INFO"}, "Snow pass synced from Environment")
         return {"FINISHED"}
 
 
@@ -1019,9 +1048,16 @@ class BBT_OT_firmament_apply_season(Operator):
         spec = SEASON_APPLY.get(env.season)
         if spec is None:
             return {"CANCELLED"}
-        for key in ("snow", "wetness", "temperature"):
+        for key in ("wetness", "temperature"):
             if key in spec:
                 setattr(env, key, spec[key])
+        # Snow line: stamp the terrain's Z bounds so the normalized line maps to world Z, then set
+        # the season's normalized value. Winter -> 0 (valley, whole map); others -> above the peaks
+        # (clears). Terrain and assets both read the same env line.
+        if "snow_line" in spec:
+            surface = fm.snow_surface or context.active_object
+            _env.stamp_snow_bounds(context.scene, surface)
+            env.snow_line = spec["snow_line"]
         # Season -> date (item 2, gated): set the month so the live solar model lowers the winter
         # sun. Writing env.month fires env's geo-hook, which repositions the sun when Live
         # Environment is on. Sky mood (time/cloud/weather) is left to Sky Look.
@@ -1032,8 +1068,8 @@ class BBT_OT_firmament_apply_season(Operator):
         built = []
         if spec.get("build_snow"):
             # Falling snow (the mote preset builds the object if missing) and the
-            # coverage pass on the surface, if one is available. Coverage's Snow input
-            # is driven from env.snow on build, so it tracks the level set above.
+            # coverage pass on the surface, if one is available. The pass's Snow amount is
+            # seeded from the temperature on build, so winter (-4C) fills it.
             bpy.ops.bob_blender_tools.firmament_mote_preset(preset="snow")
             built.append("falling snow")
             surface = fm.snow_surface or context.active_object
@@ -1331,23 +1367,27 @@ class BBT_PT_firmament_weather(Panel):
                           object_name=fm.mote_object)
             _draw_knobs(box, motes, _DOMAIN_KNOBS)
 
-        # Snow coverage (the GN pass on the terrain surface, the single coverage source).
+        # Snow pass (GN, on the terrain): feeds the accumulation shell (snow_cover) and the
+        # material's optional shelter term (snow_occlusion). The material whitens on its own.
         box = layout.box()
         box.label(text="Snow Coverage", icon="OUTLINER_DATA_SURFACE")
         box.prop(fm, "snow_surface")
         ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_snow_cover",
-                                     note="builds: the terrain snow-cover pass")
+                                     note="builds: the snow pass (shell coverage + occlusion)")
         surface = fm.snow_surface or context.active_object
         snow_mod = _named_mod(surface, "BOB_Snow")
         if snow_mod is not None:
             live = _live_env_on(context.scene)
-            # Only the Snow amount is driven from bbt_env.snow; the slope/altitude bands stay
-            # author-owned, so grey just Snow when Live Environment is on.
+            # Snow (amount) is driven from bbt_env when Live Environment is on, so grey it. The
+            # world-Z Altitude/Falloff are the snow line, set from the env on build/sync (Use Env
+            # Snow), so they show as author-owned; the slope band and occlusion are author-owned too.
             _draw_knobs_mod(box, snow_mod, ["Snow"], enabled=not live)
-            _draw_knobs_mod(box, snow_mod, _SNOW_KNOBS[1:])
+            _draw_knobs_mod(box, snow_mod, ["Slope Threshold", "Slope Falloff", "Altitude",
+                                            "Altitude Falloff", "Occlusion", "Occlusion Distance"])
             _from_env_row(box, live, "bob_blender_tools.firmament_snow_from_env")
         else:
-            box.label(text="Writes snow_cover for BobShaders to read", icon="INFO")
+            box.label(text="Feeds the snow shell + occlusion; the material snows on its own",
+                      icon="INFO")
 
 
 CLASSES = (

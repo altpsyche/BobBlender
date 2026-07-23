@@ -583,11 +583,18 @@ SURFACE_WRAPPER_PREFIX = "M_"
 # Phase-0 finding). The panel installs and reinstalls these; per-material drivers on the
 # same fields remain the known-good fallback if the shared-drive path ever regresses.
 ENV_STATE_DRIVERS = (
-    ("env_snow", "snow", 0.0),
     ("env_wetness", "wetness", 0.0),
     ("env_temperature", "temperature", 15.0),
     ("env_weather", "weather", 0.0),  # enum index; mapped to effective wetness in S_EnvState
+    ("env_snow_line", "snow_line", 0.7),  # normalized 0..1; kept in sync with env.SNOW_LINE_DEFAULT
+    ("env_snow_z_base", "snow_z_base", 0.0),  # terrain valley world-Z (stamped on build/season)
+    ("env_snow_z_span", "snow_z_span", 20.0),  # terrain relief metres (peak - valley)
+    ("env_cloud", "cloud_cover", 0.2),  # for frost: clear sky (low cloud) drives radiative cooling
+    ("env_wind", "wind_strength", 1.0),  # for frost: hoar frost needs calm air (wind gives rime)
 )
+# Below this temperature (C) snow is at full thickness; it ramps in from 0C. Snow has no amount
+# slider -- temperature is the amount, snow_line is the extent.
+SNOW_TEMP_FULL = -4.0
 
 # Snow shading constants (the surface-snow look): a slightly cool near-white albedo and a
 # soft, high roughness. Kept here so the shader and any future accumulation-shell tint agree.
@@ -596,7 +603,11 @@ _SNOW_ROUGHNESS = 0.6
 # S4 weather-term tints: warm dust, dark moss, cool frost.
 _DUST_COLOR = (0.55, 0.47, 0.33, 1.0)
 _MOSS_COLOR = (0.12, 0.22, 0.06, 1.0)
+# Hoar frost: a pale, faintly cool crystalline tint. Applied THIN (low opacity) with fine sparkle,
+# so it reads as a delicate sheen on cold exposed rock, distinct from snow's thick opaque white.
 _FROST_COLOR = (0.82, 0.87, 0.96, 1.0)
+_FROST_MAX_OPACITY = 0.28   # the cool sheen never fully hides the rock (frost is thin, not a blanket)
+_FROST_SPARKLE_SCALE = 18.0  # crystal glints (world-space noise frequency; fine but not aliasing)
 # The extra S_Weather inputs the masters must expose and pass through (name, default).
 _WEATHER_EXTRA = (
     ("Wetness Strength", 1.0), ("Wet Pooling", 0.0), ("Frost Strength", 1.0),
@@ -672,7 +683,14 @@ def _vscale(g, vec, scalar, loc):
 # rebuild gives the weather sockets new identifiers, and an embedder left un-rebuilt keeps stale
 # links to them (verified: terrain's 16 weather links drop to 0). A global bump rebuilds all of
 # them consistently, at the known cost of resetting tuned terrain/surface inputs on upgrade.
-S_GROUP_VER = 4
+# v5 (snow-line unify): S_Weather dropped the Use Attribute switch AND the per-material Altitude /
+# Altitude Falloff knobs; it now computes coverage from a normalized env snow line, scaled to the
+# terrain's Z bounds, on every surface. S_EnvState gained Snow Line + Snow Line Top outputs (world
+# Z) and its Snow output is temperature-driven (no amount slider; below freezing snows, colder is
+# thicker). The material reads a snow_occlusion attribute instead of snow_cover. The weather and
+# env-state interfaces both changed, so every embedder (S_SurfaceMaster, S_TerrainMaster,
+# S_WaterMaster) must rebuild in lockstep.
+S_GROUP_VER = 5
 
 # Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of every
 # material instancing the group (the new sockets get fresh identifiers, verified), so a global
@@ -688,7 +706,10 @@ S_GROUP_VER = 4
 #   S_WaterMaster v7: it embeds S_Weather, whose interface changed in the item-3 weather fix (the
 #   Canopy Snow term). Bumped in lockstep with the global S_GROUP_VER v4 so the water group rebuilds
 #   and re-links the weather node rather than keeping stale socket links. (v6 was the W5 depth pass.)
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 7}
+#   S_WaterMaster v8: S_Weather's interface changed again in the snow-line unify (Use Attribute
+#   dropped). Bumped in lockstep with the global S_GROUP_VER v5 so the water group rebuilds and
+#   re-links the weather node rather than keeping stale links.
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 8}
 
 
 def _cached_group(name):
@@ -715,15 +736,29 @@ def env_state_group():
     """The world-to-shader bridge: one shared group whose internal Value nodes hold the
     live env fields, driven once from scene.bbt_env by the panel. Because a node group is
     a single datablock shared by every material that instances it, driving it once feeds
-    every surface (Phase-0). No inputs; outputs Snow, Wetness, Temperature. When Firmament
-    is absent no driver is installed and the Value defaults stand (no snow), so a material
-    still renders standalone."""
+    every surface (Phase-0). No inputs; outputs Snow, Wetness, Temperature, Snow Line, Snow
+    Line Top, Cloud, Wind. When Firmament is absent no driver is installed and the Value defaults stand
+    (no snow, a high snow line), so a material still renders standalone.
+
+    Snow model (one authority, shared by terrain and assets) -- two controls, no amount slider:
+    - Temperature is the amount: 0 above freezing, ramping to full thickness by SNOW_TEMP_FULL.
+      So it snows when it is cold, colder = thicker, and nothing snows above freezing.
+    - env.snow_line is the extent, normalized 0..1: 0 = the line at the valley floor (snow
+      reaches the whole map), 1 = above the peaks (snow clears). Independent of temperature.
+    - The normalized line becomes world Z here, base + snow_line * span, from the terrain's Z
+      bounds (env.snow_z_base / snow_z_span, stamped on Apply Season / build; sane defaults
+      for a standalone asset), so the same 0..1 reads right on a 90 m or a 1000 m terrain.
+      The transition band is a fraction of span, so it scales too."""
     g, _fresh = _cached_group(ENV_STATE)
     if not _fresh:
         return g
     _gout(g, "Snow", "NodeSocketFloat")
     _gout(g, "Wetness", "NodeSocketFloat")
     _gout(g, "Temperature", "NodeSocketFloat")
+    _gout(g, "Snow Line", "NodeSocketFloat")
+    _gout(g, "Snow Line Top", "NodeSocketFloat")
+    _gout(g, "Cloud", "NodeSocketFloat")  # frost: clear sky (low cloud) = radiative cooling
+    _gout(g, "Wind", "NodeSocketFloat")    # frost: calm air = hoar frost (wind gives rime)
     go = g.nodes.new("NodeGroupOutput")
     go.location = (600, 0)
     O = go.inputs
@@ -737,8 +772,26 @@ def env_state_group():
         v.outputs[0].default_value = default
         val[node_name] = v.outputs[0]
 
-    g.links.new(val["env_snow"], O["Snow"])
     g.links.new(val["env_temperature"], O["Temperature"])
+    g.links.new(val["env_cloud"], O["Cloud"])
+    g.links.new(val["env_wind"], O["Wind"])
+
+    # Snow amount = temperature: 0 above freezing, easing to 1 (full) by SNOW_TEMP_FULL. This is
+    # the only thing that turns snow on, so a cold night snows and a warm one never does.
+    snow_amt = _mrange(g, val["env_temperature"], 0.0, SNOW_TEMP_FULL, 0.0, 1.0, (-90, 40))
+    g.links.new(snow_amt, O["Snow"])
+    # Snow line -> world Z (extent only, independent of temperature). Band a fraction of span, so
+    # the softness scales with the terrain. Map so line 0 covers the WHOLE terrain (transition sits
+    # below the valley) and line 1 clears above the peaks: hi goes base..base+span+band as line
+    # goes 0..1, lo = hi - band. At line 0, hi = base, so the valley floor is fully snowed (not the
+    # ~90% you get if the band starts at the valley).
+    band = _mmath(g, "MULTIPLY", val["env_snow_z_span"], 0.12, (250, 40))
+    span_band = _mmath(g, "ADD", val["env_snow_z_span"], band, (250, 120))
+    hi = _mmath(g, "ADD", val["env_snow_z_base"],
+                _mmath(g, "MULTIPLY", val["env_snow_line"], span_band, (420, 160)), (560, 140))
+    lo = _mmath(g, "SUBTRACT", hi, band, (560, 60))
+    g.links.new(lo, O["Snow Line"])
+    g.links.new(hi, O["Snow Line Top"])
 
     # The weather -> wetness mapping (the one convergence spot, documented in SHADERS.md):
     # effective wetness = max(env.wetness, weather contribution), where weather in {rain,
@@ -759,22 +812,23 @@ def env_state_group():
 def weather_group():
     """The shared weather layer, ending every master. S1 carries the snow term only.
 
-    Coverage has a single authority: read the snow_cover attribute (Geometry Attribute
-    node, POINT) where the Firmament GN pass ran (the terrain), and compute a shader-side
-    fallback with the SAME formula everywhere else (scattered assets, plain meshes carry
-    no pass). Use Attribute picks between them (0 computed, the default, since most
-    surfaces have no pass; 1 attribute, for the terrain).
-
-    The fallback MUST match the GN pass (snow.py), pinned in SYSTEMS.md:
-      slope_mask = smoothstep(normalZ, from Slope Threshold - Slope Falloff to Slope
-                   Threshold)   -- eases on the LOW side, snow holds on up-facing ground
-      altitude_mask = smoothstep(worldZ, from Altitude to Altitude + Altitude Falloff)
-                   -- eases on the HIGH side, snow holds on high ground
-      coverage = Snow * slope_mask * altitude_mask
-    Occlusion is a GN-only raycast term (default 0, and fallback meshes have no overhangs),
-    so omitting it here is exact when occlusion is off, which is the fallback's whole domain.
-    The attribute path's snow_cover already includes its own Snow multiply, so both paths
-    scale with env.snow identically.
+    Coverage has ONE authority now: the shader computes it, identically on every surface
+    (terrain, scattered assets, plain meshes). There is no attribute switch and no
+    dependence on the GN pass, so a missing pass can never leave a surface bare while its
+    neighbours whiten (the old Use-Attribute zero-trap):
+      slope_mask    = smoothstep(normalZ, from Slope Threshold - Slope Falloff to Slope
+                      Threshold)   -- eases on the LOW side, snow holds on up-facing ground
+      altitude_mask = smoothstep(worldZ, from Snow Line to Snow Line Top)   -- snow lies ABOVE
+                      the line; both bounds are world-Z, computed by the env bridge from the
+                      normalized env.snow_line and the terrain's Z bounds, so Season and
+                      Conditions move it live and it reads right at any terrain scale.
+      coverage      = Snow * max(slope_mask, canopy) * altitude_mask * (1 - occlusion)
+    Snow (from the env bridge) is the temperature-driven amount, so a cold night snows here as
+    snow and a warm one clears. Occlusion is an optional shelter term read from the snow_occlusion
+    attribute (the GN pass writes it; absent returns 0, so no pass means full snow, never
+    zero). The GN pass still writes snow_cover too, but only the accumulation shell (geometry)
+    reads that; the shader no longer does. Frost is gated to bare (non-snowed) faces, so it
+    never doubles the tint on snow.
     """
     g, _fresh = _cached_group(WEATHER)
     if not _fresh:
@@ -783,11 +837,10 @@ def weather_group():
     _gin(g, "Roughness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Metallic", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Snow Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
-    _gin(g, "Use Attribute", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
-    _gin(g, "Altitude", "NodeSocketFloat", 0.0)
-    _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    # The snow line (world-Z lo/hi) comes entirely from the env bridge now, scaled to the terrain,
+    # so there is no per-material altitude knob to drift out of sync between surfaces.
     # Canopy accumulation (item-3 fix): 0 leaves the pure slope/up-facing model (terrain, solid
     # surfaces); the asset-convert path raises it so snow/frost/dust also hold on the upper
     # bounding box of a near-vertical instance (a tree trunk + cone canopy caught almost none).
@@ -819,6 +872,10 @@ def weather_group():
     snow_amount = env.outputs["Snow"]
     env_wet = env.outputs["Wetness"]
     env_temp = env.outputs["Temperature"]
+    line_lo = env.outputs["Snow Line"]      # world-Z bottom of the snow line
+    line_hi = env.outputs["Snow Line Top"]  # world-Z top of the transition band
+    env_cloud = env.outputs["Cloud"]
+    env_wind = env.outputs["Wind"]
 
     # Shader Geometry: world-space normal Z (slope) and position Z (altitude), the same
     # quantities the GN pass reads, so the fallback reproduces it.
@@ -833,8 +890,9 @@ def weather_group():
 
     slope_lo = _mmath(g, "SUBTRACT", I["Slope Threshold"], I["Slope Falloff"], (-800, -60))
     slope_mask = _mrange(g, nsep.outputs["Z"], slope_lo, I["Slope Threshold"], 0.0, 1.0, (-620, -20))
-    alt_hi = _mmath(g, "ADD", I["Altitude"], I["Altitude Falloff"], (-800, -320))
-    alt_mask = _mrange(g, psep.outputs["Z"], I["Altitude"], alt_hi, 0.0, 1.0, (-620, -280))
+    # Altitude mask: snow lies above the env snow line (world-Z lo..hi from the bridge), so it
+    # tracks env.snow_line and the below-freezing drop with no per-material knob to drift.
+    alt_mask = _mrange(g, psep.outputs["Z"], line_lo, line_hi, 0.0, 1.0, (-620, -280))
 
     # Canopy term: the Generated coordinate is the instance's own bounding box (0 at the base,
     # 1 at the top), per-instance and scale-free, so its upper band marks the canopy of any
@@ -853,17 +911,15 @@ def weather_group():
     computed = _mmath(g, "MULTIPLY", snow_amount, snow_exp, (-420, -120))
     computed = _mmath(g, "MULTIPLY", computed, alt_mask, (-240, -120))
 
-    attr = g.nodes.new("ShaderNodeAttribute")
-    attr.attribute_type = "GEOMETRY"
-    attr.attribute_name = "snow_cover"
-    attr.location = (-420, -400)
-
-    # coverage = computed*(1 - Use Attribute) + snow_cover*Use Attribute. Done with math,
-    # not a Mix node, so the float sockets are unambiguous.
-    inv_use = _mmath(g, "SUBTRACT", 1.0, I["Use Attribute"], (-240, -320))
-    c_comp = _mmath(g, "MULTIPLY", computed, inv_use, (-60, -220))
-    c_attr = _mmath(g, "MULTIPLY", attr.outputs["Fac"], I["Use Attribute"], (-60, -400))
-    coverage = _mmath(g, "ADD", c_comp, c_attr, (120, -300))
+    # Optional shelter: the GN pass writes a snow_occlusion attribute (0..1). Absent, the
+    # Attribute node returns 0, so a surface with no pass simply gets no shelter reduction
+    # (full snow) -- never the old zero-coverage trap. coverage = computed * (1 - occlusion).
+    occ = g.nodes.new("ShaderNodeAttribute")
+    occ.attribute_type = "GEOMETRY"
+    occ.attribute_name = "snow_occlusion"
+    occ.location = (-420, -400)
+    keep = _mmath(g, "SUBTRACT", 1.0, occ.outputs["Fac"], (-240, -400))
+    coverage = _mmath(g, "MULTIPLY", computed, keep, (120, -300))
 
     snow_factor = g.nodes.new("ShaderNodeMath")
     snow_factor.operation = "MULTIPLY"
@@ -915,12 +971,39 @@ def weather_group():
     rough = _lerp(g, rough, _SNOW_ROUGHNESS, sf, (1360, -220))
     metal = _mmath(g, "MULTIPLY", metal, _mmath(g, "SUBTRACT", 1.0, sf, (1360, -360)), (1540, -320))
 
-    # Frost: below freezing, on up-facing exposed faces, a cool blue-white sheen.
-    cold = _mrange(g, env_temp, 0.0, -6.0, 0.0, 1.0, (1360, 460))
-    frost = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", cold, I["Frost Strength"], (1540, 460)),
-                   upface_eff, (1720, 460))
-    col = _mixcol(g, _mmath(g, "MULTIPLY", frost, 0.6, (1720, 300)), col, _FROST_COLOR, (1900, 340))
-    rough = _lerp(g, rough, 0.25, _mmath(g, "MULTIPLY", frost, 0.5, (1720, -160)), (1900, -160))
+    # Hoar frost (physically modelled, distinct from snow): vapour deposits directly to ice on
+    # clear, calm nights when a sky-facing surface radiates heat away and cools below the frost
+    # point. So it is gated by real conditions, not just temperature:
+    #   frost point : ramps in just below freezing (surfaces cool below air temp)
+    #   clear sky   : (1 - Cloud) -- cloud traps outgoing radiation, so overcast = little frost
+    #   calm air    : (1 - wind) -- wind brings granular rime instead of feathery hoar
+    #   sky-exposed : up-facing OR the instance canopy (upface_eff) radiate to the open sky, so
+    #                 frost forms on cold ground AND on the branches/canopy of a scattered tree,
+    #                 not just flat up-facing faces; undersides barely frost
+    #   bare        : (1 - snow) -- a snowed face shows snow, so frost never doubles the tint
+    # The LOOK is a thin sparkly sheen (low-opacity cool tint + fine crystalline glints), never
+    # snow's opaque blanket, so cold bare rock reads as frosted, not snow-covered.
+    frost_pt = _mrange(g, env_temp, 1.0, -5.0, 0.0, 1.0, (1360, 520))   # just below freezing on
+    clear = _mmath(g, "SUBTRACT", 1.0, env_cloud, (1360, 620))
+    calm = _mrange(g, env_wind, 4.0, 0.5, 0.0, 1.0, (1360, 700))         # calm (low wind) -> 1
+    bare = _mmath(g, "SUBTRACT", 1.0, sf, (1360, 400))
+    cond = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", frost_pt, clear, (1540, 560)),
+                  _mmath(g, "MULTIPLY", calm, I["Frost Strength"], (1540, 660)), (1720, 560))
+    frost = _mmath(g, "MULTIPLY", cond, _mmath(g, "MULTIPLY", upface_eff, bare, (1540, 400)), (1720, 460))
+    # Fine crystal sparkle: sparse world-space glints, so frost glitters rather than flatly whitens.
+    fnoise = g.nodes.new("ShaderNodeTexNoise")
+    fnoise.location = (1540, 800)
+    fnoise.inputs["Detail"].default_value = 2.0
+    _mplug(g, fnoise.inputs["Scale"], _FROST_SPARKLE_SCALE)
+    g.links.new(geo.outputs["Position"], fnoise.inputs["Vector"])
+    sparkle = _mmath(g, "MULTIPLY", _mrange(g, fnoise.outputs["Fac"], 0.62, 0.8, 0.0, 1.0, (1720, 800)),
+                     frost, (1900, 760))
+    # Thin cool sheen, then bright glints; the sheen is capped well below opaque (frost is not snow).
+    col = _mixcol(g, _mmath(g, "MULTIPLY", frost, _FROST_MAX_OPACITY, (1900, 640)), col, _FROST_COLOR,
+                  (2080, 560))
+    col = _mixcol(g, _mmath(g, "MULTIPLY", sparkle, 0.7, (2080, 760)), col, (1.0, 1.0, 1.0, 1.0),
+                  (2260, 660))
+    rough = _lerp(g, rough, 0.12, sparkle, (2260, -160))  # glints are shiny ice facets
 
     g.links.new(col, O["Base Color"])
     g.links.new(rough, O["Roughness"])
@@ -962,11 +1045,8 @@ def surface_master_group():
     _gin(g, "Macro Amount", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Macro Scale", "NodeSocketFloat", 0.2, 0.0)
     _gin(g, "Snow Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
-    _gin(g, "Use Attribute", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
-    _gin(g, "Altitude", "NodeSocketFloat", 0.0)
-    _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
     _gin(g, "Canopy Snow", "NodeSocketFloat", 0.0, 0.0, 1.0)  # scattered assets raise it (S_Weather)
     for _wn, _wd in _WEATHER_EXTRA:
         _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
@@ -1015,8 +1095,8 @@ def surface_master_group():
     g.links.new(albedo, weather.inputs["Base Color"])
     g.links.new(rough, weather.inputs["Roughness"])
     g.links.new(metal, weather.inputs["Metallic"])
-    for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", "Canopy Snow", *[n for n, _ in _WEATHER_EXTRA]):
+    for name in ("Snow Strength", "Slope Threshold", "Slope Falloff",
+                 "Canopy Snow", *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):
         g.links.new(weather.outputs[name], go.inputs[name])
@@ -1146,7 +1226,6 @@ def bobshade_material(mat, variation=0.15):
     grp.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # white tint: maps at face value
     grp.inputs["Roughness"].default_value = 1.0
     grp.inputs["Metallic"].default_value = 0.0
-    grp.inputs["Use Attribute"].default_value = 0.0  # computed coverage (no pass on assets)
     # Scattered assets are near-vertical (trunks, cone-canopy sides), so the up-facing snow model
     # misses them; raise Canopy Snow so snow/frost/dust also hold on the instance's upper bbox.
     grp.inputs["Canopy Snow"].default_value = 1.0
@@ -1485,11 +1564,8 @@ def water_master_group():
     # Weather passthrough (as surface_master), so the shared S_Weather layer works. Snow defaults
     # OFF for water: flowing water sheds snow, and the winter look comes from the frost/freeze path.
     _gin(g, "Snow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
-    _gin(g, "Use Attribute", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
-    _gin(g, "Altitude", "NodeSocketFloat", 0.0)
-    _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
     for _wn, _wd in _WEATHER_EXTRA:
         _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
@@ -1706,8 +1782,8 @@ def water_master_group():
     g.links.new(col, weather.inputs["Base Color"])
     g.links.new(rough, weather.inputs["Roughness"])
     weather.inputs["Metallic"].default_value = 0.0
-    for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
+    for name in ("Snow Strength", "Slope Threshold", "Slope Falloff",
+                 *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
 
     # Transmission collapses to opaque as it freezes; IOR passes through. Depth Opacity fades the
@@ -1972,11 +2048,8 @@ def terrain_master_group():
         _gin(g, p + "Detail Height", "NodeSocketFloat", 0.0)
     # Weather passthrough (identical to S_Weather's inputs).
     _gin(g, "Snow Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
-    _gin(g, "Use Attribute", "NodeSocketFloat", 1.0, 0.0, 1.0)  # terrain carries the pass
     _gin(g, "Slope Threshold", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
-    _gin(g, "Altitude", "NodeSocketFloat", 0.0)
-    _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
     for _wn, _wd in _WEATHER_EXTRA:
         _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
     # Terrain-only wetness passthrough (fed from the wrapper's wetness-map sample). Declared
@@ -2060,8 +2133,8 @@ def terrain_master_group():
     g.links.new(I["Wetness Map"], wetmap.inputs[0])
     g.links.new(cwet.outputs["Fac"], wetmap.inputs[1])
     g.links.new(wetmap.outputs["Value"], weather.inputs["Wetness Map"])
-    for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", "Terrain Wetness",
+    for name in ("Snow Strength", "Slope Threshold", "Slope Falloff",
+                 "Terrain Wetness",
                  *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):

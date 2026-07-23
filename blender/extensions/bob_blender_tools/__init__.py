@@ -682,6 +682,12 @@ class BBT_OT_bake_terrain(Operator):
             obj["bbt_terrain_res"] = int(grid_res)
             obj["bbt_terrain_height"] = float(eff_height)   # exaggerated relief, so a path rebuild matches
             obj["bbt_terrain_sea"] = float(hf.sea_level)
+            # Stamp the snow line's Z bounds from the freshly built terrain, so the normalized
+            # snow line maps to THIS terrain's real height (0 = valley, 1 = peaks) the moment the
+            # artist drags it -- not to stale 0..20 m defaults that leave a low valley bare.
+            from bbmcp import env as _env
+            context.view_layer.update()
+            _env.stamp_snow_bounds(context.scene, obj)
         if hf.emit_maps:
             base, ext = os.path.splitext(out_abs)
             for kind in ("flow", "wetness"):

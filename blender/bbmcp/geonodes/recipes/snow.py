@@ -1,13 +1,23 @@
-"""snow: the GN-authored snow-coverage pass (S4).
+"""snow: the GN-authored snow pass (S4).
 
-The single source of snow coverage. This runs as a modifier ON the terrain object
-(after the terrain modifier, so it sees the displaced surface), passes the geometry
-through unchanged, and writes a 0..1 `snow_cover` float attribute on the points
-(vertices). Later the BobShaders surface snow material and the accumulation shell both
-read that one attribute, so the shell thickness and the material whiteness line up
-exactly, with no shader-versus-GN drift.
+Runs as a modifier ON the terrain object (after the terrain modifier, so it sees the
+displaced surface), passes the geometry through unchanged, and writes two POINT float
+attributes:
+- `snow_cover` (0..1): the full coverage, read only by the accumulation shell (snow_shell),
+  which displaces the surface by it for real thickness and drifts. The shell is geometry,
+  so it needs a geometry value; this pass is its source.
+- `snow_occlusion` (0..1): the raw shelter term, read by the surface material as an optional
+  darkening. The material computes its OWN coverage (keyed off the env snow line) and does
+  not read snow_cover, so terrain no longer depends on the pass to whiten. Absent, the
+  material reads 0 (full snow), so a missing pass can never leave the terrain bare.
 
-    snow_cover = Snow * slope_mask(normal Z) * altitude_mask(world Z) * (1 - occlusion)
+The pass is therefore optional detail (the shell + occlusion), not the coverage authority.
+The panel seeds the pass's Snow (from the temperature) and Altitude (the world-Z snow line)
+on build / Apply Season / Use Env Snow, so the shell's coverage tracks the same line the
+material shades to.
+
+    snow_cover = Snow * slope_mask(normal Z) * altitude_mask(local Z) * (1 - occlusion)
+    snow_occlusion = is_hit * Occlusion
 
 - slope: snow sticks to up-facing ground. slope_mask rises from 0 (steep) to 1 as the
   surface normal Z passes Slope Threshold, eased over Slope Falloff.
@@ -90,6 +100,11 @@ def build(ng, out, params: dict):
     cover = math_node(ng, "MULTIPLY", cover, alt_mask, (-20, -300))
     cover = math_node(ng, "MULTIPLY", cover, keep, (160, -300))
 
+    # Two attributes, two consumers. snow_cover is the full coverage for the accumulation shell
+    # (snow_shell displaces geometry by it, so the shell still needs the pass). snow_occlusion is
+    # the raw shelter term (hit * Occlusion, 0..1) for the surface material, which computes its
+    # own coverage and only reads this to darken sheltered spots; absent it reads 0 (full snow),
+    # so the material never depends on the pass. Occlusion 0 leaves snow_occlusion 0 (no effect).
     store = nodes.new("GeometryNodeStoreNamedAttribute")
     store.data_type = "FLOAT"
     store.domain = "POINT"
@@ -97,4 +112,12 @@ def build(ng, out, params: dict):
     links.new(geometry, store.inputs["Geometry"])
     store.inputs["Name"].default_value = "snow_cover"
     links.new(cover, store.inputs["Value"])
-    links.new(store.outputs["Geometry"], out.inputs["Geometry"])
+
+    store_occ = nodes.new("GeometryNodeStoreNamedAttribute")
+    store_occ.data_type = "FLOAT"
+    store_occ.domain = "POINT"
+    store_occ.location = (580, 0)
+    links.new(store.outputs["Geometry"], store_occ.inputs["Geometry"])
+    store_occ.inputs["Name"].default_value = "snow_occlusion"
+    links.new(hit, store_occ.inputs["Value"])
+    links.new(store_occ.outputs["Geometry"], out.inputs["Geometry"])

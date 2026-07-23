@@ -406,7 +406,11 @@ class BBT_PT_world(Panel):
         col = box.column(align=True)
         col.prop(env, "temperature")
         col.prop(env, "wetness")
-        col.prop(env, "snow")
+        col.prop(env, "snow_line")  # normalized 0..1; 0 = whole map, 1 = peaks clear
+        cap = box.row()
+        cap.enabled = False
+        cap.label(text="below 0C it snows (colder = thicker); Snow Line sets how far down")
+        col = box.column(align=True)
         col.prop(env, "cloud_cover")
         col.prop(env, "wind_direction")
         col.prop(env, "wind_strength")

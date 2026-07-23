@@ -21,8 +21,8 @@ terrain BobShader, or a plain material offered a Convert. New BobShader auto-nam
   world applier registry so raising the world snow whitens every surface with no rebuild.
 
 Two homes, no drift: the shared world is bbt_env (World panel); BobShaders' own UI state is
-bbt_shaders. Coverage has one authority: read the snow_cover attribute on the terrain, compute
-the pinned fallback formula everywhere else (Use Attribute picks).
+bbt_shaders. Coverage has one authority: the shader computes it the same way on every surface,
+keyed off the env snow line, so terrain and assets obey the same line (no attribute switch).
 """
 
 import bpy
@@ -45,8 +45,7 @@ _env_owned = False
 # Live knobs drawn per sub-panel, by socket name on the wrapper's Master group node.
 _SURFACE_KNOBS = ["Base Color", "Roughness", "Metallic", "Variation"]
 _MACRO_KNOBS = ["Macro Amount", "Macro Scale"]
-_WEATHER_SNOW = ["Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff"]
+_WEATHER_SNOW = ["Snow Strength", "Slope Threshold", "Slope Falloff"]
 _WEATHER_WET = ["Wetness Strength", "Wet Pooling"]
 _WEATHER_FROST = ["Frost Strength"]
 _WEATHER_SEASON = ["Dust Amount", "Moss Amount"]
@@ -136,9 +135,10 @@ _ADD_ORDER = ("soil", "grass", "rock", "cliff", "scree", "sand")
 TERRAIN_STACK_PRESETS = {
     "temperate": {"label": "Temperate", "desc": "Soil, clumped grass, rock on slopes",
                   "layers": [("soil", {}), ("grass", {}), ("rock", {})]},
-    "alpine": {"label": "Alpine", "desc": "Rock, scree on ridges, cliff faces, high snow",
+    "alpine": {"label": "Alpine", "desc": "Rock, scree on ridges, cliff faces, snowy",
                "layers": [("rock", {}), ("scree", {}), ("cliff", {})],
-               "weather": {"Snow Strength": 1.0, "Altitude": 2.0, "Altitude Falloff": 6.0}},
+               # Snow extent is the env snow line now (Conditions/Season); the stack just leans snowy.
+               "weather": {"Snow Strength": 1.0}},
     "desert": {"label": "Desert", "desc": "Sand low, rock on slopes, scree ridges",
                "layers": [("sand", {"Height Strength": 0.0}), ("rock", {}), ("scree", {})],
                "weather": {"Snow Strength": 0.0}},
@@ -1144,11 +1144,11 @@ class BBT_PT_shaders_weather(Panel):
         # here (it also shows on the root) so it sits with the inert knobs, not a panel away.
         _env_note(context, layout)
         layout.label(text="Snow (whitens by coverage)", icon="FREEZE")
-        layout.label(text="Use Attribute: 0 computed, 1 terrain snow_cover")
+        layout.label(text="Altitude biases the env snow line; snow lies from there up")
         _draw_inputs(layout, node, _WEATHER_SNOW)
         layout.label(text="Wetness (rain/storm darken; env.wetness)", icon="MATFLUID")
         _draw_inputs(layout, node, _WEATHER_WET)
-        layout.label(text="Frost (below freezing, up-facing)", icon="FREEZE")
+        layout.label(text="Frost (hoar: clear, calm, freezing; sparkly sheen on bare rock)", icon="FREEZE")
         _draw_inputs(layout, node, _WEATHER_FROST)
         layout.label(text="Season aging (dust up / moss down)", icon="OUTLINER_DATA_SURFACE")
         _draw_inputs(layout, node, _WEATHER_SEASON)
