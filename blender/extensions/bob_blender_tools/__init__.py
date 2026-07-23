@@ -858,11 +858,10 @@ class BBT_PT_heightfield(Panel):
         col = layout.column(align=True)
         col.prop(hf, "target")
         # A6: instant preset (light: loads slider values, no rebuild until Bake + Build), so it
-        # uses the same instant idiom as the other look presets. The current pick shows below.
-        ui_helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset")
-        cap = layout.row()
-        cap.enabled = False
-        cap.label(text=f"preset: {hf.preset.replace('_', ' ').title()}", icon="PRESET")
+        # uses the same instant idiom as the other look presets. The current pick rides in the
+        # dropdown label (operator_menu_enum won't show it on its own), so no separate caption.
+        ui_helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset",
+                              current=hf.preset)
 
         row = layout.row(align=True)
         row.prop(hf, "backend", expand=True)

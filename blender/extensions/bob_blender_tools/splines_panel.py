@@ -502,6 +502,10 @@ def _sync_curve_params(context, curve):
                       ("Width Variation", cfg.width_var),
                       ("Shoulder Width", cfg.shoulder), ("Bank Slope", cfg.bank_slope),
                       ("Bank Bias", cfg.bank_bias), ("Bank Height", cfg.bank_height))
+        # Verge band (item-8): the scatter edge ring's own metres, pushed for every role (any curve
+        # can carry a verge), not role-seeded, so a role change keeps the artist's verge tuning.
+        inputs = inputs + (("Verge Gap", cfg.verge_gap), ("Verge Width", cfg.verge_width),
+                           ("Verge Side", cfg.verge_side))
         for name, val in inputs:
             _set_mod_input(ov, name, val)
         terrain.update_tag()  # a modifier-input write does not always flush; tag so it re-carves live
@@ -605,6 +609,18 @@ class BBT_Curve(PropertyGroup):
     shoulder: FloatProperty(
         name="Shoulder", default=0.0, min=0.0, soft_max=10.0, update=_sync_cb,
         description="A flat shoulder that extends the bed beyond the channel width")
+    # Verge band (item-8): the scatter edge ring a Verge layer reads. Not role-seeded (kept off
+    # _SHAPE_KEYS), so a role change preserves the artist's verge tuning.
+    verge_gap: FloatProperty(
+        name="Verge Gap", default=0.0, min=0.0, soft_max=10.0, update=_sync_cb,
+        description="Clear metres out from the path edge before the verge band starts (a hedgerow "
+                    "set back from the road). A Verge scatter layer reads this band")
+    verge_width: FloatProperty(
+        name="Verge Width", default=1.5, min=0.0, soft_max=15.0, update=_sync_cb,
+        description="Width of the verge band a Verge scatter layer scatters within")
+    verge_side: FloatProperty(
+        name="Verge Side", default=0.0, min=-1.0, max=1.0, update=_sync_cb,
+        description="Which side of the path the verge is on: -1 left only, 0 both, +1 right only")
     bank_slope: FloatProperty(
         name="Bank Slope", default=1.0, min=0.05, soft_max=4.0, update=_sync_cb,
         description="Rise/run of the banks: lower is wider and gentler")
@@ -1303,6 +1319,15 @@ class BBT_PT_paths_active(Panel):
         graded.prop(cfg, "bank_bias")
         if impose:
             graded.prop(cfg, "bank_height")
+
+        # Verge band (item-8): the ring a Verge scatter layer reads. Only relevant when this curve
+        # drives scatter, so it rides with do_scatter.
+        if cfg.do_scatter:
+            layout.label(text="Verge (scatter edge band)", icon="OUTLINER_OB_FORCE_FIELD")
+            col = layout.column(align=True)
+            col.prop(cfg, "verge_gap")
+            col.prop(cfg, "verge_width")
+            col.prop(cfg, "verge_side", slider=True)
 
         if impose:
             layout.label(text="Water", icon="MATFLUID")

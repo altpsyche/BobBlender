@@ -163,46 +163,32 @@ def biome_terrain(biome):
 
 def validate_biome(biome):
     """Static checks on a biome manifest, returned as a list of human-readable warnings (empty
-    = clean). Catches the common authoring mistakes: a missing model file, a malformed model
-    entry, a scatter kind with no models to place, an unknown terrain layer key, a missing
-    terrain texture set, and an unknown world field. Surfaced in the Import/Apply operator
-    reports and printed at import. Poly-budget over-runs are reported separately at import,
-    where the mesh is actually counted."""
+    = clean). Catches the common authoring mistakes: an unknown terrain layer key, a missing
+    terrain texture set, an unknown world field, and a malformed scatter config. Surfaced in the
+    Apply operator reports and printed at build.
+
+    Models block: there is no model importer (the glTF path was removed; the block-out proxies
+    from bbmcp.proxies are the one geometry source). A `models` block is therefore ignored at
+    build time. It is not validated as if it were used -- a single note flags that it is inert,
+    so an author is not misled into thinking real model files will be placed."""
     raw = _load_manifest(biome)
     if not raw:
         return [f"{biome}: manifest.json missing or unreadable"]
-    base = biome_dir(biome) if not os.path.isabs(biome) else biome
     man = biome_manifest(biome)
     warnings = []
-    # A proxy biome (meta.proxy, or simply no models block) supplies geometry from bbmcp.proxies
-    # and solid terrain, so the model-file / scatter-needs-models / terrain-texture checks below do
-    # not apply to it.
-    proxy = bool(man["meta"].get("proxy")) or not man["models"]
 
-    # Models: known kind, well-formed entries, files present, sane max_polys. Compare the
-    # normalized count against the raw list to catch entries the normalizer dropped.
-    for kind, entries in man["models"].items():
-        if kind not in _SCATTER_KINDS:
-            warnings.append(f"model kind '{kind}' is not a scatter kind {list(_SCATTER_KINDS)}")
-        for e in entries:
-            if not os.path.isfile(os.path.join(base, e["file"])):
-                warnings.append(f"model file missing: {kind}/{e['file']}")
-            mp = e.get("max_polys")
-            if mp is not None and (isinstance(mp, bool) or not isinstance(mp, (int, float)) or mp <= 0):
-                warnings.append(f"model {kind}/{e['file']}: max_polys must be a positive number")
-    for kind, rawlist in _raw_model_lists(raw).items():
-        dropped = len(rawlist) - len(man["models"].get(kind, []))
-        if dropped > 0:
-            warnings.append(f"model kind '{kind}': {dropped} malformed entry/entries ignored "
-                            "(want a file string or an object with a \"file\")")
+    # Models are inert (no importer): scatter always uses the block-out proxies. Flag the block
+    # so an author knows the files it names will not be placed, but do not check the files exist
+    # or gate scatter kinds on them -- that would validate a dead path as if it were live.
+    if man["models"]:
+        warnings.append("models block is ignored: no model importer, scatter uses block-out "
+                        "proxies (bbmcp.proxies). Remove the block or author it as a proxy biome")
 
-    # Scatter: each configured kind must be a known kind with models to place, and
-    # its value must be a placement-settings object (a non-dict crashes Biome Scatter).
+    # Scatter: each configured kind must be known, and its value must be a placement-settings
+    # object (a non-dict crashes Biome Scatter).
     for kind, cfg in man["scatter"].items():
         if kind not in _SCATTER_KINDS:
             warnings.append(f"scatter kind '{kind}' unknown {list(_SCATTER_KINDS)}")
-        elif not proxy and not man["models"].get(kind):
-            warnings.append(f"scatter kind '{kind}' has no models to place")
         if not isinstance(cfg, dict):
             warnings.append(f"scatter kind '{kind}': config must be an object of placement "
                             f"settings, got {type(cfg).__name__}")
@@ -233,22 +219,5 @@ def validate_biome(biome):
             warnings.append(f"world field '{field}' unknown")
 
     return warnings
-
-
-def _raw_model_lists(raw):
-    """The raw (pre-normalization) model lists per kind, for the validator's dropped-entry
-    check. Same reserved-key/legacy-flat logic as biome_manifest."""
-    out = {}
-    explicit = raw.get("models")
-    if isinstance(explicit, dict):
-        for kind, entries in explicit.items():
-            if isinstance(entries, list):
-                out[kind] = entries
-    for key, val in raw.items():
-        if key in _RESERVED_KEYS or key in out:
-            continue
-        if isinstance(val, list):
-            out[key] = val
-    return out
 
 

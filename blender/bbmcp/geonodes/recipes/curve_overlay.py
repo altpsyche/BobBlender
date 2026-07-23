@@ -115,6 +115,14 @@ def build(ng, out, params: dict):
     add_input(ng, "Shoulder Width", "NodeSocketFloat", float(params.get("shoulder_width", 0.0)), 0.0)
     add_input(ng, "Bank Slope", "NodeSocketFloat", float(params.get("bank_slope", 1.0)), 0.05)
     add_input(ng, "Bank Bias", "NodeSocketFloat", float(params.get("bank_bias", 0.0)), -1.0, 1.0)
+    # Verge band (R5, item-8): the shoulder ring a Verge scatter layer reads (edge_attr), controlled
+    # independently of the carve. Verge Gap is the clear metres OUT from the path edge before the band
+    # starts (a hedgerow set back from the road); Verge Width is the band's own width; Verge Side is
+    # -1 (left only) / 0 (both) / +1 (right only). Distance-based, so a mask-only path (no carve) still
+    # has a verge.
+    add_input(ng, "Verge Gap", "NodeSocketFloat", float(params.get("verge_gap", 0.0)), 0.0)
+    add_input(ng, "Verge Width", "NodeSocketFloat", float(params.get("verge_width", 1.5)), 0.0)
+    add_input(ng, "Verge Side", "NodeSocketFloat", float(params.get("verge_side", 0.0)), -1.0, 1.0)
     # Bank Height (impose/river only): the channel banks rise to at least path_z + Bank Height, so
     # the water (which sits below path_z) is contained even where the river runs across a slope and
     # the downhill ground falls away below it. In a valley the natural banks are already higher, so
@@ -241,17 +249,30 @@ def build(ng, out, params: dict):
     if params.get("carve", True):
         geo = _store_max(ng, geo, "bbt_curve_carved", onpath, (2020, 0))
 
-    # Curve edge ring (R5): the shoulder/embankment only -- onpath weighted by a core-off mask that
-    # is 0 on the driving surface (dist < Path Width) and 1 beyond the flat bench. Stored under THIS
-    # curve's own attribute (scatter_panel.edge_attr_name), so a Verge scatter layer targets one
-    # path's verge; only this curve's overlay writes it, so it holds this ring alone. A Verge layer
-    # with no curve bound reads a name nothing writes, so it scatters nothing (it needs a path).
-    core_outer = math_node(ng, "MAXIMUM", inner, math_node(ng, "ADD", gi.outputs["Path Width"], 0.1, (1560, 380)), (1740, 380))
-    edge = math_node(ng, "MULTIPLY", onpath,
-                     smooth_falloff(ng, dist, gi.outputs["Path Width"], core_outer, (1740, 460)), (1920, 440))
+    # Curve edge ring (R5, item-8): a verge band set by its OWN metres, not tied to the bench. It
+    # starts Verge Gap out from the path edge (Path Width, a radius) and spans Verge Width, with soft
+    # edges, faded at the ends by the same End Taper as the band. Stored under THIS curve's own
+    # attribute (scatter_panel.edge_attr_name), so a Verge scatter layer targets one path's verge;
+    # only this curve's overlay writes it, so it holds this ring alone. A Verge layer with no curve
+    # bound reads a name nothing writes, so it scatters nothing (it needs a path).
+    v_inner = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Verge Gap"], (1560, 500))
+    v_outer = math_node(ng, "ADD", v_inner, gi.outputs["Verge Width"], (1560, 460))
+    # Soft edge, capped at 40% of the band width so a narrow verge stays a distinct band.
+    v_soft = math_node(ng, "MINIMUM", 0.4, math_node(ng, "MULTIPLY", gi.outputs["Verge Width"], 0.4, (1560, 420)), (1740, 420))
+    v_rise = smooth_falloff(ng, dist, v_inner, math_node(ng, "ADD", v_inner, v_soft, (1740, 520)), (1920, 520))
+    v_fall = math_node(ng, "SUBTRACT", 1.0,
+                       smooth_falloff(ng, dist, math_node(ng, "SUBTRACT", v_outer, v_soft, (1740, 380)), v_outer, (1920, 380)),
+                       (2060, 400))
+    v_band = math_node(ng, "MULTIPLY", v_rise, v_fall, (2200, 460))
+    v_band = math_node(ng, "MULTIPLY", v_band, taper, (2200, 420))  # fade at the curve ends
+    # One-sided select: both sides when Verge Side is ~0, else keep the half whose `side` sign matches.
+    v_both = math_node(ng, "SUBTRACT", 1.0, math_node(ng, "ABSOLUTE", gi.outputs["Verge Side"], location=(1740, 300)), (1920, 300))
+    v_match = math_node(ng, "GREATER_THAN", math_node(ng, "MULTIPLY", side, gi.outputs["Verge Side"], (1740, 260)), 0.0, (1920, 260))
+    v_sidesel = math_node(ng, "MAXIMUM", v_both, v_match, (2060, 280))
+    edge = math_node(ng, "MULTIPLY", v_band, v_sidesel, (2360, 440))
     edge_attr = params.get("edge_attr", "")
     if edge_attr:
-        geo = _store_max(ng, geo, edge_attr, edge, (2100, 0))
+        geo = _store_max(ng, geo, edge_attr, edge, (2440, 0))
 
     # bbt_curve_<class> (R5): the per-role surface band, so a distinct role (a paved road) keys its
     # own terrain-material layer instead of sharing one look with dirt paths. Written only when the

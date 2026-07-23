@@ -164,6 +164,23 @@ def _ensure_scatter_coll(emitter, scene):
     return coll
 
 
+def _convert_layer_assets(lay):
+    """Weather a scatter layer's assets: convert every material in its assets collection to a
+    BobShader (Shaders' Convert, Collection scope) so the instances react to the world and are
+    editable per-layer. Idempotent (Convert skips a material that is already a BobShader) and it
+    installs the env feed. A no-op for a layer with no assets set yet (an empty layer the artist
+    has not pointed at a collection). This is what makes a standalone scatter weather without the
+    artist hunting for Shaders > Convert; it follows the layer's OWN collection, so a user's
+    imported assets are covered too, not only the BOB_Assets_* proxies."""
+    coll = getattr(lay, "assets", None)
+    if coll is None:
+        return
+    try:
+        bpy.ops.bob_blender_tools.shaders_convert(scope="collection", coll_name=coll.name)
+    except RuntimeError as exc:
+        print(f"[bob_blender_tools] scatter: convert {coll.name} skipped ({exc})")
+
+
 def _move_to_collection(obj, coll):
     for c in list(obj.users_collection):
         c.objects.unlink(obj)
@@ -347,8 +364,8 @@ class BBT_OT_scatter_biome_scatter(Operator):
     bl_label = "Biome Scatter"
     bl_description = ("Scatter a whole biome on the active emitter: build one layer per scatter "
                       "kind from the biome's recipe (density, scale, slope, align), point each at "
-                      "its BOB_Assets_<kind> collection, and build them. Import the biome's assets "
-                      "first (or use Apply Biome) so the layers instance real meshes, not proxies")
+                      "its BOB_Assets_<kind> block-out proxies, and build them. Weather the "
+                      "instances in Shaders (or use Build Biome, which converts them for you)")
     bl_options = {"REGISTER", "UNDO"}
 
     biome: EnumProperty(name="Biome", items=_biome_scatter_items)
@@ -455,6 +472,11 @@ class BBT_OT_scatter_add(Operator):
         lay.assets = assets
         lay.align = spec["align"]
         scn.active = list(coll.objects).index(obj)
+        # Weather the layer's assets: convert their materials to BobShaders so the instances
+        # react to the world (and are editable per-layer in Shaders), the same first-class-shader
+        # path Build Biome takes. Idempotent, and it installs the env feed. An "empty" layer has
+        # no assets yet (the artist points it at their own collection later) and is converted then.
+        _convert_layer_assets(lay)
         self.report({"INFO"}, f"Added {spec['label']} layer")
         return {"FINISHED"}
 
@@ -519,6 +541,8 @@ class BBT_OT_scatter_build_active(Operator):
         _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
                  "name": obj.name, "params": _build_params(obj, scn)}])
         obj = _active_layer(context)
+        if obj is not None:
+            _convert_layer_assets(obj.bbt_scatter_layer)  # weather its assets (custom or proxy)
         n = _count_instances(context, [obj]) if obj else 0
         self.report({"INFO"}, f"Built {obj.name}: {n} instances")
         return {"FINISHED"}
@@ -539,6 +563,7 @@ class BBT_OT_scatter_build_all(Operator):
         for obj in objs:
             _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
                      "name": obj.name, "params": _build_params(obj, scn)}])
+            _convert_layer_assets(obj.bbt_scatter_layer)  # weather its assets (custom or proxy)
         objs = list(coll.objects)
         total = _count_instances(context, objs)
         scn.summary = f"{len(objs)} layers, ~{total} instances"

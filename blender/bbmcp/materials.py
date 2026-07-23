@@ -666,7 +666,13 @@ def _vscale(g, vec, scalar, loc):
 # v3 (water look pass W1-W6): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and a
 # manual Frozen -> ice path (new Shore Foam / Foam Crispness / Wave Detail / Frozen sockets), so a
 # cached v2 water group must rebuild to expose them.
-S_GROUP_VER = 3
+# v4 (item-3 weather fix): S_Weather gained a Canopy Snow input and S_SurfaceMaster exposes it, so
+# the shared weather interface changed. Every group that EMBEDS S_Weather (S_SurfaceMaster,
+# S_TerrainMaster, and S_WaterMaster via its own override) must rebuild together: an in-place
+# rebuild gives the weather sockets new identifiers, and an embedder left un-rebuilt keeps stale
+# links to them (verified: terrain's 16 weather links drop to 0). A global bump rebuilds all of
+# them consistently, at the known cost of resetting tuned terrain/surface inputs on upgrade.
+S_GROUP_VER = 4
 
 # Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of every
 # material instancing the group (the new sockets get fresh identifiers, verified), so a global
@@ -679,7 +685,10 @@ S_GROUP_VER = 3
 #   S_WaterMaster v5 (W5): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
 #   sockets; reads the ribbon's bbt_depth (water-column metres) for Beer-Lambert colour + opacity and
 #   a soft shoreline. New interface, so rebuild the water group (terrain/surface tuning untouched).
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 6}
+#   S_WaterMaster v7: it embeds S_Weather, whose interface changed in the item-3 weather fix (the
+#   Canopy Snow term). Bumped in lockstep with the global S_GROUP_VER v4 so the water group rebuilds
+#   and re-links the weather node rather than keeping stale socket links. (v6 was the W5 depth pass.)
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 7}
 
 
 def _cached_group(name):
@@ -779,6 +788,10 @@ def weather_group():
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
     _gin(g, "Altitude", "NodeSocketFloat", 0.0)
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    # Canopy accumulation (item-3 fix): 0 leaves the pure slope/up-facing model (terrain, solid
+    # surfaces); the asset-convert path raises it so snow/frost/dust also hold on the upper
+    # bounding box of a near-vertical instance (a tree trunk + cone canopy caught almost none).
+    _gin(g, "Canopy Snow", "NodeSocketFloat", 0.0, 0.0, 1.0)
     # S4 weather terms, each gated by a strength/amount (0 = off).
     _gin(g, "Wetness Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Wet Pooling", "NodeSocketFloat", 0.0, 0.0, 1.0)
@@ -822,7 +835,22 @@ def weather_group():
     slope_mask = _mrange(g, nsep.outputs["Z"], slope_lo, I["Slope Threshold"], 0.0, 1.0, (-620, -20))
     alt_hi = _mmath(g, "ADD", I["Altitude"], I["Altitude Falloff"], (-800, -320))
     alt_mask = _mrange(g, psep.outputs["Z"], I["Altitude"], alt_hi, 0.0, 1.0, (-620, -280))
-    computed = _mmath(g, "MULTIPLY", snow_amount, slope_mask, (-420, -120))
+
+    # Canopy term: the Generated coordinate is the instance's own bounding box (0 at the base,
+    # 1 at the top), per-instance and scale-free, so its upper band marks the canopy of any
+    # scattered asset regardless of face orientation. Canopy Snow gates it (0 for terrain/solid
+    # surfaces), so raising it lets the top of a tree accumulate where the slope mask would not.
+    tc = g.nodes.new("ShaderNodeTexCoord")
+    tc.location = (-1000, -480)
+    gsep = g.nodes.new("ShaderNodeSeparateXYZ")
+    gsep.location = (-800, -480)
+    g.links.new(tc.outputs["Generated"], gsep.inputs[0])
+    canopy_top = _mrange(g, gsep.outputs["Z"], 0.4, 0.9, 0.0, 1.0, (-620, -480))
+    canopy = _mmath(g, "MULTIPLY", I["Canopy Snow"], canopy_top, (-440, -480))
+
+    # Snow exposure holds where the surface faces up OR on the canopy; times the snow amount.
+    snow_exp = _mmath(g, "MAXIMUM", slope_mask, canopy, (-420, -60))
+    computed = _mmath(g, "MULTIPLY", snow_amount, snow_exp, (-420, -120))
     computed = _mmath(g, "MULTIPLY", computed, alt_mask, (-240, -120))
 
     attr = g.nodes.new("ShaderNodeAttribute")
@@ -850,13 +878,16 @@ def weather_group():
     upface = _mrange(g, nsep.outputs["Z"], 0.2, 0.8, 0.0, 1.0, (300, 260))
     downface = _mmath(g, "SUBTRACT", 1.0, upface, (480, 300))
     cavity = _mrange(g, geo.outputs["Pointiness"], 0.5, 0.35, 0.0, 1.0, (300, 420))
+    # Dust and frost accumulate up-facing OR on the canopy, so they read on a tree the same way
+    # snow does; moss stays keyed to the true (down-facing) undersides.
+    upface_eff = _mmath(g, "MAXIMUM", upface, canopy, (480, 240))
 
     # The weather stack, applied in order on (albedo, roughness, metallic):
     #   dust/moss (aging) -> wetness (darken + gloss) -> snow (whiten) -> frost (cool sheen).
     col, rough, metal = I["Base Color"], I["Roughness"], I["Metallic"]
 
     # Dust on up-facing, moss on down-facing (continuous amounts, set by season on Apply).
-    dust = _mmath(g, "MULTIPLY", I["Dust Amount"], upface, (660, 320))
+    dust = _mmath(g, "MULTIPLY", I["Dust Amount"], upface_eff, (660, 320))
     col = _mixcol(g, dust, col, _DUST_COLOR, (840, 360))
     moss = _mmath(g, "MULTIPLY", I["Moss Amount"], downface, (660, 200))
     col = _mixcol(g, moss, col, _MOSS_COLOR, (1000, 300))
@@ -887,7 +918,7 @@ def weather_group():
     # Frost: below freezing, on up-facing exposed faces, a cool blue-white sheen.
     cold = _mrange(g, env_temp, 0.0, -6.0, 0.0, 1.0, (1360, 460))
     frost = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", cold, I["Frost Strength"], (1540, 460)),
-                   upface, (1720, 460))
+                   upface_eff, (1720, 460))
     col = _mixcol(g, _mmath(g, "MULTIPLY", frost, 0.6, (1720, 300)), col, _FROST_COLOR, (1900, 340))
     rough = _lerp(g, rough, 0.25, _mmath(g, "MULTIPLY", frost, 0.5, (1720, -160)), (1900, -160))
 
@@ -936,6 +967,7 @@ def surface_master_group():
     _gin(g, "Slope Falloff", "NodeSocketFloat", 0.2, 0.0, 1.0)
     _gin(g, "Altitude", "NodeSocketFloat", 0.0)
     _gin(g, "Altitude Falloff", "NodeSocketFloat", 5.0, 0.0)
+    _gin(g, "Canopy Snow", "NodeSocketFloat", 0.0, 0.0, 1.0)  # scattered assets raise it (S_Weather)
     for _wn, _wd in _WEATHER_EXTRA:
         _gin(g, _wn, "NodeSocketFloat", _wd, 0.0, 1.0)
     _gout(g, "Base Color", "NodeSocketColor")
@@ -984,7 +1016,7 @@ def surface_master_group():
     g.links.new(rough, weather.inputs["Roughness"])
     g.links.new(metal, weather.inputs["Metallic"])
     for name in ("Snow Strength", "Use Attribute", "Slope Threshold", "Slope Falloff",
-                 "Altitude", "Altitude Falloff", *[n for n, _ in _WEATHER_EXTRA]):
+                 "Altitude", "Altitude Falloff", "Canopy Snow", *[n for n, _ in _WEATHER_EXTRA]):
         g.links.new(I[name], weather.inputs[name])
     for name in ("Base Color", "Roughness", "Metallic"):
         g.links.new(weather.outputs[name], go.inputs[name])
@@ -1115,6 +1147,9 @@ def bobshade_material(mat, variation=0.15):
     grp.inputs["Roughness"].default_value = 1.0
     grp.inputs["Metallic"].default_value = 0.0
     grp.inputs["Use Attribute"].default_value = 0.0  # computed coverage (no pass on assets)
+    # Scattered assets are near-vertical (trunks, cone-canopy sides), so the up-facing snow model
+    # misses them; raise Canopy Snow so snow/frost/dust also hold on the instance's upper bbox.
+    grp.inputs["Canopy Snow"].default_value = 1.0
     grp.inputs["Variation"].default_value = variation
 
     def feed(map_name, src, val):
