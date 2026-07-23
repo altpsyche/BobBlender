@@ -23,14 +23,15 @@ Small rules that keep the repo navigable as it grows.
 | Deliverables | `projects/<name>/exports/` |
 | Textures used by one project | `projects/<name>/textures/` |
 | Textures used everywhere | `library/textures/` |
-| A CC0 asset biome (models + recipe) | `library/models/<biome>/` (a `manifest.json`) |
+| A biome (manifest, optional models) | `library/models/<biome>/` (a `manifest.json`) |
 
 ## Attribution
 
 Record provenance for downloaded assets even when the licence (e.g. CC0) does not require it.
 A texture set carries a one-line `SOURCE.txt` (`<role>: Poly Haven '<slug>' (CC0, public domain).
-<url>`); a model biome carries the same per-model `SOURCE.txt` plus a `CREDITS.md` listing every
-asset's source, and a `meta` block in its `manifest.json` (`source`, `license`).
+<url>`). A biome records its attribution in the `meta` block of its `manifest.json` (`source`,
+`license`); the shipped biome (`library/models/blockout`) is a procedural block-out with no
+external files, so it needs none.
 
 ## Render output
 
@@ -53,9 +54,9 @@ When a geometry-node or material node group proves reusable:
 The BobBlenderTools N-panel suite follows one design language (full rationale in
 `UX-REDESIGN.md`). When adding or editing a panel, keep to it:
 
-- Order along the pipeline with `bl_order`, not registration: World 0, Terrain 1, Scatter 2,
-  Shaders 3, Atmosphere 4, Advanced 5. A one-line overview at the top of World names the
-  sequence (panel labels stay plain, no stage numbers).
+- Order along the pipeline with `bl_order`, not registration: World 0, Biome 1, Terrain 2,
+  Paths 3, Scatter 4, Shaders 5, Atmosphere 6, Advanced 7. A one-line overview at the top of
+  World names the sequence (panel labels stay plain, no stage numbers).
 - Native identity. Reflect the active thing (active object/material, active emitter/layer),
   never a panel-local name or duplicate target pointer.
 - Use the shared helpers in `ui_helpers.py` so the language stays consistent: `context_header`

@@ -123,7 +123,11 @@ STACKS = {
          "talus": 0.14, "open_size": 6},
         {"kind": "thermal", "talus": 0.14, "factor": 0.5, "iterations": 1},
         # amplify the coarse cliffs into fluted rock faces; flat caps carry no slope so they stay flat.
-        {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 20},
+        # A small diffusion breaks the stream-power rills that a CLEAN planar scarp wall otherwise combs
+        # into an evenly-spaced vertical picket-fence; with it the faces read as varied buttresses and
+        # furrows, not a uniform comb. (Canyon needs no diffusion -- its fluvial-carved walls are
+        # already varied, so the rills follow real topology instead of aligning on a flat wall.)
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 20, "diffusion": 0.06},
     ],
     "canyon": [   # dendritic canyons incised into a high layered PLATEAU: flat rims survive, the
                   # stream-power hero cuts confined steep-walled channels, strata show in the walls.
@@ -162,7 +166,8 @@ STACKS = {
         {"kind": "scarp", "iterations": 4, "cap_slope": 0.12, "undercut": 0.0015,
          "talus": 0.13, "open_size": 16},
         {"kind": "thermal", "talus": 0.13, "factor": 0.5, "iterations": 1},
-        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20},
+        # diffusion breaks the picket-fence comb a clean planar scarp otherwise rills into (see mesa).
+        {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20, "diffusion": 0.06},
     ],
     # --- Dunes ---
     "dunes": [   # a field of many crisp transverse dunes marching downwind. Frequency is high so

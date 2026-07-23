@@ -85,4 +85,14 @@ def build(ng, out, params: dict):
         set_mat.inputs["Material"].default_value = mat
         geometry = set_mat.outputs["Geometry"]
 
+    # Shade smooth. A GN grid is flat-shaded by default, so a displaced terrain reads as a field of
+    # per-quad facets (an "orange-peel" stipple on every slope) at any real bake resolution. The
+    # heightfield is continuous, so the terrain should carry continuous normals: set the face shade
+    # smooth here, the single build choke point, so every preset ships smooth without the caller
+    # touching mesh data.
+    smooth = nodes.new("GeometryNodeSetShadeSmooth")
+    smooth.location = (1520, 0)
+    links.new(geometry, smooth.inputs["Geometry"])
+    geometry = smooth.outputs["Geometry"]
+
     links.new(geometry, out.inputs["Geometry"])

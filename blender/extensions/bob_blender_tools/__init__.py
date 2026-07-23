@@ -421,8 +421,6 @@ class BBT_HeightfieldProps(PropertyGroup):
         default="auto",
     )
     backend_hint: StringProperty(name="Backends", default="")
-    preview: BoolProperty(name="Preview (256)", default=True,
-                          description="Bake at 256 for a fast look; off for full resolution")
     emit_maps: BoolProperty(
         name="Flow + wetness maps", default=True,
         description="Also bake <name>_flow.png and <name>_wetness.png beside the height, "
@@ -621,8 +619,8 @@ class BBT_OT_bake_terrain(Operator):
         target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
         out_abs = os.path.join(repo, "library", "_generated", f"{target}_hf.png")
         # Either send the edited op stack verbatim (P4 custom mode), or the preset
-        # plus the five global knobs; the venv turns knobs into a stack and applies
-        # the preview size, so the panel does not duplicate that logic.
+        # plus the five global knobs; the venv turns knobs into a stack, so the panel
+        # does not duplicate that logic.
         if hf.use_custom_stack and len(hf.ops):
             knobs = {"size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
                      "stack": _stack_from_ops(hf)}
@@ -635,7 +633,10 @@ class BBT_OT_bake_terrain(Operator):
 
         # Blocking bake with feedback (wait cursor + progress spinner) via the shared host-bake runner.
         t0 = time.perf_counter()
-        meta, err = _run_host_bake(context, out_abs, knobs=knobs, preview=hf.preview, maps=hf.emit_maps)
+        # Panel always bakes full resolution: every shipped preset amplifies, so a "preview" only ever
+        # dropped to AMPLIFY_PREVIEW (512 vs 768) for a marginal GPU speedup. The fast-look path lives on
+        # in the CLI (--preview) and pipeline.bake(preview=True) for CPU/scripted use.
+        meta, err = _run_host_bake(context, out_abs, knobs=knobs, preview=False, maps=hf.emit_maps)
         if err is not None:
             self.report({"ERROR"}, err)
             return {"CANCELLED"}
@@ -644,8 +645,8 @@ class BBT_OT_bake_terrain(Operator):
         server._ensure_path()
         from bbmcp.dispatch import apply_op
 
-        # The pipeline decides the actual bake size (preview overrides it), so
-        # take it from the returned metadata for the terrain grid resolution.
+        # Take the actual bake size from the returned metadata (the pipeline owns it), not the
+        # requested resolution, for the terrain grid resolution.
         bake_size = int(meta.get("size", hf.resolution))
         apply_op({"op": "reload_image", "path": out_abs})
         # Mesh grid density is DECOUPLED from the bake resolution: the heightmap keeps its full
@@ -871,7 +872,6 @@ class BBT_PT_heightfield(Panel):
             layout.label(text=hf.backend_hint, icon=icon)
 
         row = layout.row(align=True)
-        row.prop(hf, "preview")
         row.prop(hf, "resolution")
         layout.prop(hf, "emit_maps")
 
