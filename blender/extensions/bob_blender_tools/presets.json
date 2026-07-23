@@ -73,6 +73,22 @@
       "relief_ratio": 0.22,
       "sea_level": 0.1
     },
+    "badlands": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "relief_ratio": 0.14,
+      "sea_level": 0.12
+    },
+    "plateau": {
+      "relief": 0.5,
+      "detail": 0.5,
+      "erosion": 0.5,
+      "warp": 0.5,
+      "relief_ratio": 0.16,
+      "sea_level": 0.05
+    },
     "dunes": {
       "relief": 0.5,
       "detail": 0.5,
@@ -130,36 +146,35 @@
     "glacial": [
       {
         "kind": "noise",
-        "ridged": 0.35,
-        "detail_strength": 0.4,
-        "octaves": 4,
-        "warp": 80
+        "ridged": 0.5,
+        "detail_strength": 0.55,
+        "octaves": 5,
+        "warp": 70
       },
       {
-        "kind": "fluvial",
-        "sp_m": 0.5,
-        "sp_n": 1.0,
-        "recompute": 25,
-        "fill_iters": 600,
-        "acc_iters": 600,
-        "thermal_iters": 1,
-        "max_delta": 0.022,
-        "iterations": 55,
-        "k": 0.011,
-        "diffusion": 0.15,
-        "talus": 0.008
-      },
-      {
-        "kind": "smooth",
-        "sigma": 2.0
+        "kind": "glacial",
+        "ela": 0.5,
+        "iterations": 60,
+        "erode": 1.6,
+        "widen": 0.9,
+        "ice_width": 8.0,
+        "horn": 0.34,
+        "arete_talus": 0.016
       },
       {
         "kind": "amplify",
         "mode": "fluvial",
-        "strength": 0.02,
-        "iterations": 20,
+        "strength": 0.012,
+        "iterations": 18,
+        "diffusion": 0.08,
         "to": 768,
         "relief": 0.22
+      },
+      {
+        "kind": "thermal",
+        "talus": 0.012,
+        "factor": 0.5,
+        "iterations": 1
       }
     ],
     "foothills": [
@@ -430,6 +445,77 @@
         "iterations": 22,
         "to": 768,
         "relief": 0.22
+      }
+    ],
+    "badlands": [
+      {
+        "kind": "noise",
+        "ridged": 0.42,
+        "detail_strength": 0.85,
+        "octaves": 5,
+        "warp": 48
+      },
+      {
+        "kind": "smooth",
+        "sigma": 0.6
+      },
+      {
+        "kind": "rill",
+        "iterations": 10,
+        "groove": 0.065,
+        "spacing": 13.0,
+        "smear": 8,
+        "slope_gate": 0.25,
+        "aspect_sigma": 1.0,
+        "sharpen": 0.25,
+        "sharpen_sigma": 1.5,
+        "despike": 2,
+        "talus": 0.05,
+        "thermal_iters": 1
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.014,
+        "iterations": 16,
+        "diffusion": 0.0,
+        "to": 768,
+        "relief": 0.14
+      }
+    ],
+    "plateau": [
+      {
+        "kind": "strata",
+        "layers": 2,
+        "dissection": 0.55,
+        "base_freq": 1.8,
+        "smooth": 6.0
+      },
+      {
+        "kind": "curve",
+        "contrast": 0.85
+      },
+      {
+        "kind": "scarp",
+        "iterations": 4,
+        "cap_slope": 0.12,
+        "undercut": 0.0015,
+        "talus": 0.13,
+        "open_size": 16
+      },
+      {
+        "kind": "thermal",
+        "talus": 0.13,
+        "factor": 0.5,
+        "iterations": 1
+      },
+      {
+        "kind": "amplify",
+        "mode": "fluvial",
+        "strength": 0.02,
+        "iterations": 20,
+        "to": 768,
+        "relief": 0.16
       }
     ],
     "dunes": [

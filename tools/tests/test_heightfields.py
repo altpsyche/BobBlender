@@ -312,6 +312,66 @@ def test_canyon_incises_a_plateau():
     assert c_deep > m_deep                 # cuts deeper below its rim than a mesa cap
 
 
+def test_badlands_is_densely_rilled():
+    # Badlands' landform signature: DENSE, closely-spaced fine gullies -- a high drainage density that
+    # stream-power fluvial (which coarsens into a few graded valleys) cannot make. Measured as the
+    # fraction of cells that are local channel minima at a small radius: many closely-spaced minima =
+    # dense rilling. Gates the rill op (anisotropic downslope grooves); a diagnostic, render-verified,
+    # never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO diagnostic).
+    from scipy.ndimage import minimum_filter
+    bk = backend.select("auto")
+    def rill_density(name):
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
+        return float((h <= minimum_filter(h, 5) + 1e-6).mean())
+    bad = rill_density("badlands")
+    foot = rill_density("foothills")   # a fluvial preset of comparable moderate relief
+    assert bad > 0.05, bad            # genuinely dense fine rilling
+    assert bad > 3.0 * foot           # far denser dissection than fluvial's few graded valleys
+
+
+def test_plateau_is_a_continuous_tableland():
+    # Plateau's landform signature: a broad flat top that is CONTINUOUS -- one connected tableland --
+    # unlike mesa, whose equally-flat caps are dissected into scattered isolated buttes. Measured as
+    # the largest connected flat component as a fraction of the tile: plateau keeps most of its flat
+    # area in ONE piece, mesa splits it up. Gates the plateau generator; a diagnostic, render-verified,
+    # never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO diagnostic).
+    from scipy.ndimage import label
+    bk = backend.select("auto")
+    def flat_and_biggest(name):
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
+        gy, gx = np.gradient(h)
+        flat = np.hypot(gx, gy) < 0.0015
+        lab, n = label(flat)
+        biggest = max((int((lab == i).sum()) for i in range(1, n + 1)), default=0) / flat.size
+        return float(flat.mean()), biggest
+    p_flat, p_big = flat_and_biggest("plateau")
+    m_flat, m_big = flat_and_biggest("mesa")
+    assert p_flat > 0.5, p_flat        # broad flat tableland dominates (like mesa's caps)
+    assert p_big > 0.3, p_big          # most of that flat area is ONE connected table
+    assert p_big > 2.0 * m_big         # far more continuous than mesa's scattered buttes
+
+
+def test_glacial_carves_u_valleys():
+    # Glacial's landform signature: broad FLAT-FLOORED U-valleys, where an equally rugged FLUVIAL
+    # mountain (alpine) cuts V-valleys whose slope continues right down to the thalweg. Measured as the
+    # fraction of valley-bottom cells that are near-flat: a glacier planes a wide flat floor, so this is
+    # high; a river V has no flat floor, so it is low. Gates the glacial op (ice-flux abrasion +
+    # ice-width floor planing); a diagnostic, backed by a 3D render in review, never a stat on its own.
+    # size=256 keeps the amplify cascade a no-op (a MACRO diagnostic). Compared to alpine, NOT to a
+    # gentle lowland preset, whose low ground is naturally flat for reasons unrelated to glaciation.
+    bk = backend.select("auto")
+    def floor_flatfrac(name):
+        h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
+        gy, gx = np.gradient(h)
+        s = np.hypot(gx, gy)
+        valley = h < np.percentile(h, 20)          # valley-bottom cells
+        return float((s[valley] < 0.01).mean())     # of those, the fraction that is near-flat
+    g_floor = floor_flatfrac("glacial")
+    a_floor = floor_flatfrac("alpine")
+    assert g_floor > 0.55, g_floor        # broad flat U-valley floors
+    assert g_floor > 1.25 * a_floor       # far flatter-floored than a fluvial mountain's V-valleys
+
+
 # --- Amplification (Schott et al. 2024 multi-scale erosion): the amplify op and its two modes. ---
 
 def _amp_macro(n=96, seed=0):
