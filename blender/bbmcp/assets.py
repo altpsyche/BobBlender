@@ -45,7 +45,7 @@ _TERRAIN_LAYER_KEYS = ("soil", "grass", "rock", "cliff", "scree", "sand")
 # panels, not the other way round).
 _WORLD_FIELDS = (
     "time_of_day", "year", "month", "day", "utc_offset", "latitude", "longitude",
-    "season", "weather", "temperature", "wetness", "snow", "cloud_cover",
+    "season", "weather", "temperature", "wetness", "snow_line", "cloud_cover",
     "wind_direction", "wind_strength",
 )
 
