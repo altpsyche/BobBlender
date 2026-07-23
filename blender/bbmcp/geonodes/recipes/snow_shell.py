@@ -7,9 +7,12 @@ surface along its normal by `snow_cover * Thickness`. The coverage is blurred fi
 Attribute) so the shell rounds off into soft drifts instead of a hard step, and so thin
 coverage does not spike single vertices.
 
-It reads the SAME `snow_cover` attribute the surface material reads, so the shell thickness
-and the material whiteness line up by construction (the single-source rule). Attach it with
-`build_geonodes_on_object(obj, "snow_shell", "BOB_SnowShell", params)`, after `BOB_Snow`.
+It reads the `snow_cover` attribute the `snow` pass wrote. That pass computes coverage against
+the mesh's LOCAL Z, while the surface material computes its own coverage against WORLD Z, so the
+shell thickness and the material whiteness align only when the pass is seeded in the surface's
+local frame (the panel's `_sync_snow_pass` converts the world-Z snow line to local before feeding
+Altitude). Attach it with `build_geonodes_on_object(obj, "snow_shell", "BOB_SnowShell", params)`,
+after `BOB_Snow`.
 """
 
 from ..blocks import math_node

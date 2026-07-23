@@ -69,16 +69,35 @@ def _on_geo_change(self, context):
             print(f"[bbmcp.env] geo hook failed: {exc}")
 
 
+def _snow_terrain(scene):
+    """The terrain the snow line's Z bounds should map over. Firmament designates one snow surface
+    per scene (fm.snow_surface); everything that stamps bounds (Apply Season, build snow, the picker)
+    keys off it, so the drag callback must too or it fits to a different terrain and silently moves
+    the line. Order: the designated snow surface, else the active object if it is a terrain, else the
+    first bbt_terrain_height-stamped mesh (the single-terrain fallback). Read bbt_firmament by
+    duck-typing so env.py stays the acyclic root and never imports the extension."""
+    def _is_terrain(o):
+        return o is not None and getattr(o, "type", None) == "MESH" and "bbt_terrain_height" in o
+    fm = getattr(scene, "bbt_firmament", None)
+    surf = getattr(fm, "snow_surface", None) if fm is not None else None
+    if _is_terrain(surf):
+        return surf
+    active = getattr(getattr(bpy.context, "view_layer", None), "objects", None)
+    active = getattr(active, "active", None)
+    if _is_terrain(active):
+        return active
+    return next((o for o in scene.objects if _is_terrain(o)), None)
+
+
 def _on_snow_line_change(self, context):
-    """Update callback on snow_line: re-fit the terrain Z bounds from the scene's terrain, so the
-    normalized line maps to the real terrain every time the artist drags it -- even on a terrain
-    built before the bounds were first stamped. Best-effort: the first bbt_terrain_height-stamped
-    mesh; no terrain, no change (defaults hold for a standalone asset)."""
+    """Update callback on snow_line: re-fit the terrain Z bounds from the scene's designated snow
+    terrain, so the normalized line maps to the real terrain every time the artist drags it -- even
+    on a terrain built before the bounds were first stamped. Keys off the same terrain the build and
+    season paths do (_snow_terrain); no terrain, no change (defaults hold for a standalone asset)."""
     scene = getattr(context, "scene", None) or getattr(bpy.context, "scene", None)
     if scene is None:
         return
-    terr = next((o for o in scene.objects
-                 if o.type == "MESH" and "bbt_terrain_height" in o), None)
+    terr = _snow_terrain(scene)
     if terr is not None:
         stamp_snow_bounds(scene, terr)
 
@@ -137,6 +156,11 @@ class BBT_EnvProps(PropertyGroup):
                                          "peaks clear)")
     # Terrain Z bounds the snow line maps over, stamped on Apply Season / build snow (valley world-Z
     # and relief in metres). Defaults suit a mid-size terrain so a standalone asset still snows.
+    # These are a single scene-global pair, stamped from the ONE designated snow terrain
+    # (fm.snow_surface; see _snow_terrain). Every surface's material maps its own world-Z against this
+    # one line, so a scene with two terrains at different Z ranges under one env shares a single snow
+    # line and only the designated terrain reads correct. Per-terrain bounds would need the mapping
+    # baked per material at apply time; the single-terrain model is canonical for now.
     snow_z_base: FloatProperty(name="Snow Z Base", default=0.0,
                                description="Valley world-Z the snow line maps from (set by the "
                                            "terrain)")

@@ -1125,13 +1125,22 @@ def _build_wrapper(mat_name, master, sig, wire):
     of the GN modifier snapshot). `wire(nt, grp, bsdf, old_sig)` adds any texture-set nodes."""
     name = mat_name if mat_name.startswith(SURFACE_WRAPPER_PREFIX) else SURFACE_WRAPPER_PREFIX + mat_name
     mat = bpy.data.materials.get(name)
+    master_ver = master.get("bbt_ver")
     old_node = None
     if mat is not None and mat.use_nodes and mat.node_tree is not None:
         old_node = mat.node_tree.nodes.get("Master")
         if old_node is not None and old_node.type == "GROUP" \
                 and old_node.node_tree is master and mat.get("bbt_sig") == sig:
+            # Structure unchanged, so tuned inputs are kept -- but if the shared master group was
+            # rebuilt in place (version bump), this instance's sockets were left at type-zero. Re-seed
+            # them to the new interface defaults so an upgrade costs a revert-to-default, not a black
+            # base layer / silently-off snow. No-op when the master version is unchanged.
+            if mat.get("bbt_master_ver") != master_ver:
+                _seed_inputs_from_interface(old_node)
+                mat["bbt_master_ver"] = master_ver
             return mat  # unchanged; keep tuned inputs
     old_sig = mat.get("bbt_sig") if mat is not None else None
+    prev_master_ver = mat.get("bbt_master_ver") if mat is not None else None
     snap = _snapshot_group_inputs(old_node)
     if mat is None:
         mat = bpy.data.materials.new(name)
@@ -1160,9 +1169,16 @@ def _build_wrapper(mat_name, master, sig, wire):
             nt.links.new(src, target)
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     _restore_group_inputs(grp, snap)
+    # A version bump zeroed the old instance sockets before this rebuild, so the snapshot restored
+    # zeros, not tuned values. Fall back to the fresh interface defaults in that case (defaults beat
+    # type-zero). On a plain structural change (same master version) the snapshot holds real values,
+    # so leave them alone.
+    if prev_master_ver is not None and prev_master_ver != master_ver:
+        _seed_inputs_from_interface(grp)
     if wire is not None:
         wire(nt, grp, bsdf, old_sig)
     mat["bbt_sig"] = sig
+    mat["bbt_master_ver"] = master_ver
     return mat
 
 
@@ -1770,9 +1786,28 @@ def water_master_group():
     # Base roughness: near-mirror water, rougher where foam churns, frosted where frozen.
     rough = _lerp(g, I["Water Roughness"], 0.6, foam, (620, -820))
     rough = _lerp(g, rough, _ICE_ROUGHNESS, frozen, (620, -980))
-    # Ice tint on the manual freeze path (the env-cold path is tinted by the S_Weather frost term,
-    # so tinting there too would double up); icy blue-white as Frozen rises.
-    col = _mixcol(g, _mmath(g, "MULTIPLY", I["Frozen"], 0.8, (620, -360)), col, _WATER_ICE, (800, -420))
+    # Ice tint: icy blue-white as the water freezes, driven by the FULL frozen term (env cold OR
+    # manual Frozen), not the manual input alone. The old code tinted only I["Frozen"] and delegated
+    # the env-cold tint to the S_Weather frost term -- but frost is gated by clear sky and calm air,
+    # so an overcast or windy freeze dropped the tint entirely and the river rendered glassy, opaque,
+    # and dark (physically wrong for thick ice). To avoid doubling with the frost tint where frost
+    # DOES fire, the ice tint is complemented by the same frost gate (frost point * clear * calm):
+    # where frost is active (cold + clear + calm) it backs off and the frost term tints; where frost
+    # is suppressed (overcast / windy) the ice tint carries the full look. So exactly one icy tint
+    # applies on any surface, never zero and never both. Gate math mirrors weather_group's frost gate.
+    frost_pt = _mrange(g, env.outputs["Temperature"], 1.0, -5.0, 0.0, 1.0, (440, -300))
+    clear = _mmath(g, "SUBTRACT", 1.0, env.outputs["Cloud"], (440, -420))
+    calm = _mrange(g, env.outputs["Wind"], 4.0, 0.5, 0.0, 1.0, (440, -540))
+    # Include Frost Strength: the weather frost cond is frost_pt * clear * calm * Frost Strength, so
+    # the complement must match, else zeroing Frost Strength on water would suppress the frost tint
+    # AND back off the ice tint, leaving a cold river untinted.
+    frost_active = _mmath(g, "MULTIPLY",
+                          _mmath(g, "MULTIPLY", frost_pt, clear, (620, -360)),
+                          _mmath(g, "MULTIPLY", calm, I["Frost Strength"], (620, -480)), (780, -400))
+    ice_tint = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", frozen,
+                      _mmath(g, "SUBTRACT", 1.0, frost_active, (620, -600)), (800, -540)),
+                      0.8, (800, -660))
+    col = _mixcol(g, ice_tint, col, _WATER_ICE, (960, -420))
 
     # Weather layer: inherit wetness/frost/snow. Its below-freezing frost term whitens + roughens
     # the albedo on the env-cold path; metallic stays 0.
@@ -2308,3 +2343,28 @@ def _restore_group_inputs(node, snap):
                 s.default_value = snap[s.name]
             except (AttributeError, TypeError, ValueError):
                 pass
+
+
+def _seed_inputs_from_interface(node):
+    """Reset a group node's instance input sockets to the group interface's own default_value.
+
+    A version-stamped rebuild (_cached_group) clears and repopulates the group interface, which
+    leaves the sockets of every EXISTING instance node at type-zero (0.0 / black), not at the new
+    interface default. Type-zero silently disables terms whose real default is nonzero (Snow
+    Strength 1.0 -> 0.0 turns snow off, an Enable 1.0 -> 0.0 blanks a base layer). Re-seeding from
+    the interface restores the documented upgrade cost (tuned values revert to DEFAULT) instead of
+    the undocumented one (they revert to zero)."""
+    if node is None or node.node_tree is None:
+        return
+    for item in node.node_tree.interface.items_tree:
+        if getattr(item, "item_type", "") != "SOCKET" or getattr(item, "in_out", "") != "INPUT":
+            continue
+        if not hasattr(item, "default_value"):
+            continue
+        sock = node.inputs.get(item.name)
+        if sock is None or not hasattr(sock, "default_value"):
+            continue
+        try:
+            sock.default_value = item.default_value
+        except (AttributeError, TypeError, ValueError):
+            pass

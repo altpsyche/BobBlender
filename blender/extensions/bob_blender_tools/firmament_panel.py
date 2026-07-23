@@ -208,12 +208,12 @@ SCENE_PRESETS = {
     "overcast": {
         "label": "Overcast", "desc": "Flat grey blanket, still air",
         "env": {"time_of_day": 12.0, "weather": "overcast",
-                "cloud_cover": 0.85, "wind_direction": 200.0, "wind_strength": 2.0},
+                "cloud_cover": 0.80, "wind_direction": 200.0, "wind_strength": 2.0},
         "clouds": "overcast", "fog": None, "rain": None, "motes": None},
     "storm": {
         "label": "Storm", "desc": "Dark deep cloud, heavy rain, strong wind",
         "env": {"time_of_day": 16.0, "weather": "storm",
-                "cloud_cover": 0.95, "wind_direction": 210.0, "wind_strength": 7.0},
+                "cloud_cover": 0.90, "wind_direction": 210.0, "wind_strength": 7.0},
         "clouds": "storm", "fog": ("height_fog", "valley"),
         "rain": "downpour", "motes": None},
     "foggy_dawn": {
@@ -451,14 +451,28 @@ def _world_snow_line(env):
     return hi - band, band
 
 
+def _local_snow_line(surface, env):
+    """The snow line lo/band in the SURFACE's local frame. The line is a world-Z line (the material
+    shades to it via world position), but the GN pass compares it against the mesh's LOCAL position
+    (a GN modifier's Position is object-local), so it must be converted or a Z-translated/scaled
+    terrain piles shell snow where the material renders bare rock. Handles the realistic terrain
+    transform (Z translation and uniform/Z scale); a rotated terrain is not a case the heightfield
+    hub produces. Used by both the build operator and the live sync so they agree."""
+    lo, band = _world_snow_line(env)
+    tz = surface.matrix_world.translation.z
+    sz = surface.matrix_world.to_scale().z or 1.0
+    return (lo - tz) / sz, band / sz
+
+
 def _sync_snow_pass(surface, env):
-    """Set the GN pass (the shell) from the env: Snow amount from temperature, and the world-Z
-    snow line/band, matching the shader. Snow is temperature-driven with no plain env field to
-    drive live, so the shell is refreshed on build / Apply Season / Use Env Snow, not per-edit."""
+    """Set the GN pass (the shell) from the env: Snow amount from temperature, and the snow line/band
+    in the surface's local frame (matching the shader's world-Z line). Snow is temperature-driven with
+    no plain env field to drive live, so the shell is refreshed on build / Apply Season / Use Env Snow,
+    not per-edit."""
     mod = _named_mod(surface, "BOB_Snow")
     if mod is None or env is None:
         return
-    lo, band = _world_snow_line(env)
+    lo, band = _local_snow_line(surface, env)
     for name, value in (("Snow", _snow_amount(env)), ("Altitude", lo), ("Altitude Falloff", band)):
         inp = _input_of(mod, name)
         if inp is not None:
@@ -665,7 +679,9 @@ class BBT_FirmamentProps(PropertyGroup):
         poll=lambda self, obj: obj.type == "MESH",
         # Picking the terrain also fits the snow line's Z bounds to it, so the normalized line
         # reads right immediately (0 = its valley, 1 = its peaks).
-        update=lambda self, ctx: _env.stamp_snow_bounds(ctx.scene, self.snow_surface),
+        # Wrapped so the callback returns None: stamp_snow_bounds returns a bool, and a property
+        # update callback that returns non-None raises "the return value must be None".
+        update=lambda self, ctx: (_env.stamp_snow_bounds(ctx.scene, self.snow_surface), None)[1],
         description="The terrain the snow-coverage pass writes snow_cover onto (BobShaders "
                     "reads that attribute). Defaults to the active mesh")
 
@@ -1005,7 +1021,7 @@ class BBT_OT_firmament_build_snow_cover(Operator):
             # the pass (the shell): amount from temperature and the world-Z line/band matching the
             # shader, so the shell's coverage tracks what the material shades.
             _env.stamp_snow_bounds(context.scene, surface)
-            lo, band = _world_snow_line(env)
+            lo, band = _local_snow_line(surface, env)  # local frame; the pass compares against local Z
             params["snow"] = _snow_amount(env)
             params["altitude"] = lo
             params["altitude_falloff"] = band

@@ -12,17 +12,21 @@ attributes:
   material reads 0 (full snow), so a missing pass can never leave the terrain bare.
 
 The pass is therefore optional detail (the shell + occlusion), not the coverage authority.
-The panel seeds the pass's Snow (from the temperature) and Altitude (the world-Z snow line)
-on build / Apply Season / Use Env Snow, so the shell's coverage tracks the same line the
-material shades to.
+The panel seeds the pass's Snow (from the temperature) and Altitude on build / Apply Season /
+Use Env Snow, so the shell's coverage tracks the same line the material shades to. The altitude
+mask here is compared against LOCAL Z (a GN modifier's Position is object-local), so the panel
+converts the world-Z snow line into the surface's local frame before feeding Altitude; that is
+what keeps the shell aligned with the material (which shades to the world-Z line) on a terrain
+that is translated or scaled in Z.
 
     snow_cover = Snow * slope_mask(normal Z) * altitude_mask(local Z) * (1 - occlusion)
     snow_occlusion = is_hit * Occlusion
 
 - slope: snow sticks to up-facing ground. slope_mask rises from 0 (steep) to 1 as the
   surface normal Z passes Slope Threshold, eased over Slope Falloff.
-- altitude: snow sticks higher up. altitude_mask rises from 0 to 1 as world Z passes
-  Altitude, eased over Altitude Falloff.
+- altitude: snow sticks higher up. altitude_mask rises from 0 to 1 as local Z passes
+  Altitude, eased over Altitude Falloff (Altitude is the world-Z snow line converted to the
+  surface's local frame by the panel, so it lines up with the material's world-Z coverage).
 - occlusion (crude to start, per the plan): a sheltered surface holds less snow. A
   short upward Raycast against the same mesh marks a point as occluded when something
   is directly above it (an overhang, a crevice). Gated by Occlusion strength (0 = off);
@@ -65,7 +69,8 @@ def build(ng, out, params: dict):
     slope_lo = math_node(ng, "SUBTRACT", gi.outputs["Slope Threshold"], gi.outputs["Slope Falloff"], (-820, -360))
     slope_mask = smooth_falloff(ng, nsep.outputs["Z"], slope_lo, gi.outputs["Slope Threshold"], (-640, -260))
 
-    # Altitude: snow above a world-Z line, eased over Altitude Falloff.
+    # Altitude: snow above the line (local Z; the panel feeds the world-Z snow line converted to
+    # this surface's local frame), eased over Altitude Falloff.
     pos = position(ng, (-1000, -520))
     psep = nodes.new("ShaderNodeSeparateXYZ")
     psep.location = (-820, -520)
