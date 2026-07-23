@@ -261,18 +261,27 @@ class BBT_OT_world_apply_biome(Operator):
             if "CANCELLED" in bpy.ops.bob_blender_tools.scatter_biome_scatter(biome=biome):
                 fail("scatter"); return {"CANCELLED"}
             steps.append("scatter")
-            # Weather the scattered proxies: convert each kind's BOB_Assets_<kind> to BobShaders
-            # (shaders_convert Collection scope; idempotent, installs the env feed). Off skips it.
+            # Weather the scattered assets: convert each built layer's OWN assets collection to
+            # BobShaders (Convert, Collection scope; idempotent, installs the env feed). Reading
+            # the layers rather than the hardcoded BOB_Assets_<kind> names means a biome pointing
+            # a layer at a custom collection is weathered too, not only the block-out proxies. Off
+            # (the checkbox) keeps the plain materials.
             if world_state.biome_weather_assets:
-                for kind in man["scatter"]:
-                    coll = f"BOB_Assets_{kind.capitalize()}"
-                    if bpy.data.collections.get(coll) is None:
+                emitter = context.scene.bbt_scatter.emitter
+                scoll = emitter.bbt_scatter_coll if emitter is not None else None
+                seen = set()
+                for lay_obj in (scoll.objects if scoll is not None else ()):
+                    assets = getattr(lay_obj.bbt_scatter_layer, "assets", None)
+                    if assets is None or assets.name in seen:
                         continue
+                    seen.add(assets.name)
                     try:
-                        bpy.ops.bob_blender_tools.shaders_convert(scope="collection", coll_name=coll)
+                        bpy.ops.bob_blender_tools.shaders_convert(
+                            scope="collection", coll_name=assets.name)
                     except RuntimeError as exc:
-                        print(f"[bob_blender_tools] build biome: convert {coll} skipped ({exc})")
-                steps.append("weathered assets")
+                        print(f"[bob_blender_tools] build biome: convert {assets.name} skipped ({exc})")
+                if seen:
+                    steps.append("weathered assets")
         if man["world"]:
             world_state.biome_world = biome  # world_biome_world reads the staged pick
             if "CANCELLED" in bpy.ops.bob_blender_tools.world_biome_world():
@@ -302,6 +311,11 @@ class BBT_PT_biome(Panel):
         if not _has_any_biome():
             layout.label(text="No biomes in library/models", icon="INFO")
             return
+
+        # What a biome is (item 4): one preset that touches terrain, scatter, season and weather
+        # together. Build Biome stands up the whole scene; the per-panel Biome Terrain / Biome
+        # Scatter / Biome World are the same recipe applied one piece at a time.
+        layout.label(text="A biome presets terrain + scatter + world together", icon="INFO")
 
         # P1: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
         target = _apply_target(context)
@@ -369,8 +383,19 @@ class BBT_PT_world(Panel):
                 layout, "bob_blender_tools.firmament_build_sky", text="Build Sky",
                 note="no sky yet; builds the sky + sun from the time and place below")
 
-        # -- World now: the live conditions. Time/place (the set-once sun geo inputs) moved to the
-        # collapsed "Time and place" sub-panel below, so this first screen is the day-to-day knobs. --
+        # -- Season: the one seasonal lever (snow/wetness/temperature + winter subsystems). Set
+        # the season first, then tune the live Conditions below on top of whatever it stamps. --
+        box = layout.box()
+        box.label(text="Season", icon=ui_helpers.STRUCTURAL_ICON)
+        box.prop(env, "season")
+        if not firmament_off:
+            box.prop(context.scene.bbt_firmament, "season_sets_date")
+        ui_helpers.structural_action(
+            box, "bob_blender_tools.firmament_apply_season", text="Apply Season",
+            note="sets snow/wetness/temperature; winter builds falling snow + coverage")
+
+        # -- World now: the live conditions, on top of the season. Time/place (the set-once sun geo
+        # inputs) moved to the collapsed "Time and place" sub-panel below, so this stays day-to-day. --
         box = layout.box()
         col = box.column(align=True)
         col.label(text="Conditions (live)", icon="FORCE_WIND")
@@ -385,15 +410,6 @@ class BBT_PT_world(Panel):
         col.prop(env, "cloud_cover")
         col.prop(env, "wind_direction")
         col.prop(env, "wind_strength")
-
-        # -- Season: the one seasonal lever (snow/wetness/temperature + winter subsystems). The
-        # live Conditions above stay editable on top of whatever a season stamps. --
-        box = layout.box()
-        box.label(text="Season", icon=ui_helpers.STRUCTURAL_ICON)
-        box.prop(env, "season")
-        ui_helpers.structural_action(
-            box, "bob_blender_tools.firmament_apply_season", text="Apply Season",
-            note="sets snow/wetness/temperature; winter builds falling snow + coverage")
 
         # -- Sky Look: a staged whole-atmosphere mood (time/weather/cloud/wind + subsystems).
         # Sky only: it never touches the season. Needs Firmament (it rebuilds the atmosphere). --

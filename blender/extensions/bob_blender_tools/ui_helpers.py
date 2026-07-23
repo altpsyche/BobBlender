@@ -64,10 +64,13 @@ def structural_action(layout, op_idname, text=None, note=None, icon=STRUCTURAL_I
     return op
 
 
-def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
+def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET", current=None):
     """The INSTANT preset idiom (P4): an operator_menu_enum showing the operator enum's per-item
     label + description, firing on the pick. Same control and wording for every light preset in
     the suite (terrain, scatter layer, cloud, fog, rain, mote, surface, stack).
+
+    operator_menu_enum never shows the current pick in its own label, so pass `current` (the raw
+    enum value) to fold it into the button text ("Preset: Canyon") instead of a separate caption.
 
     The one rule (A6), so the two idioms never diverge again:
     - preset_row (instant, this): a LIGHT look preset that only sets values, reversible, no
@@ -75,6 +78,8 @@ def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET"):
       subsystem it tunes may not exist yet, so picking it never silently builds.
     - staged_preset_row (stage-then-Apply): reserved for the genuinely HEAVY rebuilds that stand
       up or replace subsystems (Sky Look, Build Biome, Biome World)."""
+    if current:
+        text = f"{text}: {current.replace('_', ' ').title()}"
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
 
 

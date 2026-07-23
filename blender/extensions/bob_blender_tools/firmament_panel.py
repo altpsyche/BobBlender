@@ -168,6 +168,23 @@ SEASON_APPLY = {
                "build_snow": True},
 }
 
+# Representative mid-season month per season, NORTHERN hemisphere. When "Season sets the date"
+# is on, Apply Season writes env.month to this, and the live solar model (env geo-hook ->
+# _reposition_sun) does the physically-correct thing: a low winter sun with long shadows, a high
+# summer sun. Sky mood (time of day, cloud, weather) stays Sky Look's job, so the two never fight.
+_SEASON_MONTH_NORTH = {"spring": 4, "summer": 7, "autumn": 10, "winter": 1}
+
+
+def _season_month(season, latitude):
+    """The month a season implies, hemisphere-aware: the southern hemisphere is offset half a
+    year, so its winter (June/July) sits opposite the northern winter (December/January)."""
+    m = _SEASON_MONTH_NORTH.get(season)
+    if m is None:
+        return None
+    if latitude < 0.0:
+        m = (m + 5) % 12 + 1  # +6 months, wrapped into 1..12
+    return m
+
 # Sky Looks: one pick sets the SKY/atmosphere mood only (time of day, weather, cloud cover,
 # wind) and seeds each named subsystem, building any that are missing (at the current quality,
 # so a Preview pick stays cheap). A subsystem set to None is left alone, not deleted. `fog` is
@@ -529,6 +546,14 @@ class BBT_FirmamentProps(PropertyGroup):
         name="Sky Look",
         items=[(k, v["label"], v["desc"]) for k, v in SCENE_PRESETS.items()],
         description="A whole-sky mood to stage; press Apply Sky Look to commit it")
+
+    # Season -> date coupling (item 2). When on, Apply Season sets env.month to the season's
+    # representative month (hemisphere-aware) so the live sun drops in winter for free. Gated so
+    # a pinned shot date is never silently clobbered.
+    season_sets_date: BoolProperty(
+        name="Season sets the date", default=True,
+        description="Apply Season also sets the calendar month, so the sun sits low in winter "
+                    "and high in summer. Turn off to keep the date you set")
 
     # Sun override on top of the geographic position. update=_on_sun_override_change re-places
     # the sun live, matching the geographic fields' live behaviour.
@@ -997,6 +1022,13 @@ class BBT_OT_firmament_apply_season(Operator):
         for key in ("snow", "wetness", "temperature"):
             if key in spec:
                 setattr(env, key, spec[key])
+        # Season -> date (item 2, gated): set the month so the live solar model lowers the winter
+        # sun. Writing env.month fires env's geo-hook, which repositions the sun when Live
+        # Environment is on. Sky mood (time/cloud/weather) is left to Sky Look.
+        if fm.season_sets_date:
+            month = _season_month(env.season, env.latitude)
+            if month is not None:
+                env.month = month
         built = []
         if spec.get("build_snow"):
             # Falling snow (the mote preset builds the object if missing) and the
