@@ -101,7 +101,8 @@ def bake_heightfield(
     Returns metadata: {path, out_file, backend, platform, size, seconds, stats,
     hash, cached}.
     """
-    from ..heightfields import bake, presets
+    import bobtools._hfpath  # noqa: F401  (adds the extension's core/heightfields to sys.path)
+    from heightfields import bake, presets
 
     p = dict(params or {})
     preset = p.pop("preset", None)

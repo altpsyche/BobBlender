@@ -9,19 +9,19 @@ curve is a scene-owned datablock the artist edits in the viewport; its role and 
 config that seed and drive the effects.
 
 Homes:
-- Panel: `blender/extensions/bob_blender_tools/splines_panel.py` (the Paths panel, the roles, the
+- Panel: `blender/extensions/bob_blender_tools/ui/splines.py` (the Paths panel, the roles, the
   operators, and the per-curve `bbt_curve` data).
-- Curve authoring + drape ops: `blender/bbmcp/path_curve.py` (`make_path`, `drape_curve`,
+- Curve authoring + drape ops: `blender/extensions/bob_blender_tools/core/path_curve.py` (`make_path`, `drape_curve`,
   `inspect_river`).
-- Recipes: `blender/bbmcp/geonodes/recipes/curve_overlay.py` (terrain carve + masks),
+- Recipes: `blender/extensions/bob_blender_tools/core/geonodes/recipes/curve_overlay.py` (terrain carve + masks),
   `curve_water.py` (water ribbon), `scatter_along.py` (instances along a curve).
-- Material hooks: `blender/bbmcp/materials.py` (`apply_curve_surface`, `apply_curve_wet`,
+- Material hooks: `blender/extensions/bob_blender_tools/core/materials.py` (`apply_curve_surface`, `apply_curve_wet`,
   `water_material` / `water_master_group`, `enable_eevee_refraction`).
 
 ## 1. What a typed curve is
 
 A typed curve is an ordinary Blender curve object carrying a `bbt_curve` PropertyGroup
-(`splines_panel.BBT_Curve`). The scene holds a list of them in `bbt_curves` (a `BBT_CurvesProps`
+(`ui/splines.BBT_Curve`). The scene holds a list of them in `bbt_curves` (a `BBT_CurvesProps`
 with a `curves` collection of `BBT_CurveEntry` rows, each a `PointerProperty` to the curve object,
 so a row survives a rename). `bbt_curve` holds two kinds of config:
 
@@ -43,7 +43,7 @@ the object matrix to identity before a build, so a moved curve still samples and
 
 ## 2. Role catalog
 
-Roles live in the `ROLES` dict in `splines_panel.py`. There are five, in two families. The family
+Roles live in the `ROLES` dict in `ui/splines.py`. There are five, in two families. The family
 key `"impose"` marks river/stream; its absence marks the follow-terrain roles.
 
 Follow-terrain family (the bench levels to the LIVE terrain height under the centreline, then
@@ -75,7 +75,7 @@ channels that are on.
 
 Each curve gets its own Geometry Nodes overlay modifier on the terrain object, named
 `BOB_Curve_<curvename>`, built from the `curve_overlay` recipe
-(`blender/bbmcp/geonodes/recipes/curve_overlay.py`). The overlay:
+(`blender/extensions/bob_blender_tools/core/geonodes/recipes/curve_overlay.py`). The overlay:
 
 - Stacks after the base terrain modifier and before `BOB_Snow` (`_position_overlay`), so it carves
   the displaced surface and snow settles on the carved result. One modifier per curve, so a network
@@ -129,18 +129,18 @@ overlay is respected at once. `_clear_scatter` flips any scatter layer still set
 "none" over to "clear" and rebuilds the Scatter emitter's layers via
 `bob_blender_tools.scatter_build_all`.
 
-Per-layer curve binding lives in the Scatter panel (`scatter_panel.BBT_ScatterLayer.curve_mode`),
+Per-layer curve binding lives in the Scatter panel (`ui/scatter.BBT_ScatterLayer.curve_mode`),
 with these modes:
 
 - `none`: ignore curves.
 - `clear`: multiply density by (1 - mask), so the layer clears along the whole path band.
 - `keep`: multiply by the mask, so the layer scatters only in the band.
 - `verge`: scatter only on the path shoulder / edge ring, reading `bbt_curve_edge_<curvename>`
-  (`scatter_panel.edge_attr_name`); needs a curve bound, else it reads a name nothing writes and
+  (`ui/scatter.edge_attr_name`); needs a curve bound, else it reads a name nothing writes and
   scatters nothing.
 - `along`: switch the layer to the `scatter_along` recipe, placing instances ALONG the bound curve.
 
-The `scatter_along` recipe (`blender/bbmcp/geonodes/recipes/scatter_along.py`) spaces instances
+The `scatter_along` recipe (`blender/extensions/bob_blender_tools/core/geonodes/recipes/scatter_along.py`) spaces instances
 evenly by curve length / Spacing, offsets them sideways, projects them down onto the emitter so they
 sit on the terrain, and keeps them upright (align yaws them to the path heading, else a random Z
 spin). Its knobs: Spacing, Offset, Z Offset, Yaw, Jitter, Seed, Min Scale, Max Scale.
@@ -149,7 +149,7 @@ spin). Its knobs: Spacing, Offset, Z Offset, Yaw, Jitter, Seed, Min Scale, Max S
 
 The Water channel exists only for the river/stream family; the panel hides the toggle for follow
 roles. `_build_water` builds a water-surface ribbon object named `BOB_Water_<curvename>` from the
-`curve_water` recipe (`blender/bbmcp/geonodes/recipes/curve_water.py`), then shades it with
+`curve_water` recipe (`blender/extensions/bob_blender_tools/core/geonodes/recipes/curve_water.py`), then shades it with
 `materials.water_material` (a water BobShader) via a Set-Material modifier and calls
 `enable_eevee_refraction`.
 
@@ -224,7 +224,7 @@ Note: there is no standalone venv "carve" op; the baked path is the erosion pipe
 
 ## 6. Operators
 
-All in `splines_panel.py`:
+All in `ui/splines.py`:
 
 - `bob_blender_tools.curve_add` ("Add Curve"): takes a `role`; creates a curve via `make_path` with a
   short straight starter line, seeds the role params, adds it to the list, and makes it active for
@@ -265,7 +265,7 @@ Reeds on the banks: add a Scatter layer with Curve = Verge, bound to the path.
 
 ## 8. Driving from MCP
 
-Curve authoring and drape ops (dispatched in `blender/bbmcp/dispatch.py`, implemented in
+Curve authoring and drape ops (dispatched in `blender/extensions/bob_blender_tools/core/dispatch.py`, implemented in
 `path_curve.py`):
 
 - `make_path`: build a NURBS curve. Params: `name`, `points` (>= 2), `resolution`, and optionally

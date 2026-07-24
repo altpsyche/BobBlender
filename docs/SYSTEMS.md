@@ -85,7 +85,7 @@ the bake tool and the Blender side only.
 
 ### Baking the heightfield (tool: `bake_heightfield`)
 
-`bobtools.heightfields`, a pure venv subpackage. A preset is a filter STACK, an
+`core.heightfields`, a pure venv subpackage. A preset is a filter STACK, an
 ordered op list evaluated by `engine.run_stack`: a generator (noise, dunes,
 voronoi, strata) establishes the base, later ops erode and shape it. Five curated
 global knobs (Relief, Detail, Erosion, Warp, Seed) modulate a copy of the active
@@ -109,8 +109,8 @@ on the CLI) to also emit flow and wetness sidecar PNGs; off by default.
 ```
 
 Presets are starting points: pass `"preset": "<name>"` in params and override
-fields. From a script, `bobtools.heightfields.bake(abs_path, params, preview=...)`
-is the same entry; the CLI is `python -m bobtools.heightfields --out X.png
+fields. From a script, `core.heightfields.bake(abs_path, params, preview=...)`
+is the same entry; the CLI is `python -m core.heightfields --out X.png
 --params-file p.json` (also `--knobs-file`, `--preview`, `--maps`, `--backends`).
 
 After a re-bake, send a `reload_image` op so the open session picks up the new
@@ -620,5 +620,5 @@ Amplitude. Live params: Size, Resolution, Amplitude, Frequency.
 
 ## Adding or changing a recipe
 
-Recipes live in `blender/bbmcp/geonodes/recipes/`, one file each, composed from
+Recipes live in `blender/extensions/bob_blender_tools/core/geonodes/recipes/`, one file each, composed from
 the shared blocks in `blocks.py`. See `blender/README.md` for the how-to.

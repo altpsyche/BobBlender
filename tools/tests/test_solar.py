@@ -1,4 +1,4 @@
-"""Tests for the pure-Python solar model (blender/bbmcp/solar.py).
+"""Tests for the pure-Python solar model (blender/extensions/bob_blender_tools/core/solar.py).
 
 Run: uv run --with pytest --project tools pytest tools/tests -q
 
@@ -16,7 +16,8 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parents[2]
 _spec = importlib.util.spec_from_file_location(
-    "bbmcp_solar", REPO_ROOT / "blender" / "bbmcp" / "solar.py"
+    "core_solar",
+    REPO_ROOT / "blender" / "extensions" / "bob_blender_tools" / "core" / "solar.py",
 )
 solar = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(solar)

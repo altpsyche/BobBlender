@@ -1,7 +1,11 @@
 """BobBlenderHeightFields: terrain heightfield generation and erosion.
 
-Pure venv package (numpy on CPU, CuPy/CUDA on GPU), no bpy and no MCP. Kept
-extractable as a standalone repo later. See docs/UNIFIED-SYSTEM.md.
+The single committed copy of the terrain compute, living inside the extension at
+`core/heightfields/` (P4). It is bpy-free and MCP-free pure array code (numpy on CPU,
+CuPy/CUDA on GPU), so it runs BOTH in-process inside Blender's bundled Python (the live
+bake) and in the venv (the golden tests), off one source with no duplicate. `auto` uses
+the GPU when a device is present and CPU otherwise; CPU is the deterministic reference.
+Kept extractable as a standalone repo later. See docs/UNIFIED-SYSTEM.md.
 
 Public surface: bake() evaluates a terrain op stack (generators write a base,
 filters and flow-accumulation erosion shape it -- see engine.run_stack) and writes

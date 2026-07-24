@@ -3,8 +3,8 @@
 The authored surface-material system. It gives every object a strong, art-directable
 material and makes that material obey the shared world state (snow, wet, frost, season,
 temperature). This doc describes what the code does today. The code is the source of truth:
-`blender/bbmcp/materials.py` (the material engine, all node-group builders) and
-`blender/extensions/bob_blender_tools/shaders_panel.py` (the Shaders N-panel).
+`blender/extensions/bob_blender_tools/core/materials.py` (the material engine, all node-group builders) and
+`blender/extensions/bob_blender_tools/ui/shaders.py` (the Shaders N-panel).
 
 Naming follows `CONVENTIONS.md`: shared shader node groups are `S_<Effect>`, wrapper
 materials are `M_<Surface>`. The auto-cached Firmament volume/particulate materials keep the
@@ -289,7 +289,7 @@ Panel UI state is `Scene.bbt_shaders` (`BBT_ShadersProps`): terrain_active, conv
 convert_collection, asset_material. The shared world state is `Scene.bbt_env` (owned by Firmament,
 read-only here). The Live Environment master toggle is `bbt_world.live_env`.
 
-### Presets (all Blender-side dicts in `shaders_panel.py`)
+### Presets (all Blender-side dicts in `ui/shaders.py`)
 
 - `SURFACE_PRESETS`: rock, cliff, bark, soil, metal, painted, grass_blade. Each sets Base Color,
   Roughness, Metallic, Variation.
@@ -314,7 +314,7 @@ pick a slot, and tune the Master node's inputs live in the sub-panels. Presets s
 one press. There is no rebuild step for tuning; only assigning terrain drainage maps is structural
 (and it snapshots/restores tuned inputs).
 
-Programmatically (the path the panel, splines, and headless verifies use): call the `bbmcp.materials`
+Programmatically (the path the panel, splines, and headless verifies use): call the `core.materials`
 functions in-process on a running Blender - `surface_material` / `terrain_material` / `water_material`
 to build wrappers, `new_bobshader(obj, master)` to create-and-assign, `bobshade_material(mat)` to
 convert, `master_type` / `is_bobshader` to detect, `assign_material` to shade GN meshes,

@@ -28,7 +28,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
-from . import server, ui_helpers
+from ..bridge import server
+from . import helpers
 
 # The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
 # socket exists (path/paint/camera sockets appear only when that feature is set).
@@ -82,8 +83,7 @@ LAYER_TYPES = {
 # Helpers
 def _apply(ops):
     """Run bbmcp ops in-process, the path the terrain panel's build step uses."""
-    server._ensure_path()
-    from bbmcp.dispatch import apply_op
+    from ..core.dispatch import apply_op
 
     return [apply_op(op) for op in ops]
 
@@ -102,8 +102,7 @@ _BIOME_SCATTER_IDS = {}
 
 def _biome_scatter_items(self, context):
     global _BIOME_SCATTER_ITEMS
-    server._ensure_path()
-    from bbmcp import assets
+    from ..core import assets
 
     items = []
     for n in assets.list_biomes():
@@ -118,8 +117,7 @@ def _biome_scatter_items(self, context):
 
 
 def _has_biome_scatter():
-    server._ensure_path()
-    from bbmcp import assets
+    from ..core import assets
 
     return any(assets.biome_scatter(n) for n in assets.list_biomes())
 
@@ -379,8 +377,7 @@ class BBT_OT_scatter_biome_scatter(Operator):
         if not self.biome or self.biome == "NONE":
             self.report({"ERROR"}, "No biome carries a scatter recipe")
             return {"CANCELLED"}
-        server._ensure_path()
-        from bbmcp import assets
+        from ..core import assets
 
         recipe = assets.biome_scatter(self.biome)
         if not recipe:
@@ -610,7 +607,7 @@ def _draw_knobs(layout, obj, names, enabled=True):
         if inp is None:
             continue
         if nm in _SEED_KNOBS:
-            ui_helpers.seed_row(col, inp, "value", "bob_blender_tools.scatter_random_seed",
+            helpers.seed_row(col, inp, "value", "bob_blender_tools.scatter_random_seed",
                                 text=nm, op_props={"socket": nm})
         else:
             col.row(align=True).prop(inp, "value", text=nm)
@@ -646,7 +643,7 @@ class BBT_PT_scatter(Panel):
         hdr = None
         if emitter is not None:
             hdr = f"{emitter.name} / {layer.name}" if layer is not None else emitter.name
-        ui_helpers.context_header(layout, "Active mesh", hdr, icon="OUTLINER_OB_MESH",
+        helpers.context_header(layout, "Active mesh", hdr, icon="OUTLINER_OB_MESH",
                                   empty="Pick an emitter to scatter on.")
 
         layout.prop(scn, "emitter")
@@ -684,7 +681,7 @@ class BBT_PT_scatter(Panel):
             cap.label(text="scatter layers only; the Biome panel builds the whole scene",
                       icon="INFO")
 
-        ui_helpers.structural_action(layout, "bob_blender_tools.scatter_build_all",
+        helpers.structural_action(layout, "bob_blender_tools.scatter_build_all",
                                      note="rebuilds every layer of this emitter")
         if scn.summary:
             layout.label(text=scn.summary, icon="INFO")
@@ -733,7 +730,7 @@ class BBT_PT_scatter_layer(Panel):
         if not along:
             box.prop(lay, "align", expand=True)
             box.prop_search(lay, "vgroup", scn.emitter, "vertex_groups", text="Mask Group")
-        ui_helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
+        helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
         # Live group (P3): the modifier's own inputs, edited in place, no rebuild.

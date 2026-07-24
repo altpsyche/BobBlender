@@ -11,9 +11,10 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
   (gitignored) and be appended into hand-edited files via the Asset Browser.
 - `tools/`: a Python project (`bobtools`) that runs in its own venv, not inside
   Blender. `bobtools/mcp/` is the framework and bus (contracts, executors, bridge,
-  MCP server); `bobtools/heightfields/` is the pure terrain-compute capability;
-  repo utilities and the ComfyUI client sit alongside.
-- `blender/`: code that runs inside Blender's Python. `bbmcp/` is the authoring
+  MCP server); repo utilities and the ComfyUI client sit alongside. The terrain
+  compute moved into the extension at `core/heightfields/` (P4, single source); the
+  venv reaches that one copy via `bobtools/_hfpath.py` (puts the core dir on sys.path).
+- `blender/`: code that runs inside Blender's Python. `core/` is the authoring
   library, `runners/` are headless entry scripts, `extensions/bob_blender_tools/`
   is the BobBlenderTools addon (World, Terrain, Scatter, Shaders, Atmosphere, and a
   collapsed Advanced/Bridge panel; see the panel-UX section below).
@@ -38,30 +39,73 @@ contracts (Pydantic ops, validated in the venv)
       |  JSON
       v
 tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
-  mcp/contracts.py    op vocabulary         bbmcp/      builders
-  mcp/executor.py     headless executor -->  runners/    headless entry
-  mcp/bridge.py       live executor          extensions/bob_blender_tools  the addon
-  mcp/mcp_server.py   MCP tools
-  heightfields/       terrain compute
+  mcp/contracts.py    op vocabulary         core/            builders
+  mcp/executor.py     headless executor -->  core/heightfields/  terrain compute (single source)
+  mcp/bridge.py       live executor          runners/          headless entry
+  mcp/mcp_server.py   MCP tools              extensions/bob_blender_tools  the addon
 ```
 
 - The op vocabulary (`contracts.py`) is validated where agent input enters, so
   the Blender side trusts clean JSON and needs no extra deps.
-- The builders (`blender/bbmcp/`) are the single place that knows how to build
+- The builders (`blender/extensions/bob_blender_tools/core/`) are the single place that knows how to build
   meshes, geometry nodes, and materials. Reused by both executors.
 - The executor is swappable. `executor.py` spawns headless Blender for
   reproducible builds; `bridge.py` targets the open session for live work. Both
   present the same shape, so adding one did not change anything upstream.
 
 To grow the vocabulary: add an op model in `bobtools/mcp/contracts.py`, a builder
-in `blender/bbmcp/`, and one line in `blender/bbmcp/dispatch.py`. Geometry-node
-builders are recipes in `blender/bbmcp/geonodes/recipes/`.
+in `blender/extensions/bob_blender_tools/core/`, and one line in `blender/extensions/bob_blender_tools/core/dispatch.py`. Geometry-node
+builders are recipes in `blender/extensions/bob_blender_tools/core/geonodes/recipes/`.
 
 ## The BobBlenderTools extension
 
 `blender/extensions/bob_blender_tools/` is the Bob suite's Blender-side host: one
 addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panels.
 MCP is one capability here, not the roof.
+
+Internally the three concerns are separated (P2): `ui/` holds the panels (`world`,
+`firmament`, `scatter`, `shaders`, `splines`, and shared `helpers`), `bridge/` holds the
+live socket `server`, and `core/` is the builder library. A thin `__init__.py` does only
+register/unregister, addon prefs, and the terrain-bake operators. Every intra-package
+import is relative, so the folder is self-contained and importable under both the live
+`bl_ext.*` namespace and the headless `bob_blender_tools.*` name.
+
+### Asset packs (P3)
+
+Art lives OUTSIDE the repo, in asset packs. A pack is a plain folder with
+`models/<biome>/manifest.json` biomes and `textures/<set>/` texture sets (plus an optional
+`pack.json` root manifest: id/name/version/provides). `core/assets.py` resolves biomes and
+texture sets over an ordered search path, `asset_roots()`, first hit wins: (1) the
+`$BOB_ASSET_PACKS` env list, (2) the addon-preference **Asset Pack Folders**, (3) the dev repo
+`library/` when running in-repo, (4) the block-out pack bundled inside the extension
+(`assets/models/blockout/`) as the always-present floor. `assets.py` stays bpy-free (it is read
+by the panels, never imports them); the preference folders are pushed in from the addon via
+`set_pref_roots()`. **Rescan Asset Packs** (Advanced panel) re-reads the folders and refreshes
+the biome enums. The extension zip ships only the block-out; real packs are separate downloads a
+user points the preference at, so the repo and the zip stay lean and `library/` can later move to
+its own repo without touching extension code.
+
+Generated data (baked heightfields, drainage maps) writes to a resolved **Output Folder**
+(`_output_dir()`): the addon-preference path if set, else beside the saved `.blend`, else a
+per-user extension cache. The free-text bake target is `basename`-guarded so it cannot escape
+that folder. This replaces the old hardcoded `library/_generated/`, which does not exist on an
+installed machine.
+
+### Compute delivery (P5)
+
+The terrain bake runs the single-source compute (`core/heightfields`) IN-PROCESS. That compute
+needs scipy (CPU) and CuPy (GPU), which Blender's bundled Python does not ship. `compute.py`
+(bpy-free detection + a pip subprocess into Blender's own Python) plus the **Enable Compute**
+operator install them on the user's request: it probes the GPU/CUDA line (nvidia-smi), installs
+scipy and the matching `cupy-cudaXXx` wheel into Blender's Python, and verifies a real device
+round-trip. `auto` then picks the GPU with no toggle; a startup probe steers the artist to Enable
+Compute when a GPU is present and the deps are missing. If in-process compute fails for ANY reason
+— deps absent, or CuPy imports but its CUDA/NVRTC libs are unreachable (a Steam pressure-vessel
+sandbox hides system CUDA, and the CUDA-13 pip wheels are not yet published, so cupy-cuda13x cannot
+JIT there) — the bake falls back to the dev venv by subprocess, which hops to the host via the
+Steam launcher where CUDA works. `verify_gpu()` JIT-compiles a kernel (not just a reduction) so
+Enable Compute reports the real in-Blender GPU state. AMD/ROCm is CPU-only for now. Standalone
+artists on CUDA 13 + Steam without a venv get CPU until the cu13 CUDA wheels ship.
 
 ### Panel UX (2026-07-20 redesign)
 
@@ -74,7 +118,7 @@ point). Order is set by `bl_order`, not registration (World 0, Biome 1, Terrain 
 Scatter 4, Shaders 5, Atmosphere 6, Advanced 7); a one-line overview at the top of World names
 the sequence.
 
-Suite-wide principles, implemented once in `ui_helpers.py` (a context-header helper, a
+Suite-wide principles, implemented once in `ui/helpers.py` (a context-header helper, a
 structural-action marker with a shared icon + "rebuilds:" note, and a preset row):
 
 - Native identity. Each panel reflects the active thing, not a panel-local pointer/name.
@@ -82,7 +126,7 @@ structural-action marker with a shared icon + "rebuilds:" note, and a preset row
   `materials.master_type`); Scatter reflects the active emitter/layer; Terrain the target
   object. No `material_name`/`target`.
 - One world, one place. The world master toggle (**Live Environment**) and the scene
-  **Quality** level live on World (`bbt_world`). A SUBSCRIBER REGISTRY in `world_panel.py`
+  **Quality** level live on World (`bbt_world`). A SUBSCRIBER REGISTRY in `ui/world.py`
   lets each consumer register an applier `fn(scene)`; a world change re-applies all. World
   never imports its consumers, so `env.py` stays the acyclic root and a new world-driven
   subsystem is one `register_applier()` call. This folds the old per-panel `live_env` toggles
@@ -93,7 +137,7 @@ structural-action marker with a shared icon + "rebuilds:" note, and a preset row
 
 Its MCP Bridge runs a local socket server, applying ops on Blender's main thread
 through a timer (the only safe way to mutate `bpy` from a socket) and running only
-whitelisted `bbmcp` ops. It has start/stop/status, autostart on launch, a Reload
+whitelisted `core` ops. It has start/stop/status, autostart on launch, a Reload
 Builders button (needed because Blender caches imports, so new builder code
 requires a purge), and a clean stop so it can restart. Dev-installed by
 `bob-setup`.
@@ -109,7 +153,7 @@ the new op tag until the server is reconnected.
 ## Firmament: the atmosphere capability
 
 A sibling capability panel (labelled **Atmosphere** in the tab since the 2026-07-20 UX
-redesign; the module stays `firmament_panel.py`) that authors sky, clouds, fog, weather
+redesign; the module is `ui/firmament.py`) that authors sky, clouds, fog, weather
 particulates, and snow coverage. It still owns and registers the shared world state, but the
 world's UI (the Environment sliders) now lives in the World panel, and the scene Quality level
 and the Live Environment master moved to `bbt_world` (see the panel-UX section).
@@ -117,21 +161,21 @@ Built in slices S1-S5 (see `FIRMAMENT.md` for the design and the slice records).
 It is the base layer other capabilities read the world from, a one-way dependency, so
 the graph stays acyclic and a `BobBlenderFirmament` split stays mechanical. All bpy-only.
 
-- `bbmcp/env.py`: `Scene.bbt_env`, the canonical world state (time_of_day, year/month/day,
+- `core/env.py`: `Scene.bbt_env`, the canonical world state (time_of_day, year/month/day,
   utc_offset, latitude, longitude, season, weather, temperature, wetness, snow, cloud_cover,
   wind_direction, wind_strength). BobFirmament registers it;
   every capability reads it through `get_env()` (None-guarded so a standalone caller
   falls back to its own defaults). `sun_params()` extracts the geographic-sun inputs.
-- `bbmcp/solar.py`: pure-Python NOAA sun position (no bpy, unit-tested).
-- `bbmcp/world.py`: `build_sky` op, a physical MULTIPLE_SCATTERING world shader plus a
+- `core/solar.py`: pure-Python NOAA sun position (no bpy, unit-tested).
+- `core/world.py`: `build_sky` op, a physical MULTIPLE_SCATTERING world shader plus a
   matched Sun light, positioned from the world state (no world haze). Authored on press,
   not a live-knob surface.
-- `bbmcp/geonodes/recipes/volumetrics.py`: the `volumetrics` recipe (clouds, height_fog,
+- `core/geonodes/recipes/volumetrics.py`: the `volumetrics` recipe (clouds, height_fog,
   noise_fog, ground_fog) built through `build_geonodes`; one bounded domain box per layer
   with a thin volume material carving the volume. `particulates.py`: rain streaks and
   dust/amber/snow motes in a camera-following domain. `snow.py`: the GN coverage pass that
   writes the `snow_cover` attribute (the single source of snow coverage; consumed later by
-  BobShaders). `bbmcp/materials.py` holds the cached volume/particulate shaders.
+  BobShaders). `core/materials/volumes.py` holds the cached volume/particulate shaders.
 - Live-vs-structural, per the repo policy: continuous world values (wind, snow,
   cloud_cover) feed live via drivers on the GN modifier inputs under a Live Environment
   toggle, reinstalled on each build; a change of season is applied by an explicit Apply
@@ -153,7 +197,9 @@ is applied to Terrain and Scatter output, and imports none of them. Panel-only a
 in-process like Scatter (no MCP op, no reconnect). Built in slices; see `SHADERS.md` for
 the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays mechanical.
 
-- `bbmcp/materials.py` grows the artist-facing surface framework alongside the cached
+- `core/materials/` (a package split on coupling seams into `shared`, `volumes`, `weather`,
+  `water`, `terrain`, `surface`, re-exported from its `__init__`) grows the artist-facing
+  surface framework alongside the cached
   Firmament volume/particulate shaders: shared shader NODE GROUPS (`S_<Effect>`) that a
   thin per-object wrapper material (`M_<Surface>`) instances, the Blender-native master +
   instances shape. As of S1: `S_EnvState` (the world-to-shader bridge, internal Value nodes
@@ -196,12 +242,12 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
 - Live vs structural, per the repo policy: continuous world values (snow, wetness, temperature,
   weather) feed the weather layer live via drivers on the shared `S_EnvState` group, reinstalled
   on New/Convert and gated by the one World master Live Environment toggle (`bbt_world.live_env`),
-  which drives Shaders through the world applier registry (`shaders_panel._apply_world`). A change
+  which drives Shaders through the world applier registry (`ui/shaders._apply_world`). A change
   of kind (texture set, layer stack, dust/moss amount, season swap) is an explicit New/Convert/Apply.
 - Scatter output weathers by converting the scatter asset collection's materials to BobShaders
   (Shaders' Convert with the Collection scope, since `BOB_Assets_*` is unlinked and not
   viewport-selectable); the instances inherit the converted material and Object Info Random
-  varies each per instance. `bbmcp/assets.py` replaces the block-out proxies with real CC0 glTF
+  varies each per instance. `core/assets.py` replaces the block-out proxies with real CC0 glTF
   models from one geographic scan location (`library/models/<biome>/manifest.json`) via
   **Scatter's Import Biome** (moved there from Shaders in the redesign), keeping the assets'
   native materials; GN instancing stores each mesh once so even a multi-million-poly scanned tree
@@ -223,7 +269,7 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   `populate_scatter_assets`, `biome_models`) and the `verdant_trail` biome were removed, so the
   `models` section is back-compat only and never loaded, and terrain layers are solid tints (no
   texture-set feature). The canonical biome is a procedural block-out (`library/models/blockout`,
-  `meta.proxy=true`): proxy props from `bbmcp.proxies`, solid terrain, no external files. Whole-biome
+  `meta.proxy=true`): proxy props from `core.proxies`, solid terrain, no external files. Whole-biome
   assembly is its own top-level **Biome** panel, driven by `world_apply_biome` (button "Build
   Biome"), which composes existing builders in order and stops on a cancelled step: terrain
   (**Biome Terrain**, Shaders), scatter (**Biome Scatter**, Scatter, a layer per kind from
@@ -232,11 +278,11 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   live in an unlinked, unselectable collection, their surface materials are edited through the
   selectable scatter LAYER object: selecting a layer lists its instanced assets' materials and the
   Surface / Weather sub-panels tune the chosen one, reaching every instance
-  (docs/SCATTER-SHADING-UX.md). Names and conventions follow the UX redesign (ui_helpers, native
+  (docs/SCATTER-SHADING-UX.md). Names and conventions follow the UX redesign (ui/helpers, native
   context).
 - `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the texture-set
   pickers, and the Convert scope + collection). Identity is native: the material on the active
-  object's active slot (no `material_name`/`target`/`master` enum). The panel (`shaders_panel.py`)
+  object's active slot (no `material_name`/`target`/`master` enum). The panel (`ui/shaders.py`)
   lists every material slot of the active mesh with a per-row select and an adaptive New (empty)
   or Convert (plain), a Batch-convert (active/selected/collection) for the scatter assets, and the
   Surface / Terrain Layers (+ Layer Masks) / Weather sub-panels gated on `materials.master_type`
@@ -255,12 +301,16 @@ the MCP bus.
   props `bbt_*`.
 - MCP capability (kept MCP, correctly): the MCP server `bobblendermcp` (in
   `.mcp.json`), the venv package `bobtools/mcp/`, and the live MCP Bridge panel.
-- Builder library: the sys.path module `bbmcp` (not `bob_build`). It builds the
-  whole suite (terrain, scatter, proxies, paths), so the MCP-flavoured name is a
-  legacy misnomer kept for now; rename deferred to the polyrepo extraction.
+- Builder library: `bob_blender_tools.core` (was `core`). It builds the whole
+  suite (terrain, scatter, proxies, paths); the old MCP-flavoured name was a
+  misnomer and is gone. As a namespaced subpackage of the extension it is
+  collision-proof without needing a special top-level name, and every intra-package
+  import is relative (`from .core... `), so no code lands on Blender's global
+  sys.path.
 
-Rule: anything that lands on Blender's global sys.path gets a collision-proof
-name.
+Rule: anything that would land on Blender's global sys.path gets a collision-proof
+name; the extension avoids the problem entirely by keeping its code inside its own
+package and importing relatively.
 
 ## Version control
 
@@ -271,7 +321,7 @@ Git plus Git-LFS. `.blend`, textures, and volumes go through LFS
 
 BobBlenderMCP stays in this monorepo for now. The framework (`bobtools/mcp/`:
 contracts, executor, bridge, server, plus the extension and dispatch) is the bus;
-compute capabilities (`bobtools/heightfields/`, later a scatter package) ride over
+compute capabilities (`core/heightfields/`, later a scatter package) ride over
 it and stay separable. Everything is kept extract-ready so a piece can later split
 into its own repo (BobBlenderMCP / BobBlenderHeightFields / BobBlenderScatter under
 a BobBlenderTools umbrella) with `git subtree`. Extract when the op vocabulary

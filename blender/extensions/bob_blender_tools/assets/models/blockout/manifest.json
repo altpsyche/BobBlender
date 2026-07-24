@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "name": "Blockout",
+    "description": "Procedural block-out biome: proxy props, solid terrain, no external assets",
+    "climate": "temperate",
+    "source": "procedural (bbmcp.proxies)",
+    "license": "none",
+    "version": 2,
+    "proxy": true
+  },
+  "terrain": {
+    "layers": [
+      { "layer": "soil"  },
+      { "layer": "grass" },
+      { "layer": "rock"  },
+      { "layer": "cliff" }
+    ]
+  },
+  "scatter": {
+    "trees":  { "density": 0.4,  "scale": [0.8, 1.3], "min_normal_z": 0.6,  "align": "up"     },
+    "rocks":  { "density": 1.5,  "scale": [0.4, 1.2], "min_normal_z": 0.25, "align": "normal" },
+    "plants": { "density": 1.0,  "scale": [0.7, 1.2], "min_normal_z": 0.4,  "align": "normal" },
+    "grass":  { "density": 22.0, "scale": [0.6, 1.1], "min_normal_z": 0.35, "align": "normal" }
+  },
+  "world": {
+    "season": "summer",
+    "weather": "clear",
+    "time_of_day": 10.0,
+    "cloud_cover": 0.2,
+    "temperature": 22.0,
+    "wind_direction": 90.0,
+    "wind_strength": 1.5
+  }
+}

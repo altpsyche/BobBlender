@@ -9,7 +9,7 @@ check keeps every intra-package import relative.
 
 Banned top-level names (absolute import of any of these from inside the package):
   - bob_blender_tools : the package importing itself by absolute path
-  - bbmcp             : the dead pre-rename alias (add after P1 removes the shim)
+  - bbmcp             : the dead pre-rename alias (removed at P1)
 
 Usage:
   python tools/scripts/check_selfimports.py [package_dir]
@@ -23,8 +23,7 @@ import ast
 import pathlib
 import sys
 
-# Add "bbmcp" here in the same commit that deletes the P0 import shim (end of P1).
-BANNED_TOP_LEVEL = ("bob_blender_tools",)
+BANNED_TOP_LEVEL = ("bob_blender_tools", "bbmcp")
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_PKG = REPO_ROOT / "blender" / "extensions" / "bob_blender_tools"

@@ -13,6 +13,9 @@ projects/**/renders/**
 # Agent/headless-generated .blend files (regenerable)
 **/_generated/
 
+# Built extension zips (regenerable via tools/scripts/build_extension.py)
+/dist/
+
 # Caches (simulation, fluid, bake)
 **/cache/
 **/*_cache/

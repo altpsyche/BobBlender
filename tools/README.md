@@ -40,8 +40,8 @@ Registered in `../.mcp.json` with a portable `uv run` invocation. Tools:
 and `build_live` (into the open Blender via the BobBlenderTools extension).
 
 Adding a build op stays small: an op model in `mcp/contracts.py`, a builder in
-`../blender/bbmcp/`, and one line in its `dispatch.py`. No new MCP tool is
-needed, since `build` and `build_live` are generic over ops.
+`../blender/extensions/bob_blender_tools/core/`, and one line in its `dispatch.py`.
+No new MCP tool is needed, since `build` and `build_live` are generic over ops.
 
 ## ComfyUI
 

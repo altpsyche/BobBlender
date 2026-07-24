@@ -18,8 +18,8 @@ import numpy as np
 import pytest
 from scipy.ndimage import zoom
 
-from bobtools import heightfields as hf
-from bobtools.heightfields import (
+import heightfields as hf
+from heightfields import (
     backend, engine, erode, generate, io, maps, ops_erode, params, pipeline, presets,
 )
 
@@ -160,7 +160,7 @@ def test_flow_prior_concentrates_incision_on_the_path():
     # with no prior -- the spline is a drainage prior, not a cosmetic carve.
     bk = backend.select("cpu")
     base, curves = _diag_river_curve()
-    from bobtools.heightfields import ops_carve, ops_erode
+    from heightfields import ops_carve, ops_erode
     xp = bk.xp
     dist = ops_carve._distance_uv(base.shape, curves, xp, ops_erode._ndimage(xp))
     onpath = bk.asnumpy(ops_carve._profile(dist, 0.008, 0.02, xp)) > 0.5
@@ -196,7 +196,7 @@ def test_deposit_adds_material_in_channels():
     # channel: a run with a seeded groove must gain more mass on-path than off-path.
     bk = backend.select("cpu")
     base, curves = _diag_river_curve()
-    from bobtools.heightfields import ops_carve, ops_erode
+    from heightfields import ops_carve, ops_erode
     xp = bk.xp
     dist = ops_carve._distance_uv(base.shape, curves, xp, ops_erode._ndimage(xp))
     onpath = bk.asnumpy(ops_carve._profile(dist, 0.01, 0.03, xp)) > 0.5

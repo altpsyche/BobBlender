@@ -34,7 +34,8 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import server, ui_helpers, world_panel
+from ..bridge import server
+from . import helpers, world
 
 # The bbmcp modules, imported at register and held so unregister uses the same objects
 # even after Reload Builders purges bbmcp. _env_owned records whether BobShaders had to
@@ -147,8 +148,7 @@ TERRAIN_STACK_PRESETS = {
 
 def _materials():
     """The bbmcp.materials module, path ensured (the in-process bbmcp import Scatter uses)."""
-    server._ensure_path()
-    from bbmcp import materials
+    from ..core import materials
 
     return materials
 
@@ -338,7 +338,7 @@ def _live_env_on(scene):
 
 
 def _apply_world(scene):
-    """Shaders' world applier (subscribed with world_panel): install or remove the shared
+    """Shaders' world applier (subscribed with world): install or remove the shared
     S_EnvState drivers per the master Live Environment toggle, so raising the world snow
     whitens every surface with no rebuild. A driver edit on a shared datablock, safe from the
     rebuild re-entrancy the repo avoids for structural changes."""
@@ -362,8 +362,7 @@ _BIOME_TERRAIN_IDS = {"NONE": 0}
 
 def _biome_terrain_items(self, context):
     global _BIOME_TERRAIN_ITEMS
-    server._ensure_path()
-    from bbmcp import assets
+    from ..core import assets
 
     items = []
     for n in assets.list_biomes():
@@ -378,8 +377,7 @@ def _biome_terrain_items(self, context):
 
 
 def _has_biome_terrain():
-    server._ensure_path()
-    from bbmcp import assets
+    from ..core import assets
 
     return any(assets.biome_terrain(n) is not None for n in assets.list_biomes())
 
@@ -683,8 +681,7 @@ class BBT_OT_shaders_biome_terrain(Operator):
         if obj is None:
             self.report({"ERROR"}, "Select a mesh first")
             return {"CANCELLED"}
-        server._ensure_path()
-        from bbmcp import assets
+        from ..core import assets
 
         spec = assets.biome_terrain(self.biome) if self.biome and self.biome != "NONE" else None
         if not spec:
@@ -735,8 +732,7 @@ class BBT_OT_shaders_snow_shell_add(Operator):
         if _named_mod(surface, "BOB_Snow") is None:
             self.report({"WARNING"}, "No snow_cover pass on this surface (add it in Atmosphere); "
                                      "the shell will read 0 until then")
-        server._ensure_path()
-        from bbmcp.geonodes import build_geonodes_on_object
+        from ..core.geonodes import build_geonodes_on_object
 
         build_geonodes_on_object(surface, "snow_shell", SNOW_SHELL_MOD, {})
         # Keep the Set-Material modifier last so the shell's geometry is still shaded.
@@ -806,7 +802,7 @@ class BBT_PT_shaders(Panel):
         obj = _active_object(context)
 
         # P1/P7: the context header, or the empty state that says what to do next.
-        if not ui_helpers.context_header(layout, "Active mesh", obj.name if obj else None,
+        if not helpers.context_header(layout, "Active mesh", obj.name if obj else None,
                                          icon="OUTLINER_OB_MESH",
                                          empty="Select a mesh to shade its materials."):
             return
@@ -832,7 +828,7 @@ class BBT_PT_shaders(Panel):
             m = slot.material
             mt = mats.master_type(m) if m is not None else None
             row = box.row(align=True)
-            ui_helpers.select_row(row, "bob_blender_tools.shaders_select",
+            helpers.select_row(row, "bob_blender_tools.shaders_select",
                                   m.name if m is not None else "(empty)", i == active_idx,
                                   op_props={"target": "slot", "index": i})
             if m is None:
@@ -905,7 +901,7 @@ class BBT_PT_shaders(Panel):
         for m in asset_mats:
             mt = mats.master_type(m)
             row = box.row(align=True)
-            ui_helpers.select_row(row, "bob_blender_tools.shaders_select", m.name, m.name == sel,
+            helpers.select_row(row, "bob_blender_tools.shaders_select", m.name, m.name == sel,
                                   op_props={"target": "asset", "name": m.name})
             if mt in _MASTER_TAG:
                 ic, lbl = _MASTER_TAG[mt]
@@ -941,7 +937,7 @@ class BBT_PT_shaders_surface(Panel):
         node = _master_node(mat)
         if node is None:
             return
-        ui_helpers.preset_row(layout, "bob_blender_tools.shaders_preset")
+        helpers.preset_row(layout, "bob_blender_tools.shaders_preset")
         _draw_inputs(layout, node, _SURFACE_KNOBS)
         # A scattered asset shades through its instanced collection, not its own slot, so the
         # tint/rough/variation above are all it exposes here.
@@ -1041,11 +1037,11 @@ class BBT_PT_shaders_terrain(Panel):
             return
 
         row = layout.row(align=True)
-        ui_helpers.preset_row(row, "bob_blender_tools.shaders_terrain_stack_preset",
+        helpers.preset_row(row, "bob_blender_tools.shaders_terrain_stack_preset",
                               text="Stack Preset")
         if _has_biome_terrain():
             row.operator_menu_enum("bob_blender_tools.shaders_biome_terrain", "biome",
-                                   text="Biome Terrain", icon=ui_helpers.STRUCTURAL_ICON)
+                                   text="Biome Terrain", icon=helpers.STRUCTURAL_ICON)
             cap = layout.row()
             cap.enabled = False
             cap.label(text="terrain layers only; the Biome panel builds the whole scene",
@@ -1073,7 +1069,7 @@ class BBT_PT_shaders_terrain(Panel):
             col = node.inputs.get(f"L{i} Base Color")
             if col is not None:
                 row.prop(col, "default_value", text="")
-            ui_helpers.select_row(row, "bob_blender_tools.shaders_select", f"Layer {i}",
+            helpers.select_row(row, "bob_blender_tools.shaders_select", f"Layer {i}",
                                   i == active, radio=False,
                                   op_props={"target": "layer", "index": i})
         if len(enabled) < maxn:
@@ -1082,7 +1078,7 @@ class BBT_PT_shaders_terrain(Panel):
         # Active layer: surface + a layer preset, then the placement masks.
         i = max(0, min(active, _materials().MAX_TERRAIN_LAYERS - 1))
         layout.label(text=f"Layer {i}", icon="NODE_TEXTURE")
-        ui_helpers.preset_row(layout, "bob_blender_tools.shaders_terrain_layer_preset",
+        helpers.preset_row(layout, "bob_blender_tools.shaders_terrain_layer_preset",
                               text="Layer Preset")
         _draw_layer_inputs(layout, node, i, _LAYER_SURFACE)
 
@@ -1204,8 +1200,7 @@ CLASSES = (
 
 def register():
     global _env, _env_owned
-    server._ensure_path()
-    from bbmcp import env
+    from ..core import env
     _env = env
     # Firmament owns the shared world; register it here only if running standalone (e.g. a
     # headless verify), and record ownership so unregister only removes what it created.
@@ -1216,12 +1211,12 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_shaders = bpy.props.PointerProperty(type=BBT_ShadersProps)
     # Subscribe the surface applier so the World master Live Environment toggle drives it.
-    world_panel.register_applier(_apply_world)
+    world.register_applier(_apply_world)
 
 
 def unregister():
     global _env_owned
-    world_panel.unregister_applier(_apply_world)
+    world.unregister_applier(_apply_world)
     del bpy.types.Scene.bbt_shaders
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

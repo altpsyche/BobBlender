@@ -21,9 +21,11 @@ def _argv_after_dashes():
 def main():
     req_path, result_path = _argv_after_dashes()
 
-    # Make bbmcp importable (blender/runners/ -> blender/).
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from bbmcp.dispatch import apply_op
+    # The builder library is bob_blender_tools.core, inside the extension. One
+    # sys.path insert of the extensions dir, then a plain package import.
+    blender_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # blender/
+    sys.path.insert(0, os.path.join(blender_dir, "extensions"))
+    from bob_blender_tools.core.dispatch import apply_op
 
     payload = json.loads(open(req_path).read())
     result = {

@@ -2,12 +2,12 @@
 
 Canonical reference, written from the code. Source of truth:
 
-- blender/bbmcp/assets.py (manifest reader, accessors, validator)
-- blender/bbmcp/proxies.py (block-out proxy assets)
-- blender/bbmcp/geonodes/recipes/scatter.py, scatter_along.py (the GN scatter recipes)
-- blender/extensions/bob_blender_tools/scatter_panel.py (Biome Scatter, layers)
-- blender/extensions/bob_blender_tools/shaders_panel.py (Biome Terrain, Convert)
-- blender/extensions/bob_blender_tools/world_panel.py (Build Biome, Biome World, Biome panel)
+- blender/extensions/bob_blender_tools/core/assets.py (manifest reader, accessors, validator)
+- blender/extensions/bob_blender_tools/core/proxies.py (block-out proxy assets)
+- blender/extensions/bob_blender_tools/core/geonodes/recipes/scatter.py, scatter_along.py (the GN scatter recipes)
+- blender/extensions/bob_blender_tools/ui/scatter.py (Biome Scatter, layers)
+- blender/extensions/bob_blender_tools/ui/shaders.py (Biome Terrain, Convert)
+- blender/extensions/bob_blender_tools/ui/world.py (Build Biome, Biome World, Biome panel)
 - library/models/<biome>/manifest.json, library/textures/<set>/
 
 ## What a biome is
@@ -18,12 +18,12 @@ kind, and the world mood (season, weather, time). One pick stands up a whole coh
 scene: terrain material, scattered layers, and world state.
 
 The canonical biome is a block-out biome. Its props are procedural proxies
-(bbmcp.proxies), its terrain is solid-tint layers, and it references no external model
+(core.proxies), its terrain is solid-tint layers, and it references no external model
 files. The one shipped biome is library/models/blockout/ (meta.proxy = true).
 
 There is no glTF import path. assets.py only reads and validates manifests; it does not
-load model files. Proxy geometry comes from bbmcp.proxies; scatter layers and terrain
-materials are built by the panels over existing bbmcp recipes and BobShaders masters.
+load model files. Proxy geometry comes from core.proxies; scatter layers and terrain
+materials are built by the panels over existing core recipes and BobShaders masters.
 
 ## Manifest schema (v2)
 
@@ -55,13 +55,13 @@ meta fields the code reads:
 - proxy        true marks a proxy biome; the validator then skips the model-file,
                scatter-needs-models, and (per-layer) checks that assume real assets
 
-terrain layer keys (_TERRAIN_LAYER_KEYS, mirrors shaders_panel TERRAIN_LAYER_PRESETS):
+terrain layer keys (_TERRAIN_LAYER_KEYS, mirrors ui/shaders TERRAIN_LAYER_PRESETS):
 soil, grass, rock, cliff, scree, sand.
 
-scatter kinds (_SCATTER_KINDS, mirrors scatter_panel LAYER_TYPES minus "empty"):
+scatter kinds (_SCATTER_KINDS, mirrors ui/scatter LAYER_TYPES minus "empty"):
 trees, rocks, plants, grass.
 
-scatter cfg keys read by the panel (_biome_layer_params in scatter_panel.py):
+scatter cfg keys read by the panel (_biome_layer_params in ui/scatter.py):
 - density         placement density
 - scale           [min, max], mapped to Min Scale / Max Scale
 - min_normal_z, max_normal_z   slope band
@@ -76,7 +76,7 @@ cloud_cover, wind_direction, wind_strength.
 ### The shipped blockout manifest
 
 library/models/blockout/manifest.json:
-- meta: name Blockout, climate temperate, source "procedural (bbmcp.proxies)",
+- meta: name Blockout, climate temperate, source "procedural (core.proxies)",
   license none, version 2, proxy true.
 - terrain: four solid-tint layers soil / grass / rock / cliff (no "texture" on any).
 - scatter: trees, rocks, plants, grass, each with density, scale, min_normal_z, align.

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "bob-blockout",
+  "name": "Bob Block-out",
+  "version": "1.0.0",
+  "author": "BobBlenderTools",
+  "license": "none",
+  "description": "The bundled procedural block-out pack shipped inside the extension: a proxy biome (procedural props, solid terrain, no external files). Always present as the floor of the asset search path.",
+  "provides": { "biomes": ["blockout"], "texture_sets": [] }
+}

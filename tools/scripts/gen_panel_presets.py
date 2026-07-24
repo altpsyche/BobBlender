@@ -3,7 +3,8 @@
 The Heightfield panel is a Blender extension running in a different interpreter, so
 it cannot import the venv. It reads a committed JSON of the generation knobs it
 exposes; this script is the one place those values come from
-(bobtools.heightfields.presets.PRESET_KNOBS). Rerun it when presets change and
+(heightfields.presets.PRESET_KNOBS, the single source in core/heightfields, reached
+via bobtools._hfpath). Rerun it when presets change and
 commit the updated presets.json. A drift test (tools/tests) fails if the committed
 file is stale.
 
@@ -19,7 +20,8 @@ Run: uv run --extra terrain --project tools python tools/scripts/gen_panel_prese
 import json
 import pathlib
 
-from bobtools.heightfields import params, presets
+import bobtools._hfpath  # noqa: F401  (adds core/heightfields to sys.path)
+from heightfields import params, presets
 
 # The global knobs the panel resets to neutral when a preset is chosen.
 PANEL_KNOBS = ("relief", "detail", "erosion", "warp")
@@ -68,7 +70,7 @@ def build_panel_stacks() -> dict:
 
 def main():
     data = {
-        "_note": "Generated from bobtools.heightfields.presets by "
+        "_note": "Generated from heightfields.presets (core/heightfields) by "
                  "tools/scripts/gen_panel_presets.py. Do not edit by hand.",
         "presets": build_panel_presets(),
         "stacks": build_panel_stacks(),

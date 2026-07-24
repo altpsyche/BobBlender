@@ -59,7 +59,7 @@ The BobBlenderTools N-panel suite follows one design language (full rationale in
   World names the sequence (panel labels stay plain, no stage numbers).
 - Native identity. Reflect the active thing (active object/material, active emitter/layer),
   never a panel-local name or duplicate target pointer.
-- Use the shared helpers in `ui_helpers.py` so the language stays consistent: `context_header`
+- Use the shared helpers in `ui/helpers.py` so the language stays consistent: `context_header`
   (the "what am I acting on" line + empty-state hint), `structural_action` (a build/rebuild
   button with the shared `STRUCTURAL_ICON` and a short "rebuilds:/builds:" note), and
   `preset_row` (the one preset control, an `operator_menu_enum` with per-item label +
@@ -69,7 +69,7 @@ The BobBlenderTools N-panel suite follows one design language (full rationale in
 - Show only what applies to the current state (adaptive/minimal): per-row New OR Convert, not
   both; hide sub-panels that do not apply (poll on the detected kind).
 - The world is driven from one place (the World panel, `bbt_world`). A world-driven subsystem
-  subscribes an applier via `world_panel.register_applier(fn)`; it does not add its own world
+  subscribes an applier via `ui/world.register_applier(fn)`; it does not add its own world
   toggle.
 
 ## Git hygiene

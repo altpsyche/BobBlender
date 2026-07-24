@@ -189,8 +189,8 @@ forest-scandinavia/                <- one pack
   pack.json                        <- the manifest (see below)
   models/<biome>/manifest.json     <- biome definitions (existing biome_manifest shape)
   textures/<set>/                  <- grass_basecolor.jpg, grass_normal.png, ...
-  hdri/<name>.exr
 ```
+(No HDRIs: the sky is procedural — Firmament's `build_sky` — so a pack ships no environment maps.)
 
 `pack.json`:
 
@@ -202,7 +202,7 @@ forest-scandinavia/                <- one pack
   "version": "1.0.0",
   "author": "…",
   "license": "CC0",
-  "provides": { "biomes": ["birch_glade"], "texture_sets": ["grass","rock","soil"], "hdri": ["overcast_4k"] }
+  "provides": { "biomes": ["birch_glade"], "texture_sets": ["grass","rock","soil"] }
 }
 ```
 
@@ -335,6 +335,15 @@ autostart** (an agent-authoring feature; default OFF for artists, on-demand in t
 Advanced panel). Disable those buttons with a clear note rather than erroring.
 Note GPU is explicitly NOT in this gated list — it is a required capability
 (P5).
+**P4 scipy reality (found during P4; corrects the spike).** The compute needs
+**scipy.ndimage** (gaussian/morphology/zoom/EDT), which Blender's Python lacks, so a
+fully in-process bake on bundled numpy is not possible yet. As landed, the bake runs
+**in-process by default and falls back to the dev venv** (same single source) when
+scipy/CuPy are absent in Blender; bundling scipy was rejected (zip bloat). This makes
+P5's Enable Compute responsible for installing **scipy as well as CuPy** into Blender's
+Python; after that the in-process path runs natively for all presets with no bake-code
+change. See `docs/PRE-P0-SCOPE.md` "Correction".
+
 **Required P4 code change (from the pre-P0 spike): PIL-free PNG I/O.**
 `heightfields/io.py` imports `from PIL import Image` at module top, and Blender's
 bundled Python has no PIL, so the package cannot import in-Blender as-is. Replace
@@ -358,11 +367,12 @@ release gate for v1, not a follow-up.
   imports in Blender's Python. If capable hardware is present and GPU is not yet
   enabled, surface the enable action prominently (not buried) — the default path
   actively steers a GPU user to turn it on, rather than leaving it dormant.
-- **Enable GPU Acceleration** action in the Terrain panel: with the user's consent
-  (required — writing into Blender's Python and downloading a wheel need it),
-  `pip install` the matching `cupy-cudaXXx` (or ROCm) wheel into Blender's bundled
-  Python, then verify a real device round-trip. One click, no shell knowledge,
-  clear progress and error text.
+- **Enable Compute** action in the Terrain panel: with the user's consent (required —
+  writing into Blender's Python and downloading wheels need it), `pip install` **scipy**
+  (required by the CPU compute — see the P4 scipy note) plus the matching `cupy-cudaXXx`
+  (or ROCm) wheel into Blender's bundled Python, then verify a real device round-trip.
+  One click, no shell knowledge, clear progress and error text. Installing scipy alone
+  already unblocks the full in-process CPU bake (no more venv fallback); CuPy adds GPU.
 - **Auto-use after install**: the `auto` backend picks the GPU on the next bake; no
   toggle to flip. Status line shows the live device ("GPU: RTX 4090" / "CPU").
 - **CPU fallback is automatic and silent** ONLY when no compatible GPU or driver is
@@ -373,6 +383,19 @@ release gate for v1, not a follow-up.
 - **Acceptance for the phase**: on a CUDA machine the guided install completes and
   a bake runs on the GPU with a device round-trip verified; on a GPU-less machine
   the same build bakes on CPU with no error. Both are required to close P5.
+
+**Status (landed 2026-07-24).** Implemented as `compute.py` (bpy-free detection + a pip
+subprocess into Blender's own Python — `sys.executable` is the bundled interpreter on 5.2) plus
+the **Enable Compute** operator (consent via invoke_confirm), a Terrain-panel prompt shown
+prominently when a GPU is present and the deps are missing, a startup probe, and a truthful
+status line (real device round-trip). It installs **scipy AND the matching CuPy line** (the P4
+correction): the CUDA line is parsed from nvidia-smi, handling the newer `CUDA UMD Version`
+header. Verified on an RTX 5080 / CUDA 13.3: probe -> `cupy-cuda13x`; guided install completed;
+`verify_gpu()` device round-trip PASSED; a preset (`alpine`, which needs scipy) then baked
+**in-process on the GPU with no venv fallback**, and the operator built the terrain. Once
+installed, `auto` picks the GPU with no toggle. AMD/ROCm is detected as absent here and is
+CPU-only for now (explicit tier). GPU-less CPU path is by construction (probe finds no GPU ->
+installs scipy only -> in-process CPU); not physically tested on this box.
 
 **P6 — Manifest permissions + build + release.**
 Declare `[permissions]` in `blender_manifest.toml` before building: `network`
@@ -390,6 +413,18 @@ is not v1-shippable.
 Document install: Preferences → Get Extensions → Install from Disk. Decide the
 channel: self-hosted zip (now) vs the extensions.blender.org platform later (needs
 their review + compatible tags/license).
+
+**Status (landed 2026-07-24).** `[permissions]` declared (`network`, `files`; each ≤64 chars per
+Blender's cap) plus a `[build] paths_exclude_pattern` for caches/dotfiles. `tools/scripts/
+build_extension.py` resolves Blender via `bobtools.config.blender_binary()`, optionally stamps
+`--version`, runs `extension validate` then `extension build` into `dist/` (gitignored). Verified:
+manifest validates; build produces a **262 KB** `bob_blender_tools-0.1.0.zip` (block-out only, no
+scipy/CuPy, **zero `__pycache__`**). Packaged-install acceptance (P3 risk): extracted as a
+real-copy (non-symlink) install into an isolated `BLENDER_USER_RESOURCES`, enabled cleanly, panel
+registered, and the **bundled block-out biome resolved from inside the zip with no repo** — so the
+resolver's bundled floor and relative imports both hold on a packaged install. Install documented
+in the README ("Ship it"); channel decided: self-hosted zip now, extensions.blender.org later. The
+release gate (P5 GPU) is met.
 
 **P7 — API docs.**
 Write `tools/scripts/gen_api_docs.py` and author the four sections above into

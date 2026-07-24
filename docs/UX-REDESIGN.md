@@ -6,7 +6,7 @@ Season), and Sky Look (a STAGED atmosphere preset that no longer touches season/
 Biome World + Apply Biome moved out of the World panel into a new top-level Biome panel (Build Biome).
 The "Import Real" asset control and its verdant_trail glTF set were removed (block-out proxies are the
 one asset source). Both presets in the suite (Sky Look, heightfield landscape) now use the staged
-`ui_helpers.staged_preset_row` idiom instead of instant apply.
+`ui/helpers.staged_preset_row` idiom instead of instant apply.
 
 Status: COMPLETE (design 2026-07-20; implemented 2026-07-20, phases 0-6). Scope: the driving
 UX, flow, information architecture, and shared abstractions of the WHOLE BobBlenderTools N-panel
@@ -16,22 +16,22 @@ about how the tools are driven. No shading regression: a fixed scene renders byt
 the pre-redesign baseline (max/mean pixel delta 0.0).
 
 Progress (see section 9 for the phase plan):
-- Phase 0 DONE: shared UX helpers module (`ui_helpers.py`: context_header, structural_action,
+- Phase 0 DONE: shared UX helpers module (`ui/helpers.py`: context_header, structural_action,
   preset_row) and the panel reorder scaffold (bl_order sets the pipeline order; World=0 reserved).
   No behavioural change; verified headless (register + icon/idname audit).
-- Phase 1 DONE: World panel (`world_panel.py`, bl_order 0) with World-now (live conditions) vs
+- Phase 1 DONE: World panel (`ui/world.py`, bl_order 0) with World-now (live conditions) vs
   Set-up-a-look (Season/Apply Season/Scene Preset, structural), plus the Quality level and the
   ONE Live Environment master toggle (bbt_world). Firmament renamed to Atmosphere; its Environment
   sub-panel, Quality, live_env, and Scene Preset moved out. The two old per-panel live_env toggles
   (bbt_shaders.live_env, bbt_firmament.live_env) are folded into bbt_world.live_env via a SUBSCRIBER
-  REGISTRY in world_panel: each consumer registers an applier fn(scene); a world change re-applies
+  REGISTRY in ui/world: each consumer registers an applier fn(scene); a world change re-applies
   all. Adding a world-driven subsystem later is one register_applier() call; World never imports its
   consumers, so env.py stays the acyclic root. Verified: headless audit passes; a fixed scene driven
   through the new API matches the pre-redesign baseline exactly (state snapshot identical; render
   delta max 0.0 over 307200 channels). Baseline in library/_generated/ux_baseline/.
 - Phases 2+3 DONE (Shaders identity pivot + contextual list, done together as they rework the same
   panel): materials.py gains master_type/is_bobshader (detect a BobShader by its Master group tree)
-  and new_bobshader (auto-name M_<object> + assign). shaders_panel now edits the ACTIVE object's
+  and new_bobshader (auto-name M_<object> + assign). ui/shaders now edits the ACTIVE object's
   active material slot: the top panel lists every material slot of the active mesh (P1 header, P7
   empty state), each row select/status/adaptive New-or-Convert; a Batch-convert (scope active/
   selected/collection) keeps the one remaining collection picker for the unlinked scatter assets.
@@ -307,20 +307,20 @@ The panel order in section 4 mirrors this so the UI teaches the flow.
 
 ## 8. Migration map (by file)
 
-shaders_panel.py: remove material_name/target/_current_material-by-name, the Build/Assign*3
+ui/shaders.py: remove material_name/target/_current_material-by-name, the Build/Assign*3
 ops+buttons, Import Real Assets, the standalone asset_collection picker; add the active-mesh
 material list, showcase header, per-row New/Convert, Convert-all; rework Surface/Terrain/Weather
 sub-panels to key off active_object.active_material via master_type; drop the local live_env
 (use World's).
 
-scatter_panel.py: add per-layer asset collection browser and Import Biome (moved from Shaders,
-calls bbmcp.assets.populate_scatter_assets); make the structural-vs-live split explicit; add the
+ui/scatter.py: add per-layer asset collection browser and Import Biome (moved from Shaders,
+calls core.assets.populate_scatter_assets); make the structural-vs-live split explicit; add the
 context header.
 
 materials.py: add is_bobshader/master_type and a New-material entry (auto-name + assign);
 keep bobshade_material, assign_material, and all builders unchanged.
 
-firmament_panel.py: move the Environment sub-panel into a new World panel (world now vs set up a
+ui/firmament.py: move the Environment sub-panel into a new World panel (world now vs set up a
 look); keep Sky/Clouds/Fog/Weather as Atmosphere; adopt shared verbs/presets/structural marking;
 move Quality + a single Live Environment toggle to World.
 
