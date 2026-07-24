@@ -751,7 +751,13 @@ def build_clouds(op: dict) -> dict:
 
 
 def build_fog(op: dict) -> dict:
-    """MCP op: build a volumetric fog domain (height_fog / noise_fog / ground_fog)."""
+    """MCP op: build a volumetric fog domain (height_fog / noise_fog / ground_fog).
+
+    The default fog is deliberately dense (a thick foggy-morning look). For a thin, beam-friendly
+    haze pass a `preset` (ground_mist / valley / banks / thick) and/or an explicit `density`
+    override -- without one, a full-height domain washes the whole frame grey and no light shafts
+    read. density overlays the preset (or the recipe default) so `preset` + `density` together set
+    a look and then dial its thickness."""
     scene = bpy.context.scene
     name = op.get("object") or "BOB_Fog"
     mode = op.get("mode", "height_fog")
@@ -759,8 +765,21 @@ def build_fog(op: dict) -> dict:
         raise ValueError(f"fog mode must be height_fog/noise_fog/ground_fog, got {mode!r}")
     heightmap = op.get("heightmap") or ""
     obj = build_fog_object(scene, name=name, mode=mode, heightmap=heightmap)
+    preset = op.get("preset")
+    if preset:
+        if preset not in FOG_PRESETS:
+            raise ValueError(f"unknown fog preset {preset!r} (have: {sorted(FOG_PRESETS)})")
+        _apply_knobs(obj, FOG_PRESETS[preset]["knobs"])
+    density = op.get("density")
+    if density is not None and obj is not None:
+        _apply_knobs(obj, {"Density": float(density)})
     created = [obj.name] if obj is not None else []
-    return {"op": "build_fog", "created": created, "info": f"fog: {mode} ({name})"}
+    info = f"fog: {mode} ({name})"
+    if preset:
+        info += f" [{preset}]"
+    if density is not None:
+        info += f" density={density}"
+    return {"op": "build_fog", "created": created, "info": info}
 
 
 def build_rain(op: dict) -> dict:

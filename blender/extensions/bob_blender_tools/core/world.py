@@ -23,7 +23,7 @@ import math
 
 import bpy
 
-from . import solar
+from . import env as _env, solar
 
 WORLD_NAME = "BOB_World"
 SUN_NAME = "BOB_Sun"
@@ -114,6 +114,15 @@ def _place_sun(obj, elevation, azimuth, strength, angle_deg):
 
 def build_sky(op: dict) -> dict:
     params = op.get("params", {})
+
+    # Seed the geographic-sun inputs (time/date/place) from the shared world state when the op
+    # omits them, so a bare build_sky honours a prior set_env instead of falling back to the noon
+    # solar defaults. Explicit op params still win (they overlay the env seed), and an override is
+    # left alone (it supplies elevation/azimuth directly, no solar inputs needed).
+    if not _get(params, "use_override", False):
+        env = _env.get_env()
+        if env is not None:
+            params = {**_env.sun_params(env), **params}
 
     # Sun position: manual override, else the geographic solar model.
     if _get(params, "use_override", False):

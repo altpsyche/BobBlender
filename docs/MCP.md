@@ -130,6 +130,39 @@ run one op list (`build_live` into the running session, or `build` headless). Th
 `list_biomes` tells the agent which biomes are available and whether each shades terrain,
 scatters, and sets the world, so `apply_biome` is a single informed call.
 
+### A forest trail (path corridor + backlit mood)
+
+Two things make a path shot read: the trail's trees must pull back, and the light must come from
+the far end. Both are single flags:
+
+```jsonc
+[
+  {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Terrain",
+   "params": {"heightmap": "<abs>/_generated/forest_height.png", "size": 60, "resolution": 512, "height": 7}},
+  {"op": "apply_biome", "object": "Terrain", "biome": "blockout"},        // shade + scatter + world
+  {"op": "set_env", "params": {"season": "summer", "time_of_day": 7.5, "weather": "clear"}},
+  {"op": "make_curve", "name": "Trail", "role": "dirt_path", "terrain": "Terrain", "points": [...]},
+  {"op": "curve_build", "curve": "Trail", "terrain": "Terrain", "do_terrain": true, "do_material": true},
+  // Re-apply the biome scatter path-aware AFTER the curve exists; world:false keeps the env above.
+  {"op": "apply_biome", "object": "Terrain", "biome": "blockout", "world": false, "curve_mode": "clear"},
+  {"op": "build_sky", "params": {}},   // bare sky now honours set_env's 07:30 -> low morning sun
+  {"op": "build_fog", "mode": "ground_fog", "preset": "ground_mist", "density": 0.15},  // thin haze, beams read
+  {"op": "build_motes", "preset": "amber", "camera": "BOB_Camera"},
+  {"op": "add_camera", "name": "BOB_Camera", "location": [0, -30, 4.5], "look_at": [0, 8, 0.6], "lens": 30}
+]
+```
+
+- **`build_sky` reads `bbt_env`.** With no params it takes time/date/place from `set_env`, so a
+  bare `build_sky` after a `set_env` gives the right sun. For a hero backlight aim it manually with
+  `use_override` + a low `sun_elevation` at the `sun_azimuth` the camera faces.
+- **`build_fog` defaults dense** (a thick foggy-morning look) and will wash the frame grey. For a
+  thin, beam-friendly haze pass a `preset` (`ground_mist`/`valley`/`banks`/`thick`) and/or a
+  `density` override.
+- **Path-aware biome scatter.** `apply_biome` takes `curve_mode` (`clear` pulls scatter off carved
+  paths, `keep` confines it to them) and `world` (set `false` to leave `bbt_env` untouched). Build
+  the typed curve first, then re-apply with `world:false, curve_mode:"clear"` to open the corridor
+  without re-writing the env you just set.
+
 ## Reload rules (two-sided)
 
 The builder code runs in Blender; the op contract runs in the agent-side server. They reload
