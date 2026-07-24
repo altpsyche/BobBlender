@@ -26,7 +26,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import server, ui_helpers
+from ..bridge import server
+from . import helpers
 
 # The bbmcp.env module, held so the World panel can report when Firmament (the env owner) is off.
 _env = None
@@ -73,8 +74,7 @@ _BIOME_APPLY_IDS = {}
 
 
 def _assets():
-    server._ensure_path()
-    from bbmcp import assets
+    from ..core import assets
 
     return assets
 
@@ -319,16 +319,16 @@ class BBT_PT_biome(Panel):
 
         # P1: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
         target = _apply_target(context)
-        ui_helpers.context_header(
+        helpers.context_header(
             layout, "Active mesh", target.name if target else None,
             icon="OUTLINER_OB_MESH",
             empty="Set a Scatter emitter or select a terrain mesh to build on")
 
         # Build the whole biome (terrain + scatter + world) from the staged pick.
         box = layout.box()
-        box.label(text="Build a whole biome", icon=ui_helpers.STRUCTURAL_ICON)
+        box.label(text="Build a whole biome", icon=helpers.STRUCTURAL_ICON)
         box.prop(world, "biome_weather_assets")
-        ui_helpers.staged_preset_row(
+        helpers.staged_preset_row(
             box, world, "biome", "bob_blender_tools.world_apply_biome", text="Biome",
             apply_text="Build Biome",
             note="builds terrain + scatter + world on the terrain object above")
@@ -338,7 +338,7 @@ class BBT_PT_biome(Panel):
             box = layout.box()
             box.label(text="Biome world only", icon="WORLD")
             box.prop(world, "biome_build_sky")
-            ui_helpers.staged_preset_row(
+            helpers.staged_preset_row(
                 box, world, "biome_world", "bob_blender_tools.world_biome_world",
                 text="Biome World", apply_text="Set Biome World",
                 note="sets season/weather/time/wind from the biome; no terrain or scatter")
@@ -362,7 +362,7 @@ class BBT_PT_world(Panel):
 
         # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
         # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
-        # A8: in the shipped single addon this branch never fires (firmament_panel.register always
+        # A8: in the shipped single addon this branch never fires (firmament.register always
         # registers bbt_env at load). It is kept deliberately for the planned polyrepo split, where
         # World can ship without Firmament and bbt_env is then genuinely absent.
         firmament_off = _env is None or _env.get_env(context.scene) is None
@@ -379,18 +379,18 @@ class BBT_PT_world(Panel):
         # can set the time/place (Time and place sub-panel) and build from the top panel on the
         # first pass, not hunt for it in Atmosphere. Self-limiting: it vanishes once a sky is built.
         if not firmament_off and not _sky_built():
-            ui_helpers.structural_action(
+            helpers.structural_action(
                 layout, "bob_blender_tools.firmament_build_sky", text="Build Sky",
                 note="no sky yet; builds the sky + sun from the time and place below")
 
         # -- Season: the one seasonal lever (snow/wetness/temperature + winter subsystems). Set
         # the season first, then tune the live Conditions below on top of whatever it stamps. --
         box = layout.box()
-        box.label(text="Season", icon=ui_helpers.STRUCTURAL_ICON)
+        box.label(text="Season", icon=helpers.STRUCTURAL_ICON)
         box.prop(env, "season")
         if not firmament_off:
             box.prop(context.scene.bbt_firmament, "season_sets_date")
-        ui_helpers.structural_action(
+        helpers.structural_action(
             box, "bob_blender_tools.firmament_apply_season", text="Apply Season",
             note="sets snow/wetness/temperature; winter builds falling snow + coverage")
 
@@ -421,7 +421,7 @@ class BBT_PT_world(Panel):
         if not firmament_off:
             box = layout.box()
             box.label(text="Sky Look", icon="WORLD")
-            ui_helpers.staged_preset_row(
+            helpers.staged_preset_row(
                 box, context.scene.bbt_firmament, "sky_look",
                 "bob_blender_tools.firmament_scene_preset", text="Sky Look",
                 note="rebuilds the atmosphere subsystems; does not touch the season")
@@ -466,8 +466,7 @@ CLASSES = (
 
 def register():
     global _env
-    server._ensure_path()
-    from bbmcp import env
+    from ..core import env
     _env = env
     for cls in CLASSES:
         bpy.utils.register_class(cls)

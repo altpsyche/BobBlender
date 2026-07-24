@@ -1,9 +1,18 @@
-"""Biome manifest readers for the scatter / terrain / world pipeline.
+"""Biome manifest readers and the asset-pack resolver for the scatter / terrain / world pipeline.
 
-A biome is a folder under `library/models/<biome>/` carrying a `manifest.json`. The canonical
-biome is a block-out biome: its props are procedural proxies (bbmcp.proxies), its terrain is a
-solid-tint material, and it references no external model files. This module only reads and
-validates manifests; the proxy geometry and scatter layers are built by the panels + proxies.
+Art lives OUTSIDE this repo, in asset packs. A pack is a plain folder with `models/<biome>/
+manifest.json` biomes and `textures/<set>/` texture sets (optionally a `pack.json` root
+manifest). Packs are discovered over an ordered search path (`asset_roots()`): the
+`$BOB_ASSET_PACKS` env list, the addon-preference folder list, the dev repo `library/` when
+present, and the block-out pack bundled inside the extension as the always-present floor. First
+hit wins on a name collision, so a pack can override a bundled biome.
+
+A biome is a folder `<pack>/models/<biome>/` carrying a `manifest.json`. The canonical biome is
+a block-out biome: its props are procedural proxies (core.proxies), its terrain is a solid-tint
+material, and it references no external model files. This module only reads and validates
+manifests; the proxy geometry and scatter layers are built by the panels + proxies. It is
+bpy-free (read by the panels, never importing them), so the pack-preference folders are pushed
+in from the addon via `set_pref_roots()` rather than read from bpy here.
 
 The manifest is read through one normalizing reader, `biome_manifest()`, which returns a
 self-describing v2 dict with five sections:
@@ -50,27 +59,126 @@ _WORLD_FIELDS = (
 )
 
 
+# -- Asset-pack search path ------------------------------------------------------------------
+# realpath so a dev symlink install resolves to the real repo tree (the depth walk below counts
+# real dirs, not the bl_ext symlink location).
+def _here_up(n):
+    p = os.path.realpath(__file__)
+    for _ in range(n):
+        p = os.path.dirname(p)
+    return p
+
+
+def _bundled_root():
+    """The block-out pack bundled inside the extension: `<ext>/assets`. core/assets.py -> core
+    -> bob_blender_tools -> assets. Always the floor of the search path."""
+    return os.path.join(_here_up(2), "assets")
+
+
+def _repo_library_root():
+    """The dev asset pack: `<repo>/library`. core/assets.py is five levels below the repo root
+    (core / bob_blender_tools / extensions / blender / repo). Absent on a packaged install
+    (no repo above the addon), so it is filtered out there and only helps in-repo dev."""
+    return os.path.join(_here_up(5), "library")
+
+
+# Pack roots pushed in from the addon preferences (bpy-free here; the addon owns bpy). The env
+# var and the bundled/dev roots are read directly.
+_PREF_ROOTS = []
+
+
+def set_pref_roots(paths):
+    """Register the addon-preference "Asset Pack Folders" list. Called by the addon on register,
+    on a preference change, and by Rescan Asset Packs."""
+    global _PREF_ROOTS
+    _PREF_ROOTS = [str(p) for p in (paths or []) if p]
+
+
+def asset_roots():
+    """The ordered, existing, de-duplicated pack roots. First hit wins downstream:
+    1. $BOB_ASSET_PACKS (os.pathsep-separated), 2. the addon-preference folders,
+    3. the dev repo library/ (in-repo only), 4. the bundled block-out pack (always present)."""
+    raw = []
+    env = os.environ.get("BOB_ASSET_PACKS")
+    if env:
+        raw += env.split(os.pathsep)
+    raw += _PREF_ROOTS
+    raw.append(_repo_library_root())
+    raw.append(_bundled_root())
+    seen, out = set(), []
+    for r in raw:
+        if not r:
+            continue
+        r = os.path.abspath(r)
+        if r in seen:
+            continue
+        seen.add(r)
+        if os.path.isdir(r):
+            out.append(r)
+    return out
+
+
+def read_pack(root):
+    """The `pack.json` at a root, or a minimal synthesized manifest (id/name from the folder)
+    when absent or unreadable. Lets a folder be a valid pack with no manifest."""
+    fid = os.path.basename(root.rstrip("/\\")) or root
+    try:
+        with open(os.path.join(root, "pack.json")) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            data.setdefault("id", fid)
+            data.setdefault("name", fid)
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"schema": 1, "id": fid, "name": fid}
+
+
+def list_packs():
+    """[(root, pack_manifest), ...] over the search path, for the Rescan report and diagnostics."""
+    return [(root, read_pack(root)) for root in asset_roots()]
+
+
+# -- Biome / texture resolution over the search path -----------------------------------------
 def biome_dir(name):
-    """`library/models/<name>`, resolved from this file's repo location."""
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(repo, "library", "models", name)
+    """The directory of biome `name`, resolved over the pack search path (first pack whose
+    `models/<name>/manifest.json` exists wins). An absolute path is returned as-is. A name with
+    no hit falls back to the first root's `models/<name>` so callers still get a path."""
+    if os.path.isabs(name):
+        return name
+    for root in asset_roots():
+        cand = os.path.join(root, "models", name)
+        if os.path.isfile(os.path.join(cand, "manifest.json")):
+            return cand
+    roots = asset_roots()
+    base = roots[0] if roots else _bundled_root()
+    return os.path.join(base, "models", name)
 
 
-def _models_root():
-    return os.path.dirname(biome_dir("_"))  # library/models
-
-
-def _textures_root():
-    return os.path.join(os.path.dirname(_models_root()), "textures")  # library/textures
+def texture_set_dir(name):
+    """The directory of texture set `name` (`<pack>/textures/<name>/`), first pack wins, or None
+    when no pack provides it."""
+    for root in asset_roots():
+        cand = os.path.join(root, "textures", name)
+        if os.path.isdir(cand):
+            return cand
+    return None
 
 
 def list_biomes():
-    """Biome folder names under library/models/ that carry a manifest.json."""
-    root = _models_root()
-    if not os.path.isdir(root):
-        return []
-    return sorted(n for n in os.listdir(root)
-                  if os.path.isfile(os.path.join(root, n, "manifest.json")))
+    """Biome folder names carrying a manifest.json, unioned across all packs (first pack wins on
+    a name collision), sorted."""
+    seen = {}
+    for root in asset_roots():
+        models = os.path.join(root, "models")
+        if not os.path.isdir(models):
+            continue
+        for n in sorted(os.listdir(models)):
+            if n in seen:
+                continue
+            if os.path.isfile(os.path.join(models, n, "manifest.json")):
+                seen[n] = root
+    return sorted(seen)
 
 
 def _load_manifest(biome):
@@ -209,9 +317,9 @@ def validate_biome(biome):
                 warnings.append(f"terrain layer '{key}' unknown {list(_TERRAIN_LAYER_KEYS)}")
             tex = L.get("texture")
             # A layer with no texture renders as a solid tint (the default). Only validate the
-            # texture set folder when a layer actually names one.
-            if tex and not os.path.isdir(os.path.join(_textures_root(), tex)):
-                warnings.append(f"terrain texture set missing: library/textures/{tex}")
+            # texture set folder when a layer actually names one; search all packs for it.
+            if tex and texture_set_dir(tex) is None:
+                warnings.append(f"terrain texture set missing: textures/{tex} (in any pack)")
 
     # World: only known bbt_env fields.
     for field in man["world"]:

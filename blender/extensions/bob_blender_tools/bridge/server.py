@@ -2,7 +2,7 @@
 
 Runs the socket that lets MCP author into this Blender session. Ops execute on
 the main thread via a timer, which is the only safe way to mutate bpy from a
-socket, and only whitelisted bbmcp ops run (no arbitrary code).
+socket, and only whitelisted core ops run (no arbitrary code).
 """
 
 import json
@@ -39,15 +39,9 @@ def _validate_ops(ops):
 
 # Path and config
 def _repo_blender_dir() -> str:
-    """Return <repo>/blender, resolving the symlink so dev-installs find bbmcp."""
-    here = os.path.dirname(os.path.realpath(__file__))  # blender/extensions/bob_blender_tools
-    return os.path.dirname(os.path.dirname(here))       # blender
-
-
-def _ensure_path() -> None:
-    blender_dir = _repo_blender_dir()
-    if blender_dir not in sys.path:
-        sys.path.insert(0, blender_dir)
+    """Return <repo>/blender, resolving the symlink so dev-installs find the repo."""
+    here = os.path.dirname(os.path.realpath(__file__))  # blender/extensions/bob_blender_tools/bridge
+    return os.path.dirname(os.path.dirname(os.path.dirname(here)))  # blender
 
 
 def _configured_port() -> int:
@@ -66,7 +60,7 @@ def _configured_port() -> int:
 
 # Main-thread executor
 def _process_jobs():
-    from bbmcp.dispatch import apply_op
+    from ..core.dispatch import apply_op
 
     while not _jobs.empty():
         ops, holder, done = _jobs.get_nowait()
@@ -129,7 +123,6 @@ def start(port: int | None = None) -> str:
     if _state["running"]:
         return f"already running on 127.0.0.1:{_state['port']}"
 
-    _ensure_path()
     port = port or _configured_port()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -169,9 +162,12 @@ def stop() -> str:
 
 
 def reload_builders() -> str:
-    """Purge bbmcp from the import cache so new op code is picked up live."""
-    _ensure_path()
-    purged = [m for m in list(sys.modules) if m == "bbmcp" or m.startswith("bbmcp.")]
+    """Purge the core builder package from the import cache so new op code is picked up live."""
+    # __package__ is now ...bob_blender_tools.bridge; the addon root is one segment up, so
+    # strip the trailing ".bridge" to target ...bob_blender_tools.core (not bridge.core).
+    addon_root = __package__.rsplit(".", 1)[0]
+    core_root = addon_root + ".core"
+    purged = [m for m in list(sys.modules) if m == core_root or m.startswith(core_root + ".")]
     for name in purged:
         del sys.modules[name]
     return f"reloaded builders ({len(purged)} modules refreshed)"

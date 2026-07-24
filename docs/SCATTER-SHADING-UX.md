@@ -6,9 +6,9 @@ the surface look (base colour, roughness, variation, weather, AO, macro) of scat
 is panel and pipeline behaviour plus one auto-convert step; it does NOT change any shader graph, so
 the solid and terrain render baselines stay byte-identical (confirmed: 0.0 pixel delta).
 
-Implementation: `shaders_panel._editing_material` / `_asset_materials` + the top-panel scatter
+Implementation: `ui/shaders._editing_material` / `_asset_materials` + the top-panel scatter
 material list + `BBT_OT_shaders_select` (target="asset") + `bbt_shaders.asset_material` (P1/P2);
-`world_panel` Apply Biome `weather_assets` toggle (default on) converting each scattered kind's
+`ui/world` Apply Biome `weather_assets` toggle (default on) converting each scattered kind's
 `BOB_Assets_<kind>` after the scatter step (P3); the `assets.py` docstring corrected. Verified:
 select a scatter layer, its asset materials list, Surface and Weather sub-panels edit the chosen
 one, edits reach every instance; a normal mesh still edits its own active material.
@@ -49,7 +49,7 @@ editability without giving up the clean scene.
 ### 3.1 The scatter layer is the editable shading unit (Option A)
 
 Conceptual model: a scatter layer's look IS the materials of its asset collection, so a selected
-scatter layer becomes the panel's proxy for editing those materials. All in `shaders_panel.py`:
+scatter layer becomes the panel's proxy for editing those materials. All in `ui/shaders.py`:
 
 - State: `bbt_shaders.asset_material` (StringProperty), the chosen material within the active
   layer's assets collection.
@@ -71,7 +71,7 @@ the Surface and Weather sub-panels edit it, updating every scattered instance wi
 
 ### 3.2 Convert both ways: auto on Apply Biome + manual
 
-- Auto (default on): Apply Biome (`world_panel.BBT_OT_world_apply_biome`) gains a step, after the
+- Auto (default on): Apply Biome (`ui/world.BBT_OT_world_apply_biome`) gains a step, after the
   scatter is built, that converts each `BOB_Assets_<kind>` the biome uses to BobShaders (iterate the
   biome's scatter kinds, convert each collection's materials via `bobshade_material`). A
   `weather_assets: BoolProperty(default=True)` toggle skips it when unwanted. So a freshly applied

@@ -42,12 +42,38 @@ holds projects, the reusable library, in-house tools, and conventions.
    ```
    This syncs the `tools/` venv, dev-installs the BobBlenderTools extension, and
    prints a checklist. Then:
-   - In Blender, open Preferences > Add-ons and enable BobBlenderTools (autostart
-     on).
+   - In Blender, open Preferences > Add-ons and enable BobBlenderTools. The MCP
+     bridge autostart is OFF by default (it is an agent-authoring feature); start it
+     on demand from the Advanced panel, or turn on autostart in the add-on
+     preferences for agent work.
    - Open a Claude Code session in this repo and approve the `bobblendermcp` MCP
      server (declared in `.mcp.json`).
    - Ask an agent to build. It lands in your live viewport (`build_live`) or a
      headless `.blend` (`build`). See `tools/README.md`.
+
+## Ship it (packaged install)
+
+The extension folder is the whole product; build a distributable zip:
+
+```sh
+uv run --project tools python tools/scripts/build_extension.py            # -> dist/bob_blender_tools-<version>.zip
+uv run --project tools python tools/scripts/build_extension.py --version 0.2.0   # stamp + build
+```
+
+The script validates the manifest (`blender --command extension validate`) then builds. The zip
+is small (~260 KB): it ships the block-out pack only, no textures/`.blend`, and no scipy/CuPy.
+
+Install (any user, no repo, no venv): Blender > Preferences > Get Extensions > Install from Disk,
+pick the zip. Then:
+- Add real art via Preferences > Add-ons > BobBlenderTools > Asset Pack Folders (or
+  `$BOB_ASSET_PACKS`), and Rescan Asset Packs in the Advanced panel. The bundled block-out biome
+  works with no packs.
+- For terrain, click **Enable Compute** in the Terrain panel: it installs the compute (scipy, and
+  the matching CuPy for an NVIDIA GPU) into Blender's own Python and verifies the GPU. `auto` then
+  bakes on the GPU; machines with no GPU bake on CPU.
+
+Distribution channel: self-hosted zip for now (Install from Disk). Publishing to
+extensions.blender.org is possible later (needs their review plus compatible tags/license).
 
 ## Starting a new project
 

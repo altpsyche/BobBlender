@@ -26,14 +26,15 @@ from bpy.props import (
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
-from . import (  # noqa: F401
-    firmament_panel,
-    scatter_panel,
-    server,
-    shaders_panel,
-    splines_panel,
-    ui_helpers,
-    world_panel,
+from . import compute  # noqa: F401
+from .bridge import server  # noqa: F401
+from .ui import (  # noqa: F401
+    firmament,
+    helpers,
+    scatter,
+    shaders,
+    splines,
+    world,
 )
 
 # A 2D top-down preview of the last baked heightfield, drawn in the panel. Loaded
@@ -117,13 +118,36 @@ def _load_preview(png_path):
 
 
 # Preferences
+class BBT_AssetPackItem(PropertyGroup):
+    """One asset-pack folder in the preference list (a pack root: models/<biome>, textures/<set>)."""
+    path: StringProperty(name="Folder", description="An asset-pack folder", subtype="DIR_PATH")
+
+
+class BBT_UL_asset_packs(UIList):
+    bl_idname = "BBT_UL_asset_packs"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_prop, index):
+        layout.prop(item, "path", text="", emboss=False, icon="FILE_FOLDER")
+
+
 class BBT_AddonPreferences(AddonPreferences):
     bl_idname = __package__
 
     autostart: BoolProperty(
         name="Start bridge on launch",
-        description="Automatically start the live MCP bridge when Blender opens",
-        default=True,
+        description=("Automatically start the live MCP bridge when Blender opens. Off by default: "
+                     "the bridge is an agent-authoring feature, not something an artist needs. "
+                     "Start it on demand from the Advanced panel, or enable this for agent work"),
+        default=False,
+    )
+    asset_packs: CollectionProperty(type=BBT_AssetPackItem)
+    asset_packs_active: IntProperty(default=0)
+    output_folder: StringProperty(
+        name="Output Folder",
+        description=("Where baked heightfields and generated data are written. Empty = beside the "
+                     "saved .blend (or a per-user cache when unsaved)"),
+        subtype="DIR_PATH",
+        default="",
     )
 
     def draw(self, context):
@@ -131,9 +155,46 @@ class BBT_AddonPreferences(AddonPreferences):
         col.prop(self, "autostart")
         col.label(text=f"Bridge: {server.status()}", icon="LINKED")
 
+        col.separator()
+        col.label(text="Asset Pack Folders (models/<biome>, textures/<set>)", icon="ASSET_MANAGER")
+        row = col.row()
+        row.template_list("BBT_UL_asset_packs", "", self, "asset_packs",
+                          self, "asset_packs_active", rows=3)
+        side = row.column(align=True)
+        side.operator("bob_blender_tools.asset_pack_add", icon="ADD", text="")
+        side.operator("bob_blender_tools.asset_pack_remove", icon="REMOVE", text="")
+        col.operator("bob_blender_tools.rescan_packs", icon="FILE_REFRESH")
+
+        col.separator()
+        col.prop(self, "output_folder")
+
 
 def _prefs():
     return bpy.context.preferences.addons[__package__].preferences
+
+
+def _sync_pack_roots():
+    """Push the preference pack folders into the bpy-free asset resolver. Called on register, on
+    a pack-list edit, and by Rescan Asset Packs."""
+    from .core import assets
+    try:
+        assets.set_pref_roots([i.path for i in _prefs().asset_packs if i.path])
+    except Exception as exc:  # prefs not ready during early registration
+        print(f"[bob_blender_tools] pack roots not synced: {exc}")
+
+
+def _output_dir():
+    """The writable folder for generated data: the preference if set, else beside the saved
+    .blend, else a per-user extension cache. Always exists on return."""
+    prefs = _prefs()
+    if prefs.output_folder:
+        d = bpy.path.abspath(prefs.output_folder)
+    elif bpy.data.filepath:
+        d = os.path.join(os.path.dirname(bpy.data.filepath), "bob_generated")
+    else:
+        d = bpy.utils.extension_path_user(__package__, path="generated", create=True)
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 # Operators
@@ -160,10 +221,56 @@ class BBT_OT_stop(Operator):
 class BBT_OT_reload(Operator):
     bl_idname = "bob_blender_tools.reload_builders"
     bl_label = "Reload Builders"
-    bl_description = "Refresh bbmcp so new op code is picked up without restarting"
+    bl_description = "Refresh the core builders so new op code is picked up without restarting"
 
     def execute(self, context):
         self.report({"INFO"}, server.reload_builders())
+        return {"FINISHED"}
+
+
+class BBT_OT_asset_pack_add(Operator):
+    bl_idname = "bob_blender_tools.asset_pack_add"
+    bl_label = "Add Asset Pack Folder"
+    bl_description = "Add an asset-pack folder to the search path"
+
+    def execute(self, context):
+        prefs = _prefs()
+        prefs.asset_packs.add()
+        prefs.asset_packs_active = len(prefs.asset_packs) - 1
+        _sync_pack_roots()
+        return {"FINISHED"}
+
+
+class BBT_OT_asset_pack_remove(Operator):
+    bl_idname = "bob_blender_tools.asset_pack_remove"
+    bl_label = "Remove Asset Pack Folder"
+    bl_description = "Remove the selected asset-pack folder"
+
+    def execute(self, context):
+        prefs = _prefs()
+        i = prefs.asset_packs_active
+        if 0 <= i < len(prefs.asset_packs):
+            prefs.asset_packs.remove(i)
+            prefs.asset_packs_active = max(0, i - 1)
+            _sync_pack_roots()
+        return {"FINISHED"}
+
+
+class BBT_OT_rescan_packs(Operator):
+    bl_idname = "bob_blender_tools.rescan_packs"
+    bl_label = "Rescan Asset Packs"
+    bl_description = "Re-read the asset-pack folders and refresh the biome lists"
+
+    def execute(self, context):
+        from .core import assets
+        _sync_pack_roots()
+        packs = assets.list_packs()
+        biomes = assets.list_biomes()
+        # Force the biome enums (EnumProperty item callbacks read the filesystem) to redraw.
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        self.report({"INFO"}, f"{len(packs)} pack(s), {len(biomes)} biome(s)")
         return {"FINISHED"}
 
 
@@ -483,12 +590,30 @@ class BBT_OT_random_seed(Operator):
         return {"FINISHED"}
 
 
-def _in_steam_container():
-    """True when this Blender runs inside the Steam pressure-vessel container.
+def _resolve_bake_params(hf_mod, knobs, params, maps):
+    """Turn the panel's knobs/params into a full params dict the compute runs (mirrors the CLI's
+    argument handling). Knobs with an explicit `stack` pass through; a bare knobs dict is expanded
+    via build_params; a params dict resolves its `preset` over the base preset."""
+    if knobs is not None:
+        if "stack" in knobs:
+            resolved = {k: knobs[k] for k in ("size", "seed", "backend", "stack") if k in knobs}
+        else:
+            resolved = hf_mod.build_params(knobs)
+    else:
+        resolved = dict(params)
+        preset = resolved.pop("preset", None)
+        if preset is not None:
+            base = hf_mod.presets.get(preset)
+            base.update(resolved)
+            resolved = base
+    if maps:
+        resolved["maps"] = True
+    return resolved
 
-    There the host venv (its python symlink and CUDA) is not reachable, so a bake
-    has to run on the host instead.
-    """
+
+def _in_steam_container():
+    """True when this Blender runs inside the Steam pressure-vessel container, where the host venv
+    (its python and CUDA) is not reachable, so a fallback bake has to hop to the host."""
     return (
         os.environ.get("container") == "pressure-vessel"
         or os.path.isdir("/run/pressure-vessel")
@@ -496,28 +621,20 @@ def _in_steam_container():
     )
 
 
-def _host_argv(repo, extra):
-    """A `python -m bobtools.heightfields <extra>` command that runs on the host.
-
-    Direct venv python when Blender runs natively. Inside the Steam container the
-    venv is unreachable, so hop to the host via the Steam runtime launcher (its
-    --alongside-steam service), which forwards stdout and the exit code back.
-    """
-    host_py = os.path.join(repo, "tools", ".venv", "bin", "python")
-    inner = [host_py, "-m", "bobtools.heightfields"] + extra
-    if _in_steam_container():
-        return ["steam-runtime-launch-client", "--alongside-steam", "--"] + inner
-    return inner
-
-
-def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, maps=False):
-    """Run one venv heightfield bake by subprocess, under a wait-cursor + progress guard.
-
-    Writes the knobs (expanded via build_params) or full params JSON to a temp file, hops to the host
-    when inside the Steam container, blocks, and returns (meta, None) with the parsed result metadata,
-    or (None, error_message) on any failure. The single owner of the bake-invocation contract, shared
-    by the Terrain bake and the Paths Bake & Erode so the two cannot drift."""
+def _venv_bake(context, out_abs, *, knobs, params, preview, maps):
+    """Fallback: run the bake in the dev repo's venv by subprocess, when Blender's own Python
+    lacks the compute deps (scipy / CuPy) that P5's Enable Compute installs. The compute is the
+    same single source (`core/heightfields`), reached by the venv via `-m heightfields` with the
+    core dir on PYTHONPATH. Returns (meta, error). Unavailable on a packaged install (no venv);
+    there the caller surfaces the Enable Compute path instead."""
     repo = os.path.dirname(server._repo_blender_dir())
+    host_py = os.path.join(repo, "tools", ".venv", "bin", "python")
+    # lexists, not exists: the venv's `python` is a symlink to the host's /usr/bin/pythonX. Inside a
+    # Steam pressure-vessel sandbox /usr is the runtime's, so exists() (which follows the link) is
+    # False even though the venv is really there — and the launcher below runs it on the HOST where
+    # it resolves. Checking the link node itself avoids a false "no dev venv".
+    if not os.path.lexists(host_py):
+        return None, "no dev venv"
     payload = knobs if knobs is not None else params
     flag = "--knobs-file" if knobs is not None else "--params-file"
     tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
@@ -528,32 +645,64 @@ def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, 
         extra.append("--preview")
     if maps:
         extra.append("--maps")
-    argv = _host_argv(repo, extra)
+    # `-m bobtools.hf_cli`: bobtools is installed in the venv so it resolves with NO PYTHONPATH,
+    # which is essential because PYTHONPATH is dropped across the Steam host-hop below. The shim
+    # puts the single-source core/heightfields on sys.path itself (via bobtools._hfpath).
+    argv = [host_py, "-m", "bobtools.hf_cli"] + extra
+    if _in_steam_container():
+        argv = ["steam-runtime-launch-client", "--alongside-steam", "--"] + argv
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    except Exception as exc:
+        return None, f"venv bake could not run: {exc}"
+    finally:
+        os.unlink(tmp.name)
+    if proc.returncode != 0:
+        return None, f"venv bake failed: {(proc.stderr or proc.stdout or '').strip()[-200:]}"
+    lines = (proc.stdout or "").strip().splitlines()
+    try:
+        return (json.loads(lines[-1]) if lines else {}), None
+    except ValueError:
+        return {}, None
+
+
+def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, maps=False):
+    """Bake one heightfield, IN-PROCESS by default (P4), under a wait-cursor + progress guard.
+
+    The compute is the single committed copy inside the extension (`core.heightfields`), run on
+    Blender's bundled numpy. Some ops need scipy/CuPy, which Blender's Python does not ship until
+    P5's Enable Compute installs them; while they are absent the bake falls back to the dev repo's
+    venv (same source, by subprocess) so dev keeps its GPU bake. On a packaged install with neither
+    the deps nor a venv, it returns a clear message. Returns (meta, None) or (None, error). The one
+    owner of the bake contract, shared by the Terrain bake and the Paths Bake & Erode."""
     wm = context.window_manager
     window = context.window
     if window:
         window.cursor_set("WAIT")
     wm.progress_begin(0, 1)
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
-    except FileNotFoundError:
-        return None, ("bake runner not found. Inside Steam, the host bake needs "
-                      "steam-runtime-launch-client; or launch Blender directly (not via "
-                      "Steam) so the tools venv is reachable.")
-    except Exception as exc:  # subprocess never launched
-        return None, f"bake could not run: {exc}"
+        from .core import heightfields as hf_mod
+
+        resolved = _resolve_bake_params(hf_mod, knobs, params, maps)
+        try:
+            return hf_mod.bake(out_abs, resolved, force=True, preview=preview), None
+        except Exception as exc:
+            # In-process compute failed. Causes: deps not installed (ModuleNotFoundError), or CuPy
+            # imports but its CUDA/NVRTC libs are unreachable (e.g. a Steam pressure-vessel sandbox
+            # hides system CUDA, and the CUDA-13 pip wheels are not yet published) -> a
+            # CompileException/CUDA error, not an import error. Either way, fall back to the dev venv,
+            # which hops to the host via the Steam launcher (see _venv_bake) where CUDA works.
+            meta, verr = _venv_bake(context, out_abs, knobs=knobs, params=params,
+                                    preview=preview, maps=maps)
+            if meta is not None:
+                return meta, None
+            return None, (f"bake failed in-process ({type(exc).__name__}: {str(exc)[:120]}); "
+                          f"venv fallback unavailable ({verr}). Use Enable Compute (Advanced) or "
+                          "run from the repo venv.")
     finally:
-        os.unlink(tmp.name)
         wm.progress_end()
         if window:
             window.cursor_set("DEFAULT")
-    if proc.returncode != 0:
-        return None, f"bake failed: {(proc.stderr or proc.stdout or '').strip()[-200:]}"
-    lines = (proc.stdout or "").strip().splitlines()
-    try:
-        return (json.loads(lines[-1]) if lines else {}), None
-    except ValueError:
-        return {}, None
 
 
 class BBT_OT_hf_apply_preset(Operator):
@@ -573,51 +722,83 @@ class BBT_OT_hf_apply_preset(Operator):
         return {"FINISHED"}
 
 
+def _venv_exists():
+    return os.path.exists(os.path.join(os.path.dirname(server._repo_blender_dir()),
+                                       "tools", ".venv", "bin", "python"))
+
+
 class BBT_OT_detect_backends(Operator):
     bl_idname = "bob_blender_tools.detect_backends"
     bl_label = "Check Backends"
-    bl_description = "Ask the venv which compute backends are available (GPU/CPU)"
+    bl_description = "Probe the compute backend the bake will use (GPU device round-trip / CPU)"
 
     def execute(self, context):
         hf = context.scene.bbt_hf
-        repo = os.path.dirname(server._repo_blender_dir())
-        argv = _host_argv(repo, ["--backends"])
+        hf.backend_hint = compute.status_line(compute.probe(refresh=True), _venv_exists())
+        return {"FINISHED"}
+
+
+class BBT_OT_enable_compute(Operator):
+    bl_idname = "bob_blender_tools.enable_compute"
+    bl_label = "Enable Compute"
+    bl_description = ("Install the terrain compute (scipy, and CuPy for GPU) into Blender's own "
+                      "Python so terrain bakes in-process with no venv. Downloads wheels and writes "
+                      "to Blender's Python; needs network and disk")
+
+    def invoke(self, context, event):
+        # Consent: this downloads wheels and writes into Blender's Python. Confirm before doing it.
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        hf = context.scene.bbt_hf
+        pr = compute.probe(refresh=True)
+        packages = compute.needed_packages(pr)
+        if not packages:
+            hf.backend_hint = compute.status_line(pr, _venv_exists())
+            self.report({"INFO"}, "compute already installed")
+            return {"FINISHED"}
+
+        window = context.window
+        if window:
+            window.cursor_set("WAIT")
+        context.window_manager.progress_begin(0, 1)
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=120)
-        except FileNotFoundError:
-            hf.backend_hint = "venv unreachable"
-            self.report({"WARNING"}, "bake runner not found (see bake button tooltip)")
+            ok, msg = compute.install(packages)
+        finally:
+            context.window_manager.progress_end()
+            if window:
+                window.cursor_set("DEFAULT")
+        if not ok:
+            hf.backend_hint = "install failed (CPU fallback)"
+            self.report({"ERROR"}, f"Enable Compute failed: {msg}. Terrain still bakes on CPU/venv.")
             return {"CANCELLED"}
-        except Exception as exc:
-            hf.backend_hint = "probe failed"
-            self.report({"ERROR"}, f"probe failed: {exc}")
-            return {"CANCELLED"}
-        lines = (proc.stdout or "").strip().splitlines()
-        try:
-            data = json.loads(lines[-1]) if lines else {}
-        except ValueError:
-            data = {}
-        names = data.get("available", [])
-        if "gpu" in names:
-            hf.backend_hint = f"GPU ready ({data.get('device', 'cuda')})"
-        elif names:
-            hf.backend_hint = "CPU only"
+
+        pr = compute.probe(refresh=True)
+        # If a GPU wheel went in, verify a real device round-trip (the P5 acceptance check). A wheel
+        # that imports but cannot reach the driver degrades to CPU with a clear message, not a crash.
+        if pr["cupy_ok"]:
+            gok, ginfo = compute.verify_gpu()
+            hf.backend_hint = compute.status_line(pr, _venv_exists())
+            if gok:
+                self.report({"INFO"}, f"Compute enabled. GPU verified: {ginfo}")
+            else:
+                self.report({"WARNING"}, f"Installed, but GPU device test failed ({ginfo}); using CPU.")
         else:
-            hf.backend_hint = "none reported"
+            hf.backend_hint = compute.status_line(pr, _venv_exists())
+            self.report({"INFO"}, "CPU compute enabled (scipy installed); terrain bakes in-process.")
         return {"FINISHED"}
 
 
 class BBT_OT_bake_terrain(Operator):
     bl_idname = "bob_blender_tools.bake_terrain"
     bl_label = "Bake + Build Terrain"
-    bl_description = "Bake an eroded heightfield in the venv (GPU), then build the terrain in place"
+    bl_description = "Bake an eroded heightfield in-process, then build the terrain in place"
 
     def execute(self, context):
         hf = context.scene.bbt_hf
-        repo = os.path.dirname(server._repo_blender_dir())
-        # basename the free-text target so a value like "../../x" cannot escape _generated
+        # basename the free-text target so a value like "../../x" cannot escape the output folder
         target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
-        out_abs = os.path.join(repo, "library", "_generated", f"{target}_hf.png")
+        out_abs = os.path.join(_output_dir(), f"{target}_hf.png")
         # Either send the edited op stack verbatim (P4 custom mode), or the preset
         # plus the five global knobs; the venv turns knobs into a stack, so the panel
         # does not duplicate that logic.
@@ -642,8 +823,7 @@ class BBT_OT_bake_terrain(Operator):
             return {"CANCELLED"}
 
         # Build the terrain in place from the fresh PNG.
-        server._ensure_path()
-        from bbmcp.dispatch import apply_op
+        from .core.dispatch import apply_op
 
         # Take the actual bake size from the returned metadata (the pipeline owns it), not the
         # requested resolution, for the terrain grid resolution.
@@ -685,7 +865,7 @@ class BBT_OT_bake_terrain(Operator):
             # Stamp the snow line's Z bounds from the freshly built terrain, so the normalized
             # snow line maps to THIS terrain's real height (0 = valley, 1 = peaks) the moment the
             # artist drags it -- not to stale 0..20 m defaults that leave a low valley bare.
-            from bbmcp import env as _env
+            from .core import env as _env
             context.view_layer.update()
             _env.stamp_snow_bounds(context.scene, obj)
         if hf.emit_maps:
@@ -841,6 +1021,10 @@ class BBT_PT_panel(Panel):
         # (FILE_REFRESH) so that marker stays meaningful for real builds.
         layout.operator("bob_blender_tools.reload_builders", icon="CONSOLE")
 
+        layout.separator()
+        layout.label(text="Asset packs (folders set in add-on preferences)", icon="ASSET_MANAGER")
+        layout.operator("bob_blender_tools.rescan_packs", icon="FILE_REFRESH")
+
 
 class BBT_PT_heightfield(Panel):
     bl_label = "Terrain"
@@ -860,21 +1044,34 @@ class BBT_PT_heightfield(Panel):
 
         # P1: the target mesh the bake builds (or replaces). "Active mesh" is the one suite-wide
         # noun for the thing a panel acts on (S4), matching World/Biome/Scatter/Shaders.
-        ui_helpers.context_header(layout, "Active mesh", hf.target, icon="OUTLINER_OB_MESH")
+        helpers.context_header(layout, "Active mesh", hf.target, icon="OUTLINER_OB_MESH")
         col = layout.column(align=True)
         col.prop(hf, "target")
         # A6: instant preset (light: loads slider values, no rebuild until Bake + Build), so it
         # uses the same instant idiom as the other look presets. The current pick rides in the
         # dropdown label (operator_menu_enum won't show it on its own), so no separate caption.
-        ui_helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset",
+        helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset",
                               current=hf.preset)
 
         row = layout.row(align=True)
         row.prop(hf, "backend", expand=True)
         row.operator("bob_blender_tools.detect_backends", text="", icon="QUESTION")
         if hf.backend_hint:
-            icon = "ERROR" if hf.backend_hint.startswith(("CPU", "none", "venv", "probe")) else "INFO"
+            icon = "ERROR" if hf.backend_hint.startswith(("CPU", "none", "venv", "probe", "Enable", "install", "GPU wheel")) else "INFO"
             layout.label(text=hf.backend_hint, icon=icon)
+
+        # P5: guided compute delivery. The bake needs scipy (CPU) and CuPy (GPU) inside Blender's
+        # Python; when they are missing, steer the user to install them (prominently when a GPU is
+        # present). One click; downloads wheels and writes to Blender's Python, with consent.
+        pr = compute.probe()
+        pkgs = compute.needed_packages(pr)
+        if pkgs:
+            box = layout.box()
+            if pr["gpu"] and not pr["cupy_ok"]:
+                box.label(text=f"GPU available: {pr['gpu_name']}", icon="RESTRICT_RENDER_OFF")
+            box.label(text="Terrain compute not installed in Blender", icon="ERROR")
+            box.operator("bob_blender_tools.enable_compute",
+                         text=f"Enable Compute ({', '.join(pkgs)})", icon="IMPORT")
 
         row = layout.row(align=True)
         row.prop(hf, "resolution")
@@ -882,7 +1079,7 @@ class BBT_PT_heightfield(Panel):
 
         # P3: Bake + Build is STRUCTURAL (bakes a heightfield, then builds the mesh); the
         # Shape/Erosion/Displace knobs below are its inputs. Shade the result in Shaders.
-        ui_helpers.structural_action(layout, "bob_blender_tools.bake_terrain",
+        helpers.structural_action(layout, "bob_blender_tools.bake_terrain",
                                      text="Bake + Build Terrain",
                                      note="bakes a heightfield, then builds the terrain mesh")
         layout.label(text="Shade it in the Shaders panel", icon="INFO")
@@ -903,7 +1100,7 @@ class BBT_PT_hf_shape(Panel):
     def draw(self, context):
         hf = context.scene.bbt_hf
         layout = self.layout
-        ui_helpers.seed_row(layout, hf, "seed", "bob_blender_tools.random_seed")
+        helpers.seed_row(layout, hf, "seed", "bob_blender_tools.random_seed")
         # The four curated global knobs modulate the chosen landscape preset. A custom Filter
         # Stack bakes its own ops instead (seed still applies), so grey them when it is on.
         col = layout.column(align=True)
@@ -1000,14 +1197,20 @@ class BBT_PT_hf_stack(Panel):
 
 _CLASSES = (
     BBT_TerrainOp,
+    BBT_AssetPackItem,       # before AddonPreferences: its CollectionProperty references this type
+    BBT_UL_asset_packs,
     BBT_AddonPreferences,
     BBT_HeightfieldProps,
     BBT_OT_start,
     BBT_OT_stop,
     BBT_OT_reload,
+    BBT_OT_asset_pack_add,
+    BBT_OT_asset_pack_remove,
+    BBT_OT_rescan_packs,
     BBT_OT_random_seed,
     BBT_OT_hf_apply_preset,
     BBT_OT_detect_backends,
+    BBT_OT_enable_compute,
     BBT_OT_bake_terrain,
     BBT_OT_terrain_op_add,
     BBT_OT_terrain_op_remove,
@@ -1031,19 +1234,31 @@ def _autostart():
     return None  # one-shot timer
 
 
+def _warm_probe():
+    """Warm the compute probe cache once at startup (nvidia-smi is a subprocess; keep it out of the
+    panel draw). The Terrain panel then reads the cached result to steer Enable Compute."""
+    try:
+        compute.probe(refresh=True)
+    except Exception as exc:
+        print(f"[bob_blender_tools] compute probe skipped: {exc}")
+    return None  # one-shot timer
+
+
 def register():
     global _preview_coll
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
-    scatter_panel.register()
-    splines_panel.register()    # Paths: typed curves; drives terrain (grade) + scatter (clear)
-    firmament_panel.register()  # owns and registers the shared world (bbt_env); subscribes its applier
-    world_panel.register()      # World panel + bbt_world master toggles (drive every consumer)
-    shaders_panel.register()    # reads bbt_env; subscribes its applier
+    _sync_pack_roots()  # feed the resolver the saved preference pack folders
+    scatter.register()
+    splines.register()    # Paths: typed curves; drives terrain (grade) + scatter (clear)
+    firmament.register()  # owns and registers the shared world (bbt_env); subscribes its applier
+    world.register()      # World panel + bbt_world master toggles (drive every consumer)
+    shaders.register()    # reads bbt_env; subscribes its applier
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
+    bpy.app.timers.register(_warm_probe, first_interval=0.1)
 
 
 def unregister():
@@ -1052,11 +1267,11 @@ def unregister():
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
-    shaders_panel.unregister()
-    world_panel.unregister()
-    firmament_panel.unregister()
-    splines_panel.unregister()
-    scatter_panel.unregister()
+    shaders.unregister()
+    world.unregister()
+    firmament.unregister()
+    splines.unregister()
+    scatter.unregister()
     del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

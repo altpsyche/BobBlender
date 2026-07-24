@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "bob-dev-library",
+  "name": "Bob Dev Library",
+  "version": "1.0.0",
+  "author": "BobBlenderTools",
+  "license": "mixed (see per-asset SOURCE.txt)",
+  "description": "The in-repo dev asset pack. Registered automatically when the extension runs from the repo; ships to nobody. Later extractable to its own repo without touching extension code.",
+  "provides": { "biomes": ["blockout"], "texture_sets": ["grass", "rock", "soil"] }
+}

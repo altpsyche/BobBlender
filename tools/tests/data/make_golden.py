@@ -11,8 +11,9 @@ import tempfile
 
 import numpy as np
 
-from bobtools import heightfields as hf
-from bobtools.heightfields import io
+import bobtools._hfpath  # noqa: F401  (adds core/heightfields to sys.path)
+import heightfields as hf
+from heightfields import io
 
 # A small explicit stack: a generator, flow-accumulation fluvial erosion, and a
 # thermal pass -- enough to exercise the core op path deterministically at 64px.

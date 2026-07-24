@@ -25,7 +25,7 @@ class AddMesh(BaseModel):
 
 class BuildGeoNodes(BaseModel):
     op: Literal["build_geonodes"] = "build_geonodes"
-    recipe: str = "wave_grid"  # a named recipe in bbmcp/geonodes/recipes/
+    recipe: str = "wave_grid"  # a named recipe in core/geonodes/recipes/
     name: str | None = None
     params: dict = Field(default_factory=dict)  # recipe-specific, checked by the builder
     target: Literal["new_object", "library"] = "new_object"
@@ -80,7 +80,7 @@ class ReloadImage(BaseModel):
 
 class BuildSky(BaseModel):
     op: Literal["build_sky"] = "build_sky"
-    # Params are recipe-like and checked by the builder (bbmcp/world.py), the same
+    # Params are recipe-like and checked by the builder (core/world.py), the same
     # freeform pattern as build_geonodes. Keys: time_of_day, year, month, day,
     # utc_offset, latitude, longitude (geographic sun); use_override,
     # sun_elevation, sun_azimuth (manual sun in degrees); sun_strength, sun_angle,

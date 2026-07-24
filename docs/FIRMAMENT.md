@@ -6,18 +6,18 @@ what is planned. Source of truth is the code; this doc follows it.
 The suite authors the sky, the sun, volumetric clouds and fog, weather particles
 (rain and motes), and snow, and it owns the shared world state every other
 subsystem reads. It ships inside the `bob_blender_tools` extension plus supporting
-`bbmcp` modules, all bpy-only, so a `BobBlenderFirmament` split stays mechanical.
+`core` modules, all bpy-only, so a `BobBlenderFirmament` split stays mechanical.
 
 ## Two scene state blocks
 
-- `Scene.bbt_env` (`bbmcp/env.py`, class `BBT_EnvProps`): the shared world state.
-  Registered by `firmament_panel.register()` (which calls `env.register()`), so
+- `Scene.bbt_env` (`core/env.py`, class `BBT_EnvProps`): the shared world state.
+  Registered by `ui/firmament.register()` (which calls `env.register()`), so
   Firmament is the one registrar. Read by Terrain, Scatter, Shaders, and Firmament
   itself. Consumers guard for it being absent and fall back to their own defaults.
-- `Scene.bbt_firmament` (`firmament_panel.py`, class `BBT_FirmamentProps`):
+- `Scene.bbt_firmament` (`ui/firmament.py`, class `BBT_FirmamentProps`):
   Firmament's own UI and subsystem state (sun overrides, sky knobs, object names,
   weather camera, snow surface). Not read by other capabilities.
-- `Scene.bbt_world` (`world_panel.py`, class `BBT_WorldProps`): the scene-wide
+- `Scene.bbt_world` (`ui/world.py`, class `BBT_WorldProps`): the scene-wide
   masters that sit above the world data: `live_env`, `quality`, and the staged
   biome picks. This is not the world data; the world data is `bbt_env`.
 
@@ -43,7 +43,7 @@ subsystem reads. It ships inside the `bob_blender_tools` extension plus supporti
 
 ## Shared world state (bbt_env)
 
-`BBT_EnvProps` fields, exactly as in `bbmcp/env.py`:
+`BBT_EnvProps` fields, exactly as in `core/env.py`:
 
 Time and place (carry `update=_on_geo_change`, so a consumer can re-place the sun
 on edit):
@@ -91,22 +91,22 @@ longitude) as a plain dict for `build_sky`.
 
 Two registries carry the reads so `env.py` never imports its consumers.
 
-World applier registry (`world_panel.register_applier(fn)`; `apply_all(scene)`
+World applier registry (`ui/world.register_applier(fn)`; `apply_all(scene)`
 runs every applier when a World control changes). Registered appliers:
 
-- `firmament_panel._apply_world`: repositions the sun; installs or removes the wind
+- `ui/firmament._apply_world`: repositions the sun; installs or removes the wind
   drivers on clouds/fog/rain/motes (Wind Direction <- `bbt_env.wind_direction`,
   Wind Speed <- `bbt_env.wind_strength`; clouds also Coverage <-
   `bbt_env.cloud_cover`); installs or removes the snow-coverage driver (Snow <-
   `bbt_env.snow`); and re-applies Quality. Governed by `bbt_world.live_env`.
-- `shaders_panel._apply_world`: installs or removes the shared `S_EnvState` drivers
+- `ui/shaders._apply_world`: installs or removes the shared `S_EnvState` drivers
   that feed every BobShader (`snow`, `wetness`, `temperature`, `weather`), so raising
   world snow whitens every surface with no rebuild. Governed by `bbt_world.live_env`.
 
 Geographic-change hook registry (`env.register_geo_hook(fn)`, run by
 `_on_geo_change` on the time/place field callbacks):
 
-- `firmament_panel._sun_live_update`: repositions the sun when a geographic field
+- `ui/firmament._sun_live_update`: repositions the sun when a geographic field
   changes and Live Environment is on. The sun is a nonlinear solar calc, so it
   cannot be a driver; a lightweight reposition runs on each edit instead.
 
@@ -131,7 +131,7 @@ atmosphere-specific.
 
 ## Sky and sun
 
-Op `build_sky` (`bbmcp/world.py`), driven by `firmament_build_sky` (Build Sky).
+Op `build_sky` (`core/world.py`), driven by `firmament_build_sky` (Build Sky).
 Creates or rebuilds:
 
 - `BOB_World` world datablock with a physical sky node `BOB_Sky` (a
@@ -164,12 +164,12 @@ callback (`_on_sun_override_change`) that repositions the sun live.
 Live sun: `_reposition_sun` aims the existing `BOB_Sun` and sets the `BOB_Sky` sun
 angle from the current world state (or the override) with no node rebuild, so
 editing time/place or a sun override moves the sun without a Build Sky press.
-Build Sky itself re-runs `world_panel.apply_all` after building so the live drivers
+Build Sky itself re-runs `ui/world.apply_all` after building so the live drivers
 are reinstalled.
 
 ### Solar model
 
-`bbmcp/solar.py`, pure standard library, no bpy. `sun_position(latitude,
+`core/solar.py`, pure standard library, no bpy. `sun_position(latitude,
 longitude, year, month, day, hour, utc_offset=0.0, refraction=True)` implements the
 NOAA solar-position equations and returns a dict with `elevation`, `azimuth`,
 `declination`, and `equation_of_time` (minutes). Conventions: latitude north
@@ -179,7 +179,7 @@ lifts the apparent sun near the horizon.
 
 ## Clouds and fog (volumetrics)
 
-Recipe `volumetrics` (`bbmcp/geonodes/recipes/volumetrics.py`), reached through
+Recipe `volumetrics` (`core/geonodes/recipes/volumetrics.py`), reached through
 `build_geonodes`. Every mode builds ONE bounded domain box for the whole layer and
 lets a thin volume material carve the volume out of it (no seams, no per-cube
 clipping, density faded to zero at the box faces). The box is instanced once so the
@@ -200,7 +200,7 @@ Modes (build-time param `mode`):
 Fog is built by `firmament_build_fog` (Build Fog); `fm.fog_mode` selects the mode
 and `fm.fog_heightmap` supplies the ground_fog image.
 
-Materials (`bbmcp/materials.py`, shaders, cached by name): `cloud_volume_material`
+Materials (`core/materials/`, shaders, cached by name): `cloud_volume_material`
 (`BOB_CloudVolume`), `fog_volume_material` (`BOB_FogVolume`, shared by height_fog
 and noise_fog), and `ground_fog_volume_material` (`BOB_GroundFog_<image>`, per
 heightmap; falls back to the box fog material when no image is given). Cloud and fog
@@ -222,7 +222,7 @@ a wireframe (`display_type = "WIRE"`) so the gizmo matches the evaluated box.
 
 ## Weather particulates (rain and motes)
 
-Recipe `particulates` (`bbmcp/geonodes/recipes/particulates.py`), reached through
+Recipe `particulates` (`core/geonodes/recipes/particulates.py`), reached through
 `build_geonodes`. One recipe, two shape modes (build-time param `mode`):
 
 - `streak` (rain): fast downward fall; a thin tapered cone stretched along its
@@ -254,7 +254,7 @@ object's `cycles.use_motion_blur` on build.
 Two GN passes on the terrain surface, both reading and writing one attribute so the
 shell thickness and the material whiteness never disagree.
 
-- Recipe `snow` (`bbmcp/geonodes/recipes/snow.py`), modifier `BOB_Snow`. Runs after
+- Recipe `snow` (`core/geonodes/recipes/snow.py`), modifier `BOB_Snow`. Runs after
   the terrain modifier (so it sees the displaced surface), passes geometry through,
   and writes a 0..1 `snow_cover` float attribute on the points:
   `snow_cover = Snow * slope_mask(normal Z) * altitude_mask(world Z) * (1 - occlusion)`.
@@ -263,7 +263,7 @@ shell thickness and the material whiteness never disagree.
   `Slope Threshold`, `Slope Falloff`, `Altitude`, `Altitude Falloff`, `Occlusion`,
   `Occlusion Distance`. Built by `firmament_build_snow_cover` (Add Snow Coverage) on
   `fm.snow_surface` (else the active mesh). BobShaders reads `snow_cover`.
-- Recipe `snow_shell` (`bbmcp/geonodes/recipes/snow_shell.py`), modifier
+- Recipe `snow_shell` (`core/geonodes/recipes/snow_shell.py`), modifier
   `BOB_SnowShell`. Attaches after `BOB_Snow`, reads the same `snow_cover` (blurred
   by `Smooth`), and displaces the surface along its normal by
   `snow_cover * Thickness` for real thickness. Live knobs: `Thickness`, `Smooth`.
@@ -292,7 +292,7 @@ on the rain and mote objects (which multiplies the live Count).
 
 ## Presets and looks
 
-Blender-side dicts in `firmament_panel.py`; nothing else reads them.
+Blender-side dicts in `ui/firmament.py`; nothing else reads them.
 
 - `SCENE_PRESETS` (Sky Look), staged on `bbt_firmament.sky_look`, applied by
   `firmament_scene_preset` (Apply Sky Look): `clear_day`, `golden_hour`, `overcast`,
@@ -316,7 +316,7 @@ knobs by socket name.
 
 ## Operators
 
-Firmament (`firmament_panel.py`, all `bl_idname` prefixed `bob_blender_tools.`):
+Firmament (`ui/firmament.py`, all `bl_idname` prefixed `bob_blender_tools.`):
 
 - `firmament_build_sky` (Build Sky)
 - `firmament_build_clouds` (Build Clouds)
@@ -334,7 +334,7 @@ Firmament (`firmament_panel.py`, all `bl_idname` prefixed `bob_blender_tools.`):
 - `firmament_apply_season` (Apply Season)
 - `firmament_scene_preset` (Apply Sky Look)
 
-World (`world_panel.py`):
+World (`ui/world.py`):
 
 - `world_biome_world` (Biome World): sets bbt_env from a biome world block, then
   `apply_all`, and optionally rebuilds the sky.
@@ -348,11 +348,11 @@ moving a Conditions slider moves every built effect through drivers; the geograp
 fields move the sun through the geo hook. Turn Live Environment off to hand-tune,
 then use the Use Env Wind / Use Env Snow buttons for a one-shot copy.
 
-The panel runs bbmcp ops in-process (`firmament_panel._apply` calls
-`bbmcp.dispatch.apply_op`), the same path Scatter and Terrain use.
+The panel runs core ops in-process (`ui/firmament._apply` calls
+`core.dispatch.apply_op`), the same path Scatter and Terrain use.
 
-From MCP: send op dicts to the bbmcp dispatch. The registered handlers are
-`build_sky` and `build_geonodes` (`bbmcp/dispatch.py`). Sky:
+From MCP: send op dicts to the core dispatch. The registered handlers are
+`build_sky` and `build_geonodes` (`core/dispatch.py`). Sky:
 
     {"op": "build_sky", "params": {"latitude": 45.0, "time_of_day": 13.0, ...}}
 
@@ -372,19 +372,19 @@ a dispatch op), targeting the terrain object with recipe `snow` and modifier nam
 
 ## Code layout
 
-- `bbmcp/world.py`: `build_sky` (physical MULTIPLE_SCATTERING world + Sun light +
+- `core/world.py`: `build_sky` (physical MULTIPLE_SCATTERING world + Sun light +
   solar placement; no world haze). Object names `BOB_World`, `BOB_Sun`, `BOB_Sky`.
-- `bbmcp/env.py`: the shared world state `Scene.bbt_env`, the geo-hook registry,
+- `core/env.py`: the shared world state `Scene.bbt_env`, the geo-hook registry,
   `get_env`, and `sun_params`. bpy-only.
-- `bbmcp/solar.py`: the pure-Python NOAA solar-position math. No bpy.
-- `bbmcp/geonodes/recipes/volumetrics.py`: the clouds/fog GN recipe.
-- `bbmcp/geonodes/recipes/particulates.py`: the rain/mote GN recipe.
-- `bbmcp/geonodes/recipes/snow.py`: the `snow_cover` coverage pass.
-- `bbmcp/geonodes/recipes/snow_shell.py`: the accumulation shell.
-- `bbmcp/materials.py`: the volume and particulate materials (shaders), and the
+- `core/solar.py`: the pure-Python NOAA solar-position math. No bpy.
+- `core/geonodes/recipes/volumetrics.py`: the clouds/fog GN recipe.
+- `core/geonodes/recipes/particulates.py`: the rain/mote GN recipe.
+- `core/geonodes/recipes/snow.py`: the `snow_cover` coverage pass.
+- `core/geonodes/recipes/snow_shell.py`: the accumulation shell.
+- `core/materials/`: the volume and particulate materials (shaders), and the
   shared `S_EnvState` weather group BobShaders drives from `bbt_env`.
-- `extensions/bob_blender_tools/firmament_panel.py`: the Atmosphere panel,
+- `extensions/bob_blender_tools/ui/firmament.py`: the Atmosphere panel,
   operators, presets, live-driver install, and `bbt_firmament` state. Owns and
   registers `bbt_env`; subscribes `_apply_world` and `_sun_live_update`.
-- `extensions/bob_blender_tools/world_panel.py`: the World and Biome panels, the
+- `extensions/bob_blender_tools/ui/world.py`: the World and Biome panels, the
   world-applier registry, and `bbt_world`.

@@ -54,7 +54,8 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
-from . import server, ui_helpers
+from ..bridge import server
+from . import helpers
 
 # A small tuck (m) so the water edge sits just UNDER the bank lip rather than exactly on the
 # waterline, avoiding a hairline gap where the ribbon meets the rising bank.
@@ -154,8 +155,7 @@ ROLES = {
 # Helpers
 def _apply(ops):
     """Run bbmcp ops in-process, the path the terrain and scatter panels build through."""
-    server._ensure_path()
-    from bbmcp.dispatch import apply_op
+    from ..core.dispatch import apply_op
 
     return [apply_op(op) for op in ops]
 
@@ -313,10 +313,9 @@ def _build_curve_overlay(terrain, curve, carve=True):
         # drape_curve clips points dragged off the terrain (else a river's monotonic solve carves a
         # runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back on.
         off_terrain = bool(res and res[0].get("dropped"))
-    server._ensure_path()
-    from bbmcp.geonodes import build_geonodes_on_object
+    from ..core.geonodes import build_geonodes_on_object
 
-    from . import scatter_panel
+    from . import scatter
 
     # Only STRUCTURAL params here (they change the graph): the family branch, which attributes to
     # write, the edge ring name. The cross-section tunables are pushed live from bbt_curve by
@@ -330,7 +329,7 @@ def _build_curve_overlay(terrain, curve, carve=True):
               # a river writes the damp-bed mask the terrain material reads (apply_curve_wet).
               "wet_attr": role.get("wet_attr", ""),
               # this curve's own edge ring, so a Verge scatter layer can target just this path.
-              "edge_attr": scatter_panel.edge_attr_name(curve)}
+              "edge_attr": scatter.edge_attr_name(curve)}
     build_geonodes_on_object(terrain, "curve_overlay", _overlay_name(curve), params, reset=True)
     _position_overlay(terrain, curve)
     # The overlay reads the curve via an Object Info node (a node-level reference, not a modifier
@@ -358,8 +357,7 @@ def _apply_curve_material(terrain, role):
     mat = terrain.active_material
     if mat is None:
         return None
-    server._ensure_path()
-    from bbmcp import materials
+    from ..core import materials
 
     if role.get("family") == "impose":
         return materials.apply_curve_wet(mat, role.get("wet", 0.6))
@@ -434,8 +432,7 @@ def _build_water(curve):
     in harmony). Structural build only (reset=True); the Width / Water Depth / Flow / Foam tunables
     are pushed live from bbt_curve by _sync_curve_params, which fills the ribbon to the channel and
     meets the banks. Returns the object, or None on failure."""
-    server._ensure_path()
-    from bbmcp import materials
+    from ..core import materials
 
     name = _water_name(curve)
     _apply([{"op": "build_geonodes", "recipe": "curve_water", "name": name,
@@ -989,8 +986,7 @@ def _curve_band_spec(curve, terrain, cap=300):
     normalised [0,1] range (metres / terrain height), so the seed carve matches the intended channel.
     Returns None for a degenerate curve."""
     _apply_curve_transform(curve)  # origin assumption: the curve XY IS the terrain sample point
-    server._ensure_path()
-    from bbmcp import path_curve
+    from ..core import path_curve
     size = float(terrain.get("bbt_terrain_size", 90.0)) or 1.0
     height = float(terrain.get("bbt_terrain_height", 22.0)) or 1.0
     xy = path_curve._ordered_polyline_xy(curve)
@@ -1104,7 +1100,7 @@ class BBT_OT_curve_bake_erode(Operator):
         out_abs = os.path.join(os.path.dirname(clean_src), f"{stem}_eroded.png")
         params = {"base_png": clean_src, "stack": stack, "backend": "auto", "seed": 0}
 
-        from . import _run_host_bake
+        from .. import _run_host_bake
         # Emit flow/wetness sidecar maps beside the eroded PNG (<stem>_eroded_flow.png / _wetness.png).
         # The terrain material discovers them by the sibling convention (materials._terrain_maps), so
         # after a material rebuild the riverbed layer keys off the ERODED drainage, not the clean base.
@@ -1228,7 +1224,7 @@ class BBT_PT_paths(Panel):
         # Scatter header, which names the layer and leaves the kind to the Active Layer sub-panel.
         curve = _active_curve(context)
         hdr = curve.name if curve is not None else None
-        ui_helpers.context_header(layout, "Path", hdr, icon="CURVE_DATA",
+        helpers.context_header(layout, "Path", hdr, icon="CURVE_DATA",
                                   empty="Add a curve to shape a path.")
 
         layout.prop(scn, "terrain")
@@ -1245,7 +1241,7 @@ class BBT_PT_paths(Panel):
         col.operator("bob_blender_tools.curve_duplicate", text="", icon="DUPLICATE")
 
         if scn.curves:
-            ui_helpers.structural_action(layout, "bob_blender_tools.curve_build_all",
+            helpers.structural_action(layout, "bob_blender_tools.curve_build_all",
                                          note="carves every terrain-channel curve")
         if scn.summary:
             layout.label(text=scn.summary, icon="INFO")
@@ -1261,13 +1257,13 @@ class BBT_PT_paths(Panel):
             box.prop(scn, "erode_deposit")
             # Both are structural (they rewrite the baked heightfield), so mark them like Build
             # All (P3) rather than as raw buttons.
-            ui_helpers.structural_action(
+            helpers.structural_action(
                 box, "bob_blender_tools.curve_bake_erode",
                 note=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
             # Revert is structural too (it rewrites the baked heightfield), so route it through
             # structural_action like its Bake & Erode sibling (S6) rather than a hand-rolled row
             # with the marker icon. Enabled only once an erode has recorded a clean source.
-            ui_helpers.structural_action(
+            helpers.structural_action(
                 box, "bob_blender_tools.curve_revert_erode",
                 enabled=bool(terrain.get("bbt_heightmap_clean")))
         elif scn.curves and terrain is not None:
@@ -1306,7 +1302,7 @@ class BBT_PT_paths_active(Panel):
         box.prop(cfg, "do_scatter")
         if impose:  # the Water channel exists only for the river/stream (impose) family
             box.prop(cfg, "do_water")
-        ui_helpers.structural_action(box, "bob_blender_tools.curve_build",
+        helpers.structural_action(box, "bob_blender_tools.curve_build",
                                      note=("drapes downhill + carves the bed, lays the water surface"
                                            if impose else
                                            "drapes + carves, adds the surface band, clears scatter"))

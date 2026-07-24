@@ -5,9 +5,9 @@ landscape choice and five knobs into an eroded heightfield. `SYSTEMS.md` covers 
 Blender-side `heightmap_terrain` build that displaces a grid by the baked PNG; this
 covers how the PNG is made.
 
-The engine lives in the venv package `tools/bobtools/heightfields/` (numpy on CPU,
+The engine lives in the venv package `tools/core/heightfields/` (numpy on CPU,
 CuPy on GPU, no bpy), so it stays extractable as a standalone library. Blender drives
-a bake by subprocess to the venv (`python -m bobtools.heightfields`); the panel and
+a bake by subprocess to the venv (`python -m core.heightfields`); the panel and
 the MCP `bake_heightfield` tool are the two front doors.
 
 ## The filter stack
@@ -222,9 +222,9 @@ not a global-knob axis.
 ### CLI
 
 ```
-python -m bobtools.heightfields --out /abs/height.png --knobs-file knobs.json
-python -m bobtools.heightfields --out /abs/height.png --params-file params.json
-python -m bobtools.heightfields --backends        # print available backends as JSON
+python -m core.heightfields --out /abs/height.png --knobs-file knobs.json
+python -m core.heightfields --out /abs/height.png --params-file params.json
+python -m core.heightfields --backends        # print available backends as JSON
 ```
 
 - `--knobs-file` is flat knobs (`preset` + `relief`/`detail`/`erosion`/`warp`/`seed`/
@@ -287,7 +287,7 @@ EEVEE).
 
 ## The Blender build
 
-`heightmap_terrain` (`blender/bbmcp/geonodes/recipes/heightmap_terrain.py`) displaces a
+`heightmap_terrain` (`blender/extensions/bob_blender_tools/core/geonodes/recipes/heightmap_terrain.py`) displaces a
 grid by the baked PNG. Params: `heightmap` (absolute path), `size`, `resolution`,
 `height`, `sea_level`, `material`. It enforces metric scene units (1 unit = 1 m) as the
 single choke point, samples the heightmap at each grid point's world XY

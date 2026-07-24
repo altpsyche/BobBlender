@@ -4,7 +4,7 @@ Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/UX-REDES
 authors the built subsystems: Sky, Clouds, Fog, and Weather (rain/motes/snow coverage). The
 shared world state (Scene.bbt_env) is still owned and registered here, but its UI (the
 Environment sliders), the Preview/Final Quality level, the Live Environment master, and the
-Scene Presets / Apply Season now live in the World panel (world_panel.py). This module keeps
+Scene Presets / Apply Season now live in the World panel (world.py). This module keeps
 the firmament_* operators; the World panel drives them.
 
 The Live Environment master (bbt_world.live_env) and Quality reach this panel's subsystems
@@ -25,7 +25,8 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import server, ui_helpers, world_panel
+from ..bridge import server
+from . import helpers, world
 
 
 def _live_env_on(scene):
@@ -45,7 +46,7 @@ def _env_owned_note(layout):
 def _from_env_row(layout, live, op_idname, object_name=None):
     """The copy-from-world branch shared by every subsystem's wind (and the snow) button (S6):
     when Live Environment is on a driver owns the input, so show the owned note and no button;
-    else offer the one-shot copy-from-env button. Kept here (not ui_helpers) because it is a
+    else offer the one-shot copy-from-env button. Kept here (not helpers) because it is a
     Firmament-only idiom that reaches _env_owned_note."""
     if live:
         _env_owned_note(layout)
@@ -238,8 +239,7 @@ SCENE_PRESETS = {
 
 def _apply(ops):
     """Run bbmcp ops in-process, the path the Scatter and terrain panels use."""
-    server._ensure_path()
-    from bbmcp.dispatch import apply_op
+    from ..core.dispatch import apply_op
 
     return [apply_op(op) for op in ops]
 
@@ -437,7 +437,7 @@ def _snow_input(surface):
 def _snow_amount(env):
     """The temperature-driven snow amount (0 above freezing, 1 by SNOW_TEMP_FULL), matching the
     shader. Snow has no amount slider -- temperature is the amount."""
-    from bbmcp.materials import SNOW_TEMP_FULL
+    from ..core.materials import SNOW_TEMP_FULL
     t = max(0.0, min(1.0, env.temperature / SNOW_TEMP_FULL))
     return t * t * (3.0 - 2.0 * t)  # smoothstep, matches the shader MapRange
 
@@ -495,10 +495,9 @@ def _reposition_sun(scene):
     Cheap: no node-tree rebuild, so it is safe to call on every geographic edit."""
     import math
     global _solar
-    server._ensure_path()
-    from bbmcp import world as W
+    from ..core import world as W
     if _solar is None:
-        from bbmcp import solar as _s
+        from ..core import solar as _s
         _solar = _s
     sun = bpy.data.objects.get(W.SUN_NAME)
     env = getattr(scene, "bbt_env", None)
@@ -544,7 +543,7 @@ def _firmament_wind_objects(fm):
 
 
 def _apply_world(scene):
-    """Atmosphere's world applier (subscribed with world_panel): re-apply the atmosphere
+    """Atmosphere's world applier (subscribed with world): re-apply the atmosphere
     subsystems to the current world state. Installs or removes the live wind/snow drivers per
     the master Live Environment toggle, and re-applies the Quality level. A non-structural
     driver edit, safe from the rebuild re-entrancy the repo avoids for structural changes.
@@ -713,7 +712,7 @@ class BBT_OT_firmament_build_sky(Operator):
         res = _apply([{"op": "build_sky", "params": params}])
         # A rebuild recreates the sky node (dropping its drivers) and resets the sun; re-apply the
         # world so the live sun drivers are reinstalled and time/place stay live from here.
-        world_panel.apply_all(context.scene)
+        world.apply_all(context.scene)
         self.report({"INFO"}, f"Sky: {res[0].get('info', '')}")
         return {"FINISHED"}
 
@@ -1025,8 +1024,7 @@ class BBT_OT_firmament_build_snow_cover(Operator):
             params["snow"] = _snow_amount(env)
             params["altitude"] = lo
             params["altitude_falloff"] = band
-        server._ensure_path()
-        from bbmcp.geonodes import build_geonodes_on_object
+        from ..core.geonodes import build_geonodes_on_object
 
         build_geonodes_on_object(surface, "snow", "BOB_Snow", params)
         self.report({"INFO"}, f"Snow coverage written on {surface.name}")
@@ -1150,7 +1148,7 @@ class BBT_PT_firmament(Panel):
         built = bpy.data.objects.get("BOB_Sun") is not None
         layout.label(text="Sky built" if built else "No sky yet",
                      icon="LIGHT_SUN" if built else "INFO")
-        ui_helpers.structural_action(
+        helpers.structural_action(
             layout, "bob_blender_tools.firmament_build_sky",
             text="Rebuild Sky" if built else "Build Sky",
             note="builds the sky + sun (time/place: World; sky inputs: Sky sub-panel)")
@@ -1211,7 +1209,7 @@ class BBT_PT_firmament_clouds(Panel):
         box = layout.box()
         box.prop(fm, "cloud_object")
         box.prop(fm, "cloud_shadows")
-        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_clouds",
+        helpers.structural_action(box, "bob_blender_tools.firmament_build_clouds",
                                      note="builds: the cloud volume object")
 
         # Live knobs from the modifier (present only after a Build), grouped.
@@ -1222,7 +1220,7 @@ class BBT_PT_firmament_clouds(Panel):
 
         # A6: the look preset is instant (light: sets knobs), so it is gated behind Build like the
         # other knobs. It no longer sits above the gate where picking it would silently build.
-        ui_helpers.preset_row(layout, "bob_blender_tools.firmament_cloud_preset")
+        helpers.preset_row(layout, "bob_blender_tools.firmament_cloud_preset")
 
         live = _live_env_on(context.scene)
         col = layout.column(align=True)
@@ -1233,7 +1231,7 @@ class BBT_PT_firmament_clouds(Panel):
         _draw_knobs(col, obj, _CLOUD_SHAPE[1:])
         seed = _input(obj, "Cloud Seed")
         if seed is not None:
-            ui_helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
+            helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                 text="Cloud Seed",
                                 op_props={"object_name": fm.cloud_object,
                                           "seed_input": "Cloud Seed"})
@@ -1274,7 +1272,7 @@ class BBT_PT_firmament_fog(Panel):
         box.prop(fm, "fog_mode")
         if fm.fog_mode == "ground_fog":
             box.prop(fm, "fog_heightmap")
-        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_fog",
+        helpers.structural_action(box, "bob_blender_tools.firmament_build_fog",
                                      note="builds: the fog volume object")
 
         # Live knobs from the modifier (present only after a Build), grouped.
@@ -1284,14 +1282,14 @@ class BBT_PT_firmament_fog(Panel):
             return
 
         # A6: instant look preset, gated behind Build so picking it never silently builds.
-        ui_helpers.preset_row(layout, "bob_blender_tools.firmament_fog_preset")
+        helpers.preset_row(layout, "bob_blender_tools.firmament_fog_preset")
 
         col = layout.column(align=True)
         col.label(text="Shape", icon="MOD_NOISE")
         _draw_knobs(col, obj, _FOG_SHAPE)
         seed = _input(obj, "Fog Seed")
         if seed is not None:
-            ui_helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
+            helpers.seed_row(col, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                 text="Fog Seed",
                                 op_props={"object_name": fm.fog_object,
                                           "seed_input": "Fog Seed"})
@@ -1342,17 +1340,17 @@ class BBT_PT_firmament_weather(Panel):
         # Rain (streak mode).
         box = layout.box()
         box.label(text="Rain", icon="OUTLINER_OB_FORCE_FIELD")
-        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_rain",
+        helpers.structural_action(box, "bob_blender_tools.firmament_build_rain",
                                      note="builds: falling rain streaks")
         rain = bpy.data.objects.get(fm.rain_object)
         if rain is not None and _nodes_mod(rain) is not None:
             # A6: instant look preset, gated behind Build so it never silently builds.
-            ui_helpers.preset_row(box, "bob_blender_tools.firmament_rain_preset")
+            helpers.preset_row(box, "bob_blender_tools.firmament_rain_preset")
             box.prop(rain, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, rain, _RAIN_KNOBS)
             seed = _input(rain, "Seed")
             if seed is not None:
-                ui_helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
+                helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                     op_props={"object_name": fm.rain_object})
             live = _live_env_on(context.scene)
             _draw_knobs(box, rain, _RAIN_WIND, enabled=not live)
@@ -1364,17 +1362,17 @@ class BBT_PT_firmament_weather(Panel):
         # Motes (dust / amber / falling snow, all mote mode).
         box = layout.box()
         box.label(text="Motes (Dust / Amber / Snow)", icon="PARTICLES")
-        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_motes",
+        helpers.structural_action(box, "bob_blender_tools.firmament_build_motes",
                                      note="builds: floating motes (dust / amber / snow)")
         motes = bpy.data.objects.get(fm.mote_object)
         if motes is not None and _nodes_mod(motes) is not None:
             # A6: instant look preset, gated behind Build so it never silently builds.
-            ui_helpers.preset_row(box, "bob_blender_tools.firmament_mote_preset")
+            helpers.preset_row(box, "bob_blender_tools.firmament_mote_preset")
             box.prop(motes, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
             _draw_knobs(box, motes, _MOTE_KNOBS)
             seed = _input(motes, "Seed")
             if seed is not None:
-                ui_helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
+                helpers.seed_row(box, seed, "value", "bob_blender_tools.firmament_randomize_seed",
                                     op_props={"object_name": fm.mote_object})
             _draw_knobs(box, motes, _MOTE_LOOK)
             live = _live_env_on(context.scene)
@@ -1388,7 +1386,7 @@ class BBT_PT_firmament_weather(Panel):
         box = layout.box()
         box.label(text="Snow Coverage", icon="OUTLINER_DATA_SURFACE")
         box.prop(fm, "snow_surface")
-        ui_helpers.structural_action(box, "bob_blender_tools.firmament_build_snow_cover",
+        helpers.structural_action(box, "bob_blender_tools.firmament_build_snow_cover",
                                      note="builds: the snow pass (shell coverage + occlusion)")
         surface = fm.snow_surface or context.active_object
         snow_mod = _named_mod(surface, "BOB_Snow")
@@ -1433,8 +1431,7 @@ CLASSES = (
 
 def register():
     global _env, _solar
-    server._ensure_path()
-    from bbmcp import env
+    from ..core import env
     _env = env
     _solar = None  # rebound lazily by the driver function (survives a Reload Builders)
     env.register()  # BobFirmament owns and registers the shared world state
@@ -1445,11 +1442,11 @@ def register():
     # time/date/place re-places the sun (the override props carry their own update callback).
     _env.register_geo_hook(_sun_live_update)
     # Subscribe the atmosphere applier so the World master toggle / quality drive it (P6 scaling).
-    world_panel.register_applier(_apply_world)
+    world.register_applier(_apply_world)
 
 
 def unregister():
-    world_panel.unregister_applier(_apply_world)
+    world.unregister_applier(_apply_world)
     if _env is not None:
         _env.unregister_geo_hook(_sun_live_update)
     del bpy.types.Scene.bbt_firmament

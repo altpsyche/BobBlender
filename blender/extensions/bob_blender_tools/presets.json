@@ -1,5 +1,5 @@
 {
-  "_note": "Generated from bobtools.heightfields.presets by tools/scripts/gen_panel_presets.py. Do not edit by hand.",
+  "_note": "Generated from heightfields.presets (core/heightfields) by tools/scripts/gen_panel_presets.py. Do not edit by hand.",
   "presets": {
     "alpine": {
       "relief": 0.5,

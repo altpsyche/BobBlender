@@ -172,6 +172,18 @@ PIL dependency with a **pure-numpy(+zlib) 16-bit-grayscale PNG codec** — no PI
 no bpy (the package must stay bpy-free). This is the one real code change P4 needs
 beyond moving files; add it to P4 scope. Everything else in P4 is a move + repoint.
 
+**Correction (2026-07-24, during P4): the spike's "no scipy" claim was WRONG.** The
+compute imports **scipy.ndimage** heavily via `ops_erode._ndimage(xp)` (gaussian_filter,
+grey_opening/closing, zoom, distance-transform), lazily inside functions — so the minimal
+noise+fluvial+thermal stack the spike ran happened not to hit it, but every real preset
+(e.g. `alpine`) does. Blender's Python ships no scipy, so a fully in-process bake is NOT
+achievable on bundled numpy alone. Resolution taken in P4: the bake runs **in-process by
+default** and **falls back to the dev venv** (same single source, `-m heightfields` with the
+core dir on PYTHONPATH) when Blender's Python lacks scipy/CuPy. Bundling scipy was rejected
+(bloats the zip). **P5's Enable Compute must install scipy in addition to CuPy**; once it
+does, the in-process path runs natively for all presets and the fallback stops triggering —
+with no further change to the bake code.
+
 Spike artifacts are throwaway under scratchpad (`spike.py`, staged tree, `*_cpu.npy`).
 
 **A first, then B.** A stands up the real CI (`ci.yml`) plus the self-import guard —
