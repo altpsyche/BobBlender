@@ -20,7 +20,7 @@ gpu = [
 
 [project.scripts]
 bob-new-project = "bobtools.scaffold:main"
-bob-mcp = "bobtools.mcp.mcp_server:main"
+bob-mcp = "bobtools.mcp_launch:main"
 bob-setup = "bobtools.setup:main"
 
 [build-system]

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate the op-vocabulary table in docs/API.md from the source of truth (P7).
 
-The op contract is the Pydantic models in `tools/bobtools/mcp/contracts.py`; the handlers are the
-`_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types, defaults)
+The op contract is the Pydantic models in the extension's `mcp_agent/contracts.py`; the handlers
+are the `_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types, defaults)
 and parses the dispatch registry (op -> handler), then rewrites ONLY the region of docs/API.md
 between the GENERATED markers, leaving the authored sections untouched.
 
@@ -13,14 +13,19 @@ Dispatch is parsed with ast (importing it would pull in bpy, which the venv lack
 from __future__ import annotations
 
 import ast
+import sys
 import typing
 from pathlib import Path
 
-from bobtools.mcp import contracts
-
 REPO = Path(__file__).resolve().parents[2]
 API_DOC = REPO / "docs" / "API.md"
-DISPATCH = REPO / "blender" / "extensions" / "bob_blender_tools" / "core" / "dispatch.py"
+EXT = REPO / "blender" / "extensions" / "bob_blender_tools"
+DISPATCH = EXT / "core" / "dispatch.py"
+
+# The contract now lives inside the extension (mcp_agent/); import it as a top-level package
+# without touching the bpy-bound addon __init__ (same trick the server launcher uses).
+sys.path.insert(0, str(EXT))
+from mcp_agent import contracts  # noqa: E402
 
 BEGIN = "<!-- BEGIN GENERATED: op-vocabulary (tools/scripts/gen_api_docs.py) -->"
 END = "<!-- END GENERATED -->"

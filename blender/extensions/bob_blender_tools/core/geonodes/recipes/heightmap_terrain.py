@@ -1,8 +1,8 @@
 """heightmap_terrain: displace a grid by a heightmap image.
 
-The heightmap comes from the venv erosion engine (bobtools.erosion). This is the
-Blender side of the erosion pipeline: the heavy simulation happens in numpy, and
-Blender just reads the result.
+The heightmap comes from the in-process heightfield compute (core/heightfields). This is
+the Blender side of the erosion pipeline: the heavy simulation happens in numpy (or CuPy on
+GPU) inside Blender's own Python, and this recipe just reads the result.
 
 Params: heightmap (absolute image path), size, resolution, height, sea_level.
 

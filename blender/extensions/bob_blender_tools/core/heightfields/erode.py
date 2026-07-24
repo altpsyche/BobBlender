@@ -2,8 +2,7 @@
 
 The terrain pipeline no longer runs these -- generation and erosion are now a GPU
 op stack (see engine.run_stack, ops_erode). What remains here is the small set of
-numpy helpers still used by the compat shim (bobtools.erosion) and by run_passes,
-which composes an ordered list of these CPU passes:
+numpy helpers still used by run_passes, which composes an ordered list of these CPU passes:
 
 - thermal: slump material down slopes steeper than a talus angle. Cheap stencil.
 - stream_power: drainage-area incision (carves valley networks). CPU only; the flow

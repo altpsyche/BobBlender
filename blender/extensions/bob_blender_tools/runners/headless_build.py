@@ -1,9 +1,15 @@
-"""Headless runner, executed inside Blender by the executor.
+"""Headless runner, executed inside Blender by the MCP executor.
 
     blender --background --factory-startup --python headless_build.py -- <req.json> <result.json>
 
-Reads a BuildRequest payload, applies each op via bbmcp, saves the .blend,
-and writes a BuildResult JSON. All Blender-side; no external deps.
+Reads a BuildRequest payload, applies each op via the extension's core dispatch, saves the
+.blend, and writes a BuildResult JSON. All Blender-side; no external deps.
+
+This ships INSIDE the extension (bob_blender_tools/runners/) so a standalone install can build
+headlessly with no repo checkout: the executor spawns Blender pointed at this file, and it
+imports the installed extension's core.dispatch. It is an entry-point script, not intra-package
+code, so its absolute `bob_blender_tools` bootstrap import is exempt from the self-import lint
+(check_selfimports skips runners/).
 """
 
 import json
@@ -21,10 +27,11 @@ def _argv_after_dashes():
 def main():
     req_path, result_path = _argv_after_dashes()
 
-    # The builder library is bob_blender_tools.core, inside the extension. One
-    # sys.path insert of the extensions dir, then a plain package import.
-    blender_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # blender/
-    sys.path.insert(0, os.path.join(blender_dir, "extensions"))
+    # The builder library is bob_blender_tools.core, the package this runner lives inside. Put the
+    # dir that CONTAINS bob_blender_tools on sys.path, then a plain package import. runners/
+    # -> bob_blender_tools -> <the containing dir>.
+    containing = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, containing)
     from bob_blender_tools.core.dispatch import apply_op
 
     payload = json.loads(open(req_path).read())

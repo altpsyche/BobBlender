@@ -1,14 +1,14 @@
 """Live executor: apply ops to the open Blender session via the socket bridge.
 
-Mirrors executor.run_build's shape but targets a running session instead of
-spawning Blender. This is the swappable executor described in docs/ARCHITECTURE.md.
-Requires the BobBlenderTools extension to be enabled and its MCP bridge running.
+Mirrors executor.run_build's shape but targets a running session instead of spawning
+Blender. This is the swappable executor described in docs/ARCHITECTURE.md. Requires the
+BobBlenderTools extension to be enabled and its MCP bridge running (Advanced -> Start).
 """
 
 import json
 import socket
 
-from .. import config
+from . import paths
 from .contracts import BuildResult, OpResult
 
 
@@ -19,8 +19,8 @@ def run_build_live(
     port: int | None = None,
     timeout: float = 60.0,
 ) -> BuildResult:
-    host = host or config.bridge_host()
-    port = port or config.bridge_port()
+    host = host or paths.bridge_host()
+    port = port or paths.bridge_port()
     payload = (json.dumps({"ops": ops}) + "\n").encode()
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:

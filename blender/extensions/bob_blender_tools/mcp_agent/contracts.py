@@ -1,6 +1,6 @@
-"""The op contract: the vocabulary shared across the venv/Blender boundary.
+"""The op contract: the vocabulary shared across the agent/Blender boundary.
 
-Agent input is validated here (the venv has Pydantic). The Blender side receives
+Agent input is validated here (the MCP server has Pydantic). The Blender side receives
 valid JSON and executes it, so Blender's bundled Python needs no extra deps.
 Grow the vocabulary by adding op models to Operation.
 """
@@ -98,9 +98,9 @@ Operation = Annotated[
 
 # Request and result envelope
 class BuildRequest(BaseModel):
-    """What to build and where to save it. Paths are repo-relative."""
+    """What to build and where to save it. Paths are workdir-relative (see paths.resolve_output)."""
 
-    output_file: str  # e.g. "library/_generated/proof.blend"
+    output_file: str  # e.g. "_generated/proof.blend"
     ops: list[Operation] = Field(default_factory=list)
     base_file: str | None = None  # open this .blend first, else an empty scene
 

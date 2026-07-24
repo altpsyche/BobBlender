@@ -72,11 +72,6 @@ def template_dir() -> Path:
     return projects_dir() / "_template"
 
 
-def blender_runner(name: str) -> Path:
-    """Path to a bpy-side runner script under blender/runners/."""
-    return repo_root() / "blender" / "runners" / name
-
-
 # Shared settings (bob.toml)
 def settings() -> dict:
     path = repo_root() / "bob.toml"
