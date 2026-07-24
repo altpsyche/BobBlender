@@ -146,7 +146,10 @@ def build_geonodes(op: dict) -> dict:
             new_ng.name = old_name  # reclaim the clean name
             obj.update_tag()
             info = recipe_name + (" (in place, reset)" if reset else " (in place)")
-            return {"op": "build_geonodes", "created": [new_ng.name, obj.name], "info": info}
+            # De-dup: the object and its node group usually share a name, so return
+            # each once rather than the readable-but-noisy "Terrain, Terrain" pair.
+            created = list(dict.fromkeys([obj.name, new_ng.name]))
+            return {"op": "build_geonodes", "created": created, "info": info}
         _clear_existing(name)
 
     ng, out = new_group(name)

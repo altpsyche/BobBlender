@@ -88,13 +88,47 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 |------|--------------|-------|
 | `list_projects` | Project folders under the projects root. | folder config |
 | `list_library_assets` | Asset packs + biomes on the search path. | — (bundled pack always present) |
+| `list_biomes` | Biomes + what each builds (terrain / scatter kinds / world). | — |
 | `create_project` | Scaffold a new project folder. | write access to the projects root |
 | `build_live` | Apply ops to the **open** Blender session (viewport). | the bridge running (step 2) |
 | `build` | Build ops into a headless `.blend`. | a resolvable Blender binary |
 | `bake_heightfield` | Generate + erode a terrain heightfield PNG. | `numpy` (CPU); CuPy on the machine for GPU |
+| `render_scene` | Render the live session (or a headless `.blend`) to an image; returns the path. | the bridge, or a Blender binary for `base_file` |
 
-The op vocabulary (`add_mesh`, `build_geonodes`, `make_proxies`, `make_path`, `drape_curve`,
-`reload_image`, `build_sky`) is documented in [API.md](API.md).
+The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonodes`,
+`make_proxies`), shading (`shade_terrain`, `apply_shader`, `snow_shell`), biome
+(`apply_biome`, `world_biome`), typed paths + water (`make_curve`, `curve_build`,
+`bake_erode`, `revert_erode`), atmosphere (`build_sky`, `build_clouds`, `build_fog`,
+`build_rain`, `build_motes`, `build_snow_cover`, `apply_season`, `scene_preset`), the
+shared env (`set_env`), and scene control (`add_camera`, `render`, `delete`,
+`clear_scene`). All are documented with their fields in [API.md](API.md).
+
+## A full scene over MCP
+
+An agent can build a complete, shaded scene with no panel clicks. Bake a heightfield, then
+run one op list (`build_live` into the running session, or `build` headless). This is the
+`library/_generated/full_scene_ops.json` proof, abbreviated:
+
+```jsonc
+// 1. bake_heightfield  out_file="_generated/forest_height.png"  params={preset:"alpine", size:1024}
+// 2. build_live / build with:
+[
+  {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Terrain",
+   "params": {"heightmap": "_generated/forest_height.png", "size": 200, "resolution": 400, "height": 70}},
+  {"op": "apply_biome", "object": "Terrain", "biome": "blockout"},   // shade + scatter + world in one
+  {"op": "set_env", "params": {"season": "autumn", "time_of_day": 16, "snow_line": 0.92}},
+  {"op": "build_sky", "params": {"time_of_day": 16, "turbidity": 3.2}},
+  {"op": "build_clouds"},
+  {"op": "make_curve", "name": "River", "role": "river", "terrain": "Terrain"},
+  {"op": "curve_build", "curve": "River", "terrain": "Terrain", "do_terrain": true, "do_water": true},
+  {"op": "build_snow_cover", "object": "Terrain"},
+  {"op": "add_camera", "name": "BOB_Camera", "location": [175, -175, 100], "look_at": [0, 0, 10], "lens": 42}
+]
+// 3. render_scene  output_file="_generated/full_scene.png"  engine="BLENDER_EEVEE" samples=48
+```
+
+`list_biomes` tells the agent which biomes are available and whether each shades terrain,
+scatters, and sets the world, so `apply_biome` is a single informed call.
 
 ## Reload rules (two-sided)
 

@@ -38,6 +38,27 @@ or `build_live` (open session) MCP tools.
 | `drape_curve` | `path_curve.drape_curve` | `name`: str = `'Path'`<br>`heightmap`: str \| None = `None`<br>`size`: float = `60.0`<br>`height`: float = `14.0`<br>`sea_level`: float = `0.3`<br>`monotonic`: bool = `False`<br>`min_slope`: float = `0.0`<br>`to_sea`: bool = `False`<br>`densify`: int = `0` |
 | `reload_image` | `images.reload_image` | `path`: str \| None = `None` |
 | `build_sky` | `world.build_sky` | `params`: dict = `{}` |
+| `add_camera` | `camera.add_camera` | `name`: str = `'BOB_Camera'`<br>`location`: tuple = `(12.0, -12.0, 8.0)`<br>`look_at`: tuple \| None = `None`<br>`rotation`: tuple = `(0.0, 0.0, 0.0)`<br>`lens`: float = `50.0`<br>`clip_end`: float \| None = `None`<br>`set_active`: bool = `True` |
+| `render` | `render.render` | `output`: str = **required**<br>`engine`: 'BLENDER_EEVEE' \| 'CYCLES' = `'BLENDER_EEVEE'`<br>`samples`: int = `64`<br>`resolution`: tuple = `(1920, 1080)`<br>`resolution_percentage`: int = `100`<br>`camera`: str \| None = `None`<br>`device`: 'GPU' \| 'CPU' = `'GPU'`<br>`file_format`: str = `'PNG'` |
+| `delete` | `scene.delete` | `names`: list = `[]`<br>`name`: str \| None = `None` |
+| `clear_scene` | `scene.clear_scene` | `keep`: list = `[]`<br>`purge`: bool = `True` |
+| `set_env` | `scene.set_env` | `params`: dict = `{}` |
+| `shade_terrain` | `shading.shade_terrain` | `object`: str = **required**<br>`stack`: str \| None = `None`<br>`layers`: list \| None = `None`<br>`material`: str \| None = `None`<br>`assign`: bool = `True` |
+| `apply_shader` | `shading.apply_shader` | `object`: str = **required**<br>`master`: 'surface' \| 'terrain' \| 'water' = `'surface'`<br>`preset`: str \| None = `None` |
+| `snow_shell` | `shading.snow_shell` | `object`: str = **required** |
+| `apply_biome` | `biome.apply_biome` | `object`: str = **required**<br>`biome`: str = **required**<br>`assign`: bool = `True`<br>`weather_assets`: bool = `True` |
+| `world_biome` | `biome.world_biome` | `biome`: str = **required** |
+| `build_clouds` | `atmosphere.build_clouds` | `object`: str = `'BOB_Clouds'`<br>`cloud_shadows`: bool = `True` |
+| `build_fog` | `atmosphere.build_fog` | `object`: str = `'BOB_Fog'`<br>`mode`: 'height_fog' \| 'noise_fog' \| 'ground_fog' = `'height_fog'`<br>`heightmap`: str = `''` |
+| `build_rain` | `atmosphere.build_rain` | `object`: str = `'BOB_Rain'`<br>`camera`: str \| None = `None`<br>`motion_blur`: bool = `True`<br>`preset`: str \| None = `None` |
+| `build_motes` | `atmosphere.build_motes` | `object`: str = `'BOB_Motes'`<br>`camera`: str \| None = `None`<br>`motion_blur`: bool = `True`<br>`preset`: str \| None = `None` |
+| `build_snow_cover` | `atmosphere.build_snow_cover` | `object`: str = **required** |
+| `apply_season` | `atmosphere.apply_season` | `season`: str \| None = `None`<br>`build_snow`: bool \| None = `None`<br>`season_sets_date`: bool \| None = `None` |
+| `scene_preset` | `atmosphere.scene_preset` | `look`: str = **required** |
+| `make_curve` | `splines_build.make_curve` | `name`: str = `'Path'`<br>`role`: 'dirt_path' \| 'trail' \| 'road' \| 'river' \| 'stream' = `'dirt_path'`<br>`points`: list = `[]`<br>`terrain`: str \| None = `None` |
+| `curve_build` | `splines_build.curve_build` | `curve`: str = **required**<br>`terrain`: str \| None = `None`<br>`do_terrain`: bool \| None = `None`<br>`do_material`: bool \| None = `None`<br>`do_water`: bool \| None = `None`<br>`do_scatter`: bool = `False` |
+| `bake_erode` | `splines_build.bake_erode` | `terrain`: str = **required**<br>`curves`: list \| None = `None`<br>`strength`: float = `0.5`<br>`scope`: 'band' \| 'global' = `'band'`<br>`deposit`: bool = `True`<br>`seed`: int = `0` |
+| `revert_erode` | `splines_build.revert_erode` | `terrain`: str = **required**<br>`curves`: list \| None = `None` |
 
 _Registry-only (dispatch handlers with no contract model, not exposed to the MCP op union): `inspect_river`._
 

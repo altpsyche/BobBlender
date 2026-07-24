@@ -89,9 +89,202 @@ class BuildSky(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
-# Add MakeMaterial and other ops to this union as the library grows.
+class AddCamera(BaseModel):
+    op: Literal["add_camera"] = "add_camera"
+    name: str = "BOB_Camera"
+    location: Vector3 = (12.0, -12.0, 8.0)
+    # Aim at a point (camera looks down -Z, +Y up); overrides rotation when set.
+    look_at: Vector3 | None = None
+    rotation: Vector3 = (0.0, 0.0, 0.0)  # degrees, used when look_at is None
+    lens: float = 50.0  # focal length in mm
+    clip_end: float | None = None  # far clip; raise it for large terrains
+    set_active: bool = True  # make this the scene camera
+
+
+class Render(BaseModel):
+    op: Literal["render"] = "render"
+    output: str  # absolute image path the render writes (the tool resolves workdir-relative)
+    engine: Literal["BLENDER_EEVEE", "CYCLES"] = "BLENDER_EEVEE"  # 5.2 enums
+    samples: int = 64
+    resolution: tuple[int, int] = (1920, 1080)
+    resolution_percentage: int = 100
+    camera: str | None = None  # camera object name, else the current scene camera
+    device: Literal["GPU", "CPU"] = "GPU"  # Cycles only; EEVEE ignores it
+    file_format: str = "PNG"
+
+
+class Delete(BaseModel):
+    op: Literal["delete"] = "delete"
+    names: list[str] = Field(default_factory=list)  # object names to remove
+    name: str | None = None  # convenience for a single object
+
+
+class ClearScene(BaseModel):
+    op: Literal["clear_scene"] = "clear_scene"
+    keep: list[str] = Field(default_factory=list)  # object names to preserve
+    purge: bool = True  # also drop orphan datablocks
+
+
+class SetEnv(BaseModel):
+    op: Literal["set_env"] = "set_env"
+    # Fields to write onto Scene.bbt_env (season/weather/time_of_day/wind_*/snow_line/...);
+    # see core/env.py BBT_EnvProps. Unknown fields are reported, not fatal.
+    params: dict = Field(default_factory=dict)
+
+
+class ShadeTerrain(BaseModel):
+    op: Literal["shade_terrain"] = "shade_terrain"
+    object: str  # the terrain mesh to shade
+    # A terrain-stack preset key (temperate/alpine/desert), OR an explicit ordered list of
+    # layer-preset keys (soil/grass/rock/cliff/scree/sand). layers wins when both are set.
+    stack: str | None = None
+    layers: list[str] | None = None
+    material: str | None = None  # material name, else M_<object>
+    assign: bool = True
+
+
+class ApplyShader(BaseModel):
+    op: Literal["apply_shader"] = "apply_shader"
+    object: str  # the mesh to shade
+    master: Literal["surface", "terrain", "water"] = "surface"
+    preset: str | None = None  # a SURFACE_PRESETS key (surface master only)
+
+
+class SnowShell(BaseModel):
+    op: Literal["snow_shell"] = "snow_shell"
+    object: str  # the surface to shell (needs a snow_cover pass to read thickness)
+
+
+# Biome: one call that shades terrain + scatters + sets the world for a named biome.
+class ApplyBiome(BaseModel):
+    op: Literal["apply_biome"] = "apply_biome"
+    object: str  # target mesh to shade + scatter onto
+    biome: str  # biome folder name (see the list_biomes tool)
+    assign: bool = True  # assign the built terrain material
+    weather_assets: bool = True  # convert scattered assets to BobShaders so they weather
+
+
+class WorldBiome(BaseModel):
+    op: Literal["world_biome"] = "world_biome"
+    biome: str  # apply just the biome's world/env block to Scene.bbt_env
+
+
+# Atmosphere (BobFirmament).
+class BuildClouds(BaseModel):
+    op: Literal["build_clouds"] = "build_clouds"
+    object: str = "BOB_Clouds"
+    cloud_shadows: bool = True
+
+
+class BuildFog(BaseModel):
+    op: Literal["build_fog"] = "build_fog"
+    object: str = "BOB_Fog"
+    mode: Literal["height_fog", "noise_fog", "ground_fog"] = "height_fog"
+    heightmap: str = ""  # absolute path, used only for ground_fog
+
+
+class BuildRain(BaseModel):
+    op: Literal["build_rain"] = "build_rain"
+    object: str = "BOB_Rain"
+    camera: str | None = None  # frames the particle volume; else the scene camera
+    motion_blur: bool = True
+    preset: str | None = None  # drizzle / rain / downpour
+
+
+class BuildMotes(BaseModel):
+    op: Literal["build_motes"] = "build_motes"
+    object: str = "BOB_Motes"
+    camera: str | None = None
+    motion_blur: bool = True
+    preset: str | None = None  # dust / amber / snow
+
+
+class BuildSnowCover(BaseModel):
+    op: Literal["build_snow_cover"] = "build_snow_cover"
+    object: str  # the mesh surface to accumulate snow on
+
+
+class ApplySeason(BaseModel):
+    op: Literal["apply_season"] = "apply_season"
+    season: str | None = None  # spring/summer/autumn/winter; None = current env.season
+    build_snow: bool | None = None  # None = the season's default
+    season_sets_date: bool | None = None  # None = default (set the month from the season)
+
+
+class ScenePreset(BaseModel):
+    op: Literal["scene_preset"] = "scene_preset"
+    # A whole-mood preset: clear_day/golden_hour/overcast/storm/foggy_dawn/dust_storm/winter.
+    look: str
+
+
+# Typed paths + water + erosion (BobSplines).
+class MakeCurve(BaseModel):
+    op: Literal["make_curve"] = "make_curve"
+    name: str = "Path"
+    role: Literal["dirt_path", "trail", "road", "river", "stream"] = "dirt_path"
+    points: list[Vector3] = Field(default_factory=list)  # else a starter line sized to terrain
+    terrain: str | None = None
+
+
+class CurveBuild(BaseModel):
+    op: Literal["curve_build"] = "curve_build"
+    curve: str  # an existing typed curve object
+    terrain: str | None = None
+    # None => use the curve's own bbt_curve setting for each.
+    do_terrain: bool | None = None
+    do_material: bool | None = None
+    do_water: bool | None = None
+    do_scatter: bool = False  # no scatter callback over MCP
+
+
+class BakeErode(BaseModel):
+    op: Literal["bake_erode"] = "bake_erode"
+    terrain: str
+    curves: list[str] | None = None  # None => every scene curve
+    strength: float = 0.5
+    scope: Literal["band", "global"] = "band"
+    deposit: bool = True
+    seed: int = 0
+
+
+class RevertErode(BaseModel):
+    op: Literal["revert_erode"] = "revert_erode"
+    terrain: str
+    curves: list[str] | None = None
+
+
+# Add new ops to this union as the library grows.
 Operation = Annotated[
-    Union[AddMesh, BuildGeoNodes, MakeProxies, MakePath, DrapeCurve, ReloadImage, BuildSky],
+    Union[
+        AddMesh,
+        BuildGeoNodes,
+        MakeProxies,
+        MakePath,
+        DrapeCurve,
+        ReloadImage,
+        BuildSky,
+        AddCamera,
+        Render,
+        Delete,
+        ClearScene,
+        SetEnv,
+        ShadeTerrain,
+        ApplyShader,
+        SnowShell,
+        ApplyBiome,
+        WorldBiome,
+        BuildClouds,
+        BuildFog,
+        BuildRain,
+        BuildMotes,
+        BuildSnowCover,
+        ApplySeason,
+        ScenePreset,
+        MakeCurve,
+        CurveBuild,
+        BakeErode,
+        RevertErode,
+    ],
     Field(discriminator="op"),
 ]
 

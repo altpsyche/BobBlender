@@ -179,16 +179,11 @@ class BBT_OT_world_biome_world(Operator):
         if not world:
             self.report({"ERROR"}, f"Biome '{biome}' has no world block")
             return {"CANCELLED"}
-        env = context.scene.bbt_env
-        applied = []
-        for field, val in world.items():
-            if not hasattr(env, field):
-                continue
-            try:
-                setattr(env, field, val)
-                applied.append(field)
-            except (TypeError, ValueError):
-                print(f"[bob_blender_tools] biome world: bad value for {field!r}: {val!r}")
+        # The bbt_env setattr loop lives in core/biome.apply_world (shared with the MCP world_biome
+        # handler); the panel keeps the staged-pick resolution, the applier re-run, and the sky build.
+        from ..core import biome
+        res = biome.apply_world(context.scene.bbt_env, world)
+        applied = res["applied"]
         apply_all(context.scene)  # re-apply drivers/quality to the new world state
         built = ""
         if world_state.biome_build_sky:

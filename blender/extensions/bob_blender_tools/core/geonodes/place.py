@@ -8,7 +8,12 @@ import bpy
 
 
 def place(ng, name, target="new_object", mark_asset=False):
-    """Create the object and modifier. Return the list of created names."""
+    """Create the object and modifier. Return the list of created names.
+
+    The node group and the object usually share a name (e.g. "Terrain"), so the
+    returned list is de-duplicated in order: a caller reading `created` sees each
+    real name once, not a "Terrain, Terrain" pair (object name + node group name).
+    """
     created = [ng.name]
 
     if mark_asset:
@@ -22,4 +27,4 @@ def place(ng, name, target="new_object", mark_asset=False):
         modifier.node_group = ng
         created.append(obj.name)
 
-    return created
+    return list(dict.fromkeys(created))
