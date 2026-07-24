@@ -8,8 +8,8 @@ z = 0, and Height scales the relief.
 Modifier inputs: Size, Resolution, Height, Sea Level, Shape Scale, Scale,
 Detail, Roughness, Warp, Warp Scale, Ridged, Detail Strength, Seed.
 
-Not yet erosion. That is a later track (a repeat-zone block, or a heightmap pass
-in the tools venv). See docs/ARCHITECTURE.md.
+Not yet erosion. That is a later track (a repeat-zone block, or the heightmap_terrain
+pass driven by the in-process compute, core/heightfields). See docs/ARCHITECTURE.md.
 """
 
 from ..blocks import (

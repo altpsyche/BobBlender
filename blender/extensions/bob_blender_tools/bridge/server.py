@@ -26,7 +26,7 @@ _READ_TIMEOUT = 30.0
 
 def _validate_ops(ops):
     """Structural check at the socket trust boundary. Contract (Pydantic) validation runs
-    in the venv MCP server, but the socket is a second entry point: reject anything that is
+    in the agent-side MCP server (mcp_agent), but the socket is a second entry point: reject anything that is
     not a list of dicts each carrying a string "op" before it reaches a builder. apply_op
     still enforces the op allowlist."""
     if not isinstance(ops, list):

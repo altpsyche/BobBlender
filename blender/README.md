@@ -8,7 +8,7 @@ recipes and every tunable parameter.
 | Path | What it is |
 |------|-----------|
 | `bbmcp/` | The authoring library. Builders turn a validated op dict into meshes, geometry nodes, or materials. Reused by the headless executor and the live bridge. Named `bbmcp`, not `bob_build`, to avoid sys.path clashes with other bob tools. |
-| `runners/` | Entry scripts launched by Blender. `headless_build.py` reads a request, applies ops via `bbmcp`, saves the `.blend`, and writes a result JSON. |
+| (runners) | Headless entry scripts moved INTO the extension at `extensions/bob_blender_tools/runners/` (P8), so a standalone install builds headlessly with no repo. `headless_build.py` reads a request, applies ops via the extension's `core.dispatch`, saves the `.blend`, and writes a result JSON. |
 | `extensions/bob_blender_tools/` | The BobBlenderTools addon (id `bob_blender_tools`), the Bob suite's Blender-side host: one `BobBlenderTools` N-panel tab with the MCP Bridge (a managed socket server with start/stop/status, autostart, reload), the Heightfield Terrain panel, and next Scatter. Dev-installed by `bob-setup`. |
 
 ## Two ways it is invoked
@@ -16,7 +16,8 @@ recipes and every tunable parameter.
 Headless (batch, reproducible), via the MCP `build` tool. `executor.py` spawns a
 fresh Blender:
 ```
-blender --background --factory-startup --python blender/runners/headless_build.py \
+blender --background --factory-startup \
+        --python extensions/bob_blender_tools/runners/headless_build.py \
         -- <request.json> <result.json>
 ```
 
@@ -31,7 +32,7 @@ be installed into Blender.
 1. Add a function in `bbmcp/<area>.py` that takes an op dict and returns a result
    dict.
 2. Register it in `bbmcp/dispatch.py`.
-3. Add the matching op model in `tools/bobtools/mcp/contracts.py`.
+3. Add the matching op model in the extension's `mcp_agent/contracts.py`.
 
 ## Adding a geometry-node recipe
 

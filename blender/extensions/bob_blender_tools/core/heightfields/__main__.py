@@ -1,5 +1,6 @@
-"""CLI for a bake, so Blender (a different interpreter) can drive one by
-subprocess: `python -m bobtools.heightfields --out X.png --params-file p.json`.
+"""CLI for a bake, so another interpreter can drive one by subprocess. Run it as
+`python -m heightfields --out X.png --params-file p.json` (with this core dir on sys.path),
+or from the dev venv as `python -m bobtools.hf_cli ...` (which puts core on the path first).
 
 Prints the result metadata as JSON on the last stdout line. `--backends` prints
 the available compute backends (and the GPU device name if present) instead of
@@ -28,7 +29,7 @@ def _print_backends():
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="bobtools.heightfields")
+    ap = argparse.ArgumentParser(prog="heightfields")
     ap.add_argument("--out", help="absolute PNG path")
     ap.add_argument("--params-file", help="JSON full-params file")
     ap.add_argument("--knobs-file", help="JSON flat-knobs file (expanded via build_params)")

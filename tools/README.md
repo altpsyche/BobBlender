@@ -26,22 +26,22 @@ it: `BOB_BLENDER`, `BOB_REPO`, `BOB_BRIDGE_HOST`, `BOB_BRIDGE_PORT`.
 | `bobtools/naming.py` | Naming helpers (slugs). | none |
 | `bobtools/scaffold.py` | `bob-new-project <name>`, a new project from the template. | none |
 | `bobtools/setup.py` | `bob-setup`, dev-installs the extension and prints a checklist. | none |
-| `bobtools/mcp/contracts.py` | Pydantic op vocabulary, validated at the boundary. | `pydantic` |
-| `bobtools/mcp/executor.py` | Headless executor. Spawns Blender to build a `.blend`. | none |
-| `bobtools/mcp/bridge.py` | Live executor. Sends ops to the open Blender over a socket. | none |
-| `bobtools/mcp/mcp_server.py` | `bob-mcp`, the MCP server exposing repo and build tools. | `mcp` |
+| `bobtools/mcp_launch.py` | `bob-mcp` dev launcher: runs the extension's `mcp_agent` server in-repo. | `mcp`, `pydantic` |
 | `bobtools/heightfields/` | Terrain heightfield generation and erosion (CPU/GPU). Writes a heightmap PNG that `heightmap_terrain` displaces. See `../docs/SYSTEMS.md`. | `numpy`, `pillow`, `scipy`, optional `cupy` |
 | `bobtools/comfyui.py` | ComfyUI API client (queue a workflow, fetch outputs). | `httpx`, `websockets` |
 
 ## MCP server
 
-Registered in `../.mcp.json` with a portable `uv run` invocation. Tools:
-`list_projects`, `list_library_assets`, `create_project`, `build` (headless),
-and `build_live` (into the open Blender via the BobBlenderTools extension).
+The server now ships INSIDE the extension (`../blender/extensions/bob_blender_tools/mcp_agent/`)
+so it runs standalone with no repo — see [`../docs/MCP.md`](../docs/MCP.md) for the full
+install/connect/use flow and the **Copy MCP Config** button. In-repo, `bob-mcp` (this package's
+`mcp_launch.py`, registered in `../.mcp.json`) runs that same server. Tools: `list_projects`,
+`list_library_assets`, `create_project`, `build` (headless), `build_live` (into the open Blender),
+`bake_heightfield`.
 
-Adding a build op stays small: an op model in `mcp/contracts.py`, a builder in
-`../blender/extensions/bob_blender_tools/core/`, and one line in its `dispatch.py`.
-No new MCP tool is needed, since `build` and `build_live` are generic over ops.
+Adding a build op stays small: an op model in the extension's `mcp_agent/contracts.py`, a builder
+in `../blender/extensions/bob_blender_tools/core/`, and one line in its `dispatch.py`. No new MCP
+tool is needed, since `build` and `build_live` are generic over ops.
 
 ## ComfyUI
 

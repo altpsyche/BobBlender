@@ -46,7 +46,7 @@ _PREVIEW_KEY = "hf"
 # Panel presets: picking a landscape family loads a good starting look -- the four
 # global knobs reset to neutral (0.5, the preset as authored) and the Blender-side
 # display knobs (height, sea level) that suit the family. The table is committed in
-# presets.json, generated from the venv presets by tools/scripts/gen_panel_presets.py
+# presets.json, generated from the heightfield presets (core/heightfields/presets.py) by tools/scripts/gen_panel_presets.py
 # (the single source of truth; a drift test guards it). You then sculpt with the
 # knobs; there is no separate "custom" entry -- your knob tweaks ARE the custom look.
 def _load_hf_presets():
@@ -69,8 +69,8 @@ def _preset_items(self, context):
 
 # Real-world scale (1 Blender unit = 1 m). A preset stores a relief RATIO (relief / tile width),
 # not a fixed metre height, so the metre Height is derived from the artist's tile size and the
-# landform stays physically proportioned at any size. Mirrors presets.height_for in the venv
-# (which the panel cannot import); keep the two in sync.
+# landform stays physically proportioned at any size. Mirrors presets.height_for in
+# core/heightfields (duplicated so the panel avoids importing the numpy compute); keep in sync.
 _RELIEF_MIN_M = 0.5
 _RELIEF_CEIL_FRAC = 0.6
 
@@ -228,6 +228,41 @@ class BBT_OT_reload(Operator):
         return {"FINISHED"}
 
 
+class BBT_OT_copy_mcp_config(Operator):
+    bl_idname = "bob_blender_tools.copy_mcp_config"
+    bl_label = "Copy MCP Config"
+    bl_description = ("Copy a .mcp.json snippet (with this install's resolved path) for an agent "
+                     "client such as Claude Code. The agent-side MCP server ships inside this "
+                     "extension; no repo checkout needed. See docs/MCP.md")
+
+    def execute(self, context):
+        # realpath so a dev symlink install resolves to the real tree, matching the runner bootstrap.
+        ext = os.path.dirname(os.path.realpath(__file__))
+        launcher = os.path.join(ext, "mcp_agent", "__main__.py")
+        snippet = json.dumps(
+            {
+                "mcpServers": {
+                    "bobblendermcp": {
+                        "type": "stdio",
+                        "command": "uv",
+                        "args": [
+                            "run",
+                            "--with", "mcp>=1.2",
+                            "--with", "pydantic>=2",
+                            "--with", "numpy>=1.26",
+                            "python", launcher,
+                        ],
+                        "env": {},
+                    }
+                }
+            },
+            indent=2,
+        )
+        context.window_manager.clipboard = snippet
+        self.report({"INFO"}, "MCP config copied to clipboard (paste into .mcp.json)")
+        return {"FINISHED"}
+
+
 class BBT_OT_asset_pack_add(Operator):
     bl_idname = "bob_blender_tools.asset_pack_add"
     bl_label = "Add Asset Pack Folder"
@@ -274,7 +309,7 @@ class BBT_OT_rescan_packs(Operator):
         return {"FINISHED"}
 
 
-# Filter-stack editor (P4). The venv terrain engine evaluates an ordered op stack
+# Filter-stack editor (P4). The heightfield engine (core/heightfields) evaluates an ordered op stack
 # (generators write a base, filters and erosion shape it, selectors mask where a
 # filter acts). This exposes that stack in the panel: a preset is a starting point
 # the artist loads and then edits op by op. Each op kind draws only its own params;
@@ -512,7 +547,7 @@ def _stack_from_ops(hf):
     return [_op_to_dict(op) for op in hf.ops if op.enabled]
 
 
-# Heightfield terrain: bake in the venv, build in place here.
+# Heightfield terrain: bake in-process (core/heightfields; dev-venv host-hop fallback), build in place here.
 class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
     # No Material picker (docs/UX-REDESIGN.md decision D): a terrain gets its material by
@@ -543,7 +578,7 @@ class BBT_HeightfieldProps(PropertyGroup):
     seed: IntProperty(name="Seed", default=7,
                       description="Random variation; the same seed always gives the same terrain")
     # The five curated global knobs. Each is 0..1 with 0.5 meaning "the preset as
-    # authored"; the venv (params.resolve_stack) turns them into the op stack.
+    # authored"; the compute (core/heightfields params.resolve_stack) turns them into the op stack.
     relief: FloatProperty(name="Relief", default=0.5, min=0.0, max=1.0,
                           description="Ruggedness: higher is rockier, more dramatic ridgelines")
     detail: FloatProperty(name="Detail", default=0.5, min=0.0, max=1.0,
@@ -800,7 +835,7 @@ class BBT_OT_bake_terrain(Operator):
         target = os.path.basename((hf.target or "terrain").strip()) or "terrain"
         out_abs = os.path.join(_output_dir(), f"{target}_hf.png")
         # Either send the edited op stack verbatim (P4 custom mode), or the preset
-        # plus the five global knobs; the venv turns knobs into a stack, so the panel
+        # plus the five global knobs; the compute turns knobs into a stack, so the panel
         # does not duplicate that logic.
         if hf.use_custom_stack and len(hf.ops):
             knobs = {"size": hf.resolution, "seed": hf.seed, "backend": hf.backend,
@@ -1022,6 +1057,10 @@ class BBT_PT_panel(Panel):
         layout.operator("bob_blender_tools.reload_builders", icon="CONSOLE")
 
         layout.separator()
+        layout.label(text="Agent authoring (MCP): drive this session from an agent client", icon="URL")
+        layout.operator("bob_blender_tools.copy_mcp_config", icon="COPYDOWN")
+
+        layout.separator()
         layout.label(text="Asset packs (folders set in add-on preferences)", icon="ASSET_MANAGER")
         layout.operator("bob_blender_tools.rescan_packs", icon="FILE_REFRESH")
 
@@ -1204,6 +1243,7 @@ _CLASSES = (
     BBT_OT_start,
     BBT_OT_stop,
     BBT_OT_reload,
+    BBT_OT_copy_mcp_config,
     BBT_OT_asset_pack_add,
     BBT_OT_asset_pack_remove,
     BBT_OT_rescan_packs,

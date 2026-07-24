@@ -1008,7 +1008,7 @@ def _curve_band_spec(curve, terrain, cap=300):
 class BBT_OT_curve_bake_erode(Operator):
     bl_idname = "bob_blender_tools.curve_bake_erode"
     bl_label = "Bake & Erode Curves"
-    bl_description = ("Commit: run the venv erosion on the terrain heightfield to weather the landscape "
+    bl_description = ("Commit: run the heightfield erosion on the terrain heightfield to weather the landscape "
                       "the curves shape, then RE-IMPOSE every curve on the eroded terrain (re-drape, "
                       "carve the channel + banks, rebuild the water) so bed, banks and water re-derive "
                       "together and the water stays contained -- no gap. Rerun after editing curves or "

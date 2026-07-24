@@ -1,8 +1,9 @@
 """The headless executor: run a validated BuildRequest through Blender.
 
-This is the swappable boundary. Today it spawns `blender --background` and runs
-the bpy-side runner. A live-socket executor can later implement the same
-`run_build(request) -> BuildResult` signature with zero changes upstream.
+This is the swappable boundary. It spawns `blender --background` and runs the bpy-side
+runner shipped inside this extension (runners/headless_build.py), so a standalone install
+(no repo) can still build headlessly. The live-socket executor (bridge.py) implements the
+same run_build(request) -> BuildResult signature for build_live.
 """
 
 import json
@@ -11,7 +12,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .. import config
+from . import paths
 from .contracts import BuildRequest, BuildResult
 
 # Logs go to stderr. stdout is the MCP stdio protocol channel.
@@ -19,12 +20,12 @@ log = logging.getLogger("bob.executor")
 
 
 def run_build(request: BuildRequest, *, timeout: float = 300.0) -> BuildResult:
-    blender = config.blender_binary()
-    runner = config.blender_runner("headless_build.py")
+    blender = paths.blender_binary()
+    runner = paths.runner_path()
 
     try:
-        output_abs = config.resolve_under_repo(request.output_file)
-        base_abs = str(config.resolve_under_repo(request.base_file)) if request.base_file else ""
+        output_abs = paths.resolve_output(request.output_file)
+        base_abs = str(paths.resolve_output(request.base_file)) if request.base_file else ""
     except ValueError as exc:
         return BuildResult(ok=False, output_file=request.output_file, error=str(exc))
 

@@ -10,14 +10,17 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
   Blender Asset Library. Agent output can land in `library/_generated/`
   (gitignored) and be appended into hand-edited files via the Asset Browser.
 - `tools/`: a Python project (`bobtools`) that runs in its own venv, not inside
-  Blender. `bobtools/mcp/` is the framework and bus (contracts, executors, bridge,
-  MCP server); repo utilities and the ComfyUI client sit alongside. The terrain
-  compute moved into the extension at `core/heightfields/` (P4, single source); the
-  venv reaches that one copy via `bobtools/_hfpath.py` (puts the core dir on sys.path).
-- `blender/`: code that runs inside Blender's Python. `core/` is the authoring
-  library, `runners/` are headless entry scripts, `extensions/bob_blender_tools/`
+  Blender: repo utilities, the ComfyUI client, and a thin `bob-mcp` launcher
+  (`bobtools/mcp_launch.py`) for in-repo dev. The MCP server itself moved into the
+  extension (`mcp_agent/`, P8) so it ships with the product and runs standalone; the
+  terrain compute likewise lives in the extension at `core/heightfields/` (P4, single
+  source), which the venv reaches via `bobtools/_hfpath.py` (puts the core dir on sys.path).
+- `blender/`: code that runs inside Blender's Python. `extensions/bob_blender_tools/`
   is the BobBlenderTools addon (World, Terrain, Scatter, Shaders, Atmosphere, and a
-  collapsed Advanced/Bridge panel; see the panel-UX section below).
+  collapsed Advanced/Bridge panel; see the panel-UX section below). It is the whole
+  shippable product: `core/` (authoring library), `ui/`, `bridge/` (the live socket),
+  `mcp_agent/` (the agent-side MCP server), and `runners/` (headless entry scripts).
+  See [MCP.md](MCP.md) for the agent setup and tool reference.
 - `renders/`: outputs, gitignored.
 - `config/`, `docs/`, `references/`.
 
@@ -53,7 +56,7 @@ tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
   reproducible builds; `bridge.py` targets the open session for live work. Both
   present the same shape, so adding one did not change anything upstream.
 
-To grow the vocabulary: add an op model in `bobtools/mcp/contracts.py`, a builder
+To grow the vocabulary: add an op model in the extension's `mcp_agent/contracts.py`, a builder
 in `blender/extensions/bob_blender_tools/core/`, and one line in `blender/extensions/bob_blender_tools/core/dispatch.py`. Geometry-node
 builders are recipes in `blender/extensions/bob_blender_tools/core/geonodes/recipes/`.
 
@@ -147,7 +150,7 @@ contract (`contracts.py`) runs in the long-running venv MCP server, which parses
 it once at startup. So changing an existing recipe body needs only Reload
 Builders, but adding or changing an op's contract also needs the MCP server
 reconnected (`/mcp reconnect bobblendermcp`, or restart the CLI). Restarting
-Blender alone does not reload the tools-side contract, `build_live` will reject
+Blender alone does not reload the agent-side contract, `build_live` will reject
 the new op tag until the server is reconnected.
 
 ## Firmament: the atmosphere capability
@@ -300,7 +303,8 @@ the MCP bus.
   `bob_blender_tools.*`, classes `BBT_*`, N-panel tab `BobBlenderTools`, scene
   props `bbt_*`.
 - MCP capability (kept MCP, correctly): the MCP server `bobblendermcp` (in
-  `.mcp.json`), the venv package `bobtools/mcp/`, and the live MCP Bridge panel.
+  `.mcp.json`), the agent-side package in the extension (`mcp_agent/`), and the live
+  MCP Bridge panel.
 - Builder library: `bob_blender_tools.core` (was `core`). It builds the whole
   suite (terrain, scatter, proxies, paths); the old MCP-flavoured name was a
   misnomer and is gone. As a namespaced subpackage of the extension it is
@@ -319,8 +323,8 @@ Git plus Git-LFS. `.blend`, textures, and volumes go through LFS
 
 ## Repo boundary (kept extract-ready)
 
-BobBlenderMCP stays in this monorepo for now. The framework (`bobtools/mcp/`:
-contracts, executor, bridge, server, plus the extension and dispatch) is the bus;
+BobBlenderMCP stays in this monorepo for now. The framework (the extension's
+`mcp_agent/`: contracts, executor, bridge, server, plus the socket bridge and dispatch) is the bus;
 compute capabilities (`core/heightfields/`, later a scatter package) ride over
 it and stay separable. Everything is kept extract-ready so a piece can later split
 into its own repo (BobBlenderMCP / BobBlenderHeightFields / BobBlenderScatter under

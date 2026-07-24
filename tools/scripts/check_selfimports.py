@@ -62,6 +62,12 @@ def check_package(pkg_dir: pathlib.Path) -> list[str]:
     for path in sorted(pkg_dir.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
+        # runners/ holds Blender-side entry scripts (blender --python), not intra-package code.
+        # They legitimately bootstrap the addon by absolute name after a sys.path insert, so they
+        # are exempt from the relative-import rule. mcp_agent/ is the standalone agent-side server;
+        # it never imports the bpy-bound addon package, so it too is outside the two-worlds rule.
+        if "runners" in path.parts or "mcp_agent" in path.parts:
+            continue
         for lineno, source in check_file(path):
             rel = path.relative_to(REPO_ROOT)
             violations.append(f"{rel}:{lineno}: {source}")

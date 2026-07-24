@@ -1,8 +1,8 @@
 """Image ops. Small, so a fresh bake shows without a manual reload.
 
-reload_image reloads image datablocks from disk. After the venv re-bakes a
-heightmap PNG, this refreshes the datablock the terrain samples, and tagging
-objects makes the geometry-node modifiers re-evaluate.
+reload_image reloads image datablocks from disk. After a heightmap PNG is re-baked,
+this refreshes the datablock the terrain samples, and tagging objects makes the
+geometry-node modifiers re-evaluate.
 """
 
 import os
