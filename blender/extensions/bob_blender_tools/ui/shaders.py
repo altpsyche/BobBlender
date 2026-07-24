@@ -35,6 +35,7 @@ from bpy.props import (
 from bpy.types import Operator, Panel, PropertyGroup
 
 from ..bridge import server
+from ..core import shading
 from . import helpers, world
 
 # The bbmcp modules, imported at register and held so unregister uses the same objects
@@ -61,33 +62,10 @@ _WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Wave Detail", "
                "Foam Color", "Foam Amount", "Shore Foam", "Foam Crispness"]
 _WATER_FREEZE = ["Frozen"]
 
-# Surface presets: named parameter sets applied to the wrapper's Master inputs (like the
-# scatter layer types and the cloud presets). A Blender-side dict; nothing else reads it.
-# S1 sets the solid-colour look and per-instance variation; the weather knobs stay at
-# their defaults (snow whitens by coverage when the world snow rises).
-SURFACE_PRESETS = {
-    "rock": {"label": "Rock", "desc": "Mid-grey stone, rough, some variation",
-             "knobs": {"Base Color": (0.34, 0.33, 0.31, 1.0), "Roughness": 0.85,
-                       "Metallic": 0.0, "Variation": 0.15}},
-    "cliff": {"label": "Cliff", "desc": "Dark grey-brown rock face",
-              "knobs": {"Base Color": (0.22, 0.20, 0.18, 1.0), "Roughness": 0.90,
-                        "Metallic": 0.0, "Variation": 0.20}},
-    "bark": {"label": "Bark", "desc": "Warm brown tree bark",
-             "knobs": {"Base Color": (0.20, 0.13, 0.08, 1.0), "Roughness": 0.80,
-                       "Metallic": 0.0, "Variation": 0.25}},
-    "soil": {"label": "Soil", "desc": "Dark earth, fully rough",
-             "knobs": {"Base Color": (0.14, 0.10, 0.07, 1.0), "Roughness": 1.0,
-                       "Metallic": 0.0, "Variation": 0.20}},
-    "metal": {"label": "Metal", "desc": "Bare metal, low roughness",
-              "knobs": {"Base Color": (0.56, 0.57, 0.58, 1.0), "Roughness": 0.30,
-                        "Metallic": 1.0, "Variation": 0.05}},
-    "painted": {"label": "Painted", "desc": "A flat painted surface",
-                "knobs": {"Base Color": (0.30, 0.42, 0.55, 1.0), "Roughness": 0.50,
-                          "Metallic": 0.0, "Variation": 0.0}},
-    "grass_blade": {"label": "Grass Blade", "desc": "Green vegetation surface",
-                    "knobs": {"Base Color": (0.16, 0.28, 0.09, 1.0), "Roughness": 0.60,
-                              "Metallic": 0.0, "Variation": 0.30}},
-}
+# Surface / terrain / stack presets live in core/shading.py so the panel operators and the MCP
+# ops share one copy (subtract-duplication; docs/UX-REDESIGN.md). Bound here for the enum items
+# and the operator bodies that read them.
+SURFACE_PRESETS = shading.SURFACE_PRESETS
 
 
 # Terrain live knobs, grouped for the active-layer sub-panels (per-slot, prefixed L{i}).
@@ -102,48 +80,10 @@ _LAYER_OTHER = ["Paint Strength", "Curvature Strength"]
 _LAYER_FLOW = ["Flow Strength", "Flow Threshold"]
 _LAYER_CURVE = ["Curve Strength", "Curve Hard", "Curve B Strength", "Curve B Hard"]
 
-# Terrain layer presets: a surface plus the masks that place it, applied to the active slot.
-# The masks reuse the scatter vocabulary (slope band, altitude band, noise), so a rock layer
-# and rock scatter land on the same slopes. A base fill (soil/sand) carries no mask.
-TERRAIN_LAYER_PRESETS = {
-    "soil": {"label": "Soil", "desc": "Bare earth base fill (no mask)",
-             "knobs": {"Base Color": (0.16, 0.11, 0.07, 1.0), "Roughness": 1.0,
-                       "Slope Strength": 0.0, "Height Strength": 0.0, "Noise Strength": 0.0}},
-    "grass": {"label": "Grass", "desc": "Green on flatter ground, clumped",
-              "knobs": {"Base Color": (0.15, 0.26, 0.09, 1.0), "Roughness": 0.9,
-                        "Min Normal Z": 0.6, "Slope Strength": 0.7,
-                        "Noise Scale": 0.18, "Noise Contrast": 0.55, "Noise Strength": 0.5}},
-    "rock": {"label": "Rock", "desc": "Grey stone on mid-to-steep slopes",
-             "knobs": {"Base Color": (0.34, 0.33, 0.31, 1.0), "Roughness": 0.85,
-                       "Min Normal Z": 0.0, "Max Normal Z": 0.6, "Slope Strength": 0.85}},
-    "cliff": {"label": "Cliff", "desc": "Dark rock on the steepest faces",
-              "knobs": {"Base Color": (0.20, 0.19, 0.18, 1.0), "Roughness": 0.9,
-                        "Min Normal Z": 0.0, "Max Normal Z": 0.35, "Slope Strength": 1.0}},
-    "scree": {"label": "Scree", "desc": "Loose tan debris on ridges / mid-slopes",
-              "knobs": {"Base Color": (0.45, 0.40, 0.32, 1.0), "Roughness": 0.95,
-                        "Min Normal Z": 0.3, "Max Normal Z": 0.75, "Slope Strength": 0.6,
-                        "Curvature Strength": 0.3}},
-    "sand": {"label": "Sand", "desc": "Pale sand in the low ground",
-             "knobs": {"Base Color": (0.68, 0.62, 0.48, 1.0), "Roughness": 0.6,
-                       "Height Max": 4.0, "Height Falloff": 3.0, "Height Strength": 0.8}},
-}
-
-# When Add Layer fills a fresh slot, seed it with this preset by slot index.
-_ADD_ORDER = ("soil", "grass", "rock", "cliff", "scree", "sand")
-
-# Terrain-stack presets: enable a set of slots and place them. `layers` is an ordered list of
-# (layer-preset-key, overrides). Slots beyond the list are disabled.
-TERRAIN_STACK_PRESETS = {
-    "temperate": {"label": "Temperate", "desc": "Soil, clumped grass, rock on slopes",
-                  "layers": [("soil", {}), ("grass", {}), ("rock", {})]},
-    "alpine": {"label": "Alpine", "desc": "Rock, scree on ridges, cliff faces, snowy",
-               "layers": [("rock", {}), ("scree", {}), ("cliff", {})],
-               # Snow extent is the env snow line now (Conditions/Season); the stack just leans snowy.
-               "weather": {"Snow Strength": 1.0}},
-    "desert": {"label": "Desert", "desc": "Sand low, rock on slopes, scree ridges",
-               "layers": [("sand", {"Height Strength": 0.0}), ("rock", {}), ("scree", {})],
-               "weather": {"Snow Strength": 0.0}},
-}
+# Terrain layer / stack presets and the Add-Layer seed order: sourced from core/shading.py.
+TERRAIN_LAYER_PRESETS = shading.TERRAIN_LAYER_PRESETS
+_ADD_ORDER = shading._ADD_ORDER
+TERRAIN_STACK_PRESETS = shading.TERRAIN_STACK_PRESETS
 
 
 def _materials():
@@ -214,20 +154,9 @@ def _editing_material(context):
     return obj.active_material
 
 
-def _master_node(mat):
-    """The master group node inside a wrapper material (surface or terrain), or None."""
-    if mat is None or not mat.use_nodes or mat.node_tree is None:
-        return None
-    node = mat.node_tree.nodes.get("Master")
-    return node if node is not None and node.type == "GROUP" else None
-
-
-def _terrain_node(mat):
-    """The Master node when it is the terrain master (has the layer sockets), else None."""
-    node = _master_node(mat)
-    if node is None or node.node_tree is None:
-        return None
-    return node if node.node_tree is bpy.data.node_groups.get(_materials().TERRAIN_MASTER) else None
+# The pure node helpers live in core/shading.py (shared with the MCP ops); bound here.
+_master_node = shading.master_node
+_terrain_node = shading.terrain_node
 
 
 def _terrain_node_active(context):
@@ -259,17 +188,8 @@ def _draw_mod_knobs(layout, mod, names):
             col.prop(inp, "value", text=nm)
 
 
-def _set_layer(node, i, knobs):
-    """Set a terrain layer slot's inputs by knob name (the L{i} prefix added here)."""
-    for k, v in knobs.items():
-        sock = node.inputs.get(f"L{i} {k}")
-        if sock is not None:
-            sock.default_value = v
-
-
-def _layer_enabled(node, i):
-    sock = node.inputs.get(f"L{i} Enable")
-    return sock is not None and sock.default_value > 0.5
+_set_layer = shading.set_layer
+_layer_enabled = shading.layer_enabled
 
 
 def _assign(obj, mat):
@@ -277,46 +197,10 @@ def _assign(obj, mat):
     return _materials().assign_material(obj, mat)
 
 
-# The live-env feed: drivers on the single shared S_EnvState group, installed once and
-# feeding every material that instances it (Phase-0). Reinstalled on every New/Convert (harmless
-# if already present, and the only path that (re)creates the group). Removed when the World Live
-# Environment toggle is off or Firmament is absent, so no driver dangles.
-def _install_env_drivers(scene):
-    mats = _materials()
-    g = mats.env_state_group()
-    for node_name, field, _default in mats.ENV_STATE_DRIVERS:
-        node = g.nodes.get(node_name)
-        if node is None:
-            continue
-        sock = node.outputs[0]
-        try:
-            sock.driver_remove("default_value")
-        except (TypeError, RuntimeError):
-            pass
-        fc = sock.driver_add("default_value")
-        fc = fc[0] if isinstance(fc, list) else fc
-        drv = fc.driver
-        drv.type = "SCRIPTED"
-        var = drv.variables.new()
-        var.name = "v"
-        var.type = "SINGLE_PROP"
-        tgt = var.targets[0]
-        tgt.id_type = "SCENE"
-        tgt.id = scene
-        tgt.data_path = "bbt_env." + field
-        drv.expression = "v"
-
-
-def _remove_env_drivers():
-    g = bpy.data.node_groups.get(_materials().ENV_STATE)
-    if g is None:
-        return
-    for node in g.nodes:
-        if node.type == "VALUE":
-            try:
-                node.outputs[0].driver_remove("default_value")
-            except (TypeError, RuntimeError):
-                pass
+# The live-env feed (drivers on the shared S_EnvState group) lives in core/shading.py so the
+# panel and the MCP shading ops install it the same way; bound here.
+_install_env_drivers = shading.install_env_drivers
+_remove_env_drivers = shading.remove_env_drivers
 
 
 def _has_env(scene):
@@ -566,10 +450,7 @@ class BBT_OT_shaders_preset(Operator):
         if node is None:
             self.report({"ERROR"}, "Active material is not a BobShader")
             return {"CANCELLED"}
-        for name, val in SURFACE_PRESETS[self.preset]["knobs"].items():
-            sock = node.inputs.get(name)
-            if sock is not None:
-                sock.default_value = val
+        shading.apply_surface_preset(node, self.preset)
         self.report({"INFO"}, f"Applied {SURFACE_PRESETS[self.preset]['label']} preset")
         return {"FINISHED"}
 
@@ -584,12 +465,10 @@ class BBT_OT_shaders_terrain_add(Operator):
         node = _terrain_node_active(context)
         if node is None:
             return {"CANCELLED"}
-        nxt = next((i for i in range(mats.MAX_TERRAIN_LAYERS) if not _layer_enabled(node, i)), None)
+        nxt = shading.terrain_add_layer(node)
         if nxt is None:
             self.report({"WARNING"}, f"All {mats.MAX_TERRAIN_LAYERS} layer slots are in use")
             return {"CANCELLED"}
-        node.inputs[f"L{nxt} Enable"].default_value = 1.0
-        _set_layer(node, nxt, TERRAIN_LAYER_PRESETS[_ADD_ORDER[nxt]]["knobs"])
         context.scene.bbt_shaders.terrain_active = nxt
         self.report({"INFO"}, f"Added terrain layer {nxt}")
         return {"FINISHED"}
@@ -642,27 +521,12 @@ class BBT_OT_shaders_terrain_stack_preset(Operator):
         items=[(k, v["label"], v["desc"]) for k, v in TERRAIN_STACK_PRESETS.items()])
 
     def execute(self, context):
-        mats = _materials()
         node = _terrain_node_active(context)
         if node is None:
             return {"CANCELLED"}
-        spec = TERRAIN_STACK_PRESETS[self.preset]
-        for i in range(mats.MAX_TERRAIN_LAYERS):
-            layers = spec["layers"]
-            en = node.inputs.get(f"L{i} Enable")
-            if i < len(layers):
-                key, over = layers[i]
-                en.default_value = 1.0
-                _set_layer(node, i, TERRAIN_LAYER_PRESETS[key]["knobs"])
-                _set_layer(node, i, over)
-            else:
-                en.default_value = 0.0
-        for k, v in spec.get("weather", {}).items():
-            sock = node.inputs.get(k)
-            if sock is not None:
-                sock.default_value = v
+        shading.terrain_stack(node, self.preset)
         context.scene.bbt_shaders.terrain_active = 0
-        self.report({"INFO"}, f"Applied {spec['label']} stack")
+        self.report({"INFO"}, f"Applied {TERRAIN_STACK_PRESETS[self.preset]['label']} stack")
         return {"FINISHED"}
 
 
@@ -692,22 +556,12 @@ class BBT_OT_shaders_biome_terrain(Operator):
         # Update the active terrain material in place if there is one, else a per-object M_<obj>.
         active = _active_material(context)
         name = active.name if mats.master_type(active) == "terrain" else obj.name
-        mat = mats.terrain_material_for(obj, mat_name=name)
-        node = _terrain_node(mat)
-        if node is None:
-            self.report({"ERROR"}, "Could not build the terrain material")
+        try:
+            mat, _node, _count = shading.build_terrain_material(
+                obj, mat_name=name, layers=[L.get("layer") for L in layers])
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        for i in range(mats.MAX_TERRAIN_LAYERS):
-            en = node.inputs.get(f"L{i} Enable")
-            if en is None:
-                continue
-            if i < len(layers):
-                en.default_value = 1.0
-                key = layers[i].get("layer")
-                if key in TERRAIN_LAYER_PRESETS:
-                    _set_layer(node, i, TERRAIN_LAYER_PRESETS[key]["knobs"])
-            else:
-                en.default_value = 0.0
         _assign(obj, mat)
         _feed_env(context.scene)
         context.scene.bbt_shaders.terrain_active = 0
@@ -729,17 +583,10 @@ class BBT_OT_shaders_snow_shell_add(Operator):
         if surface is None:
             self.report({"ERROR"}, "Select a mesh for the snow shell")
             return {"CANCELLED"}
-        if _named_mod(surface, "BOB_Snow") is None:
+        had_coverage, _mod = shading.snow_shell_add(surface)
+        if not had_coverage:
             self.report({"WARNING"}, "No snow_cover pass on this surface (add it in Atmosphere); "
                                      "the shell will read 0 until then")
-        from ..core.geonodes import build_geonodes_on_object
-
-        build_geonodes_on_object(surface, "snow_shell", SNOW_SHELL_MOD, {})
-        # Keep the Set-Material modifier last so the shell's geometry is still shaded.
-        mats = _materials()
-        setmat = _named_mod(surface, mats.SET_MATERIAL_MOD)
-        if setmat is not None:
-            surface.modifiers.move(list(surface.modifiers).index(setmat), len(surface.modifiers) - 1)
         self.report({"INFO"}, f"Snow shell added on {surface.name}")
         return {"FINISHED"}
 

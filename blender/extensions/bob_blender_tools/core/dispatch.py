@@ -1,6 +1,21 @@
 """Op dispatch: map an op dict to its builder. One registry, grows over time."""
 
-from . import geonodes, images, mesh, path_curve, proxies, util, world
+from . import (
+    atmosphere,
+    biome,
+    camera,
+    geonodes,
+    images,
+    mesh,
+    path_curve,
+    proxies,
+    render,
+    scene,
+    shading,
+    splines_build,
+    util,
+    world,
+)
 
 _HANDLERS = {
     "add_mesh": mesh.add_mesh,
@@ -11,7 +26,32 @@ _HANDLERS = {
     "inspect_river": path_curve.inspect_river,  # read-only diagnostic (float check)
     "reload_image": images.reload_image,
     "build_sky": world.build_sky,
-    # "make_material": materials.make,    # later
+    # Scene control (core/camera.py, core/render.py, core/scene.py)
+    "add_camera": camera.add_camera,
+    "render": render.render,
+    "delete": scene.delete,
+    "clear_scene": scene.clear_scene,
+    "set_env": scene.set_env,
+    # Shading (core/shading.py)
+    "shade_terrain": shading.shade_terrain,
+    "apply_shader": shading.apply_shader,
+    "snow_shell": shading.snow_shell,
+    # Biome (core/biome.py): one call shades terrain + scatters + sets world for a named biome
+    "apply_biome": biome.apply_biome,
+    "world_biome": biome.world_biome,
+    # Atmosphere (core/atmosphere.py)
+    "build_clouds": atmosphere.build_clouds,
+    "build_fog": atmosphere.build_fog,
+    "build_rain": atmosphere.build_rain,
+    "build_motes": atmosphere.build_motes,
+    "build_snow_cover": atmosphere.build_snow_cover,
+    "apply_season": atmosphere.apply_season,
+    "scene_preset": atmosphere.scene_preset,
+    # Typed paths + water + erosion (core/splines_build.py)
+    "make_curve": splines_build.make_curve,
+    "curve_build": splines_build.curve_build,
+    "bake_erode": splines_build.bake_erode,
+    "revert_erode": splines_build.revert_erode,
 }
 
 

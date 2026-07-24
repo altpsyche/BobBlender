@@ -60,6 +60,29 @@ def list_library_assets() -> dict:
 
 
 @mcp.tool()
+def list_biomes() -> list[dict]:
+    """List biomes on the search path with what apply_biome will build for each.
+
+    Returns [{"name", "terrain": bool, "scatter": [kinds], "world": bool, "warnings": [..]}, ...]
+    so an agent can pick a biome and know whether it shades terrain, scatters, and sets the world.
+    """
+    paths.add_core_to_path()
+    import assets  # noqa: E402  (resolved via <ext>/core on sys.path)
+
+    out = []
+    for name in assets.list_biomes():
+        man = assets.biome_manifest(name)
+        out.append({
+            "name": name,
+            "terrain": bool(man.get("terrain")),
+            "scatter": sorted((man.get("scatter") or {}).keys()),
+            "world": bool(man.get("world")),
+            "warnings": assets.validate_biome(name),
+        })
+    return out
+
+
+@mcp.tool()
 def create_project(name: str) -> str:
     """Scaffold a new project folder under the projects root. Returns the created path.
 
@@ -159,6 +182,62 @@ def bake_heightfield(
     result = bake(out_abs, p, force=force, preview=preview)
     result["out_file"] = out_file
     return result
+
+
+@mcp.tool()
+def render_scene(
+    output_file: str,
+    engine: str = "BLENDER_EEVEE",
+    samples: int = 64,
+    resolution: tuple[int, int] = (1920, 1080),
+    camera: str | None = None,
+    device: str = "GPU",
+    base_file: str | None = None,
+) -> dict:
+    """Render a scene to an image file and return its path, so an agent can SEE its result.
+
+    By default renders the OPEN Blender session over the live bridge (where build_live authored
+    the scene). Pass base_file to instead open a saved .blend headlessly and render that.
+
+    output_file: workdir-relative image path (e.g. "_generated/shot.png").
+    engine: "BLENDER_EEVEE" (5.2 name, no _NEXT) or "CYCLES". samples: render samples.
+    resolution: (x, y) pixels. camera: camera object name, else the scene camera.
+    device: "GPU" or "CPU" (Cycles only; GPU is best-effort and falls back to CPU).
+    base_file: optional workdir-relative .blend to render headlessly instead of the live session.
+
+    Returns {ok, path, out_file, info, error}.
+    """
+    try:
+        out_abs = str(paths.resolve_output(output_file))
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "out_file": output_file}
+
+    op = {
+        "op": "render", "output": out_abs, "engine": engine, "samples": samples,
+        "resolution": list(resolution), "camera": camera, "device": device,
+    }
+
+    if base_file is not None:
+        # Headless: open the .blend, render, and re-save it next to the source (the PNG is
+        # what the render op writes). A throwaway output_file keeps run_build happy.
+        request = BuildRequest(output_file=base_file, ops=[op], base_file=base_file)
+        result = executor.run_build(request).model_dump()
+    else:
+        request = BuildRequest(output_file="(live)", ops=[op])  # validate the op
+        validated = [o.model_dump() for o in request.ops]
+        result = bridge.run_build_live(validated).model_dump()
+
+    info = ""
+    for r in result.get("results", []):
+        if r.get("op") == "render":
+            info = r.get("info", "")
+    return {
+        "ok": result.get("ok", False),
+        "path": out_abs if result.get("ok") else None,
+        "out_file": output_file,
+        "info": info,
+        "error": result.get("error"),
+    }
 
 
 def main() -> None:

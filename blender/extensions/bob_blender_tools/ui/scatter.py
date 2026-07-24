@@ -29,6 +29,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, 
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from ..bridge import server
+from ..core import scatter_build
 from . import helpers
 
 # The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
@@ -41,43 +42,17 @@ _HEIGHT_KNOBS = ["Height Strength", "Height Min", "Height Max", "Height Falloff"
 _NOISE_KNOBS = ["Noise Strength", "Noise Scale", "Noise Contrast", "Noise Seed"]
 _CAMERA_KNOBS = ["Camera Distance", "Camera Cone", "Cull Falloff"]
 
-# Layer type presets: a Blender-side dict (no codegen; no second interpreter reads
-# it, unlike the heightfield presets). Each seeds the structural config and the
-# initial live-knob values, and points assets at BOB_Assets_<Kind>. Icons are
-# standard mesh-add icons, so they are always present.
-LAYER_TYPES = {
-    "trees": {
-        "label": "Trees", "icon": "MESH_CONE", "align": "up",
-        "desc": "Upright, sparse; pulls back further from a path",
-        "knobs": {"density": 3.0, "distance_min": 1.1, "min_normal_z": 0.6,
-                  "min_scale": 0.8, "max_scale": 1.3},
-    },
-    "rocks": {
-        "label": "Rocks", "icon": "MESH_ICOSPHERE", "align": "normal",
-        "desc": "Tilted to the surface, allows slopes",
-        "knobs": {"density": 2.0, "distance_min": 0.7, "min_normal_z": 0.25,
-                  "min_scale": 0.4, "max_scale": 1.2},
-    },
-    "plants": {
-        "label": "Plants", "icon": "MESH_CIRCLE", "align": "normal",
-        "desc": "Denser, tilted to the surface, lightly clumped",
-        "knobs": {"density": 8.0, "distance_min": 0.35, "min_normal_z": 0.4,
-                  "min_scale": 0.6, "max_scale": 1.1,
-                  "noise_strength": 0.35, "noise_scale": 0.12, "noise_contrast": 0.5},
-    },
-    "grass": {
-        "label": "Grass", "icon": "MESH_PLANE", "align": "normal",
-        "desc": "Dense and small, tilted to the surface, clumped",
-        "knobs": {"density": 24.0, "distance_min": 0.12, "min_normal_z": 0.35,
-                  "min_scale": 0.5, "max_scale": 1.0,
-                  "noise_strength": 0.55, "noise_scale": 0.22, "noise_contrast": 0.6},
-    },
-    "empty": {
-        "label": "Empty", "icon": "DOT", "align": "up",
-        "desc": "Recipe defaults, no assets (bring your own collection)",
-        "knobs": {},
-    },
-}
+# The layer-type presets, the collection/naming helpers, the structural-params builder, the
+# biome-params merge, and the two build functions live in core/scatter_build.py so the panel
+# operators and the biome/MCP path share one copy (subtract-duplication; docs/UX-REDESIGN.md).
+# Bound here for the enum items, the UIList, and the operator bodies. edge_attr_name is re-exported
+# for ui/splines.py, which reads it to bind a Verge layer to a curve's edge ring.
+LAYER_TYPES = scatter_build.LAYER_TYPES
+_unique_object_name = scatter_build._unique_object_name
+_build_params = scatter_build._build_params
+_count_instances = scatter_build._count_instances
+_convert_layer_assets = scatter_build._convert_layer_assets
+edge_attr_name = scatter_build.edge_attr_name
 
 
 # Helpers
@@ -86,10 +61,6 @@ def _apply(ops):
     from ..core.dispatch import apply_op
 
     return [apply_op(op) for op in ops]
-
-
-def _assets_name(kind):
-    return f"BOB_Assets_{kind.capitalize()}"
 
 
 # Biome-scatter enum: biomes whose manifest carries a scatter recipe, so a whole layer stack can
@@ -145,54 +116,6 @@ def _live_input(obj, socket_name):
     return getattr(mod.properties.inputs, ident, None)
 
 
-def _coll_in_scene(parent, coll):
-    if coll.name in parent.children:
-        return True
-    return any(_coll_in_scene(child, coll) for child in parent.children)
-
-
-def _ensure_scatter_coll(emitter, scene):
-    """The emitter's scatter collection, created and scene-linked if needed."""
-    coll = emitter.bbt_scatter_coll
-    if coll is None:
-        coll = bpy.data.collections.new(f"{emitter.name} Scatter")
-        emitter.bbt_scatter_coll = coll
-    if not _coll_in_scene(scene.collection, coll):
-        scene.collection.children.link(coll)
-    return coll
-
-
-def _convert_layer_assets(lay):
-    """Weather a scatter layer's assets: convert every material in its assets collection to a
-    BobShader (Shaders' Convert, Collection scope) so the instances react to the world and are
-    editable per-layer. Idempotent (Convert skips a material that is already a BobShader) and it
-    installs the env feed. A no-op for a layer with no assets set yet (an empty layer the artist
-    has not pointed at a collection). This is what makes a standalone scatter weather without the
-    artist hunting for Shaders > Convert; it follows the layer's OWN collection, so a user's
-    imported assets are covered too, not only the BOB_Assets_* proxies."""
-    coll = getattr(lay, "assets", None)
-    if coll is None:
-        return
-    try:
-        bpy.ops.bob_blender_tools.shaders_convert(scope="collection", coll_name=coll.name)
-    except RuntimeError as exc:
-        print(f"[bob_blender_tools] scatter: convert {coll.name} skipped ({exc})")
-
-
-def _move_to_collection(obj, coll):
-    for c in list(obj.users_collection):
-        c.objects.unlink(obj)
-    coll.objects.link(obj)
-
-
-def _unique_object_name(base):
-    name, i = base, 1
-    while name in bpy.data.objects:
-        i += 1
-        name = f"{base}.{i:03d}"
-    return name
-
-
 def _active_coll(context):
     scn = context.scene.bbt_scatter
     return scn.emitter.bbt_scatter_coll if scn.emitter is not None else None
@@ -207,60 +130,9 @@ def _active_layer(context):
     return coll.objects[idx]
 
 
-def edge_attr_name(curve):
-    """The per-curve edge-ring attribute a Verge layer reads for ONE path (BobSplines R5). The
-    curve overlay writes the same name; both derive it from the curve's name (resolved at build,
-    like the along-curve binding), so a rename is picked up on the next build. Verge needs a curve:
-    an unbound layer reads a name nothing writes, so it scatters nothing."""
-    return f"bbt_curve_edge_{curve.name}"
-
-
 def _layer_recipe(lay):
     """Which recipe a layer builds: along-curve placement vs the surface Poisson scatter."""
     return "scatter_along" if lay.curve_mode == "along" else "scatter"
-
-
-def _build_params(obj, scn):
-    """Structural params for a layer rebuild, read from its object-native config.
-
-    The live knobs are intentionally omitted: build_geonodes restores them from the
-    old modifier by socket name, so a structural rebuild keeps the tuned values.
-    """
-    lay = obj.bbt_scatter_layer
-    if lay.curve_mode == "along":
-        # scatter_along places instances along the curve, then projects them DOWN onto the emitter
-        # so they sit on the terrain following the curve's route (needs both the curve and emitter).
-        params = {"align": lay.curve_align, "emitter": scn.emitter.name if scn.emitter else ""}
-        if lay.assets is not None:
-            params["assets"] = lay.assets.name
-        if lay.curve is not None:
-            params["curve"] = lay.curve.name
-        return params
-    params = {"emitter": scn.emitter.name if scn.emitter else "", "align": lay.align}
-    if lay.assets is not None:
-        params["assets"] = lay.assets.name
-    if lay.vgroup:
-        params["vgroup"] = lay.vgroup
-    # clear/keep/verge read a terrain curve mask the overlay baked (BobSplines C4/R5); no proximity.
-    # verge keeps to ONE path's edge ring, so it needs a curve; with none bound it reads a name
-    # nothing writes, so the layer scatters nothing (pick a path) rather than covering every verge.
-    if lay.curve_mode in ("clear", "keep", "verge"):
-        params["curve_mode"] = "clear" if lay.curve_mode == "clear" else "keep"
-        if lay.curve_mode == "verge":
-            params["curve_attr"] = edge_attr_name(lay.curve) if lay.curve is not None \
-                else "bbt_curve_none"
-    if scn.camera is not None:
-        params["camera"] = scn.camera.name
-    return params
-
-
-def _count_instances(context, objs):
-    """Total GN instances parented to any of objs, via the dependency graph."""
-    names = {o.name for o in objs}
-    dg = context.evaluated_depsgraph_get()
-    return sum(1 for i in dg.object_instances
-               if i.is_instance and i.parent is not None
-               and i.parent.original.name in names)
 
 
 # Data model
@@ -338,25 +210,6 @@ class BBT_OT_scatter_make_proxies(Operator):
         return {"FINISHED"}
 
 
-def _biome_layer_params(kind, cfg):
-    """Merge a biome scatter cfg onto the recipe's knob params over the LAYER_TYPES defaults.
-
-    Returns (knobs, align). The biome cfg speaks the manifest vocabulary (density, scale [min,max],
-    min_normal_z, max_normal_z, align); LAYER_TYPES fills anything it omits, so a partial recipe
-    still builds a sensible layer."""
-    spec = LAYER_TYPES[kind]
-    knobs = dict(spec["knobs"])
-    if "density" in cfg:
-        knobs["density"] = cfg["density"]
-    sc = cfg.get("scale")
-    if isinstance(sc, (list, tuple)) and len(sc) == 2:
-        knobs["min_scale"], knobs["max_scale"] = sc[0], sc[1]
-    for k in ("min_normal_z", "max_normal_z", "distance_min"):
-        if k in cfg:
-            knobs[k] = cfg[k]
-    return knobs, cfg.get("align", spec["align"])
-
-
 class BBT_OT_scatter_biome_scatter(Operator):
     bl_idname = "bob_blender_tools.scatter_biome_scatter"
     bl_label = "Biome Scatter"
@@ -384,40 +237,17 @@ class BBT_OT_scatter_biome_scatter(Operator):
             self.report({"ERROR"}, f"Biome '{self.biome}' has no scatter recipe")
             return {"CANCELLED"}
         warn = assets.validate_biome(self.biome)
-        coll = _ensure_scatter_coll(emitter, context.scene)
-        built = []
-        for kind, cfg in recipe.items():
-            if kind not in LAYER_TYPES or kind == "empty":
-                continue
-            spec = LAYER_TYPES[kind]
-            # Ensure the shared asset collection exists (make_proxies only fills an EMPTY
-            # collection, so re-running is idempotent).
-            _apply([{"op": "make_proxies", "kinds": [kind]}])
-            asset_coll = bpy.data.collections.get(_assets_name(kind))
-            knobs, align = _biome_layer_params(kind, cfg)
-            # Idempotent: reuse an existing layer of this kind (build_geonodes rebuilds it in
-            # place by name) instead of stacking a `.001` duplicate. So re-running Biome Scatter
-            # or Apply Biome refreshes the layers rather than doubling the instance count.
-            existing = next((o for o in coll.objects
-                             if getattr(o.bbt_scatter_layer, "kind", "") == kind), None)
-            name = existing.name if existing is not None \
-                else _unique_object_name(f"{emitter.name} {spec['label']}")
-            params = {"emitter": emitter.name, "align": align, **knobs}
-            if asset_coll is not None:
-                params["assets"] = asset_coll.name
-            if scn.camera is not None:
-                params["camera"] = scn.camera.name
-            _apply([{"op": "build_geonodes", "recipe": "scatter", "name": name, "params": params}])
-            obj = bpy.data.objects[name]
-            _move_to_collection(obj, coll)
-            lay = obj.bbt_scatter_layer
-            lay.kind = kind
-            lay.assets = asset_coll
-            lay.align = align
-            built.append(kind)
-        if built:
+        # The build loop (proxies + a reused layer per kind) lives in core/scatter_build; the panel
+        # keeps the emitter resolution, the active-layer / summary UI writes, and the report. The
+        # instances are weathered in Shaders (or by Build Biome), so build without converting here.
+        created = scatter_build.biome_scatter(emitter, recipe, scene=context.scene,
+                                              camera=scn.camera)
+        built = [bpy.data.objects[n].bbt_scatter_layer.kind for n in created
+                 if n in bpy.data.objects]
+        coll = emitter.bbt_scatter_coll
+        if created and coll is not None:
             scn.active = len(list(coll.objects)) - 1
-        total = _count_instances(context, list(coll.objects))
+        total = _count_instances(context, list(coll.objects)) if coll is not None else 0
         scn.summary = f"{len(built)} biome layers, ~{total} instances"
         msg = f"Scattered {self.biome}: {', '.join(built) or '(no kinds)'}"
         if warn:
@@ -446,34 +276,15 @@ class BBT_OT_scatter_add(Operator):
             return {"CANCELLED"}
 
         spec = LAYER_TYPES[self.kind]
-        coll = _ensure_scatter_coll(emitter, context.scene)
-
-        assets = None
-        if self.kind != "empty":
-            _apply([{"op": "make_proxies", "kinds": [self.kind]}])
-            assets = bpy.data.collections.get(_assets_name(self.kind))
-
-        name = _unique_object_name(f"{emitter.name} {spec['label']}")
-        params = {"emitter": emitter.name, "align": spec["align"], **spec["knobs"]}
-        if assets is not None:
-            params["assets"] = assets.name
-        if scn.camera is not None:
-            params["camera"] = scn.camera.name
-        _apply([{"op": "build_geonodes", "recipe": "scatter",
-                 "name": name, "params": params}])
-
-        obj = bpy.data.objects[name]
-        _move_to_collection(obj, coll)
-        lay = obj.bbt_scatter_layer
-        lay.kind = self.kind
-        lay.assets = assets
-        lay.align = spec["align"]
-        scn.active = list(coll.objects).index(obj)
-        # Weather the layer's assets: convert their materials to BobShaders so the instances
-        # react to the world (and are editable per-layer in Shaders), the same first-class-shader
-        # path Build Biome takes. Idempotent, and it installs the env feed. An "empty" layer has
-        # no assets yet (the artist points it at their own collection later) and is converted then.
-        _convert_layer_assets(lay)
+        # The layer build (proxies + the scatter recipe + weathering the assets) lives in
+        # core/scatter_build; the panel keeps the emitter resolution, the active-index write, and
+        # the report. add_layer weathers the assets (convert=True) so a fresh layer reacts to the
+        # world with no hunt for Shaders > Convert, the same first-class-shader path Build Biome takes.
+        obj, _assets = scatter_build.add_layer(
+            emitter, self.kind, scene=context.scene, camera=scn.camera)
+        coll = emitter.bbt_scatter_coll
+        if coll is not None:
+            scn.active = list(coll.objects).index(obj)
         self.report({"INFO"}, f"Added {spec['label']} layer")
         return {"FINISHED"}
 
