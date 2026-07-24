@@ -46,10 +46,10 @@ or `build_live` (open session) MCP tools.
 | `shade_terrain` | `shading.shade_terrain` | `object`: str = **required**<br>`stack`: str \| None = `None`<br>`layers`: list \| None = `None`<br>`material`: str \| None = `None`<br>`assign`: bool = `True` |
 | `apply_shader` | `shading.apply_shader` | `object`: str = **required**<br>`master`: 'surface' \| 'terrain' \| 'water' = `'surface'`<br>`preset`: str \| None = `None` |
 | `snow_shell` | `shading.snow_shell` | `object`: str = **required** |
-| `apply_biome` | `biome.apply_biome` | `object`: str = **required**<br>`biome`: str = **required**<br>`assign`: bool = `True`<br>`weather_assets`: bool = `True` |
+| `apply_biome` | `biome.apply_biome` | `object`: str = **required**<br>`biome`: str = **required**<br>`assign`: bool = `True`<br>`weather_assets`: bool = `True`<br>`world`: bool = `True`<br>`curve_mode`: 'scatter' \| 'clear' \| 'keep' \| None = `None` |
 | `world_biome` | `biome.world_biome` | `biome`: str = **required** |
 | `build_clouds` | `atmosphere.build_clouds` | `object`: str = `'BOB_Clouds'`<br>`cloud_shadows`: bool = `True` |
-| `build_fog` | `atmosphere.build_fog` | `object`: str = `'BOB_Fog'`<br>`mode`: 'height_fog' \| 'noise_fog' \| 'ground_fog' = `'height_fog'`<br>`heightmap`: str = `''` |
+| `build_fog` | `atmosphere.build_fog` | `object`: str = `'BOB_Fog'`<br>`mode`: 'height_fog' \| 'noise_fog' \| 'ground_fog' = `'height_fog'`<br>`heightmap`: str = `''`<br>`preset`: str \| None = `None`<br>`density`: float \| None = `None` |
 | `build_rain` | `atmosphere.build_rain` | `object`: str = `'BOB_Rain'`<br>`camera`: str \| None = `None`<br>`motion_blur`: bool = `True`<br>`preset`: str \| None = `None` |
 | `build_motes` | `atmosphere.build_motes` | `object`: str = `'BOB_Motes'`<br>`camera`: str \| None = `None`<br>`motion_blur`: bool = `True`<br>`preset`: str \| None = `None` |
 | `build_snow_cover` | `atmosphere.build_snow_cover` | `object`: str = **required** |

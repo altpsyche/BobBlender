@@ -86,6 +86,9 @@ class BuildSky(BaseModel):
     # sun_elevation, sun_azimuth (manual sun in degrees); sun_strength, sun_angle,
     # sun_disc, sun_intensity; altitude, air, ozone, turbidity, ground_albedo
     # (the 5.2 MULTIPLE_SCATTERING sky); world_strength.
+    # The geographic-sun inputs (time_of_day/date/place) DEFAULT from the shared world
+    # state (Scene.bbt_env) when omitted, so a bare build_sky honours a prior set_env;
+    # explicit keys here override, and use_override bypasses the solar model entirely.
     params: dict = Field(default_factory=dict)
 
 
@@ -162,6 +165,12 @@ class ApplyBiome(BaseModel):
     biome: str  # biome folder name (see the list_biomes tool)
     assign: bool = True  # assign the built terrain material
     weather_assets: bool = True  # convert scattered assets to BobShaders so they weather
+    world: bool = True  # write the biome's world block to bbt_env; False keeps the current
+    # env, so a set_env after (or a re-apply) is not clobbered by the biome's own world block.
+    # Path-aware scatter: "clear" pulls instances off carved paths, "keep" confines them to the
+    # path band, None (default) scatters everywhere. Reads the terrain curve mask, so build the
+    # typed curve first, then re-apply the biome (with world=False) to open the trail corridor.
+    curve_mode: Literal["scatter", "clear", "keep"] | None = None
 
 
 class WorldBiome(BaseModel):
@@ -181,6 +190,10 @@ class BuildFog(BaseModel):
     object: str = "BOB_Fog"
     mode: Literal["height_fog", "noise_fog", "ground_fog"] = "height_fog"
     heightmap: str = ""  # absolute path, used only for ground_fog
+    # The default fog is dense (thick foggy-morning look) and washes the frame grey. For a thin,
+    # beam-friendly haze pass a preset (ground_mist/valley/banks/thick) and/or a density override.
+    preset: str | None = None
+    density: float | None = None  # explicit Density knob; overlays the preset/recipe default
 
 
 class BuildRain(BaseModel):

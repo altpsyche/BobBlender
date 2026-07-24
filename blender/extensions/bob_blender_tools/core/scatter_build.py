@@ -206,7 +206,7 @@ def _biome_layer_params(kind, cfg):
 
 # -- Builders (shared by the panel operators + the biome handler) ----------------------------
 def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
-              coll=None, name=None, reuse=False, convert=True):
+              coll=None, name=None, reuse=False, convert=True, curve_mode=None):
     """Build one scatter layer object on `emitter` and file it in the emitter's scatter collection.
 
     Ensures the kind's block-out proxy assets (make_proxies is idempotent: it only fills an empty
@@ -217,8 +217,10 @@ def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
     knobs/align default to the kind's LAYER_TYPES preset; pass merged biome values to override.
     reuse rebuilds an existing layer of this kind in place (build_geonodes is non-destructive) so
     a re-run refreshes rather than stacking a `.001` duplicate. convert weathers the layer's assets
-    (Add Layer wants this; biome scatter defers it to its own weather step). Returns (layer_object,
-    assets_collection | None)."""
+    (Add Layer wants this; biome scatter defers it to its own weather step). curve_mode
+    ("clear"/"keep") makes the layer read the terrain curve mask so it pulls off / confines to the
+    carved paths; it is also stamped on the layer so a later structural rebuild keeps it. Returns
+    (layer_object, assets_collection | None)."""
     if emitter is None:
         raise ValueError("no emitter to scatter on")
     if kind not in LAYER_TYPES:
@@ -248,6 +250,8 @@ def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
         params["assets"] = assets.name
     if camera is not None:
         params["camera"] = camera.name
+    if curve_mode in ("clear", "keep"):
+        params["curve_mode"] = curve_mode
     _apply_op({"op": "build_geonodes", "recipe": "scatter", "name": name, "params": params})
 
     obj = bpy.data.objects.get(name)
@@ -258,17 +262,24 @@ def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
     lay.kind = kind
     lay.assets = assets
     lay.align = align
+    if curve_mode is not None and hasattr(lay, "curve_mode"):
+        try:
+            lay.curve_mode = curve_mode
+        except (TypeError, ValueError):
+            pass
     if convert:
         _convert_layer_assets(lay, scene)
     return obj, assets
 
 
-def biome_scatter(emitter, recipe, *, scene, camera=None, convert=False):
+def biome_scatter(emitter, recipe, *, scene, camera=None, convert=False, curve_mode=None):
     """Build every layer in a biome scatter recipe on `emitter`. `recipe` is the manifest's scatter
     dict {kind: cfg}; unknown/`empty` kinds are skipped. Idempotent: reuses an existing layer of
     each kind so a re-run refreshes rather than doubling the instance count. convert weathers each
     layer's assets inline (off by default; Build Biome / apply_biome run the weather step with the
-    artist's checkbox). Returns the list of created layer object names."""
+    artist's checkbox). curve_mode ("clear"/"keep") is passed to every layer so a biome scatter can
+    be made path-aware; it reads the terrain curve mask, so build the typed curve first, then
+    re-run with curve_mode to open the corridor. Returns the list of created layer object names."""
     if emitter is None:
         raise ValueError("no emitter to scatter on")
     if not recipe:
@@ -280,6 +291,7 @@ def biome_scatter(emitter, recipe, *, scene, camera=None, convert=False):
             continue
         knobs, align = _biome_layer_params(kind, cfg)
         obj, _assets = add_layer(emitter, kind, scene=scene, knobs=knobs, align=align,
-                                 camera=camera, coll=coll, reuse=True, convert=convert)
+                                 camera=camera, coll=coll, reuse=True, convert=convert,
+                                 curve_mode=curve_mode)
         created.append(obj.name)
     return created

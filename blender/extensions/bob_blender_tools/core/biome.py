@@ -69,8 +69,14 @@ def apply_biome(op: dict) -> dict:
     layers, and its world block, each section the manifest carries, in order. This is the agent-side
     equivalent of the panel's Build Biome, with no bpy.ops chaining.
 
-    op: {"object": <mesh name>, "biome": <name>, "assign"?: bool, "weather_assets"?: bool}.
-    Raises ValueError on a missing object or biome (loud failure, per the handover)."""
+    op: {"object": <mesh name>, "biome": <name>, "assign"?: bool, "weather_assets"?: bool,
+    "world"?: bool, "curve_mode"?: "scatter"|"clear"|"keep"}. world=False skips the env-overwrite
+    leg (call set_env after apply_biome without it being clobbered, or re-apply the biome scatter
+    after building curves without touching the world). curve_mode makes the biome scatter
+    path-aware -- "clear" pulls instances off carved paths, "keep" confines them to the path band;
+    it reads the terrain curve mask, so build the typed curve first, then re-apply the biome (with
+    world=False) to open the corridor. Raises ValueError on a missing object or biome (loud
+    failure, per the handover)."""
     obj = shading._mesh_object(op.get("object"))
     biome = op.get("biome")
     if not biome:
@@ -94,15 +100,17 @@ def apply_biome(op: dict) -> dict:
         steps.append(f"terrain ({count} layers, {textured} textured)")
 
     if man["scatter"]:
-        names = scatter_build.biome_scatter(obj, man["scatter"], scene=scene)
+        names = scatter_build.biome_scatter(obj, man["scatter"], scene=scene,
+                                            curve_mode=op.get("curve_mode"))
         created += names
-        steps.append(f"scatter ({len(names)} layers)")
+        cm = op.get("curve_mode")
+        steps.append(f"scatter ({len(names)} layers{f', {cm}' if cm else ''})")
         if op.get("weather_assets", True):
             n = _weather_assets(names, scene)
             if n:
                 steps.append(f"weathered {n} asset set(s)")
 
-    if man["world"]:
+    if man["world"] and op.get("world", True):
         res = apply_world(_env.get_env(scene), man["world"])
         shading.feed_env(scene)  # re-affirm the surface env feed against the new world
         steps.append(f"world ({len(res['applied'])} fields)")
