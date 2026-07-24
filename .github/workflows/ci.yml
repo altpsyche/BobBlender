@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint + venv tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Self-import guard (no absolute self-imports in the extension)
+        run: python tools/scripts/check_selfimports.py
+
+      # --extra gpu is intentionally omitted: cupy-cuda13x needs a CUDA runtime the
+      # runner lacks, and the GPU tests skip themselves when cupy is unimportable.
+      - name: Unit tests
+        run: uv run --with pytest --extra all --project tools pytest tools/tests -q
+
+  # In-Blender geometry tests run against the ONLY supported target, Blender 5.2.
+  # Enabled once the spike / P0 lands the in-Blender test entry point (see
+  # docs/PRE-P0-SCOPE.md, Item B). Kept a separate job so the fast gate above is
+  # never blocked on the heavy Blender download.
+  blender-headless:
+    name: Blender 5.2 headless geometry tests
+    runs-on: ubuntu-latest
+    # TODO(P0): flip to always-on once tools/tests has an in-Blender entry point.
+    if: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Fetch Blender 5.2
+        run: |
+          set -euo pipefail
+          BLENDER_URL="https://download.blender.org/release/Blender5.2/blender-5.2.0-linux-x64.tar.xz"
+          mkdir -p "$HOME/blender"
+          curl -fsSL "$BLENDER_URL" | tar -xJ -C "$HOME/blender" --strip-components=1
+          echo "$HOME/blender" >> "$GITHUB_PATH"
+      - name: Run headless geometry tests
+        run: blender --background --python tools/tests/run_blender_tests.py
