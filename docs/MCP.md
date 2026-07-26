@@ -70,6 +70,8 @@ The server is repo-free and reads its locations from the environment (set them i
 | `BOB_RENDERS` | Renders root. | `<workdir>/renders` |
 | `BOB_TEMPLATE` | Folder `create_project` copies for a new project. | none (creates a bare folder + README) |
 | `BOB_ASSET_PACKS` | `os.pathsep`-separated asset-pack folders (models/biomes + texture sets). | add-on prefs + bundled block-out |
+| `BOB_GENERATED` | The generated pack the `comfy_*` tools write into and the Blender side reads back. Set it when generating, or the two halves can disagree about where an asset landed. | `<workdir>/packs/generated` |
+| `BOB_COMFY_URL` | The local ComfyUI server the `comfy_*` tools talk to. | `http://127.0.0.1:8188` |
 | `BOB_BLENDER` | Blender executable for the headless `build`. | known install locations, then PATH |
 | `BOB_BRIDGE_HOST` / `BOB_BRIDGE_PORT` | Live bridge socket. | `127.0.0.1` / `9876` |
 
@@ -94,14 +96,33 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `build` | Build ops into a headless `.blend`. | a resolvable Blender binary |
 | `bake_heightfield` | Generate + erode a terrain heightfield PNG. | `numpy` (CPU); CuPy on the machine for GPU |
 | `render_scene` | Render the live session (or a headless `.blend`) to an image; returns the path. | the bridge, or a Blender binary for `base_file` |
+| `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, shipped workflows. | — (reports "not reachable" rather than failing) |
+| `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. | a local ComfyUI + an SDXL checkpoint |
+| `comfy_mesh` | Prompt to a staged scatter asset (geometry + PBR). Returns the `import_generated` op. | a local ComfyUI + TRELLIS.2 |
+| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. | a local ComfyUI + TRELLIS.2 |
+| `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |
+| `comfy_stylize` | Restyle a rendered frame while holding its composition. | a local ComfyUI + SDXL ControlNets |
 
 The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonodes`,
 `make_proxies`), shading (`shade_terrain`, `apply_shader`, `snow_shell`), biome
 (`apply_biome`, `world_biome`), typed paths + water (`make_curve`, `curve_build`,
 `bake_erode`, `revert_erode`), atmosphere (`build_sky`, `build_clouds`, `build_fog`,
 `build_rain`, `build_motes`, `build_snow_cover`, `apply_season`, `scene_preset`), the
-shared env (`set_env`), and scene control (`add_camera`, `render`, `delete`,
-`clear_scene`). All are documented with their fields in [API.md](API.md).
+shared env (`set_env`), scene control (`add_camera`, `render`, `delete`,
+`clear_scene`), and generation's Blender half (`apply_texture_set`, `import_generated`,
+`export_control`). All are documented with their fields in [API.md](API.md).
+
+**Why generation is tools and not ops.** Talking to ComfyUI needs no Blender, so the `comfy_*` tools
+run in the MCP process and block there deliberately; only the steps that need `bpy` are ops. That
+split is also why every generation tool hands back the op that consumes its result, ready to send:
+`comfy_mesh` returns an `import_op`, `comfy_texture_set` returns an `apply_op`, and `comfy_heightmap`
+returns the `bake_params` fragment. ComfyUI is optional throughout — with no server every `comfy_*`
+tool returns `{"ok": false, "error": "...not reachable..."}` and nothing else changes.
+
+**One limit of headless `build`.** It imports the extension's `core` into a `--factory-startup`
+Blender without enabling the addon, so ops that read the shared env PropertyGroup (`set_env`,
+`apply_season`, `scene_preset`) raise there. Use `build_live` for those, or pass explicit params
+(`build_sky` with a `time_of_day` works headlessly; a bare `build_sky` reads the env it cannot see).
 
 ## A full scene over MCP
 
@@ -162,6 +183,65 @@ the far end. Both are single flags:
   paths, `keep` confines it to them) and `world` (set `false` to leave `bbt_env` untouched). Build
   the typed curve first, then re-apply with `world:false, curve_mode:"clear"` to open the corridor
   without re-writing the env you just set.
+
+## A prompted scene over MCP (generation)
+
+Needs a local ComfyUI (see [COMFYUI.md](COMFYUI.md)); with none of it, every other example above
+still works. Check `comfy_status()` first. Two flows, and both are measured end to end in
+`tools/scripts/headless_comfy_g6.py`.
+
+**Prompt to a shaded terrain, about 24 s.** The mask decides where the massif goes; the erosion stack
+builds every slope.
+
+```jsonc
+// 1. comfy_texture_set  prompt="mossy forest floor with small stones"
+//    -> {"set": "mossy_forest_floor_with_small_stones", "apply_op": {...}, "pack_dir": "..."}
+// 2. comfy_heightmap    prompt="one isolated steep massif in the north west, broad low valleys"
+//    -> {"path": ".../macro.png", "bake_params": {"macro": {"path": ".../macro.png"}}}
+// 3. bake_heightfield   out_file="_generated/terrain.png"
+//    params={"preset": "alpine", "size": 1024, "macro": {"path": ".../macro.png"}}
+// 4. build_live / build with:
+[
+  {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Terrain",
+   "params": {"heightmap": "<abs>/_generated/terrain.png", "size": 180, "resolution": 400,
+              "height": 54}},
+  {"op": "shade_terrain", "object": "Terrain", "layers": ["soil", "grass", "rock"]},
+  // The generated set onto a terrain LAYER. Structural: it rewires the material's sampler nodes.
+  {"op": "apply_texture_set", "object": "Terrain", "set": "mossy_forest_floor_with_small_stones",
+   "index": 1},
+  {"op": "add_camera", "name": "BOB_Camera", "location": [150, -150, 90], "look_at": [0, 0, 10]}
+]
+// 5. render_scene  output_file="_generated/shot.png"
+```
+
+**Prompt to a scattered asset, about 100 s.** `comfy_mesh` is the slow call and does the ComfyUI half
+only; `import_generated` is the Blender half (bake, scale to `height_m`, origin to base, LOD chain,
+BobShader, write the pack, link into `BOB_Assets_<Kind>`), and `comfy_mesh` hands it back ready.
+
+```jsonc
+// 1. comfy_mesh  prompt="a weathered granite boulder covered in lichen"  kind="rocks"
+//                height_m=1.8  faces=4000
+//    -> {"staged": {...}, "import_op": {...}, "pack_dir": "..."}
+// 2. build_live / build with:
+[
+  <the import_op from step 1, verbatim>,
+  {"op": "build_geonodes", "recipe": "scatter", "name": "ScatterRocks",
+   "params": {"emitter": "Terrain", "assets": "BOB_Assets_Rocks", "density": 0.4}}
+]
+```
+
+The `import_generated` result carries a `data` dict, which is how to CHECK the asset rather than
+trust it: `lod_faces` against the budget, `uv_overlap`, `height_m`, `origin_above_base`, `master_type`
+(should read `surface`), plus any `warnings`. Read it before rendering.
+
+Two more notes:
+
+- **Set `BOB_GENERATED`.** Generation writes into the generated pack; the Blender side has to resolve
+  the same folder. With the variable set both halves agree. In a live session the addon's own output
+  folder wins instead, so pass the `pack_dir` each tool returns.
+- **A block-out can drive the shape.** `export_control` writes an existing proxy out as a control mesh
+  and returns its path and height in `data`; pass that path to `comfy_mesh(control=...)` and the
+  generated asset keeps the silhouette and footprint of the object you placed.
 
 ## Reload rules (two-sided)
 

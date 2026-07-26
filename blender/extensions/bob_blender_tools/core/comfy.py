@@ -17,6 +17,8 @@ which is a proper per-job primitive rather than `/interrupt`'s "kill whatever is
 This module is the CLIENT plus the texture-set recipe. Job orchestration (the worker thread, the
 timer tick, the registry that clears on a file load) is `core/comfy_jobs.py`; it calls in here and
 nothing here calls back out, so the client stays drivable from a script with no scheduler.
+Per-node progress comes from `core/comfy_ws.py`, which is advisory: `wait()` still decides a job is
+finished from the jobs API, so a websocket that never connects costs granularity and nothing else.
 
 `preflight()` is the highest-value function in the file. Every realistic failure -- a pack that is
 not installed, a model that was never downloaded, a graph pasted in from a community workflow that
@@ -35,15 +37,23 @@ import urllib.request
 import uuid as _uuid
 
 try:
-    from . import comfy_maps
+    from . import comfy_maps, comfy_ws
 except ImportError:  # `core` itself on sys.path (the venv / headless route, core.heightfields' own
     import comfy_maps  # pattern via tools/bobtools/_hfpath.py), where there is no parent package
+    import comfy_ws
 
 # The server Bob talks to, most specific first: an explicit argument, then the addon preference
 # (pushed in by the addon, which owns bpy, the same bpy-free hand-off `assets.set_pref_roots`
 # uses), then the env var, then the default.
 DEFAULT_URL = "http://127.0.0.1:8188"
 _PREF_URL = None
+
+# ComfyUI routes a job's progress events to the socket whose `clientId` matches the `client_id` the
+# prompt was queued with, and it keys those sockets BY that id, so a second connection using the
+# same id replaces the first. The pid makes the id per-process, which is the collision that actually
+# happens here: the MCP server and a running Blender both drive the same ComfyUI. Within one process
+# the integration runs one job at a time (16 GB, R8), so one socket per process is enough.
+CLIENT_ID = f"bob_blender_tools-{os.getpid()}"
 
 
 def set_pref_url(url):
@@ -83,6 +93,104 @@ PROMPT_SUFFIX = ("seamless tileable texture, orthographic top view, flat even li
 # that prevents it is not the artist's job to remember.
 SUBJECT_SUFFIX = ("single object, centred in frame, full view, not cropped, plain background, "
                   "even diffuse studio lighting, sharp focus")
+
+# -- Circular padding: how the tiling nodes are bound, in one place --------------------------------
+# `SeamlessTile` and `MakeCircularVAE` each offer "Make a copy" or "Modify in place", and which one
+# Bob asks for is a VALUE here rather than a widget in four graphs, for the same reason
+# `asset_chain()` and `macro_tiling()` are.
+#
+# **In place, and it is a crash fix rather than a preference.** "Make a copy" is the semantically
+# clean choice and it is what G1 shipped, but on a ComfyUI with dynamic VRAM staging enabled
+# (`comfy-aimdo`, this fork's default) the deepcopy owns a staged host buffer whose destructor is
+# unsafe: `comfy_aimdo/host_buffer.py.__del__` faults when the copy's buffers are released, and it is
+# reached from inside `model_patcher.partially_load`, so the SECOND decode of a session takes the
+# whole server down. Measured at G6, four ways:
+#
+#   copy + dynamic VRAM                        dead on the second decode, every time
+#   copy + `POST /free` between jobs           dead on the second decode (the copy is still garbage)
+#   copy + a strong reference held on it       dead on the fifth job (the fault is in the STAGING
+#                                              path, not in garbage collection, so pinning the
+#                                              object cannot keep its internal buffers alive)
+#   copy + `--disable-dynamic-vram`            no crash, but the whole install loses staging
+#   **in place**                               no crash, and staging stays on for every other route
+#
+# The control that decides it: with no copy anywhere, SDXL then a 15 GB TRELLIS.2 job then SDXL again
+# runs clean under dynamic VRAM. So staging is not broken, the deepcopy is, and only these four graphs
+# make one.
+#
+# What in place costs, and it is real: it mutates the SESSION's shared model, so the next graph on the
+# same checkpoint inherits circular padding unless it is undone. G1 named that hazard and G6 measured
+# it -- a W4 subject image came back at seam ratio 1.059, i.e. wrapped, where an untiled frame is
+# 3.9 to 8.5. `ensure_untiled()` is the other half of this decision and every non-tiling SDXL entry
+# point calls it. Revisit on a fork update: if `host_buffer.__del__` is fixed upstream, this becomes
+# "Make a copy" again, `ensure_untiled` becomes a no-op, and both halves can go.
+TILING_COPY_MODE = "Modify in place"
+
+# Titles of the two padding nodes, so the binding and the reset name them once.
+TILE_TITLE, TILE_VAE_TITLE = "BOB_TILE", "BOB_TILE_VAE"
+
+
+def tiling_values(enable=True):
+    """The `BOB_TILE` / `BOB_TILE_VAE` binding: circular padding on or off, applied in place."""
+    mode = "enable" if enable else "disable"
+    return {TILE_TITLE: {"tiling": mode, "copy_model": TILING_COPY_MODE},
+            TILE_VAE_TITLE: {"tiling": mode, "copy_vae": TILING_COPY_MODE}}
+
+
+# Whether a graph in THIS process has left the server's shared SDXL model circularly padded. Per-URL,
+# because one Bob can drive more than one server, and pessimistic on the first call: a fresh process
+# does not know what a previous one left behind, so the first non-tiling graph resets regardless.
+_TILING_DIRTY = {}
+
+
+def mark_tiling_applied(url=None, dirty=True):
+    _TILING_DIRTY[base_url(url)] = bool(dirty)
+
+
+def reset_tiling(url=None, timeout=120):
+    """Put the server's shared model and VAE back to ordinary padding. Returns the seconds it took.
+
+    Reuses W1 itself at 64 px and one step rather than shipping a reset graph, so there is no second
+    copy of the tiling wiring to drift out of sync with the real one. The sample is throwaway; what
+    matters is that both padding nodes execute, which they only do if an output depends on them.
+    """
+    graph, prov = load_workflow("tex_tileable")
+    values = {"BOB_PROMPT": {"text": "tiling reset"},
+              "BOB_SEED": {"seed": 0, "steps": 1},
+              "BOB_SIZE": {"width": 64, "height": 64}}
+    values.update(tiling_values(enable=False))
+    ckpt = prov.get("default_checkpoint")
+    if ckpt:
+        values["BOB_CKPT"] = {"ckpt_name": ckpt}
+    t0 = time.time()
+    generate_image((graph, prov), values, url=url, timeout=timeout,
+                   required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
+    mark_tiling_applied(url, False)
+    return time.time() - t0
+
+
+def ensure_untiled(url=None, on_progress=None):
+    """Reset the shared model if a tiling graph has run, before a graph that must NOT tile.
+
+    Called by every non-tiling SDXL entry point: W4's subject image, the stylise and paint routes, and
+    W13's OPEN route, which drops the padding nodes and would otherwise inherit whatever the last
+    texture set left on the model -- and a tiling macro mask is measurably the wrong thing (G5: seam
+    ratio 0.80 tiled against 86.18 open, i.e. the tiled one really does repeat the landform).
+
+    Lazy on purpose: ten texture sets in a row pay nothing, and the cost lands once in front of the
+    next subject image, which is itself followed by a 90 s geometry job. Never raises -- a failed
+    reset must not stop the generation the caller actually asked for; it is logged as progress and the
+    dirty flag stays set so the next call tries again.
+    """
+    if not _TILING_DIRTY.get(base_url(url), True):
+        return 0.0
+    if on_progress:
+        on_progress("resetting tiling")
+    try:
+        return reset_tiling(url=url)
+    except ComfyError:
+        return 0.0
+
 
 # File extensions the mesh transport recognises, which is the set Load3D accepts plus the formats
 # Trellis2ExportTrimesh can write.
@@ -309,9 +417,14 @@ def upload_image(path, url=None, subfolder="", overwrite=True, timeout=120):
     return f"{got_sub}/{got_name}" if got_sub else got_name
 
 
-def queue(prompt, url=None, client_id="bob_blender_tools"):
-    """POST a prompt graph, returning its prompt_id."""
-    out = _request(url, "/prompt", data={"prompt": prompt, "client_id": client_id}, timeout=60)
+def queue(prompt, url=None, client_id=None):
+    """POST a prompt graph, returning its prompt_id.
+
+    `client_id` decides which websocket the server publishes this job's progress to, so it defaults
+    to the same `CLIENT_ID` `wait()` connects with. Pass one only to take that routing over.
+    """
+    out = _request(url, "/prompt", data={"prompt": prompt, "client_id": client_id or CLIENT_ID},
+                   timeout=60)
     pid = out.get("prompt_id")
     if not pid:
         raise ComfyError(f"ComfyUI accepted no prompt id: {str(out)[:200]}")
@@ -346,29 +459,54 @@ def cancel(prompt_id, url=None):
                          data={}, timeout=15).get("cancelled"))
 
 
-def wait(prompt_id, url=None, timeout=600, poll=0.5, on_progress=None):
+def wait(prompt_id, url=None, timeout=600, poll=0.5, on_progress=None, progress_ws=True):
     """Block until a job is terminal, returning its outputs dict. Raises on failure or timeout.
 
     Blocking, and it stays that way: `core.comfy_jobs` runs this loop on its worker thread, so
     the client keeps working from a plain script with no scheduler in sight. `on_progress` is how
     a caller reports without owning the loop.
+
+    Progress is per-node when `/ws` is available and the job's status string when it is not, and the
+    split is deliberate: the websocket supplies the DETAIL (`step 7/20`, `node 12`) while the jobs
+    API still decides the job is finished. So a socket that never connects, drops, or is stolen by
+    another process using the same client id costs a progress bar and cannot cost a result. The
+    socket also serves as this loop's sleep, so an event is reported when it arrives rather than at
+    the next poll tick.
     """
     jobs_api = has_jobs_api(url)
     deadline = time.time() + timeout
-    while True:
-        state = job(prompt_id, url=url, jobs_api=jobs_api)
-        if state["status"] in _DONE:
-            return state["outputs"]
-        if state["status"] in _FAILED:
-            err = state.get("error") or {}
-            detail = err.get("exception_message") or err.get("exception_type") or state["status"]
-            raise ComfyError(f"ComfyUI job {state['status']}: {detail}")
-        if time.time() > deadline:
-            cancel(prompt_id, url=url)
-            raise ComfyError(f"ComfyUI job timed out after {timeout:.0f}s (cancelled)")
-        if on_progress:
-            on_progress(state["status"])
-        time.sleep(poll)
+    ws = comfy_ws.connect(base_url(url), CLIENT_ID) if (progress_ws and on_progress) else None
+    last = None
+
+    def relay(event):
+        nonlocal last
+        text = comfy_ws.progress_text(event, prompt_id)
+        if text and text != last:
+            last = text
+            on_progress(text)
+
+    try:
+        while True:
+            state = job(prompt_id, url=url, jobs_api=jobs_api)
+            if state["status"] in _DONE:
+                return state["outputs"]
+            if state["status"] in _FAILED:
+                err = state.get("error") or {}
+                detail = (err.get("exception_message") or err.get("exception_type")
+                          or state["status"])
+                raise ComfyError(f"ComfyUI job {state['status']}: {detail}")
+            if time.time() > deadline:
+                cancel(prompt_id, url=url)
+                raise ComfyError(f"ComfyUI job timed out after {timeout:.0f}s (cancelled)")
+            if ws is not None and not ws.closed:
+                ws.pump(poll, relay)  # the pump IS the sleep
+                continue
+            if on_progress:
+                on_progress(state["status"])
+            time.sleep(poll)
+    finally:
+        if ws is not None:
+            ws.close()
 
 
 def images(outputs):
@@ -736,6 +874,7 @@ def _texture_values(prompt_text, *, seed, size, negative, checkpoint, prov):
     values = {"BOB_PROMPT": {"text": full},
               "BOB_SEED": {"seed": int(seed)},
               "BOB_SIZE": {"width": int(size), "height": int(size)}}
+    values.update(tiling_values(enable=True))  # circular padding, in place; see TILING_COPY_MODE
     if negative:
         values["BOB_NEG"] = {"text": negative}
     ckpt = checkpoint or prov.get("default_checkpoint")
@@ -790,6 +929,7 @@ def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, c
         values["BOB_IMAGE"] = {"image": upload_image(reference, url=url, subfolder="bob")}
         values["BOB_SEED"]["denoise"] = float(denoise)
 
+    mark_tiling_applied(url)  # before the queue: a crash mid-job still leaves the model padded
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
@@ -953,6 +1093,7 @@ def upres_variant(variant_dir, *, scale=2.0, url=None, workflow="tex_upres", den
     values["BOB_IMAGE"] = {"image": upload_image(send, url=url, subfolder="bob")}
     values["BOB_SEED"].update(denoise=float(denoise), upscale_by=float(scale))
 
+    mark_tiling_applied(url)
     try:
         png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                                   on_progress=on_progress, on_queued=on_queued,
@@ -1034,6 +1175,9 @@ def subject_image(prompt_text, out_path, *, seed=0, size=1024, negative=None, ch
     if ckpt:
         values["BOB_CKPT"] = {"ckpt_name": ckpt}
 
+    # A subject image must NOT wrap: it is a single centred object, and a circular UNet would carry
+    # its edge round the frame. So undo any padding a texture set left on the shared model.
+    ensure_untiled(url, on_progress=on_progress)
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
@@ -1564,6 +1708,10 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
     else:
         graph = drop_node(graph, "BOB_LORA", {0: "model", 1: "clip"})
 
+    # A stylised frame holds a real composition, so wrapping it round the border is nonsense. Same
+    # shared model as W1, so the same reset. Cheap here: it is one 64 px sample in front of a
+    # multi-second restyle, and the paint route only pays it on its first view.
+    ensure_untiled(url, on_progress=on_progress)
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
@@ -1707,12 +1855,19 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
     if ckpt:
         values["BOB_CKPT"] = {"ckpt_name": ckpt}
     tiled = macro_tiling(route)
-    if not tiled:
+    if tiled:
+        values.update(tiling_values(enable=True))
+        mark_tiling_applied(url)
+    else:
         # The same argument as dropping BOB_LORA (see `drop_node`): a tiling node switched to
         # "disable" would still be a node whose pack has to be installed, and the honest default is
         # a graph that does not contain it.
         graph = drop_node(graph, "BOB_TILE", {0: "model"})
         graph = drop_node(graph, "BOB_TILE_VAE", {0: "vae"})
+        # Dropping the nodes means this route runs on the SHARED model, so a texture set earlier in
+        # the session would otherwise make the mask tile -- and a tiling macro mask puts the same
+        # elevation on both borders, which is the wallpaper repeat G5 measured and rejected.
+        ensure_untiled(url, on_progress=on_progress)
 
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,

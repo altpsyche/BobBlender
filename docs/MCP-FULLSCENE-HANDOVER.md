@@ -4,6 +4,29 @@ Paste this into a fresh chat. It is the task spec. Written 2026-07-25 against br
 `fix/audit-remediation`, Blender 5.2 LTS only. Caveman ultra mode (terse chat; code/commits/docs
 written normally). User commits — do NOT commit unless asked.
 
+> **STATUS: delivered. Verified item by item at G6 (2026-07-26), and this note is the result.**
+> `core/dispatch.py` carries **31** handlers, not the 8 this document describes: scene control, shading,
+> biome, atmosphere, typed splines, and (at G6) generation's Blender half. Read the rest of this file as
+> the spec it was, not as a description of the present.
+>
+> All eight "issues I hit" are now closed, and three of them were already closed before G6 looked:
+>
+> | # | Issue | State |
+> |---|---|---|
+> | 1 | No material / shading op | `shade_terrain`, `apply_shader`, `snow_shell`, and at G6 `apply_texture_set` |
+> | 2 | No biome op | `apply_biome`, `world_biome` |
+> | 3 | No camera or render op | `add_camera`, `render`, plus the `render_scene` tool |
+> | 4 | No delete / clear op | `delete`, `clear_scene` |
+> | 5 | Stale connected server | The reconnect rule is in docs/MCP.md, "Reload rules (two-sided)" |
+> | 6 | Stale tool docstrings | Already corrected; no "repo-relative" or "runs in the venv" remains |
+> | 7 | `build_geonodes` result dupes | Already fixed by a `dict.fromkeys` de-dup |
+> | 8 | Scatter binding by bare name is silent | **Closed at G6.** `recipes.resolve_named` warns per unresolved name and `build_geonodes` surfaces it in `info` and in `data.warnings`, so a typo'd emitter reports "emitter object 'Groundd' does not exist ... (have: Ground)" instead of building a layer that scatters nothing |
+>
+> Two limits this document did not anticipate, both now in docs/MCP.md: headless `build` cannot run
+> env-dependent ops (`set_env`, `apply_season`, `scene_preset`) because it never enables the addon that
+> registers `Scene.bbt_env`, so those need `build_live`; and the generated asset pack needs
+> `$BOB_GENERATED` for the MCP process and the Blender it spawns to agree on where output landed.
+
 ## Where things stand (context)
 
 The self-contained MCP work (P8) is DONE and uncommitted on this branch: the agent-side MCP server

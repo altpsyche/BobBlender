@@ -42,7 +42,7 @@ from ..blocks import (
     smooth_falloff,
 )
 from ..scaffold import add_input
-from . import recipe
+from . import recipe, resolve_named
 
 TAU = 6.283185307179586
 RAD_TO_DEG = 57.29577951308232
@@ -154,9 +154,11 @@ def _camera_cull(ng, camera, gi, pos, loc):
 
 @recipe("scatter")
 def build(ng, out, params: dict):
-    emitter = bpy.data.objects.get(params.get("emitter", ""))
-    assets = bpy.data.collections.get(params.get("assets", ""))
-    camera = bpy.data.objects.get(params.get("camera", ""))
+    # Resolved through `resolve_named` rather than `bpy.data.*.get`, so a typo'd name is a warning on
+    # the op result instead of a layer that builds, reports success and scatters nothing.
+    emitter = resolve_named("objects", params.get("emitter", ""), what="emitter object")
+    assets = resolve_named("collections", params.get("assets", ""), what="asset collection")
+    camera = resolve_named("objects", params.get("camera", ""), what="camera object")
     vgroup = params.get("vgroup", "")
     curve_mode = params.get("curve_mode", "none")  # none / clear / keep, off a curve mask band
     curve_attr = params.get("curve_attr", "bbt_curve_mask")  # which mask: the band, or bbt_curve_edge

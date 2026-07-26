@@ -1,11 +1,12 @@
 # ComfyUI integration plan
 
-Status: revision 13. **G0, G0.5, G1, G2, G3, G3b, G4, G4c and G5 are done**; see
+Status: revision 14. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5 and G6 are done**; see
 [What G0 shipped](#what-g0-shipped), [What G0.5 measured](#what-g05-measured),
 [What G1 shipped](#what-g1-shipped), [What G2 shipped](#what-g2-shipped),
 [What G3 shipped](#what-g3-shipped), [What G3b measured](#what-g3b-measured),
-[What G4 measured](#what-g4-measured), [What G4c measured](#what-g4c-measured), and
-[What G5 measured](#what-g5-measured). Everything from G6 on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
+[What G4 measured](#what-g4-measured), [What G4c measured](#what-g4c-measured),
+[What G5 measured](#what-g5-measured), and [What G6 measured](#what-g6-measured). Everything from G7
+on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
 layer against a 60 s gate**; G2 generalised that path without losing it (ten sets at a mean of
 5.55 s, worst-case main-thread block 16.5 ms against the blocking path's 5563 ms); G3 carried
 the same shape into geometry, at 40 to 203 s prompt-to-scattered-prop against a 300 s gate; G3b
@@ -16,7 +17,10 @@ those two claims does not survive measurement; G4c shipped **W7**, which makes a
 block-out proxy decide an asset's silhouette, and beat the multi-view route it was meant to fall back
 on; and G5 shipped **W13**, a prompted macro mask into the terrain op stack, and measured that a
 silhouette survives an erosion pass (band-limited correlation 0.906 to 0.923 against a no-mask null
-of 0.078 to 0.208) while erosion still builds the landform. See the verdicts below.
+of 0.078 to 0.208) while erosion still builds the landform; and G6 put the whole surface behind MCP,
+where an agent goes prompt to scattered asset in **102 s** and prompt to rendered shaded terrain in
+**24 s** with no GUI at all, and where a crash that had nothing to do with Bob turned out to be
+killing the server. See the verdicts below.
 
 Steps 3 and 4 of the pinned pipeline are **decided**: `Trellis2Simplify` plus `Trellis2UVUnwrap`,
 by a wide margin over Blender Decimate and Quadriflow. The measurements and the three findings
@@ -583,6 +587,8 @@ corrections, below, and the second one is the interesting part.
 ### What G2 deliberately did not build
 
 No websocket progress: 1 Hz job polling carries a progress string fine and G7 owns the upgrade.
+(It landed at **G6** instead, and the deferral's own reasoning is what expired: the string polling
+carries is the JOB's status, so a 200 s mesh job reported `in_progress` two hundred times.)
 No `contracts.py` change, no MCP op, no reconnect; G6 batches all of that. No metallic map (no
 shipped set has one and nature surfaces are dielectric). No cavity FILE: the roughness consumes a
 cavity signal in memory, and no master reads a cavity map, so writing one would be work nothing
@@ -1601,6 +1607,15 @@ no-mask bake's own 44.7. **R7's terracing does not happen, and it does not happe
 which makes the 8-bit question a different question than the plan assumed. And **W13 is W1's topology
 with different values**, which is written into its provenance rather than dressed up.
 
+> **Two corrections from G6.** This fork's dynamic-VRAM staging segfaults the server on the second
+> copied-model decode of a session, which affected `Generate Base` on its tiled route and every texture
+> set; the padding is now applied IN PLACE and undone by `ensure_untiled`, and the G5 numbers below
+> reproduce under it. That reset is also **required** on this route rather than incidental: the OPEN
+> route drops the padding nodes, so without it a texture set earlier in the session would make the mask
+> tile, and G5's own measurement is that a tiling macro mask repeats the landform (seam 0.80 against
+> 86.18). Verified after the change: the open route's raw generation reads **10.086** and the tiled
+> route's **0.964**. See [What G6 measured](#what-g6-measured) and D14.
+
 Files: `assets/workflows/heightmap_macro.json` (W13, new), `core/comfy.py` (`heightmap_macro`,
 `macro_prompt`, `MACRO_SUFFIX`, and `macro_tiling` as the route value), `core/comfy_maps.py`
 (`macro_field`, `macro_from`, and a `wrap` flag on the shared box blur),
@@ -1806,6 +1821,285 @@ editor's kind list is for ops an artist hand-authors. No `contracts.py` change a
 still batches those, and the terrain mask write is on its list, which is why the Blender half is a
 `core` function (`heightfields.params.with_macro`, reached through the `macro` bake knob) that G6 can
 wrap without touching the panel.
+
+## What G6 measured
+
+**Verdict: the generation surface is agent-drivable, and the phase's most valuable finding is not
+about Bob.** An agent goes prompt to a scattered, correctly scaled, UV'd, PBR-textured, BobShaded
+asset in **102.5 s** with no GUI, and prompt to a rendered shaded terrain in **24.1 s**, both from
+MCP tool calls and one op list. The contract change was paid once, as planned. Websocket progress
+shipped rather than deferring again, and it is **28 per-node updates against 5 status strings** on the
+same five-second job. `THIRD-PARTY-MODELS.md` exists and found two non-commercial models and a node
+pack with no licence at all. And the whole thing is one command:
+`tools/scripts/headless_comfy_all.py`.
+
+The finding that matters most: **this ComfyUI fork's dynamic-VRAM staging segfaults the server on the
+second copied-VAE decode of a session**, which is every texture-set and macro-mask graph Bob ships.
+It is not Bob's code. Five candidates were measured; the shipped fix asks for circular padding IN
+PLACE and undoes it before anything that must not wrap, so dynamic VRAM stays on. Details below.
+
+Files: `core/comfy_ws.py` (new), `core/comfy.py` (`CLIENT_ID`, `wait(progress_ws=...)`),
+`core/shading.py` (`set_texture_set`, `apply_texture_set`), `core/gen_assets.py`
+(`import_generated_op`, `export_control_op`, `_resolve_pack`), `core/proxies.py` (`collection`),
+`core/assets.py` (`generated_root`'s env fallback, `ensure_generated_pack`, the `asset_roots` fix),
+`core/dispatch.py` (three handlers), `mcp_agent/contracts.py` (three models plus `OpResult.data`, one
+edit), `mcp_agent/server.py` (six `comfy_*` tools, the `macro` key on `bake_heightfield`),
+`mcp_agent/paths.py` (`generated_pack`), `ui/shaders.py` (`_apply_texture_set` routed through core),
+`__init__.py` (the licence notice, `_generated_pack_dir` subtracted),
+`docs/THIRD-PARTY-MODELS.md` (new), `tools/scripts/headless_comfy_g6.py` (new),
+`tools/scripts/headless_comfy_all.py` (new), `tools/tests/test_comfy.py` (73 tests, up from 62),
+`tools/tests/test_contracts.py` (38, up from 24). Suite **196**, up from 179.
+
+### The two gates, measured through the real agent path
+
+Both numbers are from `tools/scripts/headless_comfy_g6.py`, which is the one gate in this plan that
+does **not** run inside Blender: it calls the MCP tool functions in the MCP process and reaches
+Blender only through `executor.run_build`, the way an agent has to. So a wrong tool signature, a wrong
+contract model or a missing handler fails it where a `core`-level test would pass.
+
+**Prompt to a scattered asset, no GUI.** One `comfy_mesh` call, then one build carrying
+`import_generated`, a scatter layer, a camera and a render:
+
+| Stage | Wall clock |
+|---|---|
+| `comfy_mesh` (W4 then W9b over HTTP) | **97.7 s** warm, 162.6 s on the run that loads TRELLIS.2 |
+| The build: finish, import, scatter, sky, EEVEE render | **4.8 s** |
+| **Total, prompt to a rendered scatter** | **102.5 s** |
+
+And the asset inspected rather than trusted, every figure read out of the op's own `data` because
+that is what an agent can see:
+
+| Gate item | Result |
+|---|---|
+| Face count inside the budget | **3,672 to 3,930** against 4,000 |
+| A UV layer with no overlap | **0.000000 to 0.0000017** against a 0.01 threshold |
+| `height_m` honoured on the built object | **1.8 m** exact |
+| Origin at the base | **0.0 m** above the lowest vertex |
+| A BobShader on it | `surface` |
+| A scatter layer instances it | `ScatterRocks` |
+
+**Prompt to a shaded terrain, no GUI.** `comfy_texture_set`, then `comfy_heightmap`, then
+`bake_heightfield` with the `macro` key, then one build:
+
+| Stage | Wall clock |
+|---|---|
+| `comfy_texture_set` (five maps written and resolved) | **5.7 to 7.0 s** |
+| `comfy_heightmap` (W13, the macro mask) | **3.9 s** |
+| `bake_heightfield` with the macro key, 768 px, GPU | **7.5 s** |
+| Build the terrain, shade it, apply the set, sky, EEVEE render | **3.8 to 6.7 s** |
+| **Total, prompt to a rendered shaded terrain** | **24.1 s** |
+
+The mask reaching the bake is measured rather than assumed: the masked and unmasked bakes of the same
+preset and seed resolve to **different recipe hashes** (`0d58a18ef7` against `9fa752252d`), which is
+the check that would have caught G5's correction 12 had it existed then.
+
+### Every shipped gate, one command
+
+`uv run --project tools --extra all python tools/scripts/headless_comfy_all.py --fast`, on the
+reference 5080. Peak VRAM is the WHOLE CARD sampled at 4 Hz while each gate ran, not the per-process
+figure the individual gates report, because this is the number that says whether a gate can share the
+machine:
+
+| gate | phase | status | wall | peak VRAM | checks |
+|---|---|---|---|---|---|
+| `g0` | G0 texture-set sampler | PASS | 2.8 s | 13,789 MiB | 32 |
+| `texset` | G1 prompt to a shaded layer | PASS | 11.3 s | 15,067 MiB | 13 |
+| `g2` | G2 variants, preflight, maps | PASS | 115.0 s | **15,846 MiB** | 37 |
+| `g3` | G3 prompt to a scattered asset | PASS | 29.1 s | 12,003 MiB | 38 |
+| `g3b` | G3b one-shot against staged | PASS | 68.0 s | 9,385 MiB | 42 |
+| `g4` | G4 stylise, paint, multi-view | PASS | 9.3 s | 9,714 MiB | 18 |
+| `g4c` | G4c Omni block-out control | PASS | 4.4 s | 8,724 MiB | 4 |
+| `g5` | G5 terrain macro mask | PASS | 1.5 s | 8,668 MiB | 7 |
+| `g6` | G6 the agent-facing surface | PASS | 2.6 s | 8,720 MiB | 23 |
+| | **total** | **9 of 9** | **243.9 s** | **15,846 MiB** | **214** |
+
+Those are with **dynamic VRAM on**, which is the shipped configuration. The same suite with
+`--disable-dynamic-vram` totalled **185.3 s at a 13,808 MiB peak**, and the difference is worth stating
+plainly rather than hiding, because it cuts against the shipped choice: **for the routes Bob ships
+today, staging is slower and uses more of the card, and buys nothing measurable.** Nothing in the
+integration currently exceeds 16 GB, so the memory it stages is memory it did not need to. What it buys
+is the option -- the 1536 hero tier, and any future model that does not fit -- and losing that option
+permanently to work around four graphs is the trade this phase declined to make. Both configurations
+pass every gate; if wall clock ever matters more than headroom, the flag is one line.
+
+`--fast` is what these numbers are: fewer prompts, cached generations, no slow A/B baseline. It
+measures less than a full run and it still runs every gate, which is the property that matters for a
+regression check. A full sweep is roughly 100 minutes of GPU time (`--list` prints the per-gate
+estimate).
+
+**Three gates needed fixing to report at all, and all three were harness bugs rather than product
+regressions.** G2 crashed in its own `_Stub` layout (no `column`, which G4's stylise block calls) and
+had been doing so silently since G4; `--sets 1` divided the drift computation by an empty half; and the
+runner's first verdict reader did not know that G3 and G3b say "0 failure(s)" where the others say "no
+failures". Nothing in the product had regressed, which is the honest result, but nobody could have
+known that before this command existed.
+
+### The crash that was not Bob's, and the fix that keeps the feature
+
+Part C failed on its first run with `ComfyUI not reachable`, and the server was in fact dead. The
+crash log has no Python traceback because it is a segfault:
+
+```
+Fatal Python error: Segmentation fault
+  File "comfy_aimdo/host_buffer.py", line 129 in __del__
+  File "comfy/model_patcher.py", line 1803 in load
+  File "comfy/model_patcher.py", line 2024 in partially_load
+  File "comfy/model_management.py", line 771 in model_use_more_vram
+  File "comfy/model_management.py", line 743 in model_load
+  File "comfy/sd.py", line 1105 in decode
+  File "nodes.py", line 335 in decode          <- the STOCK VAEDecode
+```
+
+Reproduced with the websocket disabled and from a two-call script, so it is not G6's code: **the
+second copied-VAE decode of a session kills the process.** `MakeCircularVAE(copy_vae="Make a copy")`
+plus `SeamlessTile(copy_model="Make a copy")` are what make a texture tile (D4), so this is every W1,
+W2, W3 and W13-tiled run. It is the same crash SITE as G1's `CircularVAEDecode` segfault
+(`model_management.py` `model_load`), which means **G1's fix has stopped working** on this fork: what
+is new is `comfy-aimdo` 0.4.10's dynamic VRAM staging. G2 measured ten sets in one session with no
+crash, so this is an environment regression since G2, not a latent bug in the graph.
+
+**Five candidates, measured, because the first fix that works is not always the right one.** Losing
+dynamic VRAM means losing the staging that lets a 16 GB card hold a model bigger than its free VRAM,
+which is too much to pay for four graphs if anything cheaper works:
+
+| Candidate | Crash | Tiling quality | Verdict |
+|---|---|---|---|
+| `POST /free` between jobs | **dead on job 2** | -- | The copy is still garbage; freeing models does not help. |
+| Patch the pack to pin the copy | **dead on job 5** | seam 0.91 to 1.24 | Delays it only, and it needs a fork patch. Reverted. |
+| `--disable-dynamic-vram` | none | seam 0.98 to 1.01 | Works, and costs the whole install its staging. |
+| In place, no reset | none | seam 0.90 to 1.14 | Works, and **wraps every later frame**: W4 came back at seam 1.059. |
+| **In place, plus a lazy reset** | **none** | **seam 0.83 to 1.18** | **Shipped.** |
+
+Two of those measurements decided it. The pinned-copy attempt failing on job 5 relocated the fault:
+`__del__` is reached from **inside** `model_patcher.partially_load`, so the staging path releases the
+buffer during a partial load and a strong reference to the VAE object cannot keep its internal buffers
+alive. And the control run says staging itself is fine -- **with no copy anywhere, SDXL then a 15 GB
+TRELLIS.2 job then SDXL again ran clean**, five jobs, forcing real eviction and re-staging. So the
+deepcopy is the ingredient, only four graphs make one, and the answer is to stop making it.
+
+`comfy.TILING_COPY_MODE` is therefore `"Modify in place"`, bound through `tiling_values()` so the
+decision is a value in one place beside `asset_chain()` and `macro_tiling()`. What in place costs is
+real and G1 named it: it mutates the SESSION's shared model, so the next graph on the same checkpoint
+inherits circular padding. `comfy.ensure_untiled()` is the other half, and it is **lazy** -- it resets
+only when a tiling graph has actually run, and only in front of a graph that must not wrap, so ten
+texture sets in a row pay nothing and the cost lands once ahead of the next subject image. It reuses
+W1 itself at 64 px and one step rather than shipping a reset graph, so there is no second copy of the
+tiling wiring to drift.
+
+Measured end to end, dynamic VRAM on, through Bob's own code:
+
+| | Result |
+|---|---|
+| **Ten texture sets in one session** | **10 of 10**, mean **5.93 s**, drift **-0.01 s**, seam **0.83 to 1.18** |
+| W4 subject image after those ten | seam **8.466**, i.e. untiled (1.059 without the reset) |
+| W13 open route, on the raw generation | seam **10.086**, untiled |
+| W13 tiled route, on the raw generation | seam **0.964**, wraps, which is what that route is for |
+| Cost of the reset | about 1 s, once per switch from tiling to non-tiling |
+
+Four call sites carry it: `_texture_values` (W1, W2, W3) and the W13 tiled route mark the model
+padded; W4's `subject_image`, `stylize_render` (W12, W12e, W9) and **W13's OPEN route** reset first.
+That last one is a correctness bug this fix would have introduced if it had been missed: the open
+route DROPS the padding nodes, so it runs on the shared model, and a mask that tiles puts the same
+elevation on both borders, which is the wallpaper repeat G5 measured and rejected.
+
+**`--disable-dynamic-vram` stays documented as the fallback**, for the one case Bob cannot cover: in
+place mutates process-global state on the server, so another client generating concurrently could see
+a padded model inside that window. Bob runs one job at a time and the reset is idempotent, so this is
+narrow, but it is real, and it is why the flag is written down rather than forgotten. The flag state is
+**not visible over HTTP** (`/system_stats` lists `comfy-aimdo` as installed but says nothing about
+whether staging is on), so Bob cannot detect either configuration and does not try.
+
+### Websocket progress: shipped, not deferred again
+
+The plan deferred this to G7 twice. It shipped here because the deferral's reason had expired: the
+argument was that "1 Hz job polling carries a progress string fine", and it does, but the string is
+the job's own status, so a 200 s mesh job reported `in_progress` two hundred times. Measured on the
+same five-second job:
+
+| Route | Updates | Of which per-node | What the first three said |
+|---|---|---|---|
+| Status polling | 5 | **0** | `in_progress`, `in_progress`, `in_progress` |
+| **Websocket** | **28** | **28** | `node 6`, `step 1/25`, `step 2/25` |
+
+`core/comfy_ws.py` is a hand-rolled RFC 6455 reader, because the client is stdlib-only (Bob-side
+constraint 1) and the choice was that or no per-node progress. It is small because it only does the
+client half of one direction. **The design decision that makes it safe to ship is that progress is
+advisory: `wait()` still decides a job is finished from the jobs API**, so a socket that never
+connects, drops, or is stolen by another process costs a progress bar and cannot cost a result. Four
+tests cover the framing (fragmented messages, a masked pong reply, binary preview frames dropped, a
+server that will not upgrade returning `None` rather than raising) and one covers the fallback.
+
+One thing this forced: **`client_id` had to become per-process.** ComfyUI routes a job's events to the
+socket whose `clientId` matches the prompt's `client_id`, and it keys those sockets by that id, so two
+processes using `bob_blender_tools` would steal each other's progress. `CLIENT_ID` now carries the pid,
+which is the collision that actually happens here (the MCP server and a running Blender driving one
+ComfyUI).
+
+### Eight things this plan had wrong, corrected here
+
+1. **`asset_roots()` did not read `generated_root()`, it read the private global, and that broke the
+   agent-facing route the moment the env fallback existed.** The generated pack has to be reachable
+   from a process the addon never registered in -- which is now two of the three ways this code runs,
+   the MCP server (no bpy) and the Blender the executor spawns (`--factory-startup`, extension imported
+   but not enabled) -- so `generated_root()` gained a `$BOB_GENERATED` fallback. The resolver kept
+   reading the global, so `comfy_texture_set` wrote a set into a pack `texture_set_dir` could not see
+   and the apply step failed on a set that existed on disk. Found by the gate, one line.
+2. **`import_generated` fabricated block-out proxies as a side effect, and it always had.** It called
+   `proxies.ensure_collection`, which populates an empty `BOB_Assets_<Kind>` with procedural blobs, so
+   importing one generated boulder into an empty scene put three proxies beside it and a scatter layer
+   pointed at the pool instanced all four. The G6 render came back mostly proxies, which is how it was
+   found; `proxies.collection` is the get-or-create half without the fabrication. This affected the
+   PANEL too, since G3, and nobody noticed because an artist usually has proxies already.
+3. **The macro mask needed no op, and the plan was right about that, but the tool needed one guard the
+   plan did not name.** `comfy_heightmap` returns the `bake_params` fragment ready to paste, because an
+   agent that has to know the key is `{"macro": {"path": ...}}` will get it wrong once and then stop
+   using it. The gate scores the recipe hash rather than the tool's return value.
+4. **Two ops needed a machine-readable result and `OpResult` had nowhere to put one.** `export_control`
+   produces a path the NEXT call consumes, and `import_generated` produces the face count, UV overlap,
+   height and origin the gate has to score. Both were about to be parsed out of an English `info`
+   string. `OpResult.data` is the fix, and it is the one addition to the contract beyond the three ops.
+5. **The `_apply_texture_set` the plan named is a UI function, not a core one.** It lives in
+   `ui/shaders.py` and resolves context, so the op could not "go through the same path" without one
+   extraction: `shading.set_texture_set` now holds the master-type dispatch and the panel keeps only
+   its context resolution. Same shape as every other op in this suite, and it made the panel helper
+   six lines shorter.
+6. **Headless `build` cannot run any env-dependent op, and this was never written down.**
+   `Scene.bbt_env` is a PropertyGroup the ADDON registers, and the headless runner imports `core` into
+   a `--factory-startup` Blender without enabling the addon, so `set_env`, `apply_season` and
+   `scene_preset` raise there while working perfectly over `build_live`. Not new to G6 and not caused
+   by it; the G6 gate drops `set_env` and passes the sky its time explicitly, and the limitation is now
+   in `docs/MCP.md` where an agent will meet it.
+7. **The last open item on the full-scene handover's list was real, and it was one line of silence.**
+   A scatter layer binds its emitter and its asset collection BY NAME, and `bpy.data.objects.get()` on
+   a typo returns None, so the layer built, reported success and scattered nothing -- the worst shape a
+   failure can take over MCP, where nobody is watching a viewport. `recipes.resolve_named` warns per
+   unresolved name and `build_geonodes` surfaces it in `info` and in `data.warnings`. A warning rather
+   than a raise, because an unset emitter is legitimate in some panel flows. The other seven items on
+   that list were already closed, three of them without anyone recording it; the verification is now a
+   table at the top of `docs/MCP-FULLSCENE-HANDOVER.md`.
+8. **`ComfyUI-GeometryPack` is GPL-3.0 and `ComfyUI-Hy3D-Omni` has no licence file at all.** The
+   licensing section claimed the primary model and the primary pack were both permissive, which is true
+   and beside the point: TRELLIS2 auto-clones GeometryPack as a hard requirement, and that is GPL-3.0.
+   Worse, the Omni pack ships no `LICENSE`, no `COPYING` and no licence field, so its terms are
+   unstated, which means no licence is granted rather than that it is free. Two models are also
+   non-commercial and the plan had not noticed either: **Depth Anything V2 Large (CC-BY-NC-4.0)**, used
+   by W12e alone, and **4x-UltraSharp (CC-BY-NC-SA-4.0)**, used by W3 alone. So the entire
+   non-commercial surface of this integration is two optional routes, which is worth knowing precisely
+   rather than vaguely. All of it is in `docs/THIRD-PARTY-MODELS.md`, checked against the submodule SHAs
+   and the models directory rather than against this document.
+
+### What G6 deliberately did not build
+
+No `comfy_paint_mesh` stylised route: it renders turntable views, which needs Blender, so the MCP tool
+serves the PBR route (W9t) and the stylised one stays a panel action. That is the same split
+`texture_chain()` already documents, and hiding it behind one tool would hide the fact that one route
+needs Blender in the middle. No MCP tool for the block-out control chain beyond `export_control` plus
+`comfy_mesh(control=...)`, because that IS the chain. No detection of `--disable-dynamic-vram`: it is
+not visible over HTTP, and a warning that cannot tell a fixed server from a broken one is noise on
+every start. No addon registration in the headless runner to make `set_env` work there: it would change
+what `build` is, and `build_live` already does it. No progress UI change in the panel: the operators
+already pass `on_progress` and now get better strings through it for free, which is the whole point of
+having put the route behind one function.
 
 ---
 
@@ -2142,7 +2436,15 @@ non-commercial term. Hunyuan's Community License now applies only to the retaine
 2. **A `THIRD-PARTY-MODELS.md`** listing every model the shipped workflows reference: name,
    source URL, license, and any territorial or MAU restriction, plus a plain statement that
    output licensing follows the model that produced it. Referenced from the addon preferences
-   next to the download links, so an artist sees it before pulling 20 GB.
+   next to the download links, so an artist sees it before pulling 20 GB. **Shipped at G6** as
+   `docs/THIRD-PARTY-MODELS.md`, written by inspecting the install rather than this document, and it
+   found four things this section had wrong: `ComfyUI-GeometryPack` is **GPL-3.0** and is a hard
+   requirement of the MIT pack that auto-clones it; `ComfyUI-Hy3D-Omni` ships **no licence file at
+   all**, so its terms are unstated rather than permissive; and two models are **non-commercial** --
+   Depth Anything V2 Large (CC-BY-NC-4.0, W12e only) and 4x-UltraSharp (CC-BY-NC-SA-4.0, W3 only).
+   The whole non-commercial surface of the integration is those two optional routes. The addon
+   preferences carry a four-line notice naming the territorial exclusion and the two NC routes, which
+   is the point an artist decides to download 20 GB.
 3. **Provenance in the artifact.** `SOURCE.txt` for texture sets and the sidecar JSON for meshes
    both record the model and its license. When a pack gets shared, the terms travel with the
    asset rather than living only in someone's memory.
@@ -2638,10 +2940,19 @@ GroundingDINO, openpose) is out of scope and can be ignored or pruned.
 core/comfy.py         SHIPPED G1, extended G2. stdlib client (jobs API, /view, upload,
                       service status), title templating, PREFLIGHT, and the texture-set
                       recipe: variants into _staging, Accept, Reject, upres
+core/comfy.py         EXTENDED G6. `tiling_values` / `TILING_COPY_MODE` (circular padding applied
+                      IN PLACE, which is a crash fix for this fork's staging, not a preference) and
+                      `ensure_untiled`, the lazy reset that undoes it before any graph on the same
+                      checkpoint that must not wrap. Plus `CLIENT_ID` per process, because ComfyUI
+                      keys progress sockets by client id
 core/comfy_jobs.py    SHIPPED G2. one worker thread, a bpy.app.timers tick draining a result
                       queue, every bpy touch on the main thread, @persistent load_post reset
 core/comfy_maps.py    SHIPPED G1, real at G2. PNG codec, one relief field to height / normal /
                       AO / cavity, local-contrast roughness, wrap pad and blend
+core/comfy_ws.py      SHIPPED G6. a minimal stdlib RFC 6455 reader for ComfyUI's /ws, so progress
+                      is per-node (`step 7/20`) instead of the job's own status string. Advisory by
+                      design: `comfy.wait()` still reads terminal state from the jobs API, so a
+                      socket that never connects costs a progress bar and never a result
 core/comfy_maps.py    EXTENDED G5. `macro_field` / `macro_from`, the terrain macro mask, which is
                       `relief()` read from the other side of the same cutoff, plus a `wrap` flag on
                       the shared box blur because a terrain tile is not a torus
@@ -2712,7 +3023,12 @@ keyword and not a parallel pipeline; and `stage_exports(staged)` sits beside `fi
 reading the same staged dict and returning how many `Trellis2ExportTrimesh` turns `finish_asset` has
 to undo on each file it is handed.
 
-Websocket progress stays out until G7; 1 Hz job polling carries a progress string fine.
+**Websocket progress shipped at G6**, not G7. `core/comfy_ws.py` is a stdlib RFC 6455 reader and
+`wait()` prefers it, and the reason it was safe to ship is that it is advisory: the jobs API still
+decides a job is terminal, so a socket that never connects, drops, or is stolen by another process
+costs granularity and cannot cost a result. Measured at 28 per-node updates against 5 status strings
+on the same job. It also forced `CLIENT_ID` to carry the pid, because ComfyUI keys progress sockets by
+`clientId` and the MCP server and a running Blender both drive the same server.
 
 ### Contracts
 
@@ -2742,23 +3058,40 @@ mesh bottom centre so scatter sits on the ground instead of half-buried. A sidec
 
 ### Ops and MCP
 
-Generation needs no `bpy`, so MCP tools live venv-side in `mcp_agent/server.py` and talk HTTP
-directly; only the apply step crosses the bridge.
+**Shipped at G6, in one contract edit and one reconnect, as planned.** Generation needs no `bpy`, so
+the MCP tools live venv-side in `mcp_agent/server.py` and talk HTTP directly; only the steps that
+need Blender are ops.
 
 Tools: `comfy_status()`, `comfy_texture_set()`, `comfy_mesh()`, `comfy_paint_mesh()`,
-`comfy_heightmap()`, `comfy_stylize()`, all degrading to a clear "server not reachable" rather
-than a stack trace.
+`comfy_heightmap()`, `comfy_stylize()`, every one preflighting before it queues and degrading to a
+clear "not reachable" sentence rather than a stack trace (measured: all six, against a dead port).
+Each also returns the OP that consumes its result, ready to send: `comfy_mesh` an `import_op`,
+`comfy_texture_set` an `apply_op`, `comfy_heightmap` the `bake_params` fragment. An agent that has to
+assemble those itself will get one wrong and stop using the feature.
 
-New ops, one batched contract change: `apply_texture_set` (set name plus terrain layer index or
-active material), `import_generated` (a generated-pack kind into `BOB_Assets_<kind>` with scale,
-origin, LOD), `export_control` (a block-out proxy out as a point cloud for W7). `reload_image` and
-`render` already exist.
+`comfy_paint_mesh` serves the PBR route only (W9t). The stylised route renders turntable views, which
+needs Blender, so it stays a panel action; `texture_chain()` already documents that asymmetry and
+hiding it behind one tool would hide the fact that one route needs Blender in the middle.
+
+Three ops, one batched contract change: `apply_texture_set` (a set name plus a terrain layer index, or
+a material by name), `import_generated` (either `staged` from `comfy_mesh`, which runs pipeline steps 6
+to 8 and then imports, or `name` alone to import what the pack already holds), `export_control` (a
+block-out proxy out as the control MESH W7 conditions on). Plus one addition the plan had not foreseen:
+**`OpResult.data`**, because `export_control` produces a path the next call needs and
+`import_generated` produces the face count, UV overlap, height and origin a caller has to check, and
+both were otherwise going to be parsed out of an English sentence.
 
 `comfy_heightmap()` needs **no new op at all**, which G5 arranged deliberately: the mask reaches a
-bake as the `macro` key of the params dict every existing bake path already takes
-(`heightfields.params.build_params`), so an agent generates a mask over HTTP with no `bpy` and then
-bakes it through the terrain op that exists. The one thing G6 still owns here is exposing that key on
-the bake tool's schema.
+bake as the `macro` key of the params dict every existing bake path already takes, so an agent
+generates a mask over HTTP with no `bpy` and then bakes it through the terrain op that exists. G6
+exposed that key on `bake_heightfield`'s schema and proved an agent can use it, by measuring that the
+masked and unmasked bakes of the same preset and seed resolve to different recipe hashes.
+
+The generated pack is the one thing this surface needs configuring, and `$BOB_GENERATED` is it:
+`assets.generated_root()` falls back to that variable, so the MCP process (no bpy) and the Blender the
+executor spawns (`--factory-startup`, extension imported but not enabled) agree on where an asset
+landed. A live session's own output-folder preference still wins, which is why every tool returns the
+`pack_dir` it used and every op takes an explicit one.
 
 ### UI placement
 
@@ -2821,6 +3154,17 @@ the same hand-off `assets.set_pref_roots` uses), ComfyUI folder (only needed for
 Reserve VRAM in GB. A workflow folder override and a default face budget arrive with the phases
 that need them. No staging retention preference: Reject is a delete and Accept is a move, so
 staging holds exactly the results still awaiting a decision and there is nothing to sweep.
+**G6 added no preference and one four-line disabled notice** under that block: models are the artist's
+download, output licensing follows the model, Hunyuan excludes the EU, UK and South Korea, and two
+routes use non-commercial models. That is the licensing obligation delivered where the decision is
+made, and it is text rather than a widget because there is nothing to configure.
+
+**G6 left the Start Server command line alone, and that was a decision rather than an omission.** The
+copied-VAE segfault this fork has could be fixed there with `--disable-dynamic-vram`, and briefly was;
+the shipped fix is Bob-side instead (circular padding in place, `ensure_untiled` to undo it), because
+the flag would cost the whole install its weight staging to work around four graphs. The flag remains
+the documented fallback for the concurrent-client window. See
+[What G6 measured](#what-g6-measured) and D14.
 
 ---
 
@@ -2837,7 +3181,7 @@ staging holds exactly the results still awaiting a decision and there is nothing
 | **G4** | **DONE.** Tracks D then B-stylised, in that order because they share a graph: **W12** and **W12e** stylise (render plus true depth and normal export via a material override, two-stage ControlNet img2img, the Advanced-panel button), then **W9** grown out of it as the style-control paint route with `core/gen_views.py` and `core/gen_paint.py` behind it. Plus **W6** and **W6t** multi-view geometry. What shipped, the measurements, and nine corrections are in [What G4 measured](#what-g4-measured). | **Passed, with one claim disproved and named as such.** A Bob render comes back stylised at **silhouette IoU 0.9980** (against 0.9967 estimated) in **7.7 s**, peaking at **14,194 MiB** of 16,303 summed over the ComfyUI family. **The real-passes claim failed on quality:** the differences against Depth Anything V2 plus NormalBAE are smaller than the estimator's own error on the source frame (r 0.7957, MAE 0.1224), and the honest case for keeping the export is **2.5 s per frame** plus the fact that W9 needs the same three files anyway. A mesh comes back stylised with LoRA control wired (7.1 of 255 at denoise 0.75, 1.7 at paint settings): **92.6%** of chart texels painted from 8 views, adjacent-view seam **22.3 to 26.5 of 255**, front-to-back drift **30.1**. Multi-view beats single-view on the back-facing test by six-fold: back-half IoU **0.2637** (W6t) and **0.2140** (W6) against **0.0439**, against a 0.7110 self-agreement ceiling; W6 is 5x faster at 24.4 s. The panel press costs **0.63 to 1.00 s** of main thread (the render) and the longest tick during the job is **0.14 ms**. |
 | **G4c** | **DONE.** Omni: model set 3, **W7**, `export_control`, the `Asset from Block-out` entry, and the orientation convention pinned per exporter. What shipped, the measurements, and ten corrections are in [What G4c measured](#what-g4c-measured). | **Passed, and it changed a decision the plan had already made.** A block-out proxy conditions generation and the result keeps its shape where it landed, scored with NO rotation search: **footprint IoU 0.8136 to 0.9787** against per-block-out ceilings of 0.8403 to 0.9920, proportions held to **2%**, and **0.8100 on the FINISHED asset** after simplify, texture, bake, scale, LODs and BobShade. **W7 beat the W6t multi-view baseline 3 of 3 on every measure at once** (mean footprint IoU **0.9079 against 0.6748**, **35.8 s against 164.9 s**, 2 GB less VRAM), and it still wins after W6t is allowed its best axis map, so the plan's fallback is not the honest answer. The wrapper is the least maintained dependency here and **shipped with the control signal silently random** (a vendored `linear` to `liner` rename, 0.010 voxel IoU before the fix and 0.53 after); `tools/scripts/comfy_omni_fix.py` is the fix. **One bug found on another route:** the exporter's turns ACCUMULATE, so the staged chain's high-to-low bake has been reading across a 90 or 180 degree rotation since G3, which puts a G3b conclusion back in question. Proved by `tools/scripts/headless_comfy_g4c.py`, four parts, no failures. |
 | **G5** | **DONE.** Track E: **W13**, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and `Generate Base` in the Terrain panel. What shipped, the measurements, and twelve corrections are in [What G5 measured](#what-g5-measured). | **Passed, and it answered R7 in the negative.** A prompted silhouette survives an erosion pass at **band-limited correlation 0.906 to 0.923** against a no-mask null of 0.078 to 0.208, on three prompts including the isolated massif erosion was expected to fight. It still looks intentional rather than shaped noise, as numbers: the erosion supplies **2.89 to 3.04 m** of fine relief against a mask-only baseline's **0.28 to 0.31 m**, the median slope is **42.1 to 42.8 deg** beside the no-mask bake's own 44.7, and the mask explains only 11 to 16% of the band above its own cutoff. **R7's terracing does not occur at 8 bits, and does not occur at 5 either** (histogram concentration 1.86 and 1.91 against 16-bit's 1.93), so the 16-bit save node is deferred on evidence; what the 8-bit write costs is determinism, 0.80 m rms against a reseed's 9.28 m. **About 12 s** prompt to a built terrain, **0.3 ms** of main thread, peak **7,444 to 9,844 MiB**, and it is the one route here that shares a card with Omni. Proved by `tools/scripts/headless_comfy_g5.py`, five parts, no failures. |
-| **G6** | MCP tools, the single batched contract change, websocket progress, `THIRD-PARTY-MODELS.md`, docs, full headless test suite. | Agent does prompt to scattered asset with no GUI. |
+| **G6** | **DONE.** The six `comfy_*` MCP tools, the single batched contract change (`apply_texture_set`, `import_generated`, `export_control`, plus `OpResult.data`), the `macro` key on `bake_heightfield`, websocket progress, `THIRD-PARTY-MODELS.md`, and the whole shipped-gate suite as one command. What shipped, the measurements, and eight corrections are in [What G6 measured](#what-g6-measured). | **Passed, and it found a crash that was not Bob's.** An agent goes prompt to a scattered, scaled, UV'd, PBR-textured, BobShaded asset in **102.5 s** with no GUI (generation 97.7 s, Blender 4.8 s) and prompt to a rendered shaded terrain in **24.1 s** (set 6.0, mask 3.9, bake 7.5, build and render 6.7), both through the real MCP tools and one op list, with every asset property read out of the op's own result: faces **3,672 to 3,930** against 4,000, UV overlap at most **0.0000017**, height **1.8 m** exact, origin **0.0 m** above the base, `master_type` surface. Websocket progress ships: **28 per-node updates against 5 status strings** on the same job, with termination still decided by the jobs API so a dead socket cannot cost a result. Every new op is rejected with a readable sentence when given bad params, proved rather than asserted (four contract rejections and two handler rejections). **The finding: this fork's `comfy-aimdo` dynamic-VRAM staging segfaults the server on the second copied-model decode of a session**, which is every tiling graph Bob ships. Five candidates were measured and the shipped fix keeps the staging feature: circular padding applied IN PLACE plus a lazy `ensure_untiled`, giving **ten texture sets in one session** (seam 0.83 to 1.18, drift -0.01 s) with W4 at seam 8.466 and W13's open route at 10.086, i.e. verified untiled. Proved by `tools/scripts/headless_comfy_g6.py`, four parts, 41 checks, no failures. |
 | **G7** | The geometry A/B: W8, ten fixed prompts including **at least three foliage cases**, TRELLIS.2 versus Hunyuan 2.1, one grid, decided once. Further challengers (Direct3D-S2, Hi3DGen) only if the verdict is close. | A written verdict on which model is primary per asset class, not one global winner. |
 | **G8** | Optional: track F sky dome (W14), part-level variation via W11, batch generation, ML retopo swap-in if open weights land. | |
 
@@ -2845,6 +3189,21 @@ staging holds exactly the results still awaiting a decision and there is nothing
 
 A Blender 5.2 binary is available in the CLI environment (`blender-headless-testing`), so these
 are measurable rather than `py_compile` theatre.
+
+**Start here: `tools/scripts/headless_comfy_all.py` runs every shipped gate as ONE command**, one
+summary line each with the wall clock, the whole-card peak VRAM and the number of checks, and it exits
+non-zero if any gate failed. `--fast` passes each gate its own cheap flags (fewer prompts, cached
+generations, no slow A/B baseline), which is what a regression check should use; the full run is
+GPU-hours and is what a phase verdict needs. `--list` prints the gates and their rough cost, `--gate`
+selects a subset, `--verbose` echoes a gate's own output. It re-implements no check: each gate keeps
+its own reachability gate and its own exit code, so this is a scheduler and a table.
+
+It earned its keep on the first run. **The G2 gate had been crashing since G4** — its stand-in
+`UILayout` had no `column`, which the stylise block G4 added to the panel body calls — and it looked
+clean the whole time because Blender exits 0 after a script traceback. So the runner reads each gate's
+VERDICT LINE and reports "no verdict printed, so the gate did not finish" when there is none, rather
+than trusting an exit code. Nobody had re-run G2 in two phases, which is exactly the failure mode the
+one-command suite exists to prevent.
 
 - `core/comfy.py` against a stdlib `http.server` fake: queue, jobs-API status shapes, cancel
   idempotency, `/view` bytes, multipart upload, preflight against a canned `/object_info`.
@@ -2950,6 +3309,20 @@ are measurable rather than `py_compile` theatre.
   and part B keeps the raw generation beside each (`heightmap_macro(keep_source=True)`) because the
   8-bit claim can only be audited against the image the mask was derived from. Reachability-gated:
   with no server every generation half prints SKIP and exits 0.
+- `tools/scripts/headless_comfy_g6.py`, the G6 gate, in four parts (`--part a,b,c,d`), and the one
+  gate here that does **not** run inside Blender. It calls the real MCP tool functions in the MCP
+  process and reaches Blender only through `executor.run_build`, the way an agent has to, so a wrong
+  tool signature, a wrong contract model or a missing handler fails it where a `core`-level test
+  passes. **A**: every new op validated by its model and REJECTED with a readable sentence when given
+  bad params (four contract rejections, each a different failure mode, plus two handler rejections
+  through a real Blender), every op present in both the dispatch registry and API.md, the macro key
+  composed onto a preset-shaped params dict and proved idempotent, and all six `comfy_*` tools against
+  a dead port. No server, always runs. **B**: prompt to a scattered asset, with the asset scored from
+  the op's own `data` (faces, UV overlap, height, origin, master type) because that is what an agent
+  can see. **C**: prompt to a shaded terrain, wall clock per stage, and the masked bake's recipe hash
+  differenced against the unmasked one so "the mask reached the bake" is a measurement. **D**:
+  websocket progress against status polling, counting updates and how many were per-node. The op lists
+  and renders land in `_generated/comfy_g6_check/` so the claims can be audited against artifacts.
 - `tools/scripts/comfy_omni_fix.py`, which is a test as much as a fix: `--check` reports whether the
   Omni control projection actually loaded and exits 1 when it did not. The G4c gate runs it, because
   it is the one failure in this integration that no graph-level check can see.
@@ -3004,6 +3377,18 @@ are measurable rather than `py_compile` theatre.
   land at +0.414 to +0.432 beside the null's +0.322 while a mask with no erosion gives -0.143 to
   -0.207, so the statistic discriminates cleanly whatever its sign means. Open, cheap, and it belongs
   with the terrain engine rather than with this integration.
+- **D14 This fork's dynamic-VRAM staging segfaults on a copied model, and Bob works around it by not
+  copying one.** Found at G6 and not caused by Bob: `comfy_aimdo`'s host buffer is released inside
+  `model_patcher.partially_load` and its destructor faults, so the SECOND copied-VAE decode of a
+  session kills the whole server. Bob's four tiling graphs were the only thing making a copy, so they
+  now ask for circular padding IN PLACE (`comfy.TILING_COPY_MODE`) and undo it before anything that
+  must not wrap (`comfy.ensure_untiled`). Measured: ten sets in one session, no crash, and the routes
+  that must not wrap verified untiled. Dynamic VRAM stays ON, which matters because it is what lets a
+  16 GB card hold a model larger than its free VRAM. **What is still open:** the mutation is
+  process-global on the server, so a second client generating concurrently could see a padded model
+  inside that window -- `--disable-dynamic-vram` is the documented fallback for anyone who hits it. Fix
+  belongs upstream in `comfy_aimdo`. Re-test on each fork update: if the destructor is fixed, revert
+  `TILING_COPY_MODE` to `"Make a copy"`, and `ensure_untiled` and the whole concern can go.
 - **D12 The other three Omni control modes.** `Hy3DOmniVoxelGenerate`, `…BBoxGenerate` and
   `…PoseGenerate` are installed and unmeasured. The bounding-box one is the interesting one for a
   suite like this: Bob knows every proxy's bbox for free, it is the cheapest control there is, and it

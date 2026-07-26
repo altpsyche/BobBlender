@@ -18,14 +18,21 @@ uv run --project tools python tools/scripts/gen_api_docs.py
 
 ## 1. Op vocabulary (MCP)
 
-An op is a JSON object with a string `op` tag plus fields. The vocabulary is the Pydantic models
-in `tools/bobtools/mcp/contracts.py` (validated in the venv, where agent input enters); each op's
-builder is the handler in `blender/extensions/bob_blender_tools/core/dispatch.py`. Blender receives
-already-valid JSON, so its bundled Python needs no extra deps.
+An op is a JSON object with a string `op` tag plus fields. The vocabulary is the Pydantic models in
+`blender/extensions/bob_blender_tools/mcp_agent/contracts.py` (validated in the agent-side server,
+where agent input enters); each op's builder is the handler in
+`blender/extensions/bob_blender_tools/core/dispatch.py`. Blender receives already-valid JSON, so its
+bundled Python needs no extra deps.
 
 A build request is `{output_file, ops: [...], base_file?}`; the result is
-`{ok, output_file, results: [{op, created, info}], error}`. Send ops through the `build` (headless)
-or `build_live` (open session) MCP tools.
+`{ok, output_file, results: [{op, created, info, data}], error}`. Send ops through the `build`
+(headless) or `build_live` (open session) MCP tools.
+
+`info` is a sentence for a human; `data` is the machine-readable result, and only the ops whose output
+the next call needs fill it in. `export_control` returns `{path, height_m, scale, footprint, ...}` —
+the path is what `comfy_mesh(control=...)` takes. `import_generated` returns the finished asset's
+`lod_faces`, `uv_overlap`, `height_m`, `origin_above_base`, `master_type`, `maps`, `file` and
+`warnings`, which is how to CHECK a generated asset instead of trusting it. Everywhere else it is `{}`.
 
 <!-- BEGIN GENERATED: op-vocabulary (tools/scripts/gen_api_docs.py) -->
 
@@ -46,6 +53,9 @@ or `build_live` (open session) MCP tools.
 | `shade_terrain` | `shading.shade_terrain` | `object`: str = **required**<br>`stack`: str \| None = `None`<br>`layers`: list \| None = `None`<br>`material`: str \| None = `None`<br>`assign`: bool = `True` |
 | `apply_shader` | `shading.apply_shader` | `object`: str = **required**<br>`master`: 'surface' \| 'terrain' \| 'water' = `'surface'`<br>`preset`: str \| None = `None` |
 | `snow_shell` | `shading.snow_shell` | `object`: str = **required** |
+| `apply_texture_set` | `shading.apply_texture_set` | `set`: str = `''`<br>`object`: str \| None = `None`<br>`material`: str \| None = `None`<br>`index`: int = `0` |
+| `import_generated` | `gen_assets.import_generated_op` | `kind`: str = `'rocks'`<br>`staged`: dict \| None = `None`<br>`name`: str \| None = `None`<br>`height_m`: float = `2.0`<br>`faces`: int = `4000`<br>`lods`: list \| None = `None`<br>`hero`: bool = `False`<br>`pack_dir`: str \| None = `None`<br>`cleanup`: bool = `True` |
+| `export_control` | `gen_assets.export_control_op` | `object`: str = **required**<br>`out_file`: str \| None = `None`<br>`points`: int = `8192`<br>`pack_dir`: str \| None = `None` |
 | `apply_biome` | `biome.apply_biome` | `object`: str = **required**<br>`biome`: str = **required**<br>`assign`: bool = `True`<br>`weather_assets`: bool = `True`<br>`world`: bool = `True`<br>`curve_mode`: 'scatter' \| 'clear' \| 'keep' \| None = `None` |
 | `world_biome` | `biome.world_biome` | `biome`: str = **required** |
 | `build_clouds` | `atmosphere.build_clouds` | `object`: str = `'BOB_Clouds'`<br>`cloud_shadows`: bool = `True` |
