@@ -46,7 +46,40 @@ tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
   mcp/executor.py     headless executor -->  core/heightfields/  terrain compute (single source)
   mcp/bridge.py       live executor          runners/          headless entry
   mcp/mcp_server.py   MCP tools              extensions/bob_blender_tools  the addon
+  bobtools/comfyui.py re-export only  ---->  core/comfy{,_jobs,_maps}.py
 ```
+
+Same single-source rule as the terrain compute, for the same reason: the ComfyUI client is
+stdlib only and lives in the extension, because Blender's bundled Python has no `httpx`.
+`bobtools/comfyui.py` re-exports it rather than reimplementing it. Split by what
+they own: `core/comfy.py` is the HTTP client, the title templating, preflight, and the texture-set
+recipe; `core/comfy_jobs.py` is the scheduler (one worker thread, a `bpy.app.timers` tick draining
+a result queue, every `bpy` touch on the main thread, the registry cleared by a `@persistent`
+`load_post` handler); `core/comfy_maps.py` derives the texture maps in numpy. Shipped ComfyUI
+graphs live in `extensions/bob_blender_tools/assets/workflows/`, in API format, bound by node
+title, and every one of them is preflighted before it is queued so an uninstalled pack or a
+missing model is a sentence rather than an HTTP 400. Generated output lands in
+`<output>/packs/generated/`, staged under a `_staging/` sibling of `textures/` until it is
+accepted.
+
+Three more modules need `bpy`, and they are the half of the integration that hands ComfyUI geometry
+instead of pixels. `core/gen_views.py` renders a beauty frame plus TRUE depth and normal passes
+through a view-layer material override (Blender 5.2's compositor cannot hand a pass back to Python),
+and renders the isolated flat-lit turntable the paint route needs. `core/gen_paint.py` projects the
+restyled views back into one UV texture: a world position and normal per texel from the same triangle
+raster the coverage measurement uses, a texel-space z-buffer for visibility, a normal-weighted blend,
+and the cross-view seam and drift figures that are the paint route's gate.
+
+`core/gen_assets.py` is the one that finishes an asset: ComfyUI generates a
+mesh, Blender bakes it, scales it to a real height, puts the origin on the ground, builds the LOD
+chain, converts it to a BobShader, and writes it into the generated pack with a provenance
+sidecar. Which ComfyUI graphs produce that mesh is a value rather than a branch
+(`comfy.asset_chain()` picks the route, `comfy.finish_passes()` maps what it staged onto the two
+finish callbacks), so swapping the four-graph chain for the one-shot one was a config change; the
+same shape carries the texturing decision (`comfy.texture_chain()`: native PBR or the stylised paint
+route). The split matters for threading as much as for tidiness: the whole ComfyUI chain runs on
+the worker in one job, and the Blender half runs once in that job's main-thread callback, so a
+five-minute generation never blocks a frame. Full plan and measurements: `docs/COMFYUI.md`.
 
 - The op vocabulary (`contracts.py`) is validated where agent input enters, so
   the Blender side trusts clean JSON and needs no extra deps.
@@ -283,13 +316,15 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   Surface / Weather sub-panels tune the chosen one, reaching every instance
   (docs/SCATTER-SHADING-UX.md). Names and conventions follow the UX redesign (ui/helpers, native
   context).
-- `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the texture-set
-  pickers, and the Convert scope + collection). Identity is native: the material on the active
-  object's active slot (no `material_name`/`target`/`master` enum). The panel (`ui/shaders.py`)
-  lists every material slot of the active mesh with a per-row select and an adaptive New (empty)
-  or Convert (plain), a Batch-convert (active/selected/collection) for the scatter assets, and the
-  Surface / Terrain Layers (+ Layer Masks) / Weather sub-panels gated on `materials.master_type`
-  of the active material. Registered after Firmament, which owns `bbt_env`; a `make_material` MCP
+- `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the staged
+  texture-set pick, the Convert scope + collection, and the scatter asset-material name). Identity
+  is native: the material on the active object's active slot (no `material_name`/`target`/`master`
+  enum), and a texture-set assignment is recorded on the MATERIAL (`bbt_texsets`,
+  `bbt_texset_box`), not in this state, so a rebuild carries it forward. The panel
+  (`ui/shaders.py`) lists every material slot of the active mesh with a per-row select and an
+  adaptive New (empty) or Convert (plain), a Batch-convert (active/selected/collection) for the
+  scatter assets, and the Surface / Terrain Layers (+ Layer Masks) / Weather sub-panels gated on
+  `materials.master_type` of the active material. Registered after Firmament, which owns `bbt_env`; a `make_material` MCP
   op stays a commented stub in `dispatch.py`, added only if agent-over-MCP authoring is later wanted.
 
 ## Naming

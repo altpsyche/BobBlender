@@ -1,0 +1,120 @@
+{
+  "_bob": {
+    "id": "mesh_geom_trellis",
+    "plan": "W5t, docs/COMFYUI.md track C, pipeline step 2 (primary geometry graph)",
+    "purpose": "A subject image with alpha to a dense, UV-unwrapped mesh. Open surfaces included, which is the whole reason TRELLIS.2 is primary.",
+    "derived_from": "ComfyUI-TRELLIS2/workflows/geometry_only_1024.json, converted by tools/scripts/comfy_ui_to_api.py",
+    "deviations_from_source": [
+      "MaskPreview and GeomPackPreviewMeshVTK dropped: they are GUI viewers, and Bob fetches the result over /view.",
+      "Trellis2ExportTrimesh plus Preview3D added. The export node is the one that writes a GLB with the Z-up to Y-up conversion and the UV V-flip glTF needs, but it reports its path only as a STRING output, which never reaches the job's outputs dict. Preview3D takes that string and emits a proper {filename, subfolder, type} entry, which is how Bob learns the server-side name it then fetches.",
+      "BOB_* titles added on the templated nodes. BOB_MODEL binds the resolution tier (512 preview / 1024 default / 1536_cascade hero) rather than a model filename: LoadTrellis2Models takes no checkpoint name.",
+      "target_face_count stays at the source's 500000, because the simplify budget is Bob's decision at import and a second, earlier budget here would just be a number to keep in sync."
+    ],
+    "requires_nodes": ["LoadTrellis2Models", "Trellis2GetConditioning", "Trellis2ImageToShape", "Trellis2ProcessMesh", "Trellis2ExportTrimesh"],
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack",
+    "runtime_inputs": ["BOB_IMAGE.image"],
+    "resolution_tiers": {"preview": "512", "default": "1024", "hero": "1536_cascade"},
+    "notes": "The alpha of BOB_IMAGE is what makes this work. LoadImage returns mask = 1 - alpha, InvertMask puts it back, and Trellis2GetConditioning takes the foreground. An opaque PNG therefore conditions on the whole square frame. Measured at G0.5: 1024 warm is about 87 s and peaks at 5.7 GB of 16, so no cascade is needed at 1024."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "11": {
+      "class_type": "InvertMask",
+      "inputs": {
+        "mask": ["1", 1]
+      },
+      "_meta": {
+        "title": "BOB_ALPHA"
+      }
+    },
+    "92": {
+      "class_type": "LoadTrellis2Models",
+      "inputs": {
+        "resolution": "1024",
+        "precision": "auto",
+        "attn_backend": "auto"
+      },
+      "_meta": {
+        "title": "BOB_MODEL"
+      }
+    },
+    "91": {
+      "class_type": "Trellis2GetConditioning",
+      "inputs": {
+        "model_config": ["92", 0],
+        "image": ["1", 0],
+        "mask": ["11", 0],
+        "background_color": "black"
+      },
+      "_meta": {
+        "title": "BOB_COND"
+      }
+    },
+    "104": {
+      "class_type": "Trellis2ImageToShape",
+      "inputs": {
+        "model_config": ["92", 0],
+        "conditioning": ["91", 0],
+        "seed": 0,
+        "ss_guidance_strength": 6.5,
+        "ss_guidance_rescale": 0.05,
+        "ss_sampling_steps": 12,
+        "shape_guidance_strength": 6.5,
+        "shape_guidance_rescale": 0.05,
+        "shape_sampling_steps": 12,
+        "max_tokens": 49152
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "110": {
+      "class_type": "Trellis2ProcessMesh",
+      "inputs": {
+        "trimesh": ["104", 0],
+        "remesh": "on",
+        "remesh.remesh_band": 1.0,
+        "remesh.remove_inner_faces": true,
+        "target_face_count": 500000,
+        "floater_threshold": 0.001,
+        "weld_vertices": true,
+        "weld_digits": 4,
+        "chart_cone_angle": 90.0,
+        "chart_refine_iterations": 1,
+        "chart_global_iterations": 1,
+        "chart_smooth_strength": 1
+      },
+      "_meta": {
+        "title": "BOB_PROCESS"
+      }
+    },
+    "120": {
+      "class_type": "Trellis2ExportTrimesh",
+      "inputs": {
+        "trimesh": ["110", 0],
+        "filename_prefix": "bob_mesh",
+        "file_format": "glb"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    },
+    "121": {
+      "class_type": "Preview3D",
+      "inputs": {
+        "model_file": ["120", 0]
+      },
+      "_meta": {
+        "title": "BOB_VIEW"
+      }
+    }
+  }
+}

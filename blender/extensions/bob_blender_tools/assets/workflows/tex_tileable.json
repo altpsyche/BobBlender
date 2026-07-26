@@ -1,0 +1,121 @@
+{
+  "_bob": {
+    "id": "tex_tileable",
+    "plan": "W1, docs/COMFYUI.md track A",
+    "purpose": "Prompt to one seamless albedo. Bob derives the rest of the set in numpy.",
+    "derived_from": "ComfyUI-seamless-tiling/tiled_workflow.png (pack SHA 9225ed5), converted to API format by tools/scripts/comfy_ui_to_api.py",
+    "deviations_from_source": [
+      "OffsetImage and both PreviewImage nodes dropped; a SaveImage titled BOB_OUT added, because Bob fetches the result over /view rather than looking at it.",
+      "ckpt_name repointed from albedobaseXL_v21 to the D1 checkpoint.",
+      "sampler tuned for the D1 checkpoint: 25 steps, cfg 5.0, dpmpp_2m + karras (the source had 20 / 4.5 / normal).",
+      "a real negative prompt, because the source left it empty and baked lighting is W1's main failure mode.",
+      "BOB_* titles added on the six templated nodes."
+    ],
+    "requires_nodes": ["SeamlessTile", "MakeCircularVAE"],
+    "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0)",
+    "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+    "notes": "Both halves of the padding switch are needed, measured: circular UNet with a stock zero-padded VAE decode leaves a seam 2.7x the interior difference. The source graph used CircularVAEDecode for the VAE half; this uses MakeCircularVAE plus the stock VAEDecode instead, because CircularVAEDecode deepcopies the live VAE per execution and discards it, and the server segfaults inside load_models_gpu on the next decode of the session. MakeCircularVAE's copy is retained in the execution cache and survives repeated runs."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_CKPT"
+      }
+    },
+    "2": {
+      "class_type": "SeamlessTile",
+      "inputs": {
+        "model": ["1", 0],
+        "tiling": "enable",
+        "copy_model": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "rocky ground with moss"
+      },
+      "_meta": {
+        "title": "BOB_PROMPT"
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "shadow, cast shadow, vignette, lighting gradient, specular highlight, glare, blur, depth of field, perspective, horizon, sky, plant closeup, object, text, watermark, signature, border, frame, seam"
+      },
+      "_meta": {
+        "title": "BOB_NEG"
+      }
+    },
+    "7": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "BOB_SIZE"
+      }
+    },
+    "6": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["2", 0],
+        "positive": ["3", 0],
+        "negative": ["5", 0],
+        "latent_image": ["7", 0],
+        "seed": 0,
+        "steps": 25,
+        "cfg": 5.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "11": {
+      "class_type": "MakeCircularVAE",
+      "inputs": {
+        "vae": ["1", 2],
+        "tiling": "enable",
+        "copy_vae": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE_VAE"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["6", 0],
+        "vae": ["11", 0]
+      },
+      "_meta": {
+        "title": "BOB_DECODE"
+      }
+    },
+    "13": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["12", 0],
+        "filename_prefix": "bob/tex_tileable"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

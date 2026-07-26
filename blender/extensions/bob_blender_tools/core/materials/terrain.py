@@ -6,7 +6,9 @@ import os
 
 import bpy
 
-from .shared import TERRAIN_MASTER, _build_wrapper, _cached_group, _gin, _gout, _lerp, _mixcol, _mmath, _mrange, _vmul, master_type
+from .. import assets
+from . import texset
+from .shared import TERRAIN_MASTER, _build_wrapper, _cached_group, _gin, _gout, _lerp, _mixcol, _mmath, _mrange, _vmul, _wrapper_name, master_type
 from .weather import _WEATHER_EXTRA, weather_group
 
 
@@ -45,13 +47,15 @@ def _terrain_maps(obj):
 
 
 
-def terrain_material_for(obj, mat_name=None):
+def terrain_material_for(obj, mat_name=None, texsets=None, box=None):
     """terrain_material for a built terrain OBJECT: gathers its baked flow/wetness maps and size
     so a rebuild (adding a layer) keeps the drainage wiring instead of dropping it. mat_name
-    preserves the existing material's identity when rebuilding in place."""
+    preserves the existing material's identity when rebuilding in place; texsets and box pass
+    through, and default to what the material already records."""
     flow, wet, size = _terrain_maps(obj)
     return terrain_material(mat_name or obj.name,
-                            flow_image=flow, wetness_image=wet, terrain_size=size)
+                            flow_image=flow, wetness_image=wet, terrain_size=size,
+                            texsets=texsets, box=box)
 
 
 
@@ -461,19 +465,33 @@ def terrain_master_group():
 
 
 def terrain_material(mat_name, flow_image=None, wetness_image=None,
-                     terrain_size=None):
-    """A multi-layer terrain wrapper (S_TerrainMaster): solid per-layer tints plus the baked
-    flow/wetness maps. Each layer's look is its solid Base Color (no image texture path).
+                     terrain_size=None, texsets=None, box=None):
+    """A multi-layer terrain wrapper (S_TerrainMaster): per-layer tints, the baked flow/wetness
+    maps, and optionally a texture set sampled into each layer's map inputs.
 
     flow_image / wetness_image are the baked drainage maps (siblings of the heightmap). When
     given, they are sampled per-terrain by object-space XY (UV = pos.xy/size + 0.5, matching the
     heightmap_terrain displacement) and fed into the master's Flow Map / Wetness Map inputs, so a
-    layer's Flow mask and the terrain wetness key off the terrain's own drainage."""
+    layer's Flow mask and the terrain wetness key off the terrain's own drainage.
+
+    texsets is one texture-set name per layer slot ("" = solid tint, the default), and box picks
+    triplanar over top-down planar projection. Both default to whatever the material already
+    records, so a rebuild for any other reason (adding a layer, re-baking drainage) carries the
+    textures forward instead of silently dropping back to tints."""
     master = terrain_master_group()
     size = float(terrain_size or 90.0)
+    prev = bpy.data.materials.get(_wrapper_name(mat_name))
+    sets, prev_box = texset.stored_sets(prev, MAX_TERRAIN_LAYERS)
+    if texsets is not None:
+        sets = ([str(s or "") for s in texsets] + [""] * MAX_TERRAIN_LAYERS)[:MAX_TERRAIN_LAYERS]
+    box = prev_box if box is None else bool(box)
+    # Resolve the set files up front, so a set that no longer exists on disk degrades to a solid
+    # tint rather than raising inside the node build.
+    layer_maps = {i: m for i, m in ((i, assets.texture_set_maps(s)) for i, s in enumerate(sets) if s) if m}
     sig = ("terrain|"
            + ("|flow" if flow_image is not None else "")
-           + ("|wet" if wetness_image is not None else ""))
+           + ("|wet" if wetness_image is not None else "")
+           + texset.sig_part(sets, box))
 
     def _map_uv(nt):
         """Object-space XY -> heightmap UV, shared by the flow/wetness samples. Object coords
@@ -509,4 +527,29 @@ def terrain_material(mat_name, flow_image=None, wetness_image=None,
                 nt.links.new(uv, tex.inputs["Vector"])
                 nt.links.new(tex.outputs["Color"], grp.inputs[socket])
 
-    return _build_wrapper(mat_name, master, sig, wire)
+        # Texture sets (S3). Object coordinates in BOTH projection modes: the terrain is a
+        # GN-generated grid with no UV layer, so flat here means a top-down planar projection
+        # and box adds the cliff faces. One coordinate node feeds every layer's Mapping.
+        if not layer_maps:
+            return
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        coord.name = texset.TEXSET_NODE_PREFIX + "Coord"
+        coord.location = (-2500, 400)
+        sampled = 0
+        for i, maps in sorted(layer_maps.items()):
+            node = texset.texset_sample(nt, f"L{i}", maps, coord.outputs["Object"], box=box,
+                                        loc=(-2200, 600 - i * 800))
+            if node is None:
+                continue
+            sampled += 1
+            nt.links.new(node.outputs["Albedo Map"], grp.inputs[f"L{i} Albedo Map"])
+            nt.links.new(node.outputs["Roughness Map"], grp.inputs[f"L{i} Roughness Map"])
+            nt.links.new(node.outputs["Detail Height"], grp.inputs[f"L{i} Detail Height"])
+        # The master's Height output is the height-lerp's blended detail height, so one Bump
+        # gives every textured layer its relief, following whichever layer won per texel.
+        if sampled:
+            texset.texset_bump(nt, grp.outputs["Height"], bsdf, loc=(100, -340))
+
+    mat = _build_wrapper(mat_name, master, sig, wire)
+    texset.store_sets(mat, sets, box)
+    return mat

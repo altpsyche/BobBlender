@@ -1,0 +1,293 @@
+{
+ "_bob": {
+  "id": "stylize_render_est",
+  "plan": "W12e, docs/COMFYUI.md track D. The control W12 is measured against, and the fallback for an image Bob did not render",
+  "purpose": "W12 with ESTIMATED depth and normal instead of Blender's real passes, so the claim that real passes are worth exporting is a measurement rather than an argument. It is also the only stylise route available for an image that arrived without passes.",
+  "derived_from": "stylize_render.json (W12), with the two hint LoadImage nodes replaced by Depth Anything V2 and NormalBAE preprocessors reading the render itself",
+  "deviations_from_source": [
+   "BOB_DEPTH and BOB_NORMAL (LoadImage) replaced by BOB_DEPTH_EST (DepthAnythingV2Preprocessor) and BOB_NORMAL_EST (BAE-NormalMapPreprocessor), both fed from the SCALED render, so the estimator sees exactly the pixels the sampler starts from.",
+   "Nothing else. Same checkpoint, same LoRA slot, same two-stage ControlNet chain, same sampler values, so the A/B is a comparison of hints and not of graphs."
+  ],
+  "requires_nodes": [
+   "DepthAnythingV2Preprocessor",
+   "BAE-NormalMapPreprocessor",
+   "ControlNetApplyAdvanced",
+   "SetUnionControlNetType"
+  ],
+  "requires_pack": "comfyui_controlnet_aux (the estimator weights are pulled on first run)",
+  "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+  "runtime_inputs": [
+   "BOB_IMAGE.image",
+   "BOB_LORA.lora_name"
+  ],
+  "notes": "Estimator resolution is 1024 rather than the node default 512: a 512 hint against a 1024 latent is a handicap the comparison should not hand the estimators."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "CheckpointLoaderSimple",
+   "inputs": {
+    "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CKPT"
+   }
+  },
+  "2": {
+   "class_type": "LoraLoader",
+   "inputs": {
+    "model": [
+     "1",
+     0
+    ],
+    "clip": [
+     "1",
+     1
+    ],
+    "lora_name": "bob_placeholder.safetensors",
+    "strength_model": 0.0,
+    "strength_clip": 0.0
+   },
+   "_meta": {
+    "title": "BOB_LORA"
+   }
+  },
+  "3": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "concept art of a forest clearing"
+   },
+   "_meta": {
+    "title": "BOB_PROMPT"
+   }
+  },
+  "4": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "blurry, low detail, text, watermark, signature, frame, border, distorted proportions, extra objects, changed layout"
+   },
+   "_meta": {
+    "title": "BOB_NEG"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_IMAGE"
+   }
+  },
+  "6": {
+   "class_type": "ImageScale",
+   "inputs": {
+    "image": [
+     "5",
+     0
+    ],
+    "upscale_method": "lanczos",
+    "width": 1024,
+    "height": 1024,
+    "crop": "disabled"
+   },
+   "_meta": {
+    "title": "BOB_SIZE"
+   }
+  },
+  "7": {
+   "class_type": "VAEEncode",
+   "inputs": {
+    "pixels": [
+     "6",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ENCODE"
+   }
+  },
+  "8": {
+   "class_type": "DepthAnythingV2Preprocessor",
+   "inputs": {
+    "image": [
+     "6",
+     0
+    ],
+    "ckpt_name": "depth_anything_v2_vitl.pth",
+    "resolution": 1024
+   },
+   "_meta": {
+    "title": "BOB_DEPTH_EST"
+   }
+  },
+  "9": {
+   "class_type": "BAE-NormalMapPreprocessor",
+   "inputs": {
+    "image": [
+     "6",
+     0
+    ],
+    "resolution": 1024
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_EST"
+   }
+  },
+  "10": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-depth-sdxl-1.0/diffusion_pytorch_model.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_DEPTH"
+   }
+  },
+  "11": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-union-sdxl-1.0/diffusion_pytorch_model_promax.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_NORMAL"
+   }
+  },
+  "12": {
+   "class_type": "SetUnionControlNetType",
+   "inputs": {
+    "control_net": [
+     "11",
+     0
+    ],
+    "type": "normal"
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_TYPE"
+   }
+  },
+  "13": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "3",
+     0
+    ],
+    "negative": [
+     "4",
+     0
+    ],
+    "control_net": [
+     "10",
+     0
+    ],
+    "image": [
+     "8",
+     0
+    ],
+    "strength": 0.85,
+    "start_percent": 0.0,
+    "end_percent": 0.9
+   },
+   "_meta": {
+    "title": "BOB_DEPTH_APPLY"
+   }
+  },
+  "14": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "13",
+     0
+    ],
+    "negative": [
+     "13",
+     1
+    ],
+    "control_net": [
+     "12",
+     0
+    ],
+    "image": [
+     "9",
+     0
+    ],
+    "strength": 0.45,
+    "start_percent": 0.0,
+    "end_percent": 0.7
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_APPLY"
+   }
+  },
+  "15": {
+   "class_type": "KSampler",
+   "inputs": {
+    "model": [
+     "2",
+     0
+    ],
+    "positive": [
+     "14",
+     0
+    ],
+    "negative": [
+     "14",
+     1
+    ],
+    "latent_image": [
+     "7",
+     0
+    ],
+    "seed": 0,
+    "steps": 25,
+    "cfg": 6.0,
+    "sampler_name": "dpmpp_2m",
+    "scheduler": "karras",
+    "denoise": 0.55
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "16": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "15",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_DECODE"
+   }
+  },
+  "17": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "images": [
+     "16",
+     0
+    ],
+    "filename_prefix": "bob/stylize_render_est"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  }
+ }
+}

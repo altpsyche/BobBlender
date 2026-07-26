@@ -21,7 +21,7 @@ tags = ["Pipeline", "Development"]
 
 # Declared up front so Blender 5.2 does not restrict them at runtime (it flags undeclared use).
 [permissions]
-network = "Local MCP bridge socket and compute-wheel downloads (scipy/CuPy)"
+network = "Local MCP bridge, a local ComfyUI, compute-wheel downloads"
 files = "Read asset packs, write terrain bakes, install compute wheels"
 
 # Keep caches and dev-only cruft out of the shipped zip.

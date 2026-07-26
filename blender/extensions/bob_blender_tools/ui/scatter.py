@@ -22,10 +22,12 @@ re-entrancy). build_geonodes is non-destructive and restores the live knobs by
 socket name, so a structural rebuild preserves tuned values.
 """
 
+import os
 import random
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty,
+                       StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from ..bridge import server
@@ -196,6 +198,32 @@ class BBT_ScatterProps(PropertyGroup):
     active: IntProperty(default=0)
     summary: StringProperty(default="")
 
+    # Generate Asset (docs/COMFYUI.md track C). Scatter-grade by default and the panel says so;
+    # `gen_hero` swaps Decimate for Quadriflow and doubles the bake resolution.
+    gen_prompt: StringProperty(
+        name="Prompt", default="",
+        description="What to generate, e.g. 'a mossy granite boulder'. The single-subject "
+                    "framing clause is appended for you")
+    gen_kind: EnumProperty(
+        name="Kind", items=[(k, k.capitalize(), "") for k in ("trees", "rocks", "plants", "grass")],
+        default="rocks",
+        description="Which BOB_Assets_* collection the finished asset joins, so a scatter layer "
+                    "of that kind instances it")
+    gen_height: FloatProperty(
+        name="Height (m)", default=1.5, min=0.01, max=100.0,
+        description="Real-world height. Mandatory: every image-to-3D model emits a "
+                    "unit-cube-normalised mesh, so without this the scatter looks like a toy set")
+    gen_faces: IntProperty(
+        name="Face Budget", default=4000, min=200, max=200000,
+        description="Target triangle count for the scattered mesh. A generated mesh arrives at "
+                    "roughly half a million")
+    gen_seed: IntProperty(name="Seed", default=0, min=0)
+    gen_hero: BoolProperty(
+        name="Hero", default=False,
+        description="Quadriflow instead of Decimate and a 2K bake. For an asset the camera gets "
+                    "close to; scatter-grade is the default because a background prop instanced "
+                    "four thousand times is never deformed")
+
 
 # Operators
 class BBT_OT_scatter_make_proxies(Operator):
@@ -207,6 +235,125 @@ class BBT_OT_scatter_make_proxies(Operator):
         _apply([{"op": "make_proxies",
                  "kinds": ["trees", "rocks", "plants", "grass"]}])
         self.report({"INFO"}, "Proxy assets ready")
+        return {"FINISHED"}
+
+
+def _generated_pack():
+    """The generated asset pack root the addon registered, or None."""
+    from ..core import assets
+
+    return assets.generated_root()
+
+
+def _comfy_reachable_cached():
+    """The last known ComfyUI state, never a probe: a socket call from `draw()` would freeze the
+    UI for the timeout in exactly the case the row exists to report (the G1 finding)."""
+    from .shaders import _COMFY_STATE
+
+    return _COMFY_STATE
+
+
+class BBT_OT_scatter_generate_asset(Operator):
+    bl_idname = "bob_blender_tools.scatter_generate_asset"
+    bl_label = "Generate Asset"
+    bl_description = ("Generate a scatter asset from the prompt with ComfyUI: reference image, "
+                      "then geometry plus PBR texture in one pass, then Blender bakes, scales, "
+                      "LODs and BobShades it into the generated pack. Runs in the background; "
+                      "needs a local ComfyUI server, and without one nothing else changes")
+    bl_options = {"REGISTER", "UNDO"}
+
+    # One operator, two entries in the box, because the difference between them is one input. With
+    # `from_control` the ACTIVE object's shape conditions the geometry (W7) instead of the reference
+    # image alone (W9b), and the block-out's own height replaces the Height field, since a proxy that
+    # was placed in a layout already says how big the asset is.
+    from_control: BoolProperty(
+        name="From Block-out", default=False, options={"SKIP_SAVE"},
+        description="Condition the geometry on the active object's shape, so the result keeps its "
+                    "silhouette and footprint and drops into the layout it was blocked out in")
+
+    def execute(self, context):
+        from ..core import comfy, gen_assets
+        from .shaders import _COMFY_STATE, _submit, _comfy_job_running
+
+        scn = context.scene.bbt_scatter
+        prompt = (scn.gen_prompt or "").strip()
+        if not prompt:
+            self.report({"ERROR"}, "Describe the asset first (the Prompt field)")
+            return {"CANCELLED"}
+        pack = _generated_pack()
+        if not pack:
+            self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
+                                   "add-on preferences)")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+
+        kind, seed = scn.gen_kind, int(scn.gen_seed)
+        height, faces, hero = float(scn.gen_height), int(scn.gen_faces), bool(scn.gen_hero)
+
+        # The block-out export is bpy, so it happens HERE, on the main thread, before the job is
+        # submitted (the same rule as the stylise button's render). It is one mesh copy and one glTF
+        # write, and it is the whole main-thread cost of the press.
+        control = None
+        if self.from_control:
+            proxy = context.active_object
+            if proxy is None or proxy.type != "MESH":
+                self.report({"ERROR"}, "Make the block-out proxy the active object first")
+                return {"CANCELLED"}
+            staging = comfy.staging_dir(pack)
+            os.makedirs(staging, exist_ok=True)
+            exported = gen_assets.export_control(
+                proxy, comfy.unique_file_name(staging, f"{comfy.slugify(prompt)}_control", ".glb"))
+            control = exported["path"]
+            height = exported["height_m"] or height
+        # Foliage is open by construction, so its holes are the asset, and this decides TWO
+        # stages. On the ComfyUI side it turns off Trellis2ProcessMesh's dual-contouring remesh,
+        # which otherwise returns a watertight shell and makes a leaf a leaf-shaped bag (measured
+        # at G3: 0 boundary edges with it on, 11,620 with it off). On the Blender side it leaves
+        # the pinhole fill alone, which would weld the blade shut for the same reason.
+        foliage = kind in ("plants", "grass")
+
+        # ONE worker job for the whole ComfyUI half (W4 then W9b by default, or W4, W5t, W9c and
+        # W9t on the staged route), then one main-thread finish. They do not interleave, because
+        # whichever route runs hands over a mesh that is already at its budget with UVs, so Blender
+        # has nothing to contribute in between. Nothing in `generate` touches bpy; everything in
+        # `landed` does and nothing there touches the network.
+        #
+        # The route is a value, not a branch: `comfy.asset_chain()` picks the staging function and
+        # `comfy.finish_passes()` maps whatever it staged onto the two finish callbacks, so the
+        # one-shot W9b route needs no second operator. G3b measured why the staged one is default.
+        # With a control the route is forced to the staged chain: W9b generates its own geometry from
+        # the image and takes no control mesh, so there is no one-shot version of this.
+        def generate(job):
+            chain = comfy.generate_asset_chain if control else comfy.asset_chain()
+            return chain(prompt, pack, seed=seed, tier="default",
+                         faces=faces, remesh=not foliage,
+                         texture_size=2048 if hero else 1024,
+                         **({"control": control} if control else {}),
+                         on_queued=job.note_prompt_id,
+                         on_progress=job.report)
+
+        def landed(job):
+            staged = job.result
+            if not staged:
+                return
+            simplify_pass, texture_pass = comfy.finish_passes(staged)
+            report = gen_assets.finish_asset(
+                staged["raw_mesh"], pack, kind=kind, name=comfy.slugify(prompt),
+                height_m=height, faces=faces, hero=hero,
+                bake_size=2048 if hero else gen_assets.DEFAULT_BAKE_SIZE,
+                fill_pinholes=not foliage, exports=comfy.stage_exports(staged),
+                simplify_pass=simplify_pass, texture_pass=texture_pass,
+                provenance=dict(staged["meta"], prompt=prompt, seed=seed))
+            gen_assets.import_generated(report["name"], kind=kind, pack_dir=pack)
+            comfy.reject_variant(staged["dir"])  # the staged intermediates are spent
+            scn.summary = (f"{report['name']}: {report['lod_faces'][0]} faces, "
+                           f"{report['height_m']} m, in BOB_Assets_{kind.capitalize()}")
+            _COMFY_STATE.update(ok=True, detail=scn.summary)
+
+        _submit(f"asset: {prompt[:32]}", generate, landed)
+        self.report({"INFO"}, "Generating in the background; the viewport stays usable")
         return {"FINISHED"}
 
 
@@ -387,8 +534,14 @@ class BBT_OT_scatter_random_seed(Operator):
     # Which seed socket to reshuffle. Defaults to the placement Seed; the noise clumping "Noise
     # Seed" passes its own name so it can be reshuffled too (was unreachable from the UI).
     socket: StringProperty(default="Seed", options={"HIDDEN"})
+    # "generate" reshuffles the Generate Asset seed instead of a layer socket, so both seeds go
+    # through the one reshuffle operator and the one `helpers.seed_row` idiom.
+    target: StringProperty(default="layer", options={"HIDDEN"})
 
     def execute(self, context):
+        if self.target == "generate":
+            context.scene.bbt_scatter.gen_seed = random.randint(0, 99999)
+            return {"FINISHED"}
         obj = _active_layer(context)
         seed = _live_input(obj, self.socket) if obj else None
         if seed is None:
@@ -496,6 +649,47 @@ class BBT_PT_scatter(Panel):
                                      note="rebuilds every layer of this emitter")
         if scn.summary:
             layout.label(text=scn.summary, icon="INFO")
+
+        _draw_generate(layout, scn, active=context.active_object)
+
+
+def _draw_generate(layout, scn, active=None):
+    """Generate Asset, beside the proxy and biome routes rather than in a panel of its own: it is
+    a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
+    state = _comfy_reachable_cached()
+    box = layout.box()
+    row = box.row()
+    row.label(text="Generate Asset", icon="SHADERFX")
+    row.label(text="scatter-grade" if not scn.gen_hero else "hero")
+    if not state.get("ok"):
+        cap = box.row()
+        cap.enabled = False
+        cap.label(text=state.get("detail") or "ComfyUI not connected", icon="UNLINKED")
+    box.prop(scn, "gen_prompt", text="")
+    row = box.row(align=True)
+    row.prop(scn, "gen_kind", text="")
+    row.prop(scn, "gen_height")
+    row = box.row(align=True)
+    row.prop(scn, "gen_faces")
+    row.prop(scn, "gen_hero", toggle=True)
+    helpers.seed_row(box, scn, "gen_seed", "bob_blender_tools.scatter_random_seed",
+                     op_props={"target": "generate"})
+    ready = bool(state.get("ok")) and bool((scn.gen_prompt or "").strip())
+    run = box.row()
+    run.enabled = ready
+    run.operator("bob_blender_tools.scatter_generate_asset", icon="PLAY")
+    # The block-out route (W7): the same press with the active object's shape as a second input, so
+    # it is a second button and not a second panel. Shown only when there is a mesh to condition on,
+    # which is the adaptive rule the rest of the suite follows.
+    blockout = active if (active is not None and active.type == "MESH") else None
+    if blockout is not None:
+        run = box.row()
+        run.enabled = ready
+        run.operator("bob_blender_tools.scatter_generate_asset", text="Asset from Block-out",
+                     icon="MESH_CUBE").from_control = True
+        note = box.row()
+        note.enabled = False
+        note.label(text=f"keeps {blockout.name}'s footprint, {blockout.dimensions.z:.2f} m tall")
 
 
 class BBT_PT_scatter_layer(Panel):
@@ -623,6 +817,7 @@ CLASSES = (
     BBT_ScatterLayer,
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
+    BBT_OT_scatter_generate_asset,
     BBT_OT_scatter_biome_scatter,
     BBT_OT_scatter_add,
     BBT_OT_scatter_remove,

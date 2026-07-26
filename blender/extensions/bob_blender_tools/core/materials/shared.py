@@ -148,7 +148,12 @@ S_GROUP_VER = 6
 #   embeds S_EnvState directly (its freeze path reads Temperature/Cloud/Wind/Frost), so its internal
 #   links to that group's outputs go stale when the group interface is rebuilt. Bumped in lockstep
 #   with the global S_GROUP_VER v6 so the water group rebuilds and re-links.
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 9}
+#   S_TexSet v1 (BobShaders S3): the texture-set sampler. Versioned on its own from the start,
+#   because it embeds neither S_Weather nor S_EnvState, so it never needs the lockstep rebuild the
+#   masters do -- and a future change to its interface must not cost every tuned terrain in the
+#   file a revert-to-default. The wrappers that instance it fold this number into their signature
+#   (texset.sig_part), so bumping it here still rebuilds them.
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 9, "S_TexSet": 1}
 
 
 
@@ -187,6 +192,64 @@ _WRAPPER_EXTRA_OUTPUTS = (
 
 
 
+def _wrapper_name(mat_name):
+    """The wrapper material datablock name for a base name: M_ prefixed, idempotent. The one
+    place the prefix rule lives, so a caller that needs to READ a wrapper before rebuilding it
+    (the texture-set assignment, which carries forward what the material already had) resolves
+    the same name _build_wrapper will write."""
+    return mat_name if mat_name.startswith(SURFACE_WRAPPER_PREFIX) else SURFACE_WRAPPER_PREFIX + mat_name
+
+
+# Nodes a wire() adds are named with this prefix so their tuned inputs survive a structural
+# rebuild. Assigning a texture set to a SECOND terrain layer changes the signature and therefore
+# rebuilds the whole wrapper, which would otherwise reset the FIRST layer's tiling scale, AO
+# amount, and bump strength. The Master node keeps its own snapshot path (below), which carries
+# the extra version-bump re-seed semantics; this is the plain one.
+TEXSET_NODE_PREFIX = "TexSet "
+
+
+def _snapshot_wire_nodes(nt):
+    """Snapshot the unlinked input default_values of the TEXSET_NODE_PREFIX nodes in a wrapper
+    tree, as {node name: {socket name: value}}. Linked sockets are skipped: their value is the
+    upstream node, which wire() rebuilds anyway."""
+    out = {}
+    if nt is None:
+        return out
+    for n in nt.nodes:
+        if not n.name.startswith(TEXSET_NODE_PREFIX):
+            continue
+        vals = {}
+        for s in n.inputs:
+            if s.is_linked:
+                continue
+            try:
+                v = s.default_value
+            except (AttributeError, TypeError):
+                continue
+            if hasattr(v, "__len__") and not isinstance(v, str):
+                v = tuple(v)
+            vals[s.name] = v
+        if vals:
+            out[n.name] = vals
+    return out
+
+
+def _restore_wire_nodes(nt, snap):
+    """Restore a _snapshot_wire_nodes snapshot onto the freshly built nodes, by node and socket
+    name. A node the rebuild did not recreate (its texture set was cleared) is simply absent."""
+    for node_name, vals in snap.items():
+        node = nt.nodes.get(node_name)
+        if node is None:
+            continue
+        for s in node.inputs:
+            if s.name not in vals or s.is_linked:
+                continue
+            try:
+                s.default_value = vals[s.name]
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+
 def _build_wrapper(mat_name, master, sig, wire):
     """Build (or rebuild) a thin wrapper material: one master group node ("Master") feeding
     one Principled BSDF and the Output. `sig` is a structure signature stored on the material;
@@ -194,7 +257,7 @@ def _build_wrapper(mat_name, master, sig, wire):
     inputs survive. On a structural change (a texture set assigned or changed) it rebuilds,
     snapshotting and restoring the Master's tuned inputs by socket name (the shader analogue
     of the GN modifier snapshot). `wire(nt, grp, bsdf, old_sig)` adds any texture-set nodes."""
-    name = mat_name if mat_name.startswith(SURFACE_WRAPPER_PREFIX) else SURFACE_WRAPPER_PREFIX + mat_name
+    name = _wrapper_name(mat_name)
     mat = bpy.data.materials.get(name)
     master_ver = master.get("bbt_ver")
     old_node = None
@@ -213,6 +276,7 @@ def _build_wrapper(mat_name, master, sig, wire):
     old_sig = mat.get("bbt_sig") if mat is not None else None
     prev_master_ver = mat.get("bbt_master_ver") if mat is not None else None
     snap = _snapshot_group_inputs(old_node)
+    wire_snap = _snapshot_wire_nodes(mat.node_tree) if mat is not None and mat.use_nodes else {}
     if mat is None:
         mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -248,6 +312,7 @@ def _build_wrapper(mat_name, master, sig, wire):
         _seed_inputs_from_interface(grp)
     if wire is not None:
         wire(nt, grp, bsdf, old_sig)
+        _restore_wire_nodes(nt, wire_snap)
     mat["bbt_sig"] = sig
     mat["bbt_master_ver"] = master_ver
     return mat

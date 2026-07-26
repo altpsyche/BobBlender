@@ -1,0 +1,164 @@
+{
+  "_bob": {
+    "id": "mesh_geom_texture",
+    "plan": "W9b, docs/COMFYUI.md tracks B and C, pipeline steps 2 to 5 in one graph",
+    "purpose": "One-shot geometry plus PBR from a single subject image: shape, in-graph simplify and unwrap, then the PBR rasterised into those UVs. No round trip through W9c or W9t.",
+    "derived_from": "ComfyUI-TRELLIS2/workflows/geometry_texture.json, converted by tools/scripts/comfy_ui_to_api.py",
+    "deviations_from_source": [
+      "MaskPreview and GeomPackPreviewMeshVTK dropped: they are GUI viewers, and Bob fetches the result over /view.",
+      "Preview3D kept and re-pointed at Trellis2ExportTrimesh's path string, which is how the written file's name reaches the job outputs. The source already ends with Trellis2ExportTrimesh rather than GeomPackSaveMesh, so W9b needs no exporter swap (W9t and W9c did).",
+      "LoadTrellis2Models.resolution raised from the source's 512 to 1024, the same default tier W5t uses, so the two routes are comparable.",
+      "Trellis2RasterizePBR.texture_size lowered from the source's 2048 to 1024, again to match W9t's default; BOB_TEXSIZE binds it and Hero raises it.",
+      "BOB_* titles added on the templated nodes. BOB_PROCESS binds BOTH the remesh dynamic combo (open surfaces on or off) and target_face_count, because Trellis2ProcessMesh is simplify plus weld plus UV unwrap in one node: that is the whole reason this graph needs no intermediate simplify pass.",
+      "Two seeds, so two titles: BOB_SEED is the shape sampler (Trellis2ImageToShape) and BOB_TEXSEED is the texture sampler (Trellis2ShapeToTexturedMesh)."
+    ],
+    "requires_nodes": [
+      "LoadTrellis2Models",
+      "Trellis2GetConditioning",
+      "Trellis2ImageToShape",
+      "Trellis2ShapeToTexturedMesh",
+      "Trellis2ProcessMesh",
+      "Trellis2RasterizePBR",
+      "Trellis2ExportTrimesh"
+    ],
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack",
+    "runtime_inputs": [
+      "BOB_IMAGE.image"
+    ],
+    "resolution_tiers": {
+      "preview": "512",
+      "default": "1024",
+      "hero": "1536_cascade"
+    },
+    "notes": "The order inside the graph is what makes it one-shot. Trellis2ProcessMesh simplifies, welds and unwraps the shape mesh, and Trellis2RasterizePBR then bakes the voxel grid's base color, roughness, metallic and opacity into THOSE UVs, projecting through original_mesh (the pre-simplify shape) so the texture still describes the dense surface. Bind BOB_PROCESS.target_face_count to the face budget and the graph returns finished topology already textured. The alpha of BOB_IMAGE is load-bearing exactly as in W5t: LoadImage returns mask = 1 - alpha, BOB_ALPHA puts it back, and the conditioning takes the foreground."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "11": {
+      "class_type": "InvertMask",
+      "inputs": {
+        "mask": ["1", 1]
+      },
+      "_meta": {
+        "title": "BOB_ALPHA"
+      }
+    },
+    "68": {
+      "class_type": "LoadTrellis2Models",
+      "inputs": {
+        "resolution": "1024",
+        "precision": "auto",
+        "attn_backend": "auto"
+      },
+      "_meta": {
+        "title": "BOB_MODEL"
+      }
+    },
+    "69": {
+      "class_type": "Trellis2GetConditioning",
+      "inputs": {
+        "model_config": ["68", 0],
+        "image": ["1", 0],
+        "mask": ["11", 0],
+        "background_color": "black"
+      },
+      "_meta": {
+        "title": "BOB_COND"
+      }
+    },
+    "82": {
+      "class_type": "Trellis2ImageToShape",
+      "inputs": {
+        "model_config": ["68", 0],
+        "conditioning": ["69", 0],
+        "seed": 0,
+        "ss_guidance_strength": 6.5,
+        "ss_guidance_rescale": 0.05,
+        "ss_sampling_steps": 12,
+        "shape_guidance_strength": 6.5,
+        "shape_guidance_rescale": 0.05,
+        "shape_sampling_steps": 12,
+        "max_tokens": 262144
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "83": {
+      "class_type": "Trellis2ShapeToTexturedMesh",
+      "inputs": {
+        "model_config": ["68", 0],
+        "conditioning": ["69", 0],
+        "shape_slat": ["82", 1],
+        "subs": ["82", 2],
+        "seed": 0,
+        "tex_guidance_strength": 3.0,
+        "tex_guidance_rescale": 0.2,
+        "tex_sampling_steps": 12
+      },
+      "_meta": {
+        "title": "BOB_TEXSEED"
+      }
+    },
+    "97": {
+      "class_type": "Trellis2ProcessMesh",
+      "inputs": {
+        "trimesh": ["82", 0],
+        "remesh": "on",
+        "remesh.remesh_band": 1.0,
+        "remesh.remove_inner_faces": true,
+        "target_face_count": 500000,
+        "floater_threshold": 0.001,
+        "weld_vertices": true,
+        "weld_digits": 4,
+        "chart_cone_angle": 90.0,
+        "chart_refine_iterations": 1,
+        "chart_global_iterations": 1,
+        "chart_smooth_strength": 1
+      },
+      "_meta": {
+        "title": "BOB_PROCESS"
+      }
+    },
+    "98": {
+      "class_type": "Trellis2RasterizePBR",
+      "inputs": {
+        "trimesh": ["97", 0],
+        "voxelgrid": ["83", 0],
+        "original_mesh": ["82", 0],
+        "texture_size": 1024
+      },
+      "_meta": {
+        "title": "BOB_TEXSIZE"
+      }
+    },
+    "86": {
+      "class_type": "Trellis2ExportTrimesh",
+      "inputs": {
+        "trimesh": ["98", 0],
+        "filename_prefix": "bob_geomtex",
+        "file_format": "glb"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    },
+    "64": {
+      "class_type": "Preview3D",
+      "inputs": {
+        "model_file": ["86", 0]
+      },
+      "_meta": {
+        "title": "BOB_VIEW"
+      }
+    }
+  }
+}

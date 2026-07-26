@@ -28,6 +28,7 @@ from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
 from . import compute  # noqa: F401
 from .bridge import server  # noqa: F401
+from .core import comfy_jobs  # noqa: F401
 from .ui import (  # noqa: F401
     firmament,
     helpers,
@@ -149,6 +150,29 @@ class BBT_AddonPreferences(AddonPreferences):
         subtype="DIR_PATH",
         default="",
     )
+    comfy_url: StringProperty(
+        name="ComfyUI URL",
+        description=("The ComfyUI server the generation features talk to. Empty = "
+                     "http://127.0.0.1:8188, or $BOB_COMFY_URL when that is set. ComfyUI is "
+                     "never required: with no server the Generate rows read 'not connected' and "
+                     "nothing else behaves differently"),
+        default="",
+        update=lambda self, ctx: _sync_comfy_url(),
+    )
+    comfy_repo: StringProperty(
+        name="ComfyUI Folder",
+        description=("The local ComfyUI checkout, so Advanced can start the server for you with "
+                     "--reserve-vram. Only needed for Start Server; everything else works over "
+                     "HTTP against a server you started yourself"),
+        subtype="DIR_PATH",
+        default="",
+    )
+    comfy_reserve_vram: FloatProperty(
+        name="Reserve VRAM (GB)",
+        description=("Passed to a Bob-started server as --reserve-vram, so Blender keeps enough "
+                     "of the card to hold a viewport while ComfyUI works (R8)"),
+        default=2.0, min=0.0, max=12.0,
+    )
 
     def draw(self, context):
         col = self.layout.column()
@@ -168,32 +192,79 @@ class BBT_AddonPreferences(AddonPreferences):
         col.separator()
         col.prop(self, "output_folder")
 
+        col.separator()
+        col.label(text="ComfyUI (optional: texture and asset generation)", icon="SHADERFX")
+        col.prop(self, "comfy_url")
+        col.prop(self, "comfy_repo")
+        col.prop(self, "comfy_reserve_vram")
+
 
 def _prefs():
     return bpy.context.preferences.addons[__package__].preferences
 
 
 def _sync_pack_roots():
-    """Push the preference pack folders into the bpy-free asset resolver. Called on register, on
-    a pack-list edit, and by Rescan Asset Packs."""
+    """Push the preference pack folders and the generated-output pack into the bpy-free asset
+    resolver. Called on register, on a pack-list edit, and by Rescan Asset Packs."""
     from .core import assets
     try:
         assets.set_pref_roots([i.path for i in _prefs().asset_packs if i.path])
+        assets.set_generated_root(_generated_pack_dir())
     except Exception as exc:  # prefs not ready during early registration
         print(f"[bob_blender_tools] pack roots not synced: {exc}")
+
+
+def _sync_comfy_url():
+    """Push the preference ComfyUI URL and folder into the bpy-free client, the same hand-off
+    `_sync_pack_roots` makes for the asset packs.
+
+    The folder is no longer only a Start Server detail. When it points at a local checkout the
+    mesh transport copies straight into `<comfy>/input/3d/` instead of posting multipart, which is
+    faster and one less failure mode; with no folder set the HTTP route still works.
+    """
+    from .core import comfy
+
+    try:
+        comfy.set_pref_url(_prefs().comfy_url)
+        comfy.set_pref_comfy_dir(bpy.path.abspath(_prefs().comfy_repo)
+                                 if _prefs().comfy_repo else None)
+    except Exception as exc:  # prefs not ready during early registration
+        print(f"[bob_blender_tools] ComfyUI URL not synced: {exc}")
+    comfy.forget_object_info()
 
 
 def _output_dir():
     """The writable folder for generated data: the preference if set, else beside the saved
     .blend, else a per-user extension cache. Always exists on return."""
     prefs = _prefs()
+    # getattr, not bpy.data.filepath: at startup the addons register against a restricted
+    # `_RestrictData` that has no filepath, which used to make the whole pack-root sync fail and
+    # leave the generated pack unregistered until someone pressed Rescan Asset Packs.
+    saved = getattr(bpy.data, "filepath", "")
     if prefs.output_folder:
         d = bpy.path.abspath(prefs.output_folder)
-    elif bpy.data.filepath:
-        d = os.path.join(os.path.dirname(bpy.data.filepath), "bob_generated")
+    elif saved:
+        d = os.path.join(os.path.dirname(saved), "bob_generated")
     else:
         d = bpy.utils.extension_path_user(__package__, path="generated", create=True)
     os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _generated_pack_dir():
+    """`<output>/packs/generated`, the asset pack generated data is written into: texture sets
+    under `textures/<set>/`, meshes under `models/<kind>/` (docs/COMFYUI.md, Bob-side constraint
+    4). Created with its `pack.json` on register rather than on first write, so it is a real,
+    discoverable pack from the start and accepted output shows up in the pickers with no
+    configuration step."""
+    d = os.path.join(_output_dir(), "packs", "generated")
+    for sub in ("textures", "models"):
+        os.makedirs(os.path.join(d, sub), exist_ok=True)
+    manifest = os.path.join(d, "pack.json")
+    if not os.path.isfile(manifest):
+        with open(manifest, "w") as fh:
+            json.dump({"schema": 1, "id": "generated", "name": "Generated",
+                       "description": "Data generated by BobBlenderTools"}, fh, indent=2)
     return d
 
 
@@ -1025,6 +1096,275 @@ class BBT_UL_terrain_ops(UIList):
                  icon="CHECKBOX_HLT" if item.enabled else "CHECKBOX_DEHLT")
 
 
+# ComfyUI service surface (docs/COMFYUI.md, UI placement). Lives in the collapsed Advanced panel
+# beside the MCP Bridge rather than in a top-level panel of its own: it is plumbing, and an artist
+# who never generates anything should not have to scroll past it.
+#
+# The state here is a CACHE, refreshed by Test Connection or by a job finishing, never by draw().
+# A socket call in a draw handler freezes the UI for the timeout in exactly the case the row
+# exists to report, which is the whole reason this dict exists rather than a live probe.
+_COMFY_SERVICE = {"ok": None, "detail": "not checked", "url": ""}
+
+# The server this Blender started, if it started one. Bob only stops a process it owns: killing a
+# server the artist launched by hand, from a button, is not a surprise anyone wants.
+_comfy_proc = None
+
+
+def _refresh_comfy_service():
+    from .core import comfy
+    from .ui import shaders
+
+    state = comfy.service_status()
+    _COMFY_SERVICE.update(state)
+    shaders._COMFY_STATE.update(ok=state["ok"], detail=state["detail"] if state["ok"]
+                                else "not connected")
+    return state
+
+
+class BBT_OT_comfy_test(Operator):
+    bl_idname = "bob_blender_tools.comfy_test"
+    bl_label = "Test Connection"
+    bl_description = ("Ask the ComfyUI server for its device, free VRAM and queue depth, and "
+                      "re-read its node list so a newly installed pack or model is seen. The "
+                      "panel shows this cached answer; it never probes while drawing")
+
+    def execute(self, context):
+        from .core import comfy
+
+        comfy.forget_object_info()
+        state = _refresh_comfy_service()
+        self.report({"INFO" if state["ok"] else "WARNING"},
+                    f"ComfyUI {state['url']}: {state['detail']}")
+        return {"FINISHED"}
+
+
+class BBT_OT_comfy_free(Operator):
+    bl_idname = "bob_blender_tools.comfy_free"
+    bl_label = "Free VRAM"
+    bl_description = ("Ask ComfyUI to unload its models and release its allocator, so a Cycles "
+                      "frame gets the card back. The server stays up; only its models go")
+
+    def execute(self, context):
+        from .core import comfy
+
+        try:
+            comfy.free()
+        except comfy.ComfyError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        state = _refresh_comfy_service()
+        self.report({"INFO"}, f"Freed. {state['detail']}")
+        return {"FINISHED"}
+
+
+class BBT_OT_comfy_start(Operator):
+    bl_idname = "bob_blender_tools.comfy_start"
+    bl_label = "Start Server"
+    bl_description = ("Launch ComfyUI from the folder set in preferences, reserving VRAM for "
+                      "Blender. Takes a few seconds to answer; press Test Connection after")
+
+    def execute(self, context):
+        global _comfy_proc
+        from .core import comfy
+
+        repo = bpy.path.abspath(_prefs().comfy_repo or "")
+        if not repo or not os.path.isfile(os.path.join(repo, "main.py")):
+            self.report({"ERROR"}, "Set the ComfyUI folder in the add-on preferences "
+                                   "(the one with main.py in it)")
+            return {"CANCELLED"}
+        if _comfy_proc is not None and _comfy_proc.poll() is None:
+            self.report({"WARNING"}, "Bob already started a ComfyUI server")
+            return {"CANCELLED"}
+        # The checkout's own venv if it has one, so the server runs against the interpreter its
+        # custom nodes were installed into rather than Blender's.
+        venv = os.path.join(repo, "venv", "bin", "python")
+        python = venv if os.path.isfile(venv) else "python3"
+        cmd = [python, "main.py", "--reserve-vram", f"{_prefs().comfy_reserve_vram:g}"]
+        try:
+            _comfy_proc = subprocess.Popen(cmd, cwd=repo, stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            self.report({"ERROR"}, f"Could not start ComfyUI: {exc}")
+            return {"CANCELLED"}
+        _COMFY_SERVICE.update(ok=None, detail="starting, press Test Connection",
+                              url=comfy.base_url())
+        self.report({"INFO"}, f"Started ComfyUI (pid {_comfy_proc.pid}), "
+                              f"reserving {_prefs().comfy_reserve_vram:g} GB")
+        return {"FINISHED"}
+
+
+class BBT_OT_comfy_stop(Operator):
+    bl_idname = "bob_blender_tools.comfy_stop"
+    bl_label = "Stop Server"
+    bl_description = ("Stop the ComfyUI server Bob started, giving the whole card back. A server "
+                      "you started yourself is left alone; use Free VRAM for that one")
+
+    def execute(self, context):
+        global _comfy_proc
+        if _comfy_proc is None or _comfy_proc.poll() is not None:
+            _comfy_proc = None
+            self.report({"WARNING"}, "Bob did not start this server, so it will not stop it. "
+                                     "Free VRAM unloads its models instead")
+            return {"CANCELLED"}
+        _comfy_proc.terminate()
+        try:
+            _comfy_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _comfy_proc.kill()
+        _comfy_proc = None
+        _COMFY_SERVICE.update(ok=False, detail="stopped by Bob")
+        self.report({"INFO"}, "ComfyUI stopped")
+        return {"FINISHED"}
+
+
+class BBT_StyliseProps(PropertyGroup):
+    """The three things a stylised look-dev frame needs (docs/COMFYUI.md track D).
+
+    Three, not ten: the ControlNet strengths, the sampler and the negative prompt are values in
+    `core/comfy.py` because they have measured defaults, and Strength is the one knob that genuinely
+    trades style against silhouette.
+    """
+
+    prompt: StringProperty(
+        name="Style",
+        description=("The look to push the render towards. Bob appends a clause naming the "
+                     "composition, camera and layout, because a style prompt that does not is a "
+                     "prompt for a different picture"),
+        default="painted concept art, warm evening light",
+    )
+    denoise: FloatProperty(
+        name="Strength",
+        description=("How far from the render the restyle may travel. 0.4 keeps the frame and "
+                     "changes the paint; 0.7 keeps the composition and little else"),
+        default=0.55, min=0.1, max=0.95,
+    )
+    samples: IntProperty(
+        name="Samples",
+        description="Render samples for the frame Bob stylises. The depth and normal passes are "
+                    "constant per pixel, so they always cost one sample",
+        default=64, min=1, max=4096,
+    )
+    lora: StringProperty(
+        name="LoRA",
+        description=("Optional style LoRA, by filename as ComfyUI lists it. Empty removes the "
+                     "LoRA node from the graph entirely rather than running it at zero strength"),
+        default="",
+    )
+
+
+class BBT_OT_comfy_stylise(Operator):
+    bl_idname = "bob_blender_tools.comfy_stylise"
+    bl_label = "Stylise Last Render"
+    bl_description = ("Render the current camera with TRUE depth and normal passes, then restyle "
+                      "the frame in ComfyUI under both as ControlNet. The passes are Blender's own "
+                      "geometry, not an estimate, which is the whole point of this route. Output is "
+                      "a pitch frame beside the render, never geometry")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from .core import assets, comfy, gen_views
+        from .ui.shaders import _COMFY_STATE, _comfy_job_running, _submit
+
+        scene = context.scene
+        props = scene.bbt_stylise
+        if scene.camera is None:
+            self.report({"ERROR"}, "The scene has no camera to render from")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+        pack = assets.generated_root()
+        if not pack:
+            self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
+                                   "add-on preferences)")
+            return {"CANCELLED"}
+
+        out_dir = os.path.join(pack, "_staging", "stylise")
+        stem = comfy.slugify(props.prompt or "stylise")
+        # The render is main-thread work by nature, so it happens HERE, before the job is queued:
+        # a render inside the worker would touch bpy off the main thread, which is the one thing
+        # the job model forbids (R15).
+        try:
+            shot = gen_views.render_passes(out_dir, stem, samples=int(props.samples),
+                                          resolution=max(scene.render.resolution_x,
+                                                         scene.render.resolution_y),
+                                          transparent=False)
+        except Exception as exc:  # a render failure is a message, not a traceback in the console
+            self.report({"ERROR"}, f"Render failed: {exc}")
+            return {"CANCELLED"}
+
+        prompt, denoise = props.prompt, float(props.denoise)
+        lora = (props.lora or "").strip() or None
+        target = os.path.join(out_dir, stem + "_styled.png")
+
+        def work(job):
+            return comfy.stylize_render(shot["beauty"], target, prompt,
+                                       depth=shot["depth"], normal=shot["normal"],
+                                       denoise=denoise, size=shot["resolution"], lora=lora,
+                                       on_queued=job.note_prompt_id, on_progress=job.report)
+
+        def landed(job):
+            info = job.result or {}
+            _COMFY_STATE.update(ok=True, detail=f"stylised in {info.get('seconds', 0):.0f}s: "
+                                               f"{os.path.basename(info.get('path', ''))}")
+
+        _submit(f"stylise: {prompt[:32]}", work, landed)
+        self.report({"INFO"}, f"Rendered {os.path.basename(shot['beauty'])} with depth and normal "
+                              f"passes; stylising in the background")
+        return {"FINISHED"}
+
+
+class BBT_OT_comfy_cancel(Operator):
+    bl_idname = "bob_blender_tools.comfy_cancel"
+    bl_label = "Cancel Job"
+    bl_description = "Cancel this ComfyUI job, on the server as well as here"
+
+    job_id: IntProperty(default=0)
+
+    def execute(self, context):
+        from .core import comfy_jobs
+
+        targets = [self.job_id] if self.job_id else [j.id for j in comfy_jobs.active()]
+        gone = sum(1 for jid in targets if comfy_jobs.cancel(jid))
+        self.report({"INFO"}, f"Cancelled {gone} job(s)")
+        return {"FINISHED"}
+
+
+def _draw_comfy_service(layout):
+    """The ComfyUI block of the Advanced panel. Reads cached state only."""
+    from .core import comfy_jobs
+
+    layout.label(text="ComfyUI (generation): optional, never required", icon="SHADERFX")
+    ok = _COMFY_SERVICE["ok"]
+    layout.label(text=f"{_COMFY_SERVICE['url'] or 'not checked'}: {_COMFY_SERVICE['detail']}",
+                 icon="PROP_ON" if ok else ("PROP_OFF" if ok is False else "QUESTION"))
+    row = layout.row(align=True)
+    row.operator("bob_blender_tools.comfy_test", icon="LINKED")
+    row.operator("bob_blender_tools.comfy_free", icon="TRASH")
+    row = layout.row(align=True)
+    row.operator("bob_blender_tools.comfy_start", icon="PLAY")
+    row.operator("bob_blender_tools.comfy_stop", icon="PAUSE")
+
+    # Track D lives here rather than in a panel of its own: it makes a pitch frame, not scene data,
+    # so nothing downstream in the suite reads it and no pipeline stage owns it.
+    stylise = bpy.context.scene.bbt_stylise
+    col = layout.column(align=True)
+    col.prop(stylise, "prompt")
+    row = col.row(align=True)
+    row.prop(stylise, "denoise")
+    row.prop(stylise, "samples")
+    col.operator("bob_blender_tools.comfy_stylise", icon="SHADERFX")
+    cap = col.row()
+    cap.enabled = False
+    cap.label(text="renders the camera plus true depth and normal, then restyles it")
+
+    for job in comfy_jobs.active():
+        row = layout.row(align=True)
+        row.label(text=f"{job.label} -- {job.progress or job.state} ({job.seconds:.0f}s)",
+                  icon="SORTTIME")
+        row.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
+
+
 # Panel
 # Pipeline panel order (docs/UX-REDESIGN.md section 4, + Paths per docs/SPLINES.md 5): World=0,
 # Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via bl_order so
@@ -1059,6 +1399,9 @@ class BBT_PT_panel(Panel):
         layout.separator()
         layout.label(text="Agent authoring (MCP): drive this session from an agent client", icon="URL")
         layout.operator("bob_blender_tools.copy_mcp_config", icon="COPYDOWN")
+
+        layout.separator()
+        _draw_comfy_service(layout)
 
         layout.separator()
         layout.label(text="Asset packs (folders set in add-on preferences)", icon="ASSET_MANAGER")
@@ -1240,6 +1583,7 @@ _CLASSES = (
     BBT_UL_asset_packs,
     BBT_AddonPreferences,
     BBT_HeightfieldProps,
+    BBT_StyliseProps,
     BBT_OT_start,
     BBT_OT_stop,
     BBT_OT_reload,
@@ -1256,6 +1600,12 @@ _CLASSES = (
     BBT_OT_terrain_op_remove,
     BBT_OT_terrain_op_move,
     BBT_OT_terrain_load_preset_stack,
+    BBT_OT_comfy_test,
+    BBT_OT_comfy_free,
+    BBT_OT_comfy_start,
+    BBT_OT_comfy_stop,
+    BBT_OT_comfy_stylise,
+    BBT_OT_comfy_cancel,
     BBT_UL_terrain_ops,
     BBT_PT_panel,
     BBT_PT_heightfield,
@@ -1289,7 +1639,10 @@ def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
+    bpy.types.Scene.bbt_stylise = PointerProperty(type=BBT_StyliseProps)
     _sync_pack_roots()  # feed the resolver the saved preference pack folders
+    _sync_comfy_url()   # and the client the saved ComfyUI URL
+    comfy_jobs.register()  # load_post clears the job registry: no job outlives a file (R15)
     scatter.register()
     splines.register()    # Paths: typed curves; drives terrain (grade) + scatter (clear)
     firmament.register()  # owns and registers the shared world (bbt_env); subscribes its applier
@@ -1304,6 +1657,7 @@ def register():
 def unregister():
     global _preview_coll
     server.stop()
+    comfy_jobs.unregister()
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
@@ -1312,6 +1666,7 @@ def unregister():
     firmament.unregister()
     splines.unregister()
     scatter.unregister()
+    del bpy.types.Scene.bbt_stylise
     del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

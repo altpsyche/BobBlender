@@ -1,0 +1,129 @@
+{
+  "_bob": {
+    "id": "mesh_subject",
+    "plan": "W4, docs/COMFYUI.md track C, pipeline step 1",
+    "purpose": "Prompt to one clean single-subject reference image with a REAL ALPHA cutout, which is what the geometry graphs condition on.",
+    "derived_from": "tex_tileable.json (W1) for the SDXL half, plus Trellis2RemoveBackground from ComfyUI-TRELLIS2's remove_background.json",
+    "deviations_from_source": [
+      "The circular UNet and circular VAE of W1 are dropped. A subject is not a tile, and circular padding on a subject wraps the silhouette across the frame edge.",
+      "Trellis2RemoveBackground, an InvertMask and a JoinImageWithAlpha are added, so BOB_OUT saves RGBA rather than RGB. The alpha IS the contract: G0.5 lost a run to an opaque PNG, because the geometry graphs feed LoadImage's (inverted) mask into Trellis2GetConditioning and an opaque frame makes the whole square the subject.",
+      "The InvertMask between the cut and the join is load-bearing and easy to get backwards. Trellis2RemoveBackground returns a FOREGROUND mask (white = object), and JoinImageWithAlpha computes alpha = 1 - mask because ComfyUI's LoadImage convention is that a mask is the inverse of alpha. Wiring the two together directly cuts out the subject and keeps the background.",
+      "No square pad node. BOB_SIZE generates square, so the subject is already centred in a square frame and a pad node would be a second way to get the same result wrong.",
+      "sampler as W1: 25 steps, cfg 5.0, dpmpp_2m + karras.",
+      "BOB_* titles added on the templated nodes."
+    ],
+    "requires_nodes": ["Trellis2RemoveBackground", "JoinImageWithAlpha", "InvertMask"],
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT)",
+    "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+    "notes": "The prompt is suffixed Bob-side by comfy.SUBJECT_SUFFIX, because a cropped or busy reference fails the geometry model silently and expensively, and remembering to type 'single object, centred, full view' is not the artist's job."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_CKPT"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "a mossy granite boulder"
+      },
+      "_meta": {
+        "title": "BOB_PROMPT"
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "multiple objects, group, collection, cropped, cut off, close-up, busy background, scene, room, ground plane, cast shadow, reflection, text, watermark, signature, border, frame, blurry, depth of field"
+      },
+      "_meta": {
+        "title": "BOB_NEG"
+      }
+    },
+    "7": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "BOB_SIZE"
+      }
+    },
+    "6": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["1", 0],
+        "positive": ["3", 0],
+        "negative": ["5", 0],
+        "latent_image": ["7", 0],
+        "seed": 0,
+        "steps": 25,
+        "cfg": 5.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["6", 0],
+        "vae": ["1", 2]
+      },
+      "_meta": {
+        "title": "BOB_DECODE"
+      }
+    },
+    "20": {
+      "class_type": "Trellis2RemoveBackground",
+      "inputs": {
+        "image": ["12", 0],
+        "low_vram": true
+      },
+      "_meta": {
+        "title": "BOB_CUT"
+      }
+    },
+    "21": {
+      "class_type": "InvertMask",
+      "inputs": {
+        "mask": ["20", 1]
+      },
+      "_meta": {
+        "title": "BOB_ALPHA"
+      }
+    },
+    "22": {
+      "class_type": "JoinImageWithAlpha",
+      "inputs": {
+        "image": ["20", 0],
+        "alpha": ["21", 0]
+      },
+      "_meta": {
+        "title": "BOB_RGBA"
+      }
+    },
+    "13": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["22", 0],
+        "filename_prefix": "bob/mesh_subject"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

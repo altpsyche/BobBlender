@@ -1,68 +1,39 @@
-"""Minimal ComfyUI API client: queue a workflow, wait, fetch outputs.
+"""Venv-side re-export of the ComfyUI client. There is ONE client and it is not here.
 
-Install with pip install -e '.[comfyui]'.
+The client lives inside the extension, at
+`blender/extensions/bob_blender_tools/core/comfy.py`, because Blender's bundled Python has no
+`httpx` and the same code has to run on both interpreters (docs/COMFYUI.md, Bob-side constraint
+1). It is stdlib only for that reason. This module exists so venv-side code can say
+`from bobtools import comfyui` and get that single source instead of a second implementation that
+drifts from it.
 
-Workflow pattern:
-  1. In ComfyUI, build a graph and use Save (API Format) to export JSON.
-  2. Save it under tools/workflows/ or a project's src/.
-  3. Queue it here, optionally templating inputs (prompt, seed, image path).
-
-Deliberately thin: an HTTP queue plus a history poll. Add the websocket
-progress feed (/ws?clientId=...) when you want live progress.
+Until G1 this file WAS that second implementation: a dormant 68-line `httpx` client, with no
+caller, that polled `/history` rather than the jobs API. That is the drift the single-source rule
+exists to prevent, so it is gone, along with the `[comfyui]` extra in `pyproject.toml` that only
+it needed.
 """
 
-import json
-import time
-import uuid
-from pathlib import Path
+from . import _hfpath  # noqa: F401  (side effect: puts the extension's core/ on sys.path)
 
-import httpx
+import comfy as _comfy  # noqa: E402  (the single source, importable only after _hfpath)
+import comfy_maps as maps  # noqa: E402  (albedo -> roughness / height, same single-source rule)
 
+ComfyError = _comfy.ComfyError
 
-class ComfyUIClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8188", timeout: float = 300.0):
-        self.base_url = base_url.rstrip("/")
-        self.client_id = uuid.uuid4().hex
-        self._http = httpx.Client(base_url=self.base_url, timeout=timeout)
-
-    def close(self) -> None:
-        self._http.close()
-
-    def __enter__(self) -> "ComfyUIClient":
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
-
-    @staticmethod
-    def load_workflow(path: str | Path) -> dict:
-        """Load a workflow exported via ComfyUI's 'Save (API Format)'."""
-        return json.loads(Path(path).read_text())
-
-    def queue(self, workflow: dict) -> str:
-        """Queue a workflow; returns its prompt_id."""
-        resp = self._http.post(
-            "/prompt", json={"prompt": workflow, "client_id": self.client_id}
-        )
-        resp.raise_for_status()
-        return resp.json()["prompt_id"]
-
-    def wait(self, prompt_id: str, poll: float = 1.0) -> dict:
-        """Poll /history until the prompt finishes; returns its history entry."""
-        while True:
-            resp = self._http.get(f"/history/{prompt_id}")
-            resp.raise_for_status()
-            history = resp.json()
-            if prompt_id in history:
-                return history[prompt_id]
-            time.sleep(poll)
-
-    def image_url(self, filename: str, subfolder: str = "", type_: str = "output") -> str:
-        return (
-            f"{self.base_url}/view?filename={filename}"
-            f"&subfolder={subfolder}&type={type_}"
-        )
-
-    def run(self, workflow: dict) -> dict:
-        """Queue then wait. Returns the finished history entry."""
-        return self.wait(self.queue(workflow))
+base_url = _comfy.base_url
+reachable = _comfy.reachable
+features = _comfy.features
+has_jobs_api = _comfy.has_jobs_api
+combo_options = _comfy.combo_options
+queue = _comfy.queue
+job = _comfy.job
+cancel = _comfy.cancel
+wait = _comfy.wait
+images = _comfy.images
+view = _comfy.view
+load_workflow = _comfy.load_workflow
+titles = _comfy.titles
+template = _comfy.template
+slugify = _comfy.slugify
+unique_set_name = _comfy.unique_set_name
+texture_set_from_prompt = _comfy.texture_set_from_prompt

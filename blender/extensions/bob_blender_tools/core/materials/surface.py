@@ -6,7 +6,9 @@ import os
 
 import bpy
 
-from .shared import SURFACE_MASTER, SURFACE_WRAPPER_PREFIX, _build_wrapper, _cached_group, _gin, _gout, _macro_break, _mmath, _vscale, assign_material
+from .. import assets
+from . import texset
+from .shared import SURFACE_MASTER, SURFACE_WRAPPER_PREFIX, _build_wrapper, _cached_group, _gin, _gout, _macro_break, _mmath, _vscale, _wrapper_name, assign_material
 from .weather import _WEATHER_EXTRA, weather_group
 from .water import water_material
 from .terrain import _autoconfig_riverbed, _terrain_maps, terrain_material
@@ -217,13 +219,39 @@ def new_bobshader(obj, master="surface"):
 
 
 
-def surface_material(mat_name):
+def surface_material(mat_name, texset_name=None, box=None):
     """A single-surface wrapper (S_SurfaceMaster): a solid-tint BobShader whose look comes from
-    the master's procedural terms (colour/roughness/metallic + the weather layer). No image
-    texture path."""
+    the master's procedural terms (colour/roughness/metallic + the weather layer).
+
+    With a texture set assigned (S3) the set's albedo, with AO folded in, and its roughness feed
+    the master's map inputs, and its height drives a Bump into the Principled Normal. Base Color
+    stays the TINT it was authored as, so switching solid <-> textured loses no tuned value.
+    texset_name "" clears the set; both arguments default to what the material already records."""
     master = surface_master_group()
+    prev = bpy.data.materials.get(_wrapper_name(mat_name))
+    sets, prev_box = texset.stored_sets(prev, 1)
+    if texset_name is not None:
+        sets = [str(texset_name or "")]
+    box = prev_box if box is None else bool(box)
+    maps = assets.texture_set_maps(sets[0]) if sets[0] else {}
+    sig = "surface|" + texset.sig_part(sets, box)
 
     def wire(nt, grp, bsdf, old_sig):
-        return
+        if not maps:
+            return
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        coord.name = texset.TEXSET_NODE_PREFIX + "Coord"
+        coord.location = (-1100, 400)
+        # A prop carries UVs, so flat projection uses them; box projection is the un-UV'd case
+        # (and the default here), and needs a 3D coordinate instead.
+        src = coord.outputs["Object"] if box else coord.outputs["UV"]
+        node = texset.texset_sample(nt, "S", maps, src, box=box, loc=(-800, 400))
+        if node is None:
+            return
+        nt.links.new(node.outputs["Albedo Map"], grp.inputs["Albedo Map"])
+        nt.links.new(node.outputs["Roughness Map"], grp.inputs["Roughness Map"])
+        texset.texset_bump(nt, node.outputs["Detail Height"], bsdf, loc=(100, -340))
 
-    return _build_wrapper(mat_name, master, "surface|", wire)
+    mat = _build_wrapper(mat_name, master, sig, wire)
+    texset.store_sets(mat, sets, box)
+    return mat

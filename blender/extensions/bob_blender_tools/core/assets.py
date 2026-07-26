@@ -86,6 +86,12 @@ def _repo_library_root():
 # var and the bundled/dev roots are read directly.
 _PREF_ROOTS = []
 
+# The generated-output pack (`<output>/packs/generated`), pushed in the same way and for the same
+# reason: the output folder is an addon preference and this module is bpy-free. Registered as a
+# search root so anything a generator writes (the ComfyUI track, docs/COMFYUI.md) shows up in the
+# biome and texture-set pickers with no configuration step.
+_GENERATED_ROOT = None
+
 
 def set_pref_roots(paths):
     """Register the addon-preference "Asset Pack Folders" list. Called by the addon on register,
@@ -94,15 +100,31 @@ def set_pref_roots(paths):
     _PREF_ROOTS = [str(p) for p in (paths or []) if p]
 
 
+def set_generated_root(path):
+    """Register the generated-output pack root. Called alongside set_pref_roots by the addon,
+    which owns the output-folder preference. None or "" unregisters it."""
+    global _GENERATED_ROOT
+    _GENERATED_ROOT = str(path) if path else None
+
+
+def generated_root():
+    """The registered generated-output pack root, or None when the addon has not pushed one
+    (a bpy-free unit test, or an unregistered addon)."""
+    return _GENERATED_ROOT
+
+
 def asset_roots():
-    """The ordered, existing, de-duplicated pack roots. First hit wins downstream:
-    1. $BOB_ASSET_PACKS (os.pathsep-separated), 2. the addon-preference folders,
-    3. the dev repo library/ (in-repo only), 4. the bundled block-out pack (always present)."""
+    """The ordered, existing, de-duplicated pack roots. First hit wins downstream, most specific
+    to least: 1. $BOB_ASSET_PACKS (os.pathsep-separated), 2. the addon-preference folders,
+    3. the generated-output pack, 4. the dev repo library/ (in-repo only), 5. the bundled
+    block-out pack (always present)."""
     raw = []
     env = os.environ.get("BOB_ASSET_PACKS")
     if env:
         raw += env.split(os.pathsep)
     raw += _PREF_ROOTS
+    if _GENERATED_ROOT:
+        raw.append(_GENERATED_ROOT)
     raw.append(_repo_library_root())
     raw.append(_bundled_root())
     seen, out = set(), []
@@ -165,6 +187,49 @@ def texture_set_dir(name):
     return None
 
 
+# A texture set names its files `<set>_<role>.<ext>`, which is what the Poly Haven sets on disk
+# already use and what the generated pack writes (docs/COMFYUI.md, Contracts). Roles are listed
+# in no particular order; the sampler picks the ones it consumes.
+TEXTURE_MAP_ROLES = ("basecolor", "roughness", "metallic", "normal", "height", "ao")
+
+# Extension preference order per role, first hit wins. The shipped sets mix .jpg (colour, AO,
+# roughness) and .png (normal, height), so both have to be probed rather than assumed.
+_TEXTURE_MAP_EXTS = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff")
+
+
+def texture_set_maps(name):
+    """{role: absolute path} for the maps texture set `name` actually carries on disk. Only
+    roles with a file appear, so a set with no AO simply omits it and the sampler falls back to
+    that map's identity. Empty dict when the set does not resolve in any pack."""
+    base = texture_set_dir(name)
+    if base is None:
+        return {}
+    stem = os.path.basename(base.rstrip("/\\"))
+    out = {}
+    for role in TEXTURE_MAP_ROLES:
+        for ext in _TEXTURE_MAP_EXTS:
+            cand = os.path.join(base, f"{stem}_{role}{ext}")
+            if os.path.isfile(cand):
+                out[role] = cand
+                break
+    return out
+
+
+def list_texture_sets():
+    """Texture-set folder names carrying at least a basecolor map, unioned across all packs
+    (first pack wins on a name collision), sorted. What the Shaders texture-set picker lists;
+    the basecolor requirement keeps a stray folder out of the enum."""
+    seen = set()
+    for root in asset_roots():
+        tex = os.path.join(root, "textures")
+        if not os.path.isdir(tex):
+            continue
+        for n in sorted(os.listdir(tex)):
+            if os.path.isdir(os.path.join(tex, n)):
+                seen.add(n)
+    return sorted(n for n in seen if texture_set_maps(n).get("basecolor"))
+
+
 def list_biomes():
     """Biome folder names carrying a manifest.json, unioned across all packs (first pack wins on
     a name collision), sorted."""
@@ -192,17 +257,34 @@ def _load_manifest(biome):
     return data if isinstance(data, dict) else {}
 
 
+# Defaults for the fields a GENERATED model entry carries (docs/COMFYUI.md, Contracts). They are
+# defaulted here rather than read by a second loader, which is R11: `biome_manifest()` stays the
+# one normalising reader and a caller never has to ask which schema version it is holding.
+#
+# `height_m` is the load-bearing one. Every image-to-3D model emits a unit-cube-normalised mesh, so
+# an entry without a real-world height scatters as a toy; 1.0 is a deliberately obvious wrong
+# answer rather than a silent guess, and `validate_biome` flags a generated entry that relies on it.
+_MODEL_ENTRY_DEFAULTS = {"height_m": 1.0, "lod": [], "origin": "base", "faces": None}
+
+
 def _norm_entries(entries):
     """Normalize a model kind's list to [{"file", ...}], dropping malformed entries. A bare
-    string becomes {"file": string}; an object must carry a string "file"."""
+    string becomes {"file": string}; an object must carry a string "file". Every entry comes back
+    with the generated-model fields present, so a caller reads `e["height_m"]` without a guard
+    whether the manifest is v1, v2, hand-authored or generated."""
     out = []
     if not isinstance(entries, list):
         return out
     for e in entries:
         if isinstance(e, str):
-            out.append({"file": e})
+            entry = {"file": e}
         elif isinstance(e, dict) and isinstance(e.get("file"), str):
-            out.append(dict(e))
+            entry = dict(e)
+        else:
+            continue
+        for key, default in _MODEL_ENTRY_DEFAULTS.items():
+            entry.setdefault(key, list(default) if isinstance(default, list) else default)
+        out.append(entry)
     return out
 
 
@@ -285,12 +367,23 @@ def validate_biome(biome):
     man = biome_manifest(biome)
     warnings = []
 
-    # Models are inert (no importer): scatter always uses the block-out proxies. Flag the block
-    # so an author knows the files it names will not be placed, but do not check the files exist
-    # or gate scatter kinds on them -- that would validate a dead path as if it were live.
-    if man["models"]:
-        warnings.append("models block is ignored: no model importer, scatter uses block-out "
-                        "proxies (bbmcp.proxies). Remove the block or author it as a proxy biome")
+    # Models. A GENERATED pack (meta.generated) has a real importer as of G3
+    # (`core.gen_assets.import_generated`), so its entries are checked rather than dismissed. A
+    # hand-authored biome's models block is still inert: scatter uses the block-out proxies, and
+    # the note says so rather than validating a dead path as if it were live.
+    if man["models"] and man["meta"].get("generated"):
+        base = biome_dir(biome) if not os.path.isabs(biome) else biome
+        for kind, entries in sorted(man["models"].items()):
+            for e in entries:
+                if not os.path.isfile(os.path.join(base, e["file"])):
+                    warnings.append(f"generated model missing on disk: {kind}/{e['file']}")
+                if not e.get("height_m") or e["height_m"] == _MODEL_ENTRY_DEFAULTS["height_m"]:
+                    warnings.append(f"generated model {e['file']} has no real height_m, so it "
+                                    f"scatters at 1 m")
+    elif man["models"]:
+        warnings.append("models block is ignored: no model importer for a hand-authored biome, "
+                        "scatter uses block-out proxies (bbmcp.proxies). Remove the block, or "
+                        "mark the manifest meta.generated if a generator wrote it")
 
     # Scatter: each configured kind must be known, and its value must be a placement-settings
     # object (a non-dict crashes Biome Scatter).
