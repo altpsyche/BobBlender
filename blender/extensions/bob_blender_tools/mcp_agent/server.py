@@ -166,16 +166,17 @@ def comfy_mesh(
     control: a control mesh from the `export_control` op, so the result keeps a block-out's
           silhouette and footprint (forces the staged chain, which is the only one taking a control).
     subject: a local image with ALPHA to use instead of generating a reference.
-    route: "oneshot" (default, W4 then W9b) or "staged" (W4, W5t, W9c, W9t; the only route that
-          leaves a dense mesh on disk).
+    route: "oneshot" (default, W4 then W9b), "staged" (W4, W5t, W9c, W9t; the only route that
+          leaves a dense mesh on disk) or "alt" (W4, W8, W8p, W9t; Hunyuan 2.1 geometry, which needs
+          no custom node pack). Leave it unset and the kind decides, which is the G7 verdict.
 
     Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
-        chain = comfy.generate_asset_chain if control else comfy.asset_chain(route)
+        chain = comfy.asset_chain(route=route, kind=kind, control=control)
         staged = chain(prompt, pack, seed=int(seed), tier="hero" if hero else "default",
-                       faces=int(faces), remesh=kind not in ("plants", "grass"),
+                       faces=int(faces), remesh=not comfy.is_foliage(kind),
                        texture_size=2048 if hero else 1024, subject=subject,
                        **({"control": control} if control else {}))
         return {"staged": staged, "seconds": staged.get("seconds"), "pack_dir": pack,
@@ -183,8 +184,9 @@ def comfy_mesh(
                               "height_m": float(height_m), "faces": int(faces),
                               "hero": bool(hero), "pack_dir": pack}}
 
-    if route is not None and route not in ("oneshot", "staged"):
-        return {"ok": False, "error": f"unknown route {route!r} (have: oneshot, staged)"}
+    routes = _comfy().ASSET_ROUTES
+    if route is not None and route not in routes:
+        return {"ok": False, "error": f"unknown route {route!r} (have: {', '.join(routes)})"}
     return _generation(run)
 
 

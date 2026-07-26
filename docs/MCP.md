@@ -72,6 +72,7 @@ The server is repo-free and reads its locations from the environment (set them i
 | `BOB_ASSET_PACKS` | `os.pathsep`-separated asset-pack folders (models/biomes + texture sets). | add-on prefs + bundled block-out |
 | `BOB_GENERATED` | The generated pack the `comfy_*` tools write into and the Blender side reads back. Set it when generating, or the two halves can disagree about where an asset landed. | `<workdir>/packs/generated` |
 | `BOB_COMFY_URL` | The local ComfyUI server the `comfy_*` tools talk to. | `http://127.0.0.1:8188` |
+| `BOB_COMFY_DIR` | The ComfyUI checkout, so a mesh can be copied into `<comfy>/input/3d`. **Required by every tool that uploads a MESH** (`comfy_paint_mesh`, and `comfy_mesh` on the `staged` and `alt` routes): the HTTP fallback returns a relative path and the TRELLIS.2 nodes run in an isolated worker that cannot resolve one, so without it those calls fail with "Mesh file not found". Not needed by the default route, which uploads only an image. | none |
 | `BOB_BLENDER` | Blender executable for the headless `build`. | known install locations, then PATH |
 | `BOB_BRIDGE_HOST` / `BOB_BRIDGE_PORT` | Live bridge socket. | `127.0.0.1` / `9876` |
 
@@ -98,7 +99,7 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `render_scene` | Render the live session (or a headless `.blend`) to an image; returns the path. | the bridge, or a Blender binary for `base_file` |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, shipped workflows. | — (reports "not reachable" rather than failing) |
 | `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. | a local ComfyUI + an SDXL checkpoint |
-| `comfy_mesh` | Prompt to a staged scatter asset (geometry + PBR). Returns the `import_generated` op. | a local ComfyUI + TRELLIS.2 |
+| `comfy_mesh` | Prompt to a staged scatter asset (geometry + PBR). Returns the `import_generated` op. | a local ComfyUI + TRELLIS.2 (or `route="alt"`, which needs no custom pack for the geometry) |
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. | a local ComfyUI + TRELLIS.2 |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. | a local ComfyUI + SDXL ControlNets |

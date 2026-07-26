@@ -307,26 +307,21 @@ class BBT_OT_scatter_generate_asset(Operator):
                 proxy, comfy.unique_file_name(staging, f"{comfy.slugify(prompt)}_control", ".glb"))
             control = exported["path"]
             height = exported["height_m"] or height
-        # Foliage is open by construction, so its holes are the asset, and this decides TWO
-        # stages. On the ComfyUI side it turns off Trellis2ProcessMesh's dual-contouring remesh,
-        # which otherwise returns a watertight shell and makes a leaf a leaf-shaped bag (measured
-        # at G3: 0 boundary edges with it on, 11,620 with it off). On the Blender side it leaves
-        # the pinhole fill alone, which would weld the blade shut for the same reason.
-        foliage = kind in ("plants", "grass")
+        # Foliage is open by construction, so its holes are the asset, and this decides TWO stages:
+        # the ComfyUI remesh and Blender's pinhole fill. See comfy.FOLIAGE_KINDS.
+        foliage = comfy.is_foliage(kind)
 
-        # ONE worker job for the whole ComfyUI half (W4 then W9b by default, or W4, W5t, W9c and
-        # W9t on the staged route), then one main-thread finish. They do not interleave, because
-        # whichever route runs hands over a mesh that is already at its budget with UVs, so Blender
-        # has nothing to contribute in between. Nothing in `generate` touches bpy; everything in
-        # `landed` does and nothing there touches the network.
+        # ONE worker job for the whole ComfyUI half (W4 then W9b by default), then one main-thread
+        # finish. They do not interleave, because whichever route runs hands over a mesh that is
+        # already at its budget with UVs, so Blender has nothing to contribute in between. Nothing in
+        # `generate` touches bpy; everything in `landed` does and nothing there touches the network.
         #
-        # The route is a value, not a branch: `comfy.asset_chain()` picks the staging function and
-        # `comfy.finish_passes()` maps whatever it staged onto the two finish callbacks, so the
-        # one-shot W9b route needs no second operator. G3b measured why the staged one is default.
-        # With a control the route is forced to the staged chain: W9b generates its own geometry from
-        # the image and takes no control mesh, so there is no one-shot version of this.
+        # The route is a value, not a branch: `comfy.asset_chain()` takes the kind and the control and
+        # picks the staging function, and `comfy.finish_passes()` maps whatever it staged onto the two
+        # finish callbacks, so no route needs a second operator or a widget. G3b decided the default
+        # and G7 decided which asset classes leave it.
         def generate(job):
-            chain = comfy.generate_asset_chain if control else comfy.asset_chain()
+            chain = comfy.asset_chain(kind=kind, control=control)
             return chain(prompt, pack, seed=seed, tier="default",
                          faces=faces, remesh=not foliage,
                          texture_size=2048 if hero else 1024,

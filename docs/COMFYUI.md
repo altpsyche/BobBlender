@@ -1,11 +1,12 @@
 # ComfyUI integration plan
 
-Status: revision 14. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5 and G6 are done**; see
+Status: revision 15. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5, G6 and G7 are done**; see
 [What G0 shipped](#what-g0-shipped), [What G0.5 measured](#what-g05-measured),
 [What G1 shipped](#what-g1-shipped), [What G2 shipped](#what-g2-shipped),
 [What G3 shipped](#what-g3-shipped), [What G3b measured](#what-g3b-measured),
 [What G4 measured](#what-g4-measured), [What G4c measured](#what-g4c-measured),
-[What G5 measured](#what-g5-measured), and [What G6 measured](#what-g6-measured). Everything from G7
+[What G5 measured](#what-g5-measured), [What G6 measured](#what-g6-measured) and
+[What G7 measured](#what-g7-measured). Everything from G8
 on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
 layer against a 60 s gate**; G2 generalised that path without losing it (ten sets at a mean of
 5.55 s, worst-case main-thread block 16.5 ms against the blocking path's 5563 ms); G3 carried
@@ -20,7 +21,10 @@ silhouette survives an erosion pass (band-limited correlation 0.906 to 0.923 aga
 of 0.078 to 0.208) while erosion still builds the landform; and G6 put the whole surface behind MCP,
 where an agent goes prompt to scattered asset in **102 s** and prompt to rendered shaded terrain in
 **24 s** with no GUI at all, and where a crash that had nothing to do with Bob turned out to be
-killing the server. See the verdicts below.
+killing the server; and G7 ran the geometry A/B on ten prompts and decided it per asset class,
+keeping TRELLIS.2 primary for foliage decisively and for solids on balance while Hunyuan 2.1 took the
+speed and surface-closure columns on solids, and found two silent defects on the way that mattered
+more than the verdict. See the verdicts below.
 
 Steps 3 and 4 of the pinned pipeline are **decided**: `Trellis2Simplify` plus `Trellis2UVUnwrap`,
 by a wide margin over Blender Decimate and Quadriflow. The measurements and the three findings
@@ -2101,6 +2105,302 @@ what `build` is, and `build_live` already does it. No progress UI change in the 
 already pass `on_progress` and now get better strings through it for free, which is the whole point of
 having put the route behind one function.
 
+## What G7 measured
+
+**Verdict: the grid splits by asset class, as expected, and it splits differently from the way the
+plan guessed.** TRELLIS.2 stays primary for foliage decisively and for solids on balance; Hunyuan 2.1
+**wins speed and surface closure on solids** and loses on VRAM, texture reliability and licence; the
+block-out class was already Hunyuan's through Omni and W7. No class changes route, and
+`comfy.KIND_ROUTE` is empty for stated reasons rather than for want of a measurement.
+
+The two defects the phase found are worth more than the verdict. **The challenger route returned a
+fully black albedo on every asset until a normalise node was added**, because Hunyuan returns
+[-1, 1] where TRELLIS.2 returns [-0.5, 0.5] and nothing in between rescales. And **the finished
+challenger asset baked a PERFECTLY FLAT normal map**, because that same normalise moved the low mesh
+and not the dense one, so the bake cage was half the size of the surface it was reading. The second
+one also proves that this suite's "the baked normal is non-flat" check could not fail: a flat
+tangent-space normal is (0.5, 0.5, 1.0), whose channel spread reads std 0.2357 against a 0.01
+threshold.
+
+Files: `assets/workflows/mesh_geom_alt.json` (W8, new), `assets/workflows/mesh_process.json`
+(W8p, new), `core/comfy.py` (`mesh_geom_alt`, `mesh_process`, `generate_asset_alt`, `_stage_dir` and
+`_stage_subject` extracted, `KIND_ROUTE`, `FOLIAGE_KINDS` / `is_foliage`, `asset_chain(route, kind,
+control)`), `core/comfy.py` again (`comfy_dir`'s `$BOB_COMFY_DIR` fallback, without which no mesh-uploading route
+worked over MCP at all), `core/gen_assets.py` (`match_frame`, `BAKE_FRAME_TOLERANCE`, the
+`bake_rescale` report, and the honest note on `low_boundary_edges`),
+`ui/scatter.py` and `mcp_agent/server.py` (both call sites subtracted to one `asset_chain` call),
+`tools/scripts/headless_comfy_g7.py` (new), `tools/scripts/headless_comfy_g3.py` (the flatness check
+that could not fail), `tools/scripts/headless_comfy_all.py` (the `g7` entry),
+`tools/tests/test_comfy.py` (78 tests, up from 73), `tools/tests/data/object_info_min.json`
+(56 classes, up from 53), `docs/MCP.md` (`$BOB_COMFY_DIR`). Suite **207**, up from 201.
+
+### The grid, RTX 5080 16 GB, `tools/scripts/headless_comfy_g7.py`
+
+Ten prompts, **five** of them foliage, each generated ONCE through W4 and handed to both models, so
+the reference framing is controlled for and the only variable is the geometry model. The subjects are
+G3b's, reused from its cache at the same seeds, which makes the TRELLIS.2 column directly comparable
+with that table rather than merely similar. Both halves run through the same
+`Trellis2ProcessMesh` at the same face budget and the same `remesh` value (off for foliage, on for
+the rest), because G3b measured that processing the two through different nodes would have scored the
+node. Wall clock excludes the shared subject. Generation is MODEL-MAJOR: all ten TRELLIS.2 cells,
+then all ten Hunyuan cells, so each model loads once and its VRAM is its own rather than a statement
+about swapping.
+
+| Prompt | Foliage | Model | Wall s | Peak MiB | Rise MiB | Faces | Boundary | Thin | UV overlap | Cover | Albedo std |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| boulder | no | trellis | 76.2 | 4,904 | 3,502 | 3,832 | 116 | 0.6348 | 0.00005 | 0.554 | 0.1555 |
+| boulder | no | hunyuan | **40.4** | 9,460 | 7,904 | 3,920 | **0** | 0.5347 | 0.00000 | 0.671 | 0.1762 |
+| fern | yes | trellis | **22.2** | 4,224 | 2,804 | 3,592 | **1,000** | 0.8092 | 0.00010 | 0.550 | 0.1913 |
+| fern | yes | hunyuan | 108.3 | 9,620 | 8,064 | 3,784 | 746 | 0.1772 | 0.00000 | 0.500 | 0.2372 |
+| stump | no | trellis | 86.1 | 5,484 | 3,782 | 3,812 | 130 | 0.7929 | 0.00005 | 0.635 | 0.1319 |
+| stump | no | hunyuan | **42.8** | 9,688 | 8,128 | 3,879 | **5** | 0.8163 | 0.00000 | 0.602 | 0.1259 |
+| leaf | yes | trellis | **15.0** | 4,112 | 2,666 | 3,908 | **984** | 0.0413 | 0.00000 | 0.696 | 0.1859 |
+| leaf | yes | hunyuan | 31.3 | 9,560 | 8,000 | 3,806 | 344 | 0.1845 | 0.00000 | 0.695 | 0.2288 |
+| cone | no | trellis | 174.9 | 5,958 | 4,508 | 3,904 | 650 | 0.8063 | 0.00010 | 0.638 | 0.1711 |
+| cone | no | hunyuan | **46.6** | 9,528 | 7,968 | 3,737 | **10** | 0.7961 | 0.00000 | 0.601 | 0.1142 |
+| grass | yes | trellis | **14.0** | 4,160 | 2,666 | 3,735 | **694** | 0.1650 | 0.00000 | 0.649 | 0.1779 |
+| grass | yes | hunyuan | 30.1 | 9,592 | 8,032 | 2,510 | 160 | 0.1074 | 0.00000 | 0.562 | **0.0000** |
+| ivy | yes | trellis | **12.2** | 4,166 | 2,646 | 3,919 | 499 | 0.1322 | 0.00001 | 0.709 | 0.2235 |
+| ivy | yes | hunyuan | 30.0 | 9,560 | 8,000 | 3,755 | 529 | 0.1442 | 0.00000 | 0.688 | 0.2130 |
+| log | no | trellis | 28.2 | 4,342 | 2,840 | 3,825 | 37 | 0.3161 | 0.00005 | 0.557 | 0.2076 |
+| log | no | hunyuan | 31.2 | 9,592 | 8,032 | 3,976 | **0** | 0.1840 | 0.00000 | 0.638 | 0.2384 |
+| mushroom | yes | trellis | 47.7 | 4,964 | 3,454 | 2,992 | **1,084** | 0.6269 | 0.00047 | 0.631 | 0.1732 |
+| mushroom | yes | hunyuan | **35.3** | 9,528 | 7,968 | 3,970 | 328 | 0.6478 | 0.00000 | 0.607 | 0.1873 |
+| flint | no | trellis | 107.7 | 5,240 | 3,714 | 3,811 | 11 | 0.9567 | 0.00000 | 0.640 | 0.0781 |
+| flint | no | hunyuan | **34.3** | 9,530 | 7,968 | 3,966 | **0** | 0.2535 | 0.00000 | 0.613 | 0.1064 |
+
+Rolled up, which is the shape the verdict is read from:
+
+| | TRELLIS.2 solids | Hunyuan solids | TRELLIS.2 foliage | Hunyuan foliage |
+|---|---|---|---|---|
+| Median wall clock | 86.1 s | **40.4 s** | **15.0 s** | 31.3 s |
+| All five | 473.2 s | **195.3 s** | **111.1 s** | 235.0 s |
+| Peak VRAM, ComfyUI family | **5,958 MiB** | 9,688 MiB | **4,964 MiB** | 9,620 MiB |
+| Rise over its own baseline | **4,508 MiB** | 8,128 MiB | **3,454 MiB** | 8,064 MiB |
+| Inside the 4,000 budget | 5/5 | 5/5 | 5/5 | 5/5 |
+| Median boundary edges | 116 | **0** | **984** | 344 |
+| Open (500+ boundary edges) | 1/5 | 0/5 | **4/5** | 2/5 |
+| Median in-chart albedo std | **0.1555** | 0.1259 | 0.1859 | **0.2130** |
+| Black textures | **0/5** | 0/5 | **0/5** | 1/5 |
+| Worst UV overlap | 0.00010 | 0.00000 | 0.00047 | 0.0000047 |
+
+**Foliage: TRELLIS.2, and the reason is structural rather than a margin.** It is 2.1x faster on the
+median (15.0 s against 31.3 s), holds 2.9x the boundary edges (median 984 against 344), and runs in
+half the VRAM. The important half is what the challenger's boundary edges ARE: Hunyuan cannot return
+an open surface at all, because `VoxelToMesh` extracts an isosurface from an SDF, so its 160 to 746
+boundary edges are holes `Trellis2ProcessMesh`'s floater removal and simplification left in a closed
+shell rather than a blade the model chose to leave open. On the leaf that difference is legible in
+one pair of numbers: TRELLIS.2 returns 984 boundary edges at a 0.0413 thinnest/longest ratio, i.e. a
+real blade, and Hunyuan returns 344 at 0.1845, i.e. a thicker shell with holes in it. One Hunyuan
+foliage texture in five came back black.
+
+**Solids: the challenger wins two columns and loses three, and the default does not move.** Hunyuan
+is genuinely better on two things a rock cares about. It is **2.1x faster** (median 40.4 s against
+86.1 s, and 195.3 s against 473.2 s over all five, where TRELLIS.2's 1024 tier costs 107 to 175 s on
+the two angular prompts) and it returns a **properly closed shell** (median 0 boundary edges against
+116, and 0 on three of five), which nothing downstream repairs on either route: `close_pinholes` only
+runs when Blender does the simplify, and neither of these routes does. Against that it costs
+**3.7 GB more VRAM** at the peak (9,688 MiB against 5,958), returns a flatter albedo (median in-chart
+std 0.1259 against 0.1555, and 0.1142 at a 0.0357 mean on the cone), and rides on a non-permissive
+licence with a territorial exclusion (EU, UK, South Korea) and a 1M MAU threshold where TRELLIS.2 is
+MIT. Two wins do not buy a DEFAULT that an artist in three of Bob's likeliest markets may not use, so
+solids stay on the shipped route and `route="alt"` stays an explicit choice with a measured case:
+pick it when a batch of rocks has to be fast, when a closed shell matters more than an albedo, or
+when `ComfyUI-TRELLIS2` is not installed at all, which is the one case where it is the ONLY route
+that works.
+
+**The two models also disagree about DEPTH on the solids, and the grid cannot say which is right.**
+The thinnest/longest ratio differs by more than 2x on flint (0.9567 against 0.2535) and log (0.3161
+against 0.1840), i.e. the single-view challenger flattens some shapes into slabs. These prompts have
+no ground truth, so this is recorded as a disagreement rather than an error; the one route where the
+silhouette is decided by Bob rather than guessed by a model is W7's block-out control, which is
+exactly what G4c built.
+
+**Block-out: Hunyuan, and it is already shipped as W7 rather than as this route.** No cell exists in
+this grid and none can: W8 takes no control mesh. That class was decided at G4c on footprint IoU,
+0.9079 mean against the multi-view baseline's 0.6748, 4.6x faster and 2 GB leaner. `asset_chain`
+routes any call carrying a control to the staged chain, which is where W7 lives, so the block-out
+verdict needs no entry in `KIND_ROUTE` either.
+
+### The finished asset, both models, and the flat normal map that was not flat by accident
+
+Three of the ten through steps 6 to 8 on both models, against the G3 asset checks. Every check
+passes on both, and the interesting column is the one that failed first:
+
+| Prompt | Model | Faces | Bake source | UV overlap | Cage rescale | Normal std | Normal detail | Height m | Origin | master_type |
+|---|---|---|---|---|---|---|---|---|---|---|
+| boulder | hunyuan | 3,920 | 412,454 | 0.000000 | **0.5104** | 0.2654 | 0.00985 | 1.800 | 0.000 | surface |
+| boulder | trellis | 3,843 | 3,832 | 0.000048 | 1.0000 | 0.2506 | 0.00946 | 1.800 | 0.000 | surface |
+| fern | hunyuan | 3,784 | 158,990 | 0.000000 | **0.4706** | 0.2747 | 0.01750 | 0.600 | 0.000 | surface |
+| fern | trellis | 3,607 | 3,592 | 0.000099 | 1.0000 | 0.2686 | 0.02083 | 0.600 | 0.000 | surface |
+| stump | hunyuan | 3,879 | 566,509 | 0.000000 | **0.5086** | 0.2715 | 0.01886 | 1.100 | 0.000 | surface |
+| stump | trellis | 3,883 | 3,812 | 0.000054 | 1.0000 | 0.2616 | 0.02171 | 1.100 | 0.000 | surface |
+
+The cage rescale column is the bug. W8p normalises the mesh it processes, so the low mesh comes back
+at half the size of the dense mesh it was made from, and `bake_high_to_low` sets its cage to 2% of
+the LOW mesh's own size with a ray distance of four times that. Every ray missed. What landed on disk
+was a normal map of exactly (0.5, 0.5, 1.0) and an AO of nothing: **normal detail 0.00000 against the
+0.01750 the same asset produces once the frames match.** `gen_assets.match_frame` is the fix, called
+where `undo_exports` already put the two meshes in one rotation, because a frame is a scale as well
+as a rotation. It is a no-op within 2%, which is what every same-scale chain gets.
+
+Two things follow from it. First, the challenger route DOES keep a dense mesh (158,990 to 566,509
+faces) where W9b keeps none, and once the bake reads it the transferred detail is comparable rather
+than better (0.00985 against 0.00946 on the boulder, 0.01886 against 0.02171 on the stump), which is
+the same answer D11 gives below from the other direction. Second, and worse: **the check that should
+have caught this could not fail.** "The baked normal is not flat" was `std > 0.01`, and a perfectly
+flat tangent-space normal has std **0.2357** because its three channels sit at 0.5, 0.5 and 1.0. Both
+the G3 gate and this one now measure the mean absolute neighbour difference, which is 0.0 on a
+constant image by construction, and the G3 gate's own check changed with it.
+
+### D11, answered with a number: the dense mesh still buys nothing, but G3b's measurement was wrong
+
+The same four assets G3b took through steps 6 to 8, read from its own cache so this costs no GPU at
+all, each finished three ways: the staged route with `comfy.stage_exports` applied (the fix G4c
+shipped), the same with `exports=None` (the way G3b actually ran it), and the one-shot route as the
+no-dense-mesh control.
+
+| Prompt | Run | Faces | Bake source | Normal std | Normal detail |
+|---|---|---|---|---|---|
+| boulder | staged, aligned | 3,972 | 489,570 | 0.2425 | **0.01479** |
+| boulder | staged, as G3b ran it | 3,972 | 489,570 | 0.2543 | 0.00788 |
+| boulder | one-shot control | 3,922 | 3,910 | 0.2494 | 0.00954 |
+| fern | staged, aligned | 3,449 | 442,619 | 0.2610 | **0.02143** |
+| fern | staged, as G3b ran it | 3,449 | 442,619 | 0.2390 | 0.00153 |
+| fern | one-shot control | 3,768 | 3,750 | 0.2656 | 0.02076 |
+| leaf | staged, aligned | 3,849 | 487,854 | 0.2458 | 0.00294 |
+| leaf | staged, as G3b ran it | 3,849 | 487,854 | 0.2548 | 0.00255 |
+| leaf | one-shot control | 3,939 | 3,939 | 0.2405 | **0.00321** |
+| stump | staged, aligned | 3,399 | 470,679 | 0.2452 | 0.01646 |
+| stump | staged, as G3b ran it | 3,399 | 470,679 | 0.2635 | 0.01386 |
+| stump | one-shot control | 3,974 | 3,897 | 0.2622 | **0.02178** |
+
+**Both halves of the answer are worth stating.** The alignment bug was real and it cost the staged
+route a lot: fixing it raises the transferred high-frequency content on **4 of 4** assets, by 14x on
+the fern (0.02143 against 0.00153) and 1.9x on the boulder. So G3b's staged column was measuring a
+misaligned bake, exactly as G4c suspected. And the conclusion G3b drew from it **survives anyway**:
+against the one-shot control, the aligned dense-mesh bake wins by more than 10% on **1 of 4**
+(boulder, 0.01479 against 0.00954), draws on the fern, and LOSES on the leaf and the stump. At a
+4,000-face budget `Trellis2ProcessMesh` already tracks the half-million-face surface closely enough
+that the residual is nearly nothing to encode, which is what G3b said for the wrong reason. D11 is
+closed: **no, at this budget, and the honest place to reopen it is a few-hundred-face budget or a
+hero tier, not a phase of its own.**
+
+### Every shipped gate, still one command
+
+`uv run --project tools --extra all python tools/scripts/headless_comfy_all.py --fast`, with the `g7`
+entry added. Peak VRAM is the whole card sampled at 4 Hz while each gate ran:
+
+| gate | phase | status | wall | peak VRAM | checks |
+|---|---|---|---|---|---|
+| `g0` | G0 texture-set sampler | PASS | 2.7 s | 4,204 MiB | 32 |
+| `texset` | G1 prompt to a shaded layer | PASS | 10.9 s | 14,048 MiB | 13 |
+| `g2` | G2 variants, preflight, maps | PASS | 81.7 s | **14,396 MiB** | 39 |
+| `g3` | G3 prompt to a scattered asset | PASS | 17.1 s | 8,640 MiB | 40 |
+| `g3b` | G3b one-shot against staged | PASS | 67.9 s | 3,569 MiB | 44 |
+| `g4` | G4 stylise, paint, multi-view | PASS | 9.2 s | 4,221 MiB | 18 |
+| `g4c` | G4c Omni block-out control | PASS | 3.6 s | 3,569 MiB | 4 |
+| `g5` | G5 terrain macro mask | PASS | 1.4 s | 3,568 MiB | 7 |
+| `g6` | G6 the agent-facing surface | PASS | 2.6 s | 3,568 MiB | 23 |
+| `g7` | G7 the geometry A/B | PASS | 43.9 s | 3,569 MiB | 26 |
+| | **total** | **10 of 10** | **240.9 s** | **14,396 MiB** | **236** |
+
+`g7`'s `--fast` is `--part a,d`, which is the whole no-GPU half of that gate: preflight plus the route
+decision plus D11 re-scored from the G3b cache. The G2 peak is lower than G6 reported, 14,396 MiB
+against 15,846, and the reason is worth knowing rather than celebrating: the card carried another
+3.6 GB from a desktop session throughout this run, so dynamic VRAM staged less. A whole-card figure
+is comparable across gates within one run and not across runs, which is why each gate also reports
+its own per-process split.
+
+### The plate control, because otherwise the Hunyuan column measures a background
+
+W4 writes RGBA whose RGB is still the SDXL frame behind the cutout, and ComfyUI's `LoadImage`
+converts RGBA to RGB by DISCARDING alpha rather than compositing it. Measured on a cached subject:
+the texels behind alpha 0 read 0.535 grey at std 0.1617 on the boulder, i.e. a real background, not a
+flat plate. TRELLIS.2 never sees it, because it takes the mask through `Trellis2GetConditioning`;
+Hunyuan has no mask socket at all. So W5 as it stands is not the A/B slot, and the difference is not
+cosmetic:
+
+| Prompt | Route | Faces | Thin | Extent |
+|---|---|---|---|---|
+| boulder | W8, on a white plate | 412,454 | 0.5346 | 1.962 |
+| boulder | W5, the raw RGBA | **810,268** | 0.8788 | 1.963 |
+| fern | W8, on a white plate | 158,990 | 0.2087 | 1.959 |
+| fern | W5, the raw RGBA | **589,498** | 0.1710 | 1.964 |
+
+The raw-RGBA route returns 2x to 3.7x the faces at a different aspect ratio, which is the background
+being reconstructed as geometry around the subject. That is why W8 exists beside W5 and why the three
+extra nodes are the only difference between them.
+
+### Nine things this plan had wrong, corrected here
+
+1. **W8 could not be "the same graph with the challenger inside", because MESH and TRIMESH are
+   different types and no converter exists in this install.** `VoxelToMesh` returns `MESH`, every
+   `Trellis2*` processing node takes `TRIMESH`, and a sweep of all 1,783 registered classes finds
+   nothing that converts one to the other (`SaveGLB` is the only node in the install that takes a
+   `MESH` at all). So the challenger cannot carry the `Trellis2ProcessMesh` tail that would have made
+   its output contract identical, and a fair grid needs a SECOND graph over the file it writes. That
+   is W8p, and it is the shape of every "swap the model" slot in this plan: the swap is one graph plus
+   whatever the new model does not do.
+2. **`mesh_geometry(workflow="mesh_geom")` was already a working A/B slot, and W8 is not that.** The
+   client binds only the titles a graph has and `bind_process` is a no-op on a graph without
+   `BOB_PROCESS`, so W5 was drivable as the challenger before this phase started. What was missing was
+   never the plumbing: it was the plate, without which the two models are conditioned on different
+   images.
+3. **The challenger route returns a black albedo on every asset, and it is the G0.5 trap with a third
+   distinct cause.** Hunyuan's mesh spans [-1, 1] where TRELLIS.2's spans [-0.5, 0.5],
+   `Trellis2ProcessMesh` rescales neither, and the processed mesh lands at [-0.55, 0.55], outside the
+   unit cube `Trellis2EncodeMesh` voxelises in: in-chart albedo std **0.0064 at a 0.0001 mean**, i.e.
+   black. `GeomPackNormalizeMeshToBBox(1.0)` first in W8p is the fix, and it has to be first rather
+   than last, because `remesh_band`, `floater_threshold` and `weld_digits` are lengths and the same
+   number means two different settings at two scales.
+4. **A bake reads across SCALE as well as rotation, and G4c only fixed the rotation.** The same
+   normalise that fixes the albedo makes the low mesh half the size of the dense one, and the bake
+   cage is a percentage of the low mesh, so every ray missed and the normal map came back perfectly
+   flat (detail 0.00000). `gen_assets.match_frame` is the other half of `undo_exports` and reports the
+   factor it applied, so a silent 2x is now a number in the report.
+5. **"The baked normal is not flat" could not fail, in this gate and in G3's.** A flat tangent-space
+   normal is (0.5, 0.5, 1.0) and reads std 0.2357 against a 0.01 threshold. It is the mean absolute
+   neighbour difference now, which is 0.0 on a constant image whatever the constant is.
+6. **`report["low_boundary_edges"]` is an unwelded count and therefore fiction, on any route that
+   simplified on the server.** It reads 730 to 4,135 on assets whose real openness is 0 to 1,000,
+   because the glTF importer splits every vertex the generator's UV seams cut. The low mesh must NOT
+   be welded (that would merge across those seams and break the layout the bake writes into), so the
+   figure is documented for what it is and `source_boundary_edges` is the honest one.
+7. **Foliage was a `kind in ("plants", "grass")` literal in three places, and the benchmarks
+   disagreed with the product.** G3b's own table called the mushroom a solid where the panel and the
+   MCP tool call it foliage, because `kind` is `plants`. `comfy.is_foliage` is the one value now, and
+   the G7 grid ran the shipped rule, which is why five of its ten prompts are foliage where G3b's were
+   four.
+8. **`asset_chain` had a second decision outside it, duplicated at both call sites.** The panel and
+   the MCP tool each wrote `generate_asset_chain if control else asset_chain(route)`, i.e. the rule
+   "a control forces the staged chain" lived twice, in the two places most likely to drift. It is a
+   parameter now (`asset_chain(route, kind, control)`), which is also what let the per-class verdict
+   land without touching either caller.
+9. **No mesh-uploading route worked over MCP at all, and G6's fallback claim was wrong.**
+   `upload_mesh` copies into `<comfy>/input/3d` when the ComfyUI folder is known and otherwise falls
+   back to `POST /upload/image` plus a RELATIVE path, which G6 documented as fine "because the
+   server's working directory is the ComfyUI root". It is not, for the node that matters: the upload
+   lands correctly and then `Trellis2LoadMesh` fails with `Mesh file not found: input/3d/...`,
+   because ComfyUI-TRELLIS2 runs in a comfy-env pixi worker with its own working directory. The
+   addon knows the folder from a preference; the MCP server cannot, so every route that uploads a
+   mesh (W9t, W9c, W7, and now W8p) was broken there, including `comfy_paint_mesh` since G6. The fix
+   is `$BOB_COMFY_DIR`, the same env fallback and the same reason as `$BOB_GENERATED`. Measured
+   after it: `comfy_mesh(route="alt")` plus one `import_generated` returns a finished 3,916-face
+   asset at 0.25 m with its origin at the base and a BobShader on it, in **34.2 s** with no GUI.
+
+### What G7 deliberately did not build
+
+No third challenger. D2 said Direct3D-S2 or Hi3DGen only if the grid landed close, and it did not
+land close in either direction: the two models differ by 2x on wall clock, 3.7 GB on VRAM and by a
+capability on foliage, so a third model would answer a question nobody has. No route widget in the
+panel: the verdict is a table in `comfy.py` and `route="alt"` on the MCP tool, and a radio button on a
+decision with a measured answer is knob sprawl (G3b's rule, and it holds). No Hunyuan 2.0 or turbo
+variant in the slot: `BOB_3D_MODEL` plus four numbers is what would change, and the 2.1 checkpoint is
+the one on disk. No `contracts.py` change and no reconnect: `comfy_mesh` already had a `route`
+argument, so the third route needed one validation line reading `comfy.ASSET_ROUTES` instead of a
+literal.
+
 ---
 
 ## Review findings that changed this plan
@@ -2317,8 +2617,9 @@ Both, deliberately, split by capability rather than hedged. The division:
 | Simplify and UV unwrap | **TRELLIS.2 or Blender**, A/B at G3 | `Trellis2Simplify` and `Trellis2UVUnwrap` exist; so do Decimate, Quadriflow, Smart UV Project. Measure, do not assume. |
 | **Multi-view conditioning** | **ANSWERED at G4: both, split by cost** | `Trellis2MultiViewImageToShape` (W6t) is the accuracy tier at back-half IoU **0.2637** in 120.4 s; `Hunyuan3Dv2ConditioningMultiView` (W6) is the preview tier at **0.2140** in **24.4 s**, 5x faster with 41% fewer faces. Either beats a single view six-fold on the half it cannot see (0.0439). Revision 5's claim that only Hunyuan could do it was wrong, and the comparison moving to G7 was too cautious: this is a track C route now. |
 | **Control from a block-out** (point cloud, voxels, bbox) | **ANSWERED at G4c: Hunyuan3D Omni, and it beat the alternative** | No TRELLIS equivalent, and W7 is now measured against the route that came closest: footprint IoU **0.908** mean against W6t's 0.675 on the same three block-outs, 4.6x faster, 2 GB less VRAM, proportions held to 2% against 23%. The one idea in this plan that turns an existing suite strength into a generation input, and the only route whose OUTPUT ORIENTATION is part of the answer. |
-| Zero-install smoke test | **Hunyuan3D native** | Already in ComfyUI core. Proves the Bob-side plumbing before any submodule exists. |
-| Watertight hard-surface props | **Hunyuan3D**, weakly | The CAD benchmarks favouring it are TRELLIS 1, not 2. Treat as unproven, revisit at G7. |
+| Zero-install smoke test | **Hunyuan3D native** | Already in ComfyUI core. Proves the Bob-side plumbing before any submodule exists, and since G7 it is also the only route that generates an asset at all with `ComfyUI-TRELLIS2` missing (W8 then W8p then W9t needs TRELLIS2 for the processing and texture halves, so "no custom pack" holds for the geometry only). |
+| Watertight hard-surface props | **ANSWERED at G7: Hunyuan is better at exactly this and it still does not become the default** | The claim was right and the measurement is now on file: median **0** boundary edges against TRELLIS.2's 116 on five solids, and **2.1x faster** (40.4 s against 86.1 s). It loses on VRAM (9,688 MiB against 5,958), albedo (0.1259 against 0.1555), one black texture in ten, and a licence that excludes the EU, the UK and South Korea. So `route="alt"` is documented with its numbers rather than promoted, and `comfy.KIND_ROUTE` is empty on purpose. |
+| Foliage and any open surface | **ANSWERED at G7: TRELLIS.2, structurally** | 2.9x the boundary edges (median 984 against 344) at 2.1x the speed and half the VRAM, and the challenger's holes are its simplifier's rather than its own: `VoxelToMesh` extracts an isosurface, so a leaf is a leaf-shaped bag whatever the caller asks for. |
 
 ### TRELLIS.2: one pack, verified node set
 
@@ -2404,20 +2705,23 @@ to queue a graph containing one, and the shipped-workflow test asserts the same 
 `assets/workflows/`. So a cloud node cannot arrive by copy-paste from a community graph, which is
 the realistic way it would happen.
 
-### Challengers, for the G7 A/B slot
+### Challengers: the slot, and why it is closed
 
-W8 exists so swapping the geometry model is a config change, not a rewrite. The slot's first
-occupant is now **Hunyuan 2.1 itself**, benchmarked against TRELLIS.2 on ten fixed prompts that
-include at least three foliage cases, because that is where the two differ structurally rather
-than by degree. Further candidates if the verdict is close:
+W8 exists so swapping the geometry model is a config change, not a rewrite, and **G7 ran the grid**:
+Hunyuan 2.1 against TRELLIS.2 on ten fixed prompts, five of them foliage, one shared subject each.
+The verdict is per class and it is in [What G7 measured](#what-g7-measured).
 
-- **Direct3D-S2** for sharper geometry (high-resolution SDF with spatial sparse attention).
-- **Hi3DGen** for normal-bridged detail, notably crisp on rock and bark.
-- **TripoSG**, **PartCrafter**, **PartPacker** for part-level and alternative flow models.
-- **TEXGen** as a texture-stage alternative.
+**The further candidates are dropped rather than deferred**, because the condition on them was
+"only if the verdict is close" and it was not close in either direction: 2x on wall clock, 3.7 GB on
+VRAM, and a capability difference on foliage that no amount of tuning closes. **Direct3D-S2**
+(high-resolution SDF, sharper edges), **Hi3DGen** (normal-bridged detail on rock and bark),
+**TripoSG**, **PartCrafter**, **PartPacker** and **TEXGen** are all still real models; adding one now
+would answer a question nobody has. The slot is where they go if a question appears, and W8p means
+half the work is already done: a new model needs its own generation graph and nothing else.
 
-Plan position: **TRELLIS.2 primary, Hunyuan for multi-view and Omni control, one grid at G7,
-measured, decided once.**
+Plan position: **TRELLIS.2 primary, decided by measurement per asset class at G7. Hunyuan for
+multi-view, Omni block-out control, and as the explicit `alt` route when speed or a closed shell
+matters more than an MIT licence.**
 
 ---
 
@@ -2708,8 +3012,33 @@ Needs `ComfyUI-Hy3D-Omni` and 13.5 GB of Omni weights, and needs
 `tools/scripts/comfy_omni_fix.py` run once against them. Absent any of that, preflight fails the
 graph by class name and every other route is unaffected.
 
-**W8 `mesh_geom_alt.json`** the A/B slot: same inputs, same output contract, challenger model
-inside, so the G8 benchmark is a config change rather than a rewrite.
+**W8 `mesh_geom_alt.json`, SHIPPED at G7, the A/B slot.** Same inputs and the same output contract
+as W5t, challenger model inside, so swapping the geometry model is a config change rather than a
+rewrite. The occupant is **Hunyuan3D 2.1**: W5's skeleton (`ImageOnlyCheckpointLoader` through
+`VoxelToMesh` to `SaveGLB`, latent 4096, 30 steps, cfg 5) with three nodes added at the front, and
+those three are the only reason this file exists beside W5. `EmptyImage(BOB_PLATE)` is a WHITE plate,
+`InvertMask(BOB_ALPHA)` turns `LoadImage`'s mask back into the alpha, and
+`ImageCompositeMasked(BOB_SUBJECT)` puts the subject on the plate before `CLIPVisionEncode` sees it.
+Without that, the challenger is conditioned on the SDXL background: W4's RGB is still the generated
+frame behind the cutout and ComfyUI's `LoadImage` drops alpha rather than compositing it, where
+TRELLIS.2 gets a real cutout through its mask socket. Thirteen nodes, no custom pack at all.
+
+**W8p `mesh_process.json`, SHIPPED at G7, the shared processor.** `Trellis2LoadMesh` ->
+`GeomPackNormalizeMeshToBBox(1.0)` -> `Trellis2ProcessMesh(BOB_PROCESS)` ->
+`Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D`. Five nodes, no model load, no VRAM of its own.
+It exists because the A/B has to be controlled: W9b processes its own output with
+`Trellis2ProcessMesh`, so the challenger's output has to go through the SAME node at the same face
+budget and the same `remesh` branch. Sending it through W9c instead would have scored W9c's sieve as
+the challenger's openness (G3b: 1,467 to 3,050 boundary edges against 10 to 146).
+
+The normalise is load-bearing twice, and it is the defect G7 found rather than a tidy-up. Hunyuan
+returns a mesh spanning [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and `Trellis2ProcessMesh` does
+not rescale: measured, the processed challenger mesh lands at [-0.55, 0.55], which is outside the
+unit cube `Trellis2EncodeMesh` voxelises in, so W9t returns a fully BLACK albedo on **every** asset
+(in-chart std 0.0064, mean 0.0001, against 0.1810 and 0.3745 with the normalise in). That is the
+G0.5 black-albedo trap for a third time, and the third distinct cause. Running before the process
+node rather than after it is the other half: `remesh_band`, `floater_threshold` and `weld_digits` are
+lengths, so at two different scales the same numbers are two different settings.
 
 ### Family 3: mesh painting and finishing (track B)
 
@@ -2945,6 +3274,13 @@ core/comfy.py         EXTENDED G6. `tiling_values` / `TILING_COPY_MODE` (circula
                       `ensure_untiled`, the lazy reset that undoes it before any graph on the same
                       checkpoint that must not wrap. Plus `CLIENT_ID` per process, because ComfyUI
                       keys progress sockets by client id
+core/comfy.py         EXTENDED G7. `mesh_geom_alt` (W8) and `mesh_process` (W8p), the
+                      `generate_asset_alt` chain built out of them, and the per-asset-class
+                      verdict as a value: `KIND_ROUTE` beside `DEFAULT_ASSET_ROUTE`, read by
+                      `asset_chain(route, kind, control)`, which also absorbed the "a control
+                      forces the staged chain" rule that used to be duplicated at both call
+                      sites. Plus `FOLIAGE_KINDS` / `is_foliage`, which was a literal in three
+                      places that had already drifted between the product and a benchmark
 core/comfy_jobs.py    SHIPPED G2. one worker thread, a bpy.app.timers tick draining a result
                       queue, every bpy touch on the main thread, @persistent load_post reset
 core/comfy_maps.py    SHIPPED G1, real at G2. PNG codec, one relief field to height / normal /
@@ -2974,6 +3310,11 @@ core/gen_assets.py    EXTENDED G4c. `export_control` (a block-out proxy out as t
                       unit-cube round trip track B already owned), `footprint_ratio`, and
                       `undo_exports` plus `turn`, which put every file a chain hands over into
                       one frame. See `EXPORT_TURN` for why that is two bug fixes and not one
+core/gen_assets.py    EXTENDED G7. `match_frame` and the `bake_rescale` report: a bake reads
+                      across SCALE as well as rotation, and a chain that normalises its low mesh
+                      on the server (W8p) leaves the dense mesh at twice the size, which makes
+                      every cage ray miss and writes a perfectly flat normal map. G4c put the two
+                      meshes in one rotation; this puts them in one frame
 core/gen_views.py     SHIPPED G4. bpy-side. A beauty frame plus TRUE depth and normal passes
                       through a view-layer MATERIAL OVERRIDE (not the compositor, which in
                       Blender 5.2 cannot hand a pass back), the geometry-derived depth range,
@@ -2987,8 +3328,8 @@ core/gen_paint.py     SHIPPED G4. bpy-side. The UV g-buffer (world position and 
 assets/workflows/*.json   tex_tileable, tex_tileable_ref, tex_upres, mesh_subject,
                       mesh_geom_trellis, mesh_texture, mesh_simplify_uv, mesh_geom,
                       mesh_geom_texture, stylize_render, stylize_render_est,
-                      mesh_paint_views, mesh_geom_mv, mesh_geom_mv_trellis and heightmap_macro
-                      shipped
+                      mesh_paint_views, mesh_geom_mv, mesh_geom_mv_trellis, heightmap_macro
+                      and, at G7, mesh_geom_alt and mesh_process shipped: 18 graphs
 ```
 
 Job orchestration lives in `core/comfy_jobs.py` and the client in `core/comfy.py`;
@@ -3005,10 +3346,13 @@ raising on the lot at once; `queue()`; `job(id)`; `cancel(id)`; `free()`; `view(
 `upload_image(path, subfolder)`; `template(workflow, values)` binding by title. Preflight is the
 highest-value function in the module, because a missing model is the normal failure.
 
-Since G3b it also owns the asset ROUTE, in one place: `asset_chain(route)` returns
-`generate_asset_oneshot` (W4 then W9b, the default) or `generate_asset_chain` (W4, W5t, W9c, W9t),
-and `finish_passes(staged)` maps whatever either staged onto `finish_asset`'s `simplify_pass` and
-`texture_pass`. `bind_process()` is the shared `Trellis2ProcessMesh` binding, which cannot go
+Since G3b it also owns the asset ROUTE, in one place, and G7 widened that one place rather than
+adding a second: `asset_chain(route, kind, control)` returns `generate_asset_oneshot` (W4 then W9b,
+the default), `generate_asset_chain` (W4, W5t, W9c, W9t, and the only chain that takes a control) or
+`generate_asset_alt` (W4, W8, W8p, W9t, the challenger), deciding from three inputs in priority
+order: a control forces the staged chain, an explicit route wins next, and `KIND_ROUTE` carries the
+per-asset-class verdict. `finish_passes(staged)` maps whatever any of them staged onto
+`finish_asset`'s `simplify_pass` and `texture_pass`. `bind_process()` is the shared `Trellis2ProcessMesh` binding, which cannot go
 through `template()` because a dynamic combo's sub-widgets belong to the selected key and templating
 only merges.
 
@@ -3182,8 +3526,8 @@ the documented fallback for the concurrent-client window. See
 | **G4c** | **DONE.** Omni: model set 3, **W7**, `export_control`, the `Asset from Block-out` entry, and the orientation convention pinned per exporter. What shipped, the measurements, and ten corrections are in [What G4c measured](#what-g4c-measured). | **Passed, and it changed a decision the plan had already made.** A block-out proxy conditions generation and the result keeps its shape where it landed, scored with NO rotation search: **footprint IoU 0.8136 to 0.9787** against per-block-out ceilings of 0.8403 to 0.9920, proportions held to **2%**, and **0.8100 on the FINISHED asset** after simplify, texture, bake, scale, LODs and BobShade. **W7 beat the W6t multi-view baseline 3 of 3 on every measure at once** (mean footprint IoU **0.9079 against 0.6748**, **35.8 s against 164.9 s**, 2 GB less VRAM), and it still wins after W6t is allowed its best axis map, so the plan's fallback is not the honest answer. The wrapper is the least maintained dependency here and **shipped with the control signal silently random** (a vendored `linear` to `liner` rename, 0.010 voxel IoU before the fix and 0.53 after); `tools/scripts/comfy_omni_fix.py` is the fix. **One bug found on another route:** the exporter's turns ACCUMULATE, so the staged chain's high-to-low bake has been reading across a 90 or 180 degree rotation since G3, which puts a G3b conclusion back in question. Proved by `tools/scripts/headless_comfy_g4c.py`, four parts, no failures. |
 | **G5** | **DONE.** Track E: **W13**, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and `Generate Base` in the Terrain panel. What shipped, the measurements, and twelve corrections are in [What G5 measured](#what-g5-measured). | **Passed, and it answered R7 in the negative.** A prompted silhouette survives an erosion pass at **band-limited correlation 0.906 to 0.923** against a no-mask null of 0.078 to 0.208, on three prompts including the isolated massif erosion was expected to fight. It still looks intentional rather than shaped noise, as numbers: the erosion supplies **2.89 to 3.04 m** of fine relief against a mask-only baseline's **0.28 to 0.31 m**, the median slope is **42.1 to 42.8 deg** beside the no-mask bake's own 44.7, and the mask explains only 11 to 16% of the band above its own cutoff. **R7's terracing does not occur at 8 bits, and does not occur at 5 either** (histogram concentration 1.86 and 1.91 against 16-bit's 1.93), so the 16-bit save node is deferred on evidence; what the 8-bit write costs is determinism, 0.80 m rms against a reseed's 9.28 m. **About 12 s** prompt to a built terrain, **0.3 ms** of main thread, peak **7,444 to 9,844 MiB**, and it is the one route here that shares a card with Omni. Proved by `tools/scripts/headless_comfy_g5.py`, five parts, no failures. |
 | **G6** | **DONE.** The six `comfy_*` MCP tools, the single batched contract change (`apply_texture_set`, `import_generated`, `export_control`, plus `OpResult.data`), the `macro` key on `bake_heightfield`, websocket progress, `THIRD-PARTY-MODELS.md`, and the whole shipped-gate suite as one command. What shipped, the measurements, and eight corrections are in [What G6 measured](#what-g6-measured). | **Passed, and it found a crash that was not Bob's.** An agent goes prompt to a scattered, scaled, UV'd, PBR-textured, BobShaded asset in **102.5 s** with no GUI (generation 97.7 s, Blender 4.8 s) and prompt to a rendered shaded terrain in **24.1 s** (set 6.0, mask 3.9, bake 7.5, build and render 6.7), both through the real MCP tools and one op list, with every asset property read out of the op's own result: faces **3,672 to 3,930** against 4,000, UV overlap at most **0.0000017**, height **1.8 m** exact, origin **0.0 m** above the base, `master_type` surface. Websocket progress ships: **28 per-node updates against 5 status strings** on the same job, with termination still decided by the jobs API so a dead socket cannot cost a result. Every new op is rejected with a readable sentence when given bad params, proved rather than asserted (four contract rejections and two handler rejections). **The finding: this fork's `comfy-aimdo` dynamic-VRAM staging segfaults the server on the second copied-model decode of a session**, which is every tiling graph Bob ships. Five candidates were measured and the shipped fix keeps the staging feature: circular padding applied IN PLACE plus a lazy `ensure_untiled`, giving **ten texture sets in one session** (seam 0.83 to 1.18, drift -0.01 s) with W4 at seam 8.466 and W13's open route at 10.086, i.e. verified untiled. Proved by `tools/scripts/headless_comfy_g6.py`, four parts, 41 checks, no failures. |
-| **G7** | The geometry A/B: W8, ten fixed prompts including **at least three foliage cases**, TRELLIS.2 versus Hunyuan 2.1, one grid, decided once. Further challengers (Direct3D-S2, Hi3DGen) only if the verdict is close. | A written verdict on which model is primary per asset class, not one global winner. |
-| **G8** | Optional: track F sky dome (W14), part-level variation via W11, batch generation, ML retopo swap-in if open weights land. | |
+| **G7** | **DONE.** The geometry A/B: **W8** (Hunyuan 2.1 on a plate) and **W8p** (the shared processor), ten fixed prompts, five of them foliage, one shared W4 subject each, `remesh` controlled for on both sides. Plus D11 re-measured, the per-class verdict as a value (`comfy.KIND_ROUTE`), and `gen_assets.match_frame`. What shipped, the measurements, and eight corrections are in [What G7 measured](#what-g7-measured). | **Passed, with a verdict per class rather than a winner.** **Foliage: TRELLIS.2, structurally** -- 2.1x faster (median **15.0 s** against 31.3 s), half the VRAM (**4,964 MiB** against 9,620), 2.9x the boundary edges (median **984** against 344), and the challenger cannot return an open surface at all, so its holes are the simplifier's rather than the model's. **Solids: the challenger wins two columns and loses three** -- Hunyuan is **2.1x faster** (40.4 s against 86.1 s) and returns a closed shell (median **0** boundary edges against 116, unrepaired downstream on either route), against **3.7 GB more VRAM**, a flatter albedo (0.1259 against 0.1555), one black texture in ten where W9b cannot hit the trap at all, and a licence with a territorial exclusion where TRELLIS.2 is MIT; so the default holds and `route="alt"` is an explicit choice. **Block-out: Hunyuan through Omni and W7**, decided at G4c (footprint IoU 0.9079 against 0.6748); W8 takes no control, so the grid has no cell for it. Both models 10/10 inside the 4,000 budget, worst UV overlap 0.00047, three of ten through steps 6 to 8 on BOTH models with every G3 asset check passing. **Two silent defects found:** the challenger route returned a **fully black albedo on every asset** until W8p gained a normalise (Hunyuan is [-1, 1] where TRELLIS.2 is [-0.5, 0.5]), and the finished asset then baked a **perfectly flat normal** because that normalise moved the low mesh and not the cage (detail **0.00000** against 0.01750 fixed) -- which also proved this suite's "the baked normal is non-flat" check could not fail, since a flat normal reads std 0.2357 against a 0.01 threshold. **D11 answered both ways:** the G4c alignment fix raises transferred detail on 4 of 4 assets (14x on the fern), and the dense mesh still buys nothing at this budget (1 of 4 better than the no-dense-mesh control, 2 of 4 worse). Proved by `tools/scripts/headless_comfy_g7.py`, four parts, no failures. |
+| **G8** | Optional: track F sky dome (W14), part-level variation via W11, batch generation, ML retopo swap-in if open weights land. Pick by what the suite lacks rather than by novelty. | |
 
 ## Testing
 
@@ -3198,8 +3542,8 @@ GPU-hours and is what a phase verdict needs. `--list` prints the gates and their
 selects a subset, `--verbose` echoes a gate's own output. It re-implements no check: each gate keeps
 its own reachability gate and its own exit code, so this is a scheduler and a table.
 
-It earned its keep on the first run. **The G2 gate had been crashing since G4** — its stand-in
-`UILayout` had no `column`, which the stylise block G4 added to the panel body calls — and it looked
+It earned its keep on the first run. **The G2 gate had been crashing since G4** -- its stand-in
+`UILayout` had no `column`, which the stylise block G4 added to the panel body calls -- and it looked
 clean the whole time because Blender exits 0 after a script traceback. So the runner reads each gate's
 VERDICT LINE and reports "no verdict printed, so the gate did not finish" when there is none, rather
 than trusting an exit code. Nobody had re-run G2 in two phases, which is exactly the failure mode the
@@ -3326,6 +3670,23 @@ one-command suite exists to prevent.
 - `tools/scripts/comfy_omni_fix.py`, which is a test as much as a fix: `--check` reports whether the
   Omni control projection actually loaded and exits 1 when it did not. The G4c gate runs it, because
   it is the one failure in this integration that no graph-level check can see.
+- `tools/scripts/headless_comfy_g7.py`, the G7 gate, in four parts (`--part a,b,c,d`), inside
+  Blender. **A**: preflight over every shipped graph offline against the committed dump, the
+  `api_node` assertion on the two new graphs, and the route decision as a value in one place
+  (`asset_chain` over route, kind and control; `KIND_ROUTE`; `is_foliage`; `stage_exports` on the alt
+  chain). No server, always runs, costs a second. **B**: the grid, ten prompts through both models,
+  MODEL-MAJOR so each model loads once and its VRAM is attributable rather than a statement about
+  swapping, with wall clock, per-process peak VRAM sampled from a thread, faces, boundary edges after
+  a weld, thin ratio, UV overlap, chart coverage and in-chart albedo std against the 0.02 black-albedo
+  floor; plus the plate control, which is the same subject through W5 (no composite) so the Hunyuan
+  column cannot be dismissed as a measurement of the background. **C**: three of the ten through
+  steps 6 to 8 on BOTH models against the G3 asset checks. **D**: D11, the dense mesh re-measured with
+  the bake alignment fixed, on the same four assets G3b used, read straight from the G3b cache so it
+  costs no GPU at all. Generated meshes cache WITH their timings and VRAM under
+  `_generated/comfy_g7_check/gen/`, subject images are reused from the G3b cache so the TRELLIS.2
+  column is directly comparable with that table, `--no-gen` re-scores and `--fresh` regenerates.
+  Reachability-gated for the generation half. `--fast` is `--part a,d`, which is the whole
+  no-GPU half of the gate.
 - `tools/scripts/headless_comfy_g3b.py`, the G3b gate: ten prompts through both routes off ONE
   shared W4 subject each, with wall clock, per-process VRAM sampled from a thread at the queue
   moment and at the peak, face count, boundary edges after a weld, UV overlap, chart coverage and
@@ -3346,23 +3707,10 @@ one-command suite exists to prevent.
   is not "scatter-grade or hero" but "is a hero path worth a MANUAL retopo step", and that is a
   workflow question for after G7, not a tiering decision that needed answering before G3 hardened.
   `hero=True` survives as a bake-resolution and texture-resolution switch, honestly labelled.
-- **D2 Further challengers for G7.** Direct3D-S2 for sharpness or Hi3DGen for normal-bridged
-  detail? Only if TRELLIS.2 versus Hunyuan lands close. **G4 measured the multi-view half of that
-  comparison and it did not land close in either direction**: TRELLIS.2 is 23% better on back-half
-  IoU and Hunyuan is 5x faster, which is a split by capability rather than a tie. So D2 stays open for
-  the single-view geometry grid G7 owns, and the case for a third model is weaker than it was.
 - **D10 MV-Adapter, now that there is a number to beat.** The paint route's cross-view drift is
   measured (adjacent-view seam 24.1 of 255, front-to-back 30.1), which is what makes MV-Adapter worth
   a phase: it is SDXL-based, so it keeps the LoRA style control, and its whole claim is the
   consistency those two figures quantify. Not needed by G4c or G5. Open.
-- **D11 Re-measure the dense mesh, because G3b measured it through a misaligned bake.** G4c found that
-  every `Trellis2ExportTrimesh` write turns the subject and the turns accumulate, so the staged
-  route's `bake_high_to_low` was transferring from a cage rotated 90 or 180 degrees away from its
-  target on every asset since G3. `comfy.stage_exports` fixes it. What that puts in question is one
-  sentence of G3b's verdict, "the dense mesh bought no measurable normal detail at a 4,000-face
-  budget", and re-running that comparison is cheap now that the fix is in. It does not threaten the
-  one-shot default, which won on VRAM, boundary edges and the black-albedo trap. Open, and it belongs
-  wherever a higher-budget or hero path is next considered rather than in a phase of its own.
 - **D13 The terrain engine's slope-area gradient has the wrong sign, and G5 found it by accident.**
   Building the G5 landform statistic turned up something that is not about the mask at all: a no-mask
   `alpine` bake's log-log slope-area gradient is **+0.322**, i.e. slope RISES with upstream drainage
@@ -3397,6 +3745,25 @@ one-command suite exists to prevent.
 
 ### Answered
 
+- **D2 Further challengers. Answered at G7: no, and the condition is what answers it.** D2 was
+  "Direct3D-S2 for sharpness or Hi3DGen for normal-bridged detail, only if TRELLIS.2 versus Hunyuan
+  lands close." It did not land close in either direction, on either half of the comparison: G4's
+  multi-view test split by capability (TRELLIS.2 23% better on back-half IoU, Hunyuan 5x faster) and
+  G7's single-view grid split the same way but wider (Hunyuan 2.1x faster on solids and closing every
+  shell, TRELLIS.2 in half the VRAM, never black, and the only one of the two that can leave a surface
+  open at all). A third model would sharpen a decision that is already decided by capability, so both
+  candidates are dropped rather than deferred. What stays is the SLOT: W8 plus W8p means a future
+  challenger costs one generation graph and no rewrite. Reopen only with a specific gap to close, not
+  for coverage.
+- **D11 The dense mesh, re-measured through a fixed bake. Answered at G7: still nothing, and G3b's
+  measurement really was wrong.** Both halves matter. Applying `comfy.stage_exports` raises the
+  transferred high-frequency content on **4 of 4** of G3b's own assets, by 14x on the fern (0.02143
+  against 0.00153) and 1.9x on the boulder, so G3b's staged column was indeed reading a rotated cage.
+  And the conclusion survives the fix: against the one-shot control the aligned dense-mesh bake wins by
+  more than 10% on **1 of 4**, draws on one and LOSES on two. At a 4,000-face budget
+  `Trellis2ProcessMesh` tracks the half-million-face surface closely enough that there is almost no
+  residual to encode. The honest place to reopen this is a few-hundred-face budget or a hero tier, and
+  it is now cheap to re-run: the G7 gate's part D scores it from the G3b cache with no GPU at all.
 - **D1 Image model family. Answered at G1: SDXL, with `RealVisXL_V5.0_fp16` as the finetune**
   (6.9 GB, OpenRAIL++, `SG161222/RealVisXL_V5.0`). SDXL base itself was not downloaded; a photoreal
   finetune is what track A wants and it carries its own VAE.

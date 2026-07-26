@@ -318,6 +318,41 @@ def undo_exports(count):
     return None if count == 0 else (EXPORT_TURN[0], EXPORT_TURN[1] * count)
 
 
+# One frame means one SCALE as well as one rotation, and G7 found the second half the hard way. A
+# chain can normalise its low mesh on the server without touching the dense mesh it came from:
+# W8p's `GeomPackNormalizeMeshToBBox` exists because Hunyuan returns [-1, 1] and the texture encoder
+# needs [-0.5, 0.5], so the raw mesh arrives at TWICE the low mesh's size. Nothing errors. The bake
+# cage is 2% of the low mesh's own size with a ray distance of four times that, so every ray misses,
+# and what lands on disk is a PERFECTLY FLAT normal map plus an AO of nothing -- measured at G7 as
+# normal detail 0.00000 against the same route's 0.02083 once the frames match.
+BAKE_FRAME_TOLERANCE = 0.02
+
+
+def match_frame(high, low, tolerance=BAKE_FRAME_TOLERANCE):
+    """Scale and centre `high` onto `low`'s bounding box, and return the factor applied.
+
+    A no-op within `tolerance`, which is what every same-scale chain gets: a decimation and its
+    source differ by a fraction of a percent, and moving those would be a change with no cause. Data
+    transform rather than object transform, for `turn`'s reason.
+    """
+    hi, lo = dimensions(high), dimensions(low)
+    longest_high, longest_low = max(hi), max(lo)
+    if not longest_high or not longest_low:
+        return 1.0
+    factor = longest_low / longest_high
+    if abs(factor - 1.0) <= tolerance:
+        return 1.0
+    def centre(obj):
+        low_corner, high_corner = bbox_world(obj)
+        return mathutils.Vector([(low_corner[i] + high_corner[i]) / 2.0 for i in range(3)])
+    matrix = (mathutils.Matrix.Translation(centre(low))
+              @ mathutils.Matrix.Scale(factor, 4)
+              @ mathutils.Matrix.Translation(-centre(high)))
+    high.data.transform(matrix)
+    high.data.update()
+    return round(factor, 6)
+
+
 # One export undone: the block-out route's raw mesh, and the constant the G4c gate pins by
 # measurement over all 24 axis-aligned rotations.
 CONTROL_RETURN_TURN = undo_exports(1)
@@ -910,6 +945,9 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
         # nothing to unwrap; the mesh arrives at its budget with a chart layout already on it.
         low = import_glb(simplified_glb, name=name,
                          orient=undo_exports(exports.get("simplified")))
+        # One frame is one rotation AND one scale: a chain that normalised its low mesh on the
+        # server leaves the dense mesh at its own size, and a bake across that reads nothing.
+        report["bake_rescale"] = match_frame(high, low)
         report["faces"] = face_count(low)
         report["simplify_source"] = "trellis2"
         report["uv_source"] = "trellis2_uvunwrap"
@@ -941,6 +979,12 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
             smart_uv(low)
             report["uv_source"] = "smart_uv_project"
     report["uv_overlap"] = uv_overlap(low)
+    # Counted on the mesh AS IT SHIPS, which on a route that simplified on the server means an
+    # unwelded glTF import, so it reads several times the surface's real openness (G3's correction 9,
+    # from the other side). The low mesh is deliberately NOT welded: its vertices are split along the
+    # UV seams the generator unwrapped, and merging those would break the layout the bake writes
+    # into. Read `source_boundary_edges` for the honest openness figure; this one only answers
+    # "did the surface stay open at all".
     report["low_boundary_edges"] = boundary_edges(low)
 
     if low_glb:
@@ -1022,6 +1066,10 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
             bpy.data.objects.remove(low, do_unlink=True)
             low = import_glb(textured, name=stem,
                              orient=undo_exports((exports or {}).get("textured")))
+            # Multiplied rather than overwritten: the textured file can be a second hop from the
+            # simplified one, and what the report has to carry is the TOTAL scale the cage took.
+            report["bake_rescale"] = round(report.get("bake_rescale", 1.0)
+                                           * match_frame(high, low), 6)
             report["textured_glb"] = str(textured)
             report["textured_faces"] = face_count(low)
         else:
