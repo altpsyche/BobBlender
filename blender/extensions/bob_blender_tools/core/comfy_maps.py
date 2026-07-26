@@ -21,6 +21,10 @@ nature surfaces are dielectric). The normal map IS written even though neither m
 normal socket today (S3 drives relief from a bump instead, see core/materials/texset.py): it is
 part of the texture-set contract and track B needs it, and an unread file costs 0.1 s.
 
+G5 added one derivation that is not part of a texture set: `macro_field` / `macro_from`, the terrain
+macro mask (track E). It reuses the luminance and the box blur the five maps already share and takes
+the LOW side of the same cutoff, which is why track E needed no module of its own.
+
 The PNG codec here is minimal on purpose: 8-bit, non-interlaced, which is what ComfyUI's SaveImage
 writes and what a texture set wants. Blender's bundled Python ships no PIL and the derivation must
 run in-process, so the 40 lines are cheaper than the alternative of routing pixels through `bpy`
@@ -53,6 +57,16 @@ HEIGHT_LOWPASS_FRACTION = 1.0 / 32.0
 
 # Cavity is the same idea at a much smaller radius: the crevice, not the boulder.
 CAVITY_FRACTION = 1.0 / 128.0
+
+# The macro mask (track E) is the SAME split read from the other side: keep the low frequency and
+# throw the detail away. A twelfth of the image is the coarsest cutoff that still resolves a
+# separate massif and a separate basin in one frame; anything finer starts handing the erosion stack
+# structure it would rather generate itself (R7).
+MACRO_LOWPASS_FRACTION = 1.0 / 12.0
+
+# Percentiles the macro mask is stretched between. Not 0 and 100: one blown-out highlight in the
+# generation would otherwise compress the whole landform into the bottom of the range.
+MACRO_STRETCH = (1.0, 99.0)
 
 # How hard a crevice is pushed toward rough, before the percentile stretch.
 CAVITY_ROUGHNESS = 0.5
@@ -172,15 +186,25 @@ def write_png(path, array, level=6):
 
 
 # -- Derivation ------------------------------------------------------------------------------
-def _wrap_box_blur(a, radius):
-    """A separable moving-average blur that wraps at both edges, so blurring a seamless tile
-    leaves it seamless. Cumulative sums rather than a convolution: O(n) at any radius."""
+def _box_blur(a, radius, wrap=True):
+    """A separable moving-average blur. Cumulative sums rather than a convolution: O(n) at any
+    radius.
+
+    `wrap=True` wraps at both edges, so blurring a seamless tile leaves it seamless, and it is the
+    default because every track A map is a tile. `wrap=False` replicates the edge instead, for the
+    one signal that is NOT a tile: a terrain macro mask (track E), where wrapping would bleed the
+    far side of the landform into this one and put a phantom massif on the opposite border.
+    """
     if radius < 1:
         return a
     n = 2 * radius + 1
     for axis in (1, 0):
         a = np.moveaxis(a, axis, 1)
-        pad = np.concatenate([a[:, -radius:], a, a[:, :radius]], axis=1)
+        if wrap:
+            pad = np.concatenate([a[:, -radius:], a, a[:, :radius]], axis=1)
+        else:
+            pad = np.concatenate([a[:, :1].repeat(radius, axis=1), a,
+                                  a[:, -1:].repeat(radius, axis=1)], axis=1)
         cum = np.concatenate([np.zeros((pad.shape[0], 1), np.float32),
                               np.cumsum(pad, axis=1, dtype=np.float32)], axis=1)
         a = np.moveaxis((cum[:, n:] - cum[:, :-n]) / n, 1, axis)
@@ -224,12 +248,47 @@ def relief(rgb, fraction=HEIGHT_LOWPASS_FRACTION):
     albedo, so the four maps describe one surface instead of four similar ones.
     """
     lum = luminance(rgb)
-    return _normalise(lum - _wrap_box_blur(lum, _radius(lum.shape, fraction)))
+    return _normalise(lum - _box_blur(lum, _radius(lum.shape, fraction)))
 
 
 def height_from(rgb, fraction=HEIGHT_LOWPASS_FRACTION):
     """The relief field as an 8-bit map centred on 0.5."""
     return _to_u8(0.5 + relief(rgb, fraction))
+
+
+def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MACRO_STRETCH):
+    """A generated image as a low-frequency macro MASK for the terrain op stack: float32 in 0..1.
+
+    This is `relief()`'s other half and not a new idea: relief keeps `lum - lowpass(lum)` because a
+    texture's information is its detail, and this keeps `lowpass(lum)` because a landform's
+    information is its large scale. Same luminance, same box blur, the opposite side of one cutoff,
+    which is the honest answer to whether track E needed its own derivation module. It did not.
+
+    Two differences from the track A maps, and both are because a terrain tile is not a texture
+    tile. The blur does NOT wrap (see `_box_blur`), and the result is percentile-stretched to fill
+    0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering where
+    0 is the basin floor and 1 is the highest ground, not as a signed displacement.
+
+    It is a MASK, not a heightfield (R7): every real slope, drainage line and rill comes from the
+    erosion stack afterwards. `MACRO_LOWPASS_FRACTION` is the whole claim, in one number -- a
+    twelfth of the image, so nothing finer than a massif survives to compete with the erosion.
+    """
+    lum = luminance(rgb)
+    low = _box_blur(lum, _radius(lum.shape, fraction), wrap=wrap)
+    lo, hi = (float(v) for v in np.percentile(low, percentiles))
+    spread = hi - lo
+    if spread < 1.0 / 255.0:
+        # A flat generation carries no landform. Half everywhere is the honest answer: the stack's
+        # own generator then owns the whole shape, which is what a terrain with no mask does.
+        return np.full(low.shape, 0.5, dtype=np.float32)
+    return np.clip((low - lo) / spread, 0.0, 1.0).astype(np.float32)
+
+
+def macro_from(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False):
+    """`macro_field` as the 8-bit PNG the terrain op stack reads. 8 bits on purpose, per R7: 256
+    levels of a mask that is about to be blurred and eroded is not the same claim as 256 levels of
+    a heightfield, and G5 measures the difference rather than asserting it."""
+    return _to_u8(macro_field(rgb, fraction, wrap))
 
 
 def cavity_from(height, fraction=CAVITY_FRACTION):
@@ -239,7 +298,7 @@ def cavity_from(height, fraction=CAVITY_FRACTION):
     dark" from "this pixel is in a hole", which is why the roughness takes it as an input: a
     crevice holds dust and damp and is rougher than the face beside it at the same brightness.
     """
-    return 0.5 + _normalise(height - _wrap_box_blur(height, _radius(height.shape, fraction)))
+    return 0.5 + _normalise(height - _box_blur(height, _radius(height.shape, fraction)))
 
 
 def ao_from(height, fractions=AO_FRACTIONS, strength=AO_STRENGTH):
@@ -252,7 +311,7 @@ def ao_from(height, fractions=AO_FRACTIONS, strength=AO_STRENGTH):
     """
     occ = np.zeros(height.shape[:2], dtype=np.float32)
     for fraction in fractions:
-        below = _wrap_box_blur(height, _radius(height.shape, fraction)) - height
+        below = _box_blur(height, _radius(height.shape, fraction)) - height
         scale = max(float(np.percentile(below, 99)), 1.0 / 255.0)
         occ += np.clip(below / scale, 0.0, 1.0)
     return _to_u8(1.0 - strength * (occ / len(fractions)))
@@ -290,7 +349,7 @@ def roughness_from(rgb, band=ROUGHNESS_RANGE, fraction=ROUGHNESS_LOCAL_FRACTION,
     patch really is rougher than the dry stone beside it.
     """
     inv = 1.0 - luminance(rgb)
-    local = _wrap_box_blur(inv, _radius(inv.shape, fraction))
+    local = _box_blur(inv, _radius(inv.shape, fraction))
     signal = global_weight * inv + (1.0 - global_weight) * (inv - local + 0.5)
     if cavity is not None:
         signal = signal + CAVITY_ROUGHNESS * (0.5 - np.asarray(cavity, dtype=np.float32))

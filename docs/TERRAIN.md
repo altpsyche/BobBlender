@@ -17,7 +17,8 @@ categories:
 
 - Generators write or add height: `noise` (world-sampled ridged multifractal),
   `dunes` (directional wind ridges), `voronoi` (cellular mesas / cracks), `strata`
-  (flat-lying layered rock benches).
+  (flat-lying layered rock benches), `macro` (an image as the macro base: a prompted
+  mask from ComfyUI, or any hand-painted PNG).
 - Erosion ops physically shape height: `fluvial` and `pipe_hydraulic` (water),
   `glacial` (ice), `scarp` (cap-rock cliff retreat), `rill` (downslope grooves),
   `thermal` (talus slump), `deposit` (sediment settling), `amplify` (multi-scale
@@ -53,6 +54,7 @@ it is fast on the GPU and deterministic.
 | `dunes` | generator | `wind` deg, `frequency`, `sharpness`, `warp`, `variation`, `mix`, `amount` |
 | `voronoi` | generator | `cells`, `pattern` mesa/crack, `jitter`, `mix`, `amount` |
 | `strata` | generator | `layers`, `dissection`, `base_freq`, `sharpness`, `smooth` |
+| `macro` | generator | `path` to an 8 or 16-bit PNG, `smooth` (blur as a fraction of width), `invert`, `mix`, `amount` |
 | `fluvial` | erosion | `iterations`, `k`, `sp_m`, `sp_n`, `diffusion`, `talus`, `thermal_iters`, `recompute`, `fill_iters`, `acc_iters`, `max_delta`, `flow_prior` |
 | `pipe_hydraulic` | erosion | `iterations`, `rain`, `capacity`, `dissolve`, `deposit`, `evaporate`, `incision`, `sp_m`, `sp_n` |
 | `glacial` | erosion | `ela`, `iterations`, `erode`, `kslope`, `ice_width`, `ice_gamma`, `widen`, `horn`, `arete_talus` |
@@ -217,6 +219,24 @@ ratio, and resolves any `repose_deg` pass to a concrete talus. `voronoi`, `terra
 `curve`, `smooth`, `falloff` keep their preset values; their character is structural,
 not a global-knob axis.
 
+## The macro mask: an art-directed silhouette on top of a preset
+
+A bake also takes a sixth, optional input: `macro`, a dict of `{path, weight, smooth,
+invert}` that puts an IMAGE at the head of the stack. `params.with_macro` prepends a
+`macro` op and demotes the preset's own generator to an `add` of the remaining relief, so
+the mask and the family are a weighted sum rather than one replacing the other, and every
+erosion op after it behaves exactly as it does on a noise base. `pipeline._stack_for`
+applies it to a preset stack and to an explicit one alike, so the panel, the CLI and MCP
+all reach it through the same key.
+
+It is a MASK, not a heightfield: the op blurs it at a fiftieth of the field width, so
+nothing finer than a massif survives to compete with the erosion. Measured on three
+prompts (docs/COMFYUI.md, "What G5 measured"): the mask's shape survives an erosion pass
+at band-limited correlation 0.906 to 0.923 while supplying 0.28 to 0.31 m of a tile's
+relief against the erosion's 2.89 to 3.04 m. The Terrain panel's `Generate Base` writes
+one from a prompt through ComfyUI; any 8 or 16-bit PNG works, including a hand-painted
+one.
+
 ## How to run
 
 ### CLI
@@ -330,7 +350,7 @@ hash matches the existing sidecar is a no-op that returns the cached stats.
 |------|------|
 | `heightfields/engine.py` | the op-stack evaluator + op registry + masking |
 | `heightfields/generate.py` | world-sampled ridged-multifractal base noise |
-| `heightfields/ops_generate.py` | dunes, voronoi, strata generators |
+| `heightfields/ops_generate.py` | dunes, voronoi, strata, macro generators |
 | `heightfields/ops_erode.py` | fluvial, pipe_hydraulic, glacial, scarp, rill, deposit, thermal, amplify + drainage helpers |
 | `heightfields/ops_filter.py` | terrace, warp, curve, sharpen, falloff |
 | `heightfields/ops_carve.py` | channel_seed + curve distance-field helpers |

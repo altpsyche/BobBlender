@@ -1103,3 +1103,113 @@ def test_free_vram_survives_an_empty_two_hundred(mods, fake_server):
     comfy, _ = mods
     assert comfy.free(url=fake_server) is True
     assert "/free" in _Fake.calls
+
+
+# -- Track E: the terrain macro mask (W13) ---------------------------------------------------
+def test_the_macro_mask_is_the_low_band_of_the_same_cutoff(mods):
+    """Track E needed no derivation module, and this is the reason: it is `relief()` read from the
+    other side. Same luminance, same box blur, the opposite half of one split."""
+    _comfy, maps = mods
+    n = 192
+    y, x = np.mgrid[0:n, 0:n] / n
+    rng = np.random.default_rng(5)
+    field = 0.8 * np.exp(-(((x - 0.3) ** 2 + (y - 0.3) ** 2) / 0.02))
+    noisy = np.clip(0.1 + field + 0.3 * rng.random((n, n)), 0.0, 1.0)
+    rgb = (np.repeat(noisy[:, :, None], 3, axis=2) * 255).astype(np.uint8)
+
+    macro = maps.macro_field(rgb)
+    relief = maps.relief(rgb)
+    assert macro.shape == (n, n) and macro.dtype == np.float32
+    # It spans the whole range, because the stack reads it as an elevation ordering.
+    assert macro.min() < 0.02 and macro.max() > 0.98
+    # And it is not the high band: the two are all but uncorrelated on the same image.
+    both = np.corrcoef(macro.ravel(), relief.ravel())[0, 1]
+    assert abs(both) < 0.3, f"macro and relief correlate at {both:+.3f}"
+    # The mask is smooth where the source was not: adjacent-cell steps collapse.
+    assert np.abs(np.diff(macro, axis=1)).max() < 0.15 * np.abs(np.diff(noisy, axis=1)).max()
+    assert maps.macro_from(rgb).dtype == np.uint8
+
+
+def test_a_flat_generation_gives_half_not_amplified_noise(mods):
+    """The same floor `_normalise` has, for the same reason: percentile-stretching a flat field would
+    amplify float rounding noise into a full-range landform the prompt never asked for."""
+    _comfy, maps = mods
+    flat = np.full((64, 64, 3), 130, dtype=np.uint8)
+    assert np.allclose(maps.macro_field(flat), 0.5)
+
+
+def test_the_macro_blur_wraps_only_when_the_route_asks(mods):
+    """A terrain tile is not a torus, so the mask's blur replicates its edge by default. The tiled
+    route is the exception and it has to actually be tileable when chosen."""
+    _comfy, maps = mods
+    rng = np.random.default_rng(11)
+    n = 128
+    ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)[None, :].repeat(n, axis=0)
+    rgb = (np.repeat(np.clip(ramp + 0.1 * rng.random((n, n)), 0, 1)[:, :, None], 3, axis=2)
+           * 255).astype(np.uint8)
+    open_seam = maps.seam_report(maps.macro_from(rgb, wrap=False))["ratio"]
+    tiled_seam = maps.seam_report(maps.macro_from(rgb, wrap=True))["ratio"]
+    assert tiled_seam < open_seam, f"tiled {tiled_seam:.2f} against open {open_seam:.2f}"
+
+
+def test_the_macro_route_is_a_value_and_the_open_one_drops_the_tiling(mods):
+    """W13's tiling pair ships IN the graph so preflight covers those classes, and the route decides
+    per press. Dropping the nodes rather than switching them to "disable" is the `BOB_LORA` argument
+    (R6): a disabled node still has to name an installed pack."""
+    comfy, _ = mods
+    assert set(comfy.MACRO_ROUTES) == {"open", "tiled"}
+    assert comfy.DEFAULT_MACRO_ROUTE == "open"
+    assert comfy.macro_tiling() is False and comfy.macro_tiling("tiled") is True
+    with pytest.raises(comfy.ComfyError, match="unknown macro route"):
+        comfy.macro_tiling("wrap")
+
+    prompt, prov = comfy.load_workflow(str(WORKFLOWS / "heightmap_macro.json"))
+    classes = {node["class_type"] for node in prompt.values()}
+    assert {"SeamlessTile", "MakeCircularVAE"} <= classes
+    open_graph = comfy.drop_node(comfy.drop_node(prompt, "BOB_TILE", {0: "model"}),
+                                "BOB_TILE_VAE", {0: "vae"})
+    assert not ({"SeamlessTile", "MakeCircularVAE"}
+                & {node["class_type"] for node in open_graph.values()})
+    # The chain is rewired, not broken: the sampler reads the checkpoint's model directly now.
+    titles = comfy.titles(open_graph)
+    assert open_graph[titles["BOB_SEED"]]["inputs"]["model"] == [titles["BOB_CKPT"], 0]
+    assert open_graph[titles["BOB_DECODE"]]["inputs"]["vae"] == [titles["BOB_CKPT"], 2]
+    assert prov["default_checkpoint"].endswith(".safetensors")
+
+
+def test_heightmap_macro_writes_an_eight_bit_mask_and_its_provenance(mods, monkeypatch, tmp_path):
+    """The whole Bob half of track E: one graph, one cutoff, one 8-bit PNG, one sidecar. 8-bit is the
+    decision R7 asked for and G5 measured, so the sidecar records the cutoff that makes it a mask."""
+    comfy, maps = mods
+    seen = {}
+    n = 256
+    y, x = np.mgrid[0:n, 0:n] / n
+    field = np.exp(-(((x - 0.4) ** 2 + (y - 0.4) ** 2) / 0.05))
+    rgb = (np.repeat(field[:, :, None], 3, axis=2) * 255).astype(np.uint8)
+    png = _paeth_png(rgb)   # what PIL, and so ComfyUI, actually emits
+
+    def fake_generate(workflow, values, **kwargs):
+        graph, _prov = workflow
+        seen["classes"] = {node["class_type"] for node in graph.values()}
+        seen["values"] = values
+        return png, {"prompt_id": "p9", "seconds": 4.5}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    out = tmp_path / "basin_macro.png"
+    info = comfy.heightmap_macro("a broad basin", str(out), seed=17)
+
+    assert out.exists() and info["tiled"] is False
+    assert "SeamlessTile" not in seen["classes"], "the open route drops the tiling"
+    assert comfy.MACRO_SUFFIX in seen["values"]["BOB_PROMPT"]["text"]
+    assert seen["values"]["BOB_SEED"] == {"seed": 17}
+    written = maps.read_png(out.read_bytes())
+    assert written.ndim == 2 and written.dtype == np.uint8, "one channel, 8 bits"
+    assert written.min() < 5 and written.max() > 250
+    side = json.loads((tmp_path / "basin_macro.json").read_text())
+    assert side["route"] == "open" and side["seed"] == 17
+    assert side["lowpass_fraction"] == maps.MACRO_LOWPASS_FRACTION
+    assert "MASK" in side["note"] and info["source"] is None
+
+    # keep_source is what makes the 8-bit claim auditable rather than asserted; off by default.
+    info = comfy.heightmap_macro("a broad basin", str(tmp_path / "again.png"), keep_source=True)
+    assert info["source"] and os.path.exists(info["source"])

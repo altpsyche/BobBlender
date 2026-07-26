@@ -36,7 +36,7 @@ AMPLIFY_PREVIEW = 512
 
 _DEFAULT_KNOBS = dict(
     preset="alpine", seed=7, size=DEFAULT_SIZE, backend="auto",
-    relief=0.5, detail=0.5, erosion=0.5, warp=0.5,
+    relief=0.5, detail=0.5, erosion=0.5, warp=0.5, macro=None,
 )
 
 # Generators that take a procedural seed. Each is offset so the Seed knob varies
@@ -84,6 +84,45 @@ def resolve_amplify_targets(stack, size, relief_ratio):
             op["to"] = int(size)
             op.setdefault("relief", float(relief_ratio))
     return stack
+
+
+# The generator kinds a preset stack can open with. `with_macro` demotes whichever one it finds
+# first, so a macro mask composes with every family (noise mountains, strata canyons, dune seas)
+# instead of only the noise ones.
+_GENERATORS = ("noise", "dunes", "voronoi", "strata")
+
+# The macro mask's default share of the base relief, and the blur (as a fraction of the field width)
+# that keeps it a mask. 0.6 leaves the preset a real 40% of the base, which is what stops a prompted
+# silhouette from arriving as a bare blurred blob with erosion painted on top.
+MACRO_WEIGHT = 0.6
+MACRO_SMOOTH = 0.02
+
+
+def with_macro(stack, path, *, weight=MACRO_WEIGHT, smooth=MACRO_SMOOTH, invert=False):
+    """A copy of `stack` with a macro-mask generator as op 0 and its own generator demoted to a
+    detail ADD of the remaining relief. The one place that composition is written.
+
+    Why demote rather than insert-and-hope: every shipped preset opens with a generator whose `mix`
+    is `replace`, so a mask prepended in front of one would be overwritten on the very next op and
+    the whole feature would silently do nothing. The macro takes `weight` of the base relief and the
+    preset's generator takes `1 - weight` on top, so the artist's landform and the family's
+    character are a weighted sum, and the erosion that follows sees one field either way.
+
+    Everything downstream is untouched: `fluvial`, `thermal` and `amplify` cannot tell a mask-based
+    macro from a noise-based one, which is why track E needed no new erosion path (R7).
+    """
+    out = copy.deepcopy(list(stack))
+    weight = max(0.0, min(1.0, float(weight)))
+    for op in out:
+        if op.get("kind") in _GENERATORS:
+            if op.get("mix", "replace") == "replace":
+                op["mix"] = "add"
+                op["amount"] = 1.0 - weight
+            else:
+                op["amount"] = float(op.get("amount", 1.0)) * (1.0 - weight)
+            break
+    return [{"kind": "macro", "path": str(path), "mix": "replace", "amount": weight,
+             "smooth": float(smooth), "invert": bool(invert)}] + out
 
 
 def default_knobs() -> dict:
@@ -165,10 +204,17 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
 
 
 def build_params(knobs: dict | None = None) -> dict:
-    """Expand flat knobs (preset + globals) into a bake params dict with a resolved stack."""
+    """Expand flat knobs (preset + globals) into a bake params dict with a resolved stack.
+
+    `macro` is an optional dict of `with_macro` keywords (`path` and, optionally, `weight`,
+    `smooth`, `invert`). It lands here rather than in the panel so the panel, the CLI and the MCP
+    tool all get a prompted macro base from the same one line.
+    """
     k = {**_DEFAULT_KNOBS, **(knobs or {})}
     stack = resolve_stack(k["preset"], relief=k["relief"], detail=k["detail"],
                           erosion=k["erosion"], warp=k["warp"], seed=k["seed"], size=int(k["size"]))
+    if k.get("macro"):
+        stack = with_macro(stack, **k["macro"])
     return {
         "size": int(k["size"]), "seed": int(k["seed"]), "backend": k["backend"],
         "preset": k["preset"], "stack": stack,

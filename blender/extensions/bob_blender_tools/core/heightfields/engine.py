@@ -46,6 +46,7 @@ _OPS = {
     "noise": _op_generate_noise,
     "dunes": _wrap(ops_generate.dunes),
     "voronoi": _wrap(ops_generate.voronoi),
+    "macro": _wrap(ops_generate.macro),
     "strata": _wrap(ops_generate.strata),
     "fluvial": _wrap(ops_erode.fluvial),
     "pipe_hydraulic": _wrap(ops_erode.pipe_hydraulic),

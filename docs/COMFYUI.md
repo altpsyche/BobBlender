@@ -1,20 +1,22 @@
 # ComfyUI integration plan
 
-Status: revision 12. **G0, G0.5, G1, G2, G3, G3b, G4 and G4c are done**; see
+Status: revision 13. **G0, G0.5, G1, G2, G3, G3b, G4, G4c and G5 are done**; see
 [What G0 shipped](#what-g0-shipped), [What G0.5 measured](#what-g05-measured),
 [What G1 shipped](#what-g1-shipped), [What G2 shipped](#what-g2-shipped),
 [What G3 shipped](#what-g3-shipped), [What G3b measured](#what-g3b-measured),
-[What G4 measured](#what-g4-measured), and [What G4c measured](#what-g4c-measured). Everything from
-G5 on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
+[What G4 measured](#what-g4-measured), [What G4c measured](#what-g4c-measured), and
+[What G5 measured](#what-g5-measured). Everything from G6 on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
 layer against a 60 s gate**; G2 generalised that path without losing it (ten sets at a mean of
 5.55 s, worst-case main-thread block 16.5 ms against the blocking path's 5563 ms); G3 carried
 the same shape into geometry, at 40 to 203 s prompt-to-scattered-prop against a 300 s gate; G3b
 replaced the four-graph geometry chain with the one-shot **W9b** after measuring both on ten
 prompts; G4 added the two routes that need Blender to hand ComfyUI geometry rather than pixels
 (**W12** stylise and **W9** paint), plus the multi-view geometry comparison, and found that one of
-those two claims does not survive measurement; and G4c shipped **W7**, which makes a Blender
+those two claims does not survive measurement; G4c shipped **W7**, which makes a Blender
 block-out proxy decide an asset's silhouette, and beat the multi-view route it was meant to fall back
-on. See the verdicts below.
+on; and G5 shipped **W13**, a prompted macro mask into the terrain op stack, and measured that a
+silhouette survives an erosion pass (band-limited correlation 0.906 to 0.923 against a no-mask null
+of 0.078 to 0.208) while erosion still builds the landform. See the verdicts below.
 
 Steps 3 and 4 of the pinned pipeline are **decided**: `Trellis2Simplify` plus `Trellis2UVUnwrap`,
 by a wide margin over Blender Decimate and Quadriflow. The measurements and the three findings
@@ -62,7 +64,7 @@ suite, not by novelty. These letters are used throughout the document.
 | **B. Mesh texturing** | PBR maps in an existing mesh's UVs | Highest leverage. The block-out proxies already exist and are grey. Painting them is what turns a block-out biome into a look, and it is the half a technical artist does not do by hand. | 2 |
 | **C. Mesh generation** | glTF assets from an image or a prompt | Fills the hole the block-out redesign left on purpose: `verdant_trail` and the real-glTF import path were removed, so Scatter has nothing but procedural proxies. | 3 |
 | **D. Look-dev stylise** | A styled concept frame from a Bob render | Blender hands ComfyUI a **real** depth and normal pass rather than an estimated one. Output is a pitch frame, not geometry. Shares almost all of its graph with track B. | 4 |
-| **E. Macro heightmap** | A low-frequency base for the terrain op stack | Art-directable silhouette as the stack's first input. Strictly subordinate, see the limits. | 5 |
+| **E. Macro heightmap** | A low-frequency base for the terrain op stack | Art-directable silhouette as the stack's first input. Strictly subordinate, see the limits. **Shipped at G5**, and the subordination is measured rather than intended. | 5 |
 | **F. Sky dome** | Equirectangular HDRI | `library/hdri/` is empty so the intent exists, but Firmament's procedural sky is coupled to `bbt_env` and better. An alternative look, not a replacement. | 6 |
 
 ## Honest limits, stated up front
@@ -79,7 +81,10 @@ suite, not by novelty. These letters are used throughout the document.
 - **Diffusion heightmaps are not terrain.** Low-frequency, banded, no drainage logic.
   `terrain-sota-research` already landed on keeping the op-stack plus erosion and deferring ML, so
   track E feeds the first op as a macro mask and the fluvial stream-power stack does the real work.
-  If E starts competing with the erosion stack it is being misused.
+  If E starts competing with the erosion stack it is being misused. **Measured at G5 and the split
+  holds**: the mask supplies 0.28 to 0.31 m of relief and the erosion 2.89 to 3.04 m of it on the
+  same tile, so the prompt places the massif and the stack builds every slope. The banding half of
+  this worry did not survive: see [What G5 measured](#what-g5-measured).
 - **VRAM contention is real and 16 GB is tight.** See R8.
 - **ComfyUI is never required.** No server means the Generate rows read "not connected" and every
   existing feature behaves exactly as today. The extension zip ships no models, no ComfyUI, and no
@@ -1584,6 +1589,226 @@ operator with a `from_control` property, shown only when the active object is a 
 
 ---
 
+## What G5 measured
+
+**Verdict, in one sentence each.** A prompted silhouette does survive an erosion pass and it is not
+close: **band-limited correlation 0.906 to 0.923 at the mask's own cutoff, against a no-mask null of
+0.078 to 0.208** on the same preset and seed. Erosion still builds the landform rather than
+decorating a blurred picture: the mask explains **11 to 16%** of the band above its own cutoff, the
+finished field carries **2.89 to 3.04 m** of fine relief against a mask-only baseline's **0.28 to
+0.31 m**, and its median slope is **42.1 to 42.8 degrees** against the mask's 24.6 to 27.3 and the
+no-mask bake's own 44.7. **R7's terracing does not happen, and it does not happen at 5 bits either**,
+which makes the 8-bit question a different question than the plan assumed. And **W13 is W1's topology
+with different values**, which is written into its provenance rather than dressed up.
+
+Files: `assets/workflows/heightmap_macro.json` (W13, new), `core/comfy.py` (`heightmap_macro`,
+`macro_prompt`, `MACRO_SUFFIX`, and `macro_tiling` as the route value), `core/comfy_maps.py`
+(`macro_field`, `macro_from`, and a `wrap` flag on the shared box blur),
+`core/heightfields/ops_generate.py` (the `macro` op), `core/heightfields/engine.py` (its
+registration), `core/heightfields/params.py` (`with_macro`, and `macro` as a bake knob),
+`core/heightfields/pipeline.py` (`_stack_file_sig`), `core/heightfields/io.py` (`read_png` beside a
+still-strict `read_png16`), `__init__.py` (`BBT_OT_terrain_generate_base`, five properties on
+`BBT_HeightfieldProps`, `_macro_knob`, `_draw_generate_base`, and a `target` on the existing seed
+reshuffle), `tools/scripts/headless_comfy_g5.py` (new), `tools/tests/test_comfy.py` (62 tests, up
+from 57), `tools/tests/test_heightfields.py` (60, up from 53). Suite **179**, up from 167. No new
+node classes, so `object_info_min.json` is unchanged at 53.
+
+### The survival measurement, and the null it is read against
+
+Three prompts, chosen so one is a shape erosion should FIGHT and one is a shape it should AGREE with,
+each baked three ways on the same preset (`alpine`) and seed: the mask alone with no erosion at all
+(the blurred-image baseline), the mask plus the preset stack (the shipped path), and the preset stack
+with no mask (the null). Bands are split at the mask's own cutoff, which is a gaussian of
+`MACRO_LOWPASS_FRACTION * n / sqrt(3)` rather than `* n` -- a box blur of radius r has the second
+moment of a gaussian of r/sqrt(3), and splitting at the wider sigma charges the mask for content it
+does not have.
+
+| prompt | mask s | bake s | r_low | no-mask null | r_high | null r_high | mask-linked share of the fine band | fine band as a share of the field |
+|---|---|---|---|---|---|---|---|---|
+| isolated steep massif | 4.5 | 7.5 | **+0.9057** | +0.2079 | +0.3476 | +0.0120 | 12% | 12% |
+| broad shallow basin | 4.6 | 7.5 | **+0.9136** | +0.0782 | +0.3288 | +0.0016 | 11% | 11% |
+| long corner-to-corner ridge | 4.5 | 7.5 | **+0.9229** | +0.1442 | +0.3972 | -0.0225 | 16% | 11% |
+
+`r_high` came back at 0.33 to 0.40 where the handover expected near zero, and that is not a leak: the
+no-mask null's `r_high` is +0.012 to -0.023, so the coupling exists only when the mask is in the
+stack, and its cause is that `amplify` seeds its detail band **on slopes**
+(`amp * band * _slope01(h)`). The macro decides where the slopes are, so it decides where the fine
+detail lands. The honest form of the number is `r_high` squared -- the mask explains 11 to 16% of a
+band that is itself 11 to 12% of the field's variance, so about 1.5% of the finished landform is
+mask-linked fine detail and the rest of that band is the erosion's.
+
+And in real units on a 180 m tile at 54.0 m relief, which is what says this is a landform rather than
+a blurred image:
+
+| prompt | fine relief, full | fine relief, mask only | median slope, full | mask only | no-mask bake | slope-area gradient, full | no-mask | mask only |
+|---|---|---|---|---|---|---|---|---|
+| massif | **2.974 m** | 0.299 m | **42.76 deg** | 24.56 | 44.70 | +0.432 | +0.322 | -0.207 |
+| basin | **3.043 m** | 0.275 m | **42.14 deg** | 25.39 | 44.70 | +0.419 | +0.322 | -0.206 |
+| ridge | **2.886 m** | 0.305 m | **42.69 deg** | 27.34 | 44.70 | +0.414 | +0.322 | -0.143 |
+
+Fine relief is measured above a 64th-of-the-width cutoff, five times finer than anything the mask can
+carry, so the ten-fold gap is the erosion's contribution stated in metres. The slope-area gradient is
+read against the no-mask bake and not against Flint's law, for a reason that is a finding in its own
+right and is correction 10 below.
+
+**VERDICT: the mask decides the layout and the stack decides the terrain, which is what track E was
+for.** The two shapes the phase was built around behaved the same way, so the prediction that erosion
+would fight an isolated massif and agree with a broad basin did not show up as a difference in
+survival: `r_low` is 0.906 for the massif and 0.914 for the basin, and the massif's fine relief is
+2.974 m against the basin's 3.043 m. If there is a case where a silhouette does not survive, these
+three did not find it.
+
+### The 8-bit question, and R7 turned out to be asking about the wrong failure
+
+R7 predicted visible terracing from 256 levels. Measured on the basin mask, quantised to 16, 8 and a
+deliberately-crushed 5 bits and run through the identical stack:
+
+| | levels in the file | worst-cell mask error | rms after the stack | worst cell after | r against 16-bit | fine relief | median slope | histogram concentration | flat-pair fraction |
+|---|---|---|---|---|---|---|---|---|---|
+| 16-bit | 65,315 | 0.0004 m | -- | -- | 1.00000 | 3.038 m | 42.10 | 1.929 | 0.02447 |
+| **8-bit, as shipped** | 256 | **0.1059 m** (0.196% of 54 m) | **0.8006 m** | 32.751 m | **0.99804** | 3.043 m | 42.14 | **1.864** | 0.02427 |
+| 5-bit | 32 | 0.8710 m (1.613%) | 1.7227 m | 38.891 m | 0.99090 | 3.051 m | 42.06 | 1.912 | 0.02297 |
+| a different SEED, for scale | -- | -- | **9.2792 m** | 44.928 m | 0.73320 | 3.214 m | 40.04 | 3.262 | 0.02348 |
+
+**There is no terracing at any bit depth tested**, and the reason is the op's own blur rather than the
+bit depth: the mask is resampled to the macro level and blurred at a fiftieth of the field width, and
+that averaging puts a 256-level file back above 8-bit precision -- 256 distinct levels in the file
+become **27,936** after the resample and blur. The float derivation the file is written from carries
+588,851 distinct levels, because the derivation averages three 8-bit channels over a box of radius
+width/12, so the 8-bit write is the ONLY 8-bit step on the route and it costs 0.196% of the relief.
+
+What 8 bits does cost is not precision, it is **determinism**: 0.106 m in the mask becomes 0.80 m rms
+in the finished terrain, an eight-fold amplification, because a stream-power stack is chaotic in its
+initial condition and a slightly different mask puts a channel in a slightly different place. That is
+real and it is small on the scale that matters: a reseed moves the same terrain 9.28 m rms at r 0.733,
+eleven times further. In the render, with EEVEE deterministic to a 0.0000 noise floor:
+
+| render against the 16-bit path | mean, of 255 | max |
+|---|---|---|
+| 8-bit | **0.5526** | 182 |
+| 5-bit | 2.6361 | 186 |
+| a different seed | 35.2617 | 189 |
+
+So the answer to "how much of the mask's usable information survives 256 levels, and is it visible" is
+**effectively all of it, and no**: the landform statistics are identical to three significant figures
+(fine relief 3.043 against 3.038 m, median slope 42.14 against 42.10, the mask's own survival r_low
++0.9136 against +0.9136), and the frame moves by half a grey level. **The 16-bit save node stays
+deferred, and now the deferral has a measurement behind it instead of an assumption.**
+
+### Wall clock, VRAM, and the session question
+
+| | Result |
+|---|---|
+| Mask | **4.3 to 6.5 s** at 1024 square, 20 steps |
+| Peak VRAM | **7,444 to 9,844 MiB** of 16,303 summed over the ComfyUI family |
+| Rise over the stage's own baseline | **352 MiB** with SDXL already resident, 2,752 to 7,152 MiB on a run that has to load it |
+| Bake, 768 px, GPU | **7.4 to 7.5 s**, unchanged from a no-mask bake |
+| **Prompt to a built terrain, through the panel** | **about 12 s** (4.6 s mask, 7.4 s bake and build) |
+| Main-thread cost of the Generate Base press | **0.3 ms** |
+| Longest main-thread tick while the job ran | **0.08 ms** over 497 ticks |
+| `POST /free` after a W13 run | 468 MiB still held, i.e. SDXL evicts cleanly |
+| **W13 with Omni resident** (11,266 MiB held by the family) | **runs, 5.2 s, peak 13,858 MiB**, rise 2,592 |
+| `POST /free` in that state | 9,634 MiB still held, which is G4c's Omni figure again |
+
+So this is the one route in the integration that shares a card with anything: it is SDXL at 1024 with
+no ControlNet, it is the lightest generation Bob does, and it ran unchanged with the heaviest thing in
+the integration already resident. The G4c session-planning warning does not apply to it.
+
+### Twelve things this plan had wrong, corrected here
+
+1. **The op stack has no "first input" to feed, and a mask prepended to a preset does nothing.**
+   `engine.run_stack` starts every stack from a ZERO field, so "the stack's first input" is really
+   "be op 0" -- fine -- but every shipped preset opens with a generator whose `mix` is `replace`, so a
+   macro op placed in front of one is overwritten on the very next op and **nothing raises**. That is
+   the whole reason `params.with_macro` exists: it prepends the mask AND demotes the stack's own
+   generator to an `add` of the remaining relief, so the artist's silhouette and the family's
+   character are one weighted sum. This was the single most likely way for the phase to ship a
+   feature that silently did nothing, and the plan's phrasing pointed straight at it.
+2. **The mask does not run at the bake resolution.** Every shipped preset ends in `amplify`, whose
+   coarse macro runs at `params.AMPLIFY_BASE` (256) so that a preview is a faithful prefix of a full
+   bake, so a 1024-square mask is resampled to 256 and the cascade re-creates the resolution
+   afterwards. Which means mask resolution is not a quality axis on this route at all, and the panel
+   ships no size widget: 1024 is SDXL's native size and a second resolution knob would only be a way
+   to generate a worse composition.
+3. **Track E needed no derivation module, and the honest answer was five lines.** `macro_field` is
+   `relief()`'s complement: same `luminance`, same box blur, the other side of one cutoff, with a
+   percentile stretch instead of a recentre because the stack reads it as an elevation ordering
+   rather than a signed displacement. What it DID need was one thing the plan had no reason to
+   predict: a `wrap` flag on the shared box blur, because every track A map is a tile and a terrain
+   mask is not, and a wrapping blur bleeds the far side of the landform into this one.
+4. **Whether a macro mask wants to tile is answered, and the answer is no.** Measured: seam ratio
+   **0.80** with circular padding against **86.18** without, i.e. the tiling route genuinely does put
+   the same elevation on both borders, which is exactly the repeat that makes a single terrain tile
+   read as a wallpaper. So `open` is the default, `tiled` survives as a value for the endless-sheet
+   case, and `comfy.macro_tiling()` is where that route is decided. The open route **drops**
+   `SeamlessTile` and `MakeCircularVAE` rather than switching them to "disable", which is the
+   `BOB_LORA` argument from G4 (R6): a disabled node still has to name an installed pack.
+5. **R7 predicted the wrong artefact.** Terracing does not appear at 8 bits and does not appear at 5,
+   because the mask is blurred before erosion ever sees it. The measurement is above; the practical
+   consequence is that bit depth is not the binding constraint on this route and the 16-bit save node
+   is deferred on evidence.
+6. **What the 8-bit write does cost is determinism, not precision, and the plan had no concept for
+   it.** The stack amplifies 0.106 m of mask error into 0.80 m rms of terrain because stream-power
+   incision is chaotic in its initial condition. Nothing is wrong with that -- a reseed moves it
+   eleven times further -- but it means "the same prompt and seed" is only reproducible while the
+   mask FILE is byte-identical, which is why correction 7 matters.
+7. **The bake cache had a hole that only a file-reading op could open.** `pipeline.bake` keys on the
+   resolved recipe, and a recipe naming a path is only as identified as that file's contents, so a
+   regenerated mask written to the same name was served the PREVIOUS terrain from cache.
+   `_stack_file_sig` digests every file any op reads, which is generic rather than macro-specific so
+   the next such op needs no change. R16's unique naming makes this rare in the panel and it is not
+   rare at all from a script.
+8. **`io.read_png16` could not read the file this route writes.** It is deliberately strict and it
+   stays strict -- an 8-bit file accepted as a terrain BASE would terrace it into 256 benches and
+   nothing downstream would say a word -- so the fix was to factor the decoder into `read_png`
+   (8 or 16 bit, grey or RGB(A), alpha dropped) and keep `read_png16` as the validating entry the
+   bake path uses.
+9. **W13 is W1's topology with different values, and that is the honest description.** Nine nodes,
+   the same nine classes, the same wiring. What differs: the prompt brief and negative (a top-down
+   elevation map, not a material), 20 steps at cfg 4.0 against 25 at 5.0, and `euler` with the normal
+   scheduler against `dpmpp_2m` + `karras`, because karras front-loads the fine-detail steps and this
+   route discards exactly that half of the schedule. It earns a file for the brief, the tuning, the
+   provenance and the droppable tiling pair, not for wiring, and `_bob.notes` says so.
+10. **The terrain engine's own slope-area gradient is POSITIVE, which is the opposite of Flint's
+    law.** Found while building the gate, not looked for. A no-mask `alpine` bake gives **+0.322**
+    (slope RISES with drainage area) with a strong fit (binned medians, r 0.86 to 0.89); masked bakes
+    give +0.414 to +0.432; the mask alone gives -0.143 to -0.207. So the statistic discriminates
+    cleanly and the gate scores against the engine's own output rather than against theory, which is
+    the right call for a gate about a mask. But an equilibrium fluvial landscape has a NEGATIVE
+    gradient of roughly 0.3 to 0.6, and a finite-iteration stream-power stack with no uplift is not
+    an equilibrium landscape, so this may be entirely expected. It is not G5's to resolve and it is
+    now **D13**.
+11. **A second seed on a panel needs a reshuffle, and that is not a second operator.**
+    `BBT_OT_random_seed` grew a `target` property (`terrain` or `macro`), the way the Scatter panel's
+    reshuffle already serves both a layer socket and the Generate Asset seed.
+12. **A params dict carrying BOTH a resolved stack and a mask ignored the mask, and the MCP route is
+    the one that hits it.** `pipeline._stack_for` returned an explicit `stack` verbatim, and
+    `presets.get()` returns a params dict with the stack already resolved in it, which is exactly what
+    `mcp_agent/server.py:bake_heightfield` builds from a `preset` argument. So the agent-facing route
+    would have accepted `macro` and baked the unmasked terrain, silently -- the same class of failure
+    as correction 1 and found the same way, by writing down what the caller actually passes.
+    `_stack_for` now composes a macro onto either shape and is idempotent, so `build_params` having
+    already applied it is not a second application, and the panel stopped doing its own composition:
+    one owner, not two. This is also why `comfy_heightmap()` needs no new op from G6.
+
+### What G5 deliberately did not build
+
+No 16-bit or EXR save node: measured unnecessary, correction 5. No mask staging or Accept flow -- R9
+is about variants awaiting a decision, and a macro mask is an INPUT to the next bake rather than an
+artifact, so it lands in `<output>/macro/` beside the terrain it feeds and never in the generated
+pack's `_staging/`, where the texture-variant picker would list it. No tiled-terrain UI: the route is
+a value with a measured default and no shipped feature stitches tiles yet, so a radio button would be
+knob sprawl on a decision nothing can act on. No invert auto-detection -- which way a model paints an
+elevation map is genuinely a coin flip per prompt, and a plausibility rule for it would need a
+measurement this phase does not have, so it is one toggle that says what it does. No `macro` entry in
+the advanced Filter Stack editor: the op is composed at bake time from the panel's own state, and the
+editor's kind list is for ops an artist hand-authors. No `contracts.py` change and no MCP op; G6
+still batches those, and the terrain mask write is on its list, which is why the Blender half is a
+`core` function (`heightfields.params.with_macro`, reached through the `macro` bake knob) that G6 can
+wrap without touching the panel.
+
+---
+
 ## Review findings that changed this plan
 
 Revision 1 had real defects. Each is listed with the fix, because the fixes are most of what is
@@ -1642,6 +1867,12 @@ Revision 1 said "16-bit-ish", which is not a plan.
 *Fix:* the diffusion output is treated strictly as a **low-frequency macro mask**, normalised and
 smoothed, feeding the op stack's first input; the erosion stack generates all real detail. A
 16-bit or EXR save node gets added only if a genuine height ever needs to survive the round trip.
+**Measured at G5, and the fix was right for a reason R7 did not name.** The mask is a mask, so the
+terracing never arrives: 256 levels, blurred at a fiftieth of the field width before erosion sees
+them, leave the finished terrain with the same histogram concentration as a 16-bit path
+(1.864 against 1.929) and the same landform statistics to three figures. Crushing the mask to 32
+levels does not produce terracing either. What the 8-bit write does cost is determinism, not
+precision: see [What G5 measured](#what-g5-measured). The save node stays deferred on evidence.
 
 **R8. `/free` alone does not fix 16 GB.** ComfyUI's `/free` unloads its own models but leaves the
 process and its allocator alive, and Blender holds VRAM too.
@@ -2270,8 +2501,21 @@ W12 shares almost all of its graph with W9, which is why it was built first and 
 No upscale stage: W3 already exists and an upres of a pitch frame is a second press, not a second
 graph.
 
-**W13 `heightmap_macro.json`** prompt to a low-frequency macro mask. Deliberately soft and
-deliberately 8-bit-tolerant per R7, because it is a mask, not a heightfield.
+**W13 `heightmap_macro.json`, SHIPPED at G5.** Prompt to a low-frequency macro mask. Deliberately
+soft and deliberately 8-bit-tolerant per R7, because it is a mask, not a heightfield.
+
+**It is W1's nine nodes, and the file exists for its values rather than its wiring**, which is
+recorded in its own `_bob.notes` so nobody looks for a difference that is not there. What differs:
+the prompt brief and negative are a top-down elevation map instead of a material; 20 steps at cfg 4.0
+against 25 at 5.0; `euler` with the normal scheduler against `dpmpp_2m` plus `karras`, because karras
+front-loads the fine-detail steps and this route discards exactly that half of the schedule; and the
+two circular-padding nodes are **droppable** rather than fixed. `comfy.macro_tiling()` decides that
+per press, and the default drops them: measured seam ratio 0.80 with padding against 86.18 without,
+so the tiled route really does put the same elevation on both borders, which is the repeat a single
+terrain tile must not have. `tiled` stays as a value for an endless-sheet case. Bob derives the mask
+in numpy (`comfy_maps.macro_field`, one cutoff of the same luminance track A's height channel uses)
+and the terrain engine reads it as the `macro` op, which is op 0 of the stack. Verdicts and the
+twelve corrections are in [What G5 measured](#what-g5-measured).
 
 **W14 `sky_equirect.json`** panorama for track F. Last, and only if the procedural sky is ever
 insufficient.
@@ -2328,7 +2572,7 @@ Pinned per the fork's convention, each with a `FORK_README.md` row.
 | **`ComfyUI-Hy3D-Omni`** (Rizzlord, **no license file**) | **W7**, the block-out control route. Five nodes: `Hy3DOmniLoadPipeline` plus a Point / Voxel / BBox / Pose generator. Pinned at `e513cd08`. | **Retired by G4c, and it was the real risk in this plan.** It is the ONLY ComfyUI wrapper for Omni that exists (3 stars, 0 forks, no license, last push 2025-10-03, and the better-advertised `PozzettiAndrea/ComfyUI-HunyuanX` is a 404), and it ships with the control signal broken: a vendored rename of `OmniEncoder.linear` to `self.liner` makes the checkpoint's three control-projection tensors load as MISSING under `strict=False`, so generation ignores the control and says nothing. Measured 0.010 voxel IoU before the fix and 0.53 after. `tools/scripts/comfy_omni_fix.py` is the fix; the whole write-up is in [What G4c measured](#what-g4c-measured) and in the fork's `FORK_README.md`. |
 | KJNodes and an image-filter pack | image utility across all graphs | Low. |
 | MV-Adapter | W9 style-control route only | Low, but **now optional** rather than required (R21). |
-| 16-bit / EXR save | only if R7 is ever revisited | Low, deferred. |
+| 16-bit / EXR save | only if R7 is ever revisited | **Measured unnecessary at G5**: 8 bits leaves no terracing, and neither does 5. Deferred on evidence. |
 | Hunyuan3D paint wrapper (kijai) | **dropped** | Superseded by `Trellis2TextureMesh`. It was the compile-from-source risk; deleting it is the single biggest risk reduction in revision 5. |
 | Background removal (RMBG / BiRefNet) | **not needed** | `Trellis2RemoveBackground` ships in the TRELLIS2 pack, which also sidesteps RMBG-2.0's non-commercial terms. |
 | 3D-Pack (MrForExample) | not needed | High. Large compiled dependency tree, and its main draw was TRELLIS support that now has a dedicated pack. |
@@ -2398,6 +2642,15 @@ core/comfy_jobs.py    SHIPPED G2. one worker thread, a bpy.app.timers tick drain
                       queue, every bpy touch on the main thread, @persistent load_post reset
 core/comfy_maps.py    SHIPPED G1, real at G2. PNG codec, one relief field to height / normal /
                       AO / cavity, local-contrast roughness, wrap pad and blend
+core/comfy_maps.py    EXTENDED G5. `macro_field` / `macro_from`, the terrain macro mask, which is
+                      `relief()` read from the other side of the same cutoff, plus a `wrap` flag on
+                      the shared box blur because a terrain tile is not a torus
+core/heightfields/    EXTENDED G5. the `macro` generator op (an image as the stack's base:
+                      resample, blur, restretch, mix), `params.with_macro` (which prepends it AND
+                      demotes the preset's own generator, or the mask would be overwritten by the
+                      next op), `macro` as a bake knob so panel / CLI / MCP share one line,
+                      `pipeline._stack_file_sig` so the cache notices an edited mask at a name it
+                      has seen, and `io.read_png` beside a still-strict `io.read_png16`
 core/textures.py      NOT NEEDED. G0 shipped this as core/materials/texset.py plus the
                       existing core/assets.py resolver; there is no second IO layer to write
 core/gen_assets.py    SHIPPED G3. glTF import, weld, pinhole fill, Decimate (Quadriflow
@@ -2423,7 +2676,8 @@ core/gen_paint.py     SHIPPED G4. bpy-side. The UV g-buffer (world position and 
 assets/workflows/*.json   tex_tileable, tex_tileable_ref, tex_upres, mesh_subject,
                       mesh_geom_trellis, mesh_texture, mesh_simplify_uv, mesh_geom,
                       mesh_geom_texture, stylize_render, stylize_render_est,
-                      mesh_paint_views, mesh_geom_mv and mesh_geom_mv_trellis shipped
+                      mesh_paint_views, mesh_geom_mv, mesh_geom_mv_trellis and heightmap_macro
+                      shipped
 ```
 
 Job orchestration lives in `core/comfy_jobs.py` and the client in `core/comfy.py`;
@@ -2446,6 +2700,11 @@ and `finish_passes(staged)` maps whatever either staged onto `finish_asset`'s `s
 `texture_pass`. `bind_process()` is the shared `Trellis2ProcessMesh` binding, which cannot go
 through `template()` because a dynamic combo's sub-widgets belong to the selected key and templating
 only merges.
+
+G5 added a third member on the same terms: `macro_tiling(route)` over `MACRO_ROUTES`, which is where
+"does a terrain macro mask want to tile" becomes one decision instead of a flag threaded through a
+graph. It returns a bool rather than a function because the two routes are one graph with two nodes
+dropped, not two chains.
 
 G4c added two members to that same family rather than a third route. `control=` is a value on the
 staged chain that swaps step 2 from W5t to W7 and changes nothing else, so the block-out path is one
@@ -2495,6 +2754,12 @@ active material), `import_generated` (a generated-pack kind into `BOB_Assets_<ki
 origin, LOD), `export_control` (a block-out proxy out as a point cloud for W7). `reload_image` and
 `render` already exist.
 
+`comfy_heightmap()` needs **no new op at all**, which G5 arranged deliberately: the mask reaches a
+bake as the `macro` key of the params dict every existing bake path already takes
+(`heightfields.params.build_params`), so an agent generates a mask over HTTP with no `bpy` and then
+bakes it through the terrain op that exists. The one thing G6 still owns here is exposing that key on
+the bake tool's schema.
+
 ### UI placement
 
 - **Advanced**, a `ComfyUI` sub-header beside MCP Bridge: **shipped at G2** as a cached status
@@ -2538,6 +2803,18 @@ origin, LOD), `export_control` (a block-out proxy out as a point cloud for W7). 
   fields and now runs two jobs instead of four. A route radio button would be knob sprawl on a
   decision that has a measured answer.
 - **Terrain**: `Generate Base`, labelled a macro mask so nobody reads it as a terrain generator.
+  **Shipped at G5, in the existing Terrain panel and above Bake + Build**, because it is an INPUT to
+  that press rather than a sibling of it. Four widgets: a prompt, a seed with the shared reshuffle,
+  and -- once a mask exists -- a toggle, a Mask Weight and an Invert on one row, with the file name
+  underneath. No size widget (the mask is resampled to the stack's macro level, so 1024 is the only
+  sensible size and a second resolution knob would just be a way to compose worse), no route radio
+  (the tiling answer is measured and no shipped feature stitches tiles), and no staging or Accept
+  flow: R9 is about variants awaiting a decision, and this is an input, so it lands in
+  `<output>/macro/` beside the terrain rather than in the generated pack's `_staging/` where the
+  texture-variant picker would list it. The row reads "not connected" from the same cached state the
+  Scatter and Shaders boxes use and probes nothing from `draw()`. Measured through the real
+  operators: **0.3 ms of main thread for the press, a 0.08 ms longest tick over 497 ticks**, and
+  turning the toggle off bakes the preset stack byte-for-byte as it always did.
 
 Preferences: **shipped at G2**, ComfyUI URL (pushed into the bpy-free client by `set_pref_url`,
 the same hand-off `assets.set_pref_roots` uses), ComfyUI folder (only needed for Start Server), and
@@ -2559,7 +2836,7 @@ staging holds exactly the results still awaiting a decision and there is nothing
 | **G3b** | **DONE.** W9b one-shot `geometry_texture` against W5t plus W9c plus W9t staged, ten prompts, one shared W4 subject each. Plus the opacity channel, which was G3's named partial. What shipped, the measurements, and five corrections are in [What G3b measured](#what-g3b-measured). | **Passed, and it changed the default.** W9b **fits 16 GB with 61% of the card free** (peak 6,276 MiB summed across the three ComfyUI processes, 4,508 MiB of it the graph's own rise) against the staged route's 8,586 MiB peak. Wall clock is a wash (**593.1 s against 584.1 s** for all ten). Both routes 10/10 inside the 4,000 budget with UV overlap at most 0.0001. W9b returns a far cleaner mesh (**10 to 662 boundary edges against 1,467 to 3,050**) while preserving foliage openness (4 of 4 open on both, thin ratios within 1.5%), and it **cannot hit the black-albedo trap** that returned one fully black W9t texture in ten. The dense mesh it gives up bought **no measurable normal detail** at this budget. Opacity: present in both routes and declared away as `alphaMode: OPAQUE`; wired behind a plausibility rule, firing on a generated leaf at in-chart alpha mean **0.9806**, 1.81% below 0.98, and proved through the glTF round trip. |
 | **G4** | **DONE.** Tracks D then B-stylised, in that order because they share a graph: **W12** and **W12e** stylise (render plus true depth and normal export via a material override, two-stage ControlNet img2img, the Advanced-panel button), then **W9** grown out of it as the style-control paint route with `core/gen_views.py` and `core/gen_paint.py` behind it. Plus **W6** and **W6t** multi-view geometry. What shipped, the measurements, and nine corrections are in [What G4 measured](#what-g4-measured). | **Passed, with one claim disproved and named as such.** A Bob render comes back stylised at **silhouette IoU 0.9980** (against 0.9967 estimated) in **7.7 s**, peaking at **14,194 MiB** of 16,303 summed over the ComfyUI family. **The real-passes claim failed on quality:** the differences against Depth Anything V2 plus NormalBAE are smaller than the estimator's own error on the source frame (r 0.7957, MAE 0.1224), and the honest case for keeping the export is **2.5 s per frame** plus the fact that W9 needs the same three files anyway. A mesh comes back stylised with LoRA control wired (7.1 of 255 at denoise 0.75, 1.7 at paint settings): **92.6%** of chart texels painted from 8 views, adjacent-view seam **22.3 to 26.5 of 255**, front-to-back drift **30.1**. Multi-view beats single-view on the back-facing test by six-fold: back-half IoU **0.2637** (W6t) and **0.2140** (W6) against **0.0439**, against a 0.7110 self-agreement ceiling; W6 is 5x faster at 24.4 s. The panel press costs **0.63 to 1.00 s** of main thread (the render) and the longest tick during the job is **0.14 ms**. |
 | **G4c** | **DONE.** Omni: model set 3, **W7**, `export_control`, the `Asset from Block-out` entry, and the orientation convention pinned per exporter. What shipped, the measurements, and ten corrections are in [What G4c measured](#what-g4c-measured). | **Passed, and it changed a decision the plan had already made.** A block-out proxy conditions generation and the result keeps its shape where it landed, scored with NO rotation search: **footprint IoU 0.8136 to 0.9787** against per-block-out ceilings of 0.8403 to 0.9920, proportions held to **2%**, and **0.8100 on the FINISHED asset** after simplify, texture, bake, scale, LODs and BobShade. **W7 beat the W6t multi-view baseline 3 of 3 on every measure at once** (mean footprint IoU **0.9079 against 0.6748**, **35.8 s against 164.9 s**, 2 GB less VRAM), and it still wins after W6t is allowed its best axis map, so the plan's fallback is not the honest answer. The wrapper is the least maintained dependency here and **shipped with the control signal silently random** (a vendored `linear` to `liner` rename, 0.010 voxel IoU before the fix and 0.53 after); `tools/scripts/comfy_omni_fix.py` is the fix. **One bug found on another route:** the exporter's turns ACCUMULATE, so the staged chain's high-to-low bake has been reading across a 90 or 180 degree rotation since G3, which puts a G3b conclusion back in question. Proved by `tools/scripts/headless_comfy_g4c.py`, four parts, no failures. |
-| **G5** | Track E: W13 macro mask into the op stack's first input. | A prompted silhouette survives an erosion pass and looks intentional. |
+| **G5** | **DONE.** Track E: **W13**, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and `Generate Base` in the Terrain panel. What shipped, the measurements, and twelve corrections are in [What G5 measured](#what-g5-measured). | **Passed, and it answered R7 in the negative.** A prompted silhouette survives an erosion pass at **band-limited correlation 0.906 to 0.923** against a no-mask null of 0.078 to 0.208, on three prompts including the isolated massif erosion was expected to fight. It still looks intentional rather than shaped noise, as numbers: the erosion supplies **2.89 to 3.04 m** of fine relief against a mask-only baseline's **0.28 to 0.31 m**, the median slope is **42.1 to 42.8 deg** beside the no-mask bake's own 44.7, and the mask explains only 11 to 16% of the band above its own cutoff. **R7's terracing does not occur at 8 bits, and does not occur at 5 either** (histogram concentration 1.86 and 1.91 against 16-bit's 1.93), so the 16-bit save node is deferred on evidence; what the 8-bit write costs is determinism, 0.80 m rms against a reseed's 9.28 m. **About 12 s** prompt to a built terrain, **0.3 ms** of main thread, peak **7,444 to 9,844 MiB**, and it is the one route here that shares a card with Omni. Proved by `tools/scripts/headless_comfy_g5.py`, five parts, no failures. |
 | **G6** | MCP tools, the single batched contract change, websocket progress, `THIRD-PARTY-MODELS.md`, docs, full headless test suite. | Agent does prompt to scattered asset with no GUI. |
 | **G7** | The geometry A/B: W8, ten fixed prompts including **at least three foliage cases**, TRELLIS.2 versus Hunyuan 2.1, one grid, decided once. Further challengers (Direct3D-S2, Hi3DGen) only if the verdict is close. | A written verdict on which model is primary per asset class, not one global winner. |
 | **G8** | Optional: track F sky dome (W14), part-level variation via W11, batch generation, ML retopo swap-in if open weights land. | |
@@ -2587,6 +2864,15 @@ are measurable rather than `py_compile` theatre.
   assertion**, which is the test that keeps local-only true over time. **Shipped at G2**; it also
   runs fully offline against `--object-info` a dump, which is how the same check reaches CI, and
   it prints SKIP and exits 0 with neither.
+- `core/comfy_maps.py` on synthetic albedo, and `core/heightfields` on a synthetic mask. **The macro
+  half shipped at G5**: five tests in `test_comfy.py` (the mask is the low band and not the high one
+  on one image, a flat generation gives 0.5 rather than amplified rounding noise, the blur wraps only
+  on the tiled route, the route is a value and the open one drops both tiling nodes with the chain
+  rewired, and `heightmap_macro` writes an 8-bit single-channel mask plus a sidecar carrying the
+  cutoff) and six in `test_heightfields.py` (`read_png` takes 8-bit while `read_png16` still refuses
+  it, the op resamples and blurs and restretches, an empty path is a no-op rather than a raise,
+  `with_macro` demotes the generator without mutating the preset, a mask actually pulls a bake toward
+  its shape, and the cache re-bakes an edited mask at the same path).
 - `core/comfy_maps.py` on synthetic albedo. **Shipped at G1 and extended at G2**: PNG round trip
   for RGB and grey, a decode of **Paeth-filtered** rows built explicitly (Bob's own writer only
   emits filter 0, so the decoder's real input needs constructing), a 16-bit rejection, height
@@ -2647,6 +2933,23 @@ are measurable rather than `py_compile` theatre.
   resident alongside SDXL, which on a 16.3 GB card is a real question rather than a formality.
   `--no-baseline` drops W6t, the slow half. Reachability-gated twice over: no server, or no Omni pack
   or weights, prints SKIP and exits 0.
+- `tools/scripts/headless_comfy_g5.py`, the G5 gate, in five parts (`--part a,b,c,d,e`).
+  **A**: the derivation against `relief()` on one image, the tiled and open seam ratios, the
+  composition (`with_macro` demoting the preset's generator), the cache noticing an edited mask at a
+  name it has already baked, and the 8-bit budget in levels and in metres. No server, always runs.
+  **B**: three prompts, each baked three ways -- mask alone, mask plus preset, preset with no mask --
+  scored by band-limited correlation at the mask's own cutoff, by fine relief and median slope in
+  metres and degrees, and by a binned slope-area gradient read against the no-mask bake. **C**: the
+  same mask at 16, 8 and 5 bits through the identical stack, differenced in metres, checked for
+  terracing as histogram concentration and flat-pair fraction, then RENDERED and differenced in
+  pixels against both the renderer's own noise floor and a reseeded bake, so a pixel difference has a
+  scale. **D**: residency, with the per-process VRAM rule and what `POST /free` reclaims.
+  **E**: `Generate Base` and then `Bake + Build` through the real operators and the real job queue,
+  with the main-thread tick measured and the assertion that switching the mask off bakes the preset
+  exactly as before. Masks cache WITH their timing and VRAM under `_generated/comfy_g5_check/gen/`,
+  and part B keeps the raw generation beside each (`heightmap_macro(keep_source=True)`) because the
+  8-bit claim can only be audited against the image the mask was derived from. Reachability-gated:
+  with no server every generation half prints SKIP and exits 0.
 - `tools/scripts/comfy_omni_fix.py`, which is a test as much as a fix: `--check` reports whether the
   Omni control projection actually loaded and exits 1 when it did not. The G4c gate runs it, because
   it is the one failure in this integration that no graph-level check can see.
@@ -2687,6 +2990,20 @@ are measurable rather than `py_compile` theatre.
   budget", and re-running that comparison is cheap now that the fix is in. It does not threaten the
   one-shot default, which won on VRAM, boundary edges and the black-albedo trap. Open, and it belongs
   wherever a higher-budget or hero path is next considered rather than in a phase of its own.
+- **D13 The terrain engine's slope-area gradient has the wrong sign, and G5 found it by accident.**
+  Building the G5 landform statistic turned up something that is not about the mask at all: a no-mask
+  `alpine` bake's log-log slope-area gradient is **+0.322**, i.e. slope RISES with upstream drainage
+  area, with a strong fit (binned medians, r 0.86 to 0.89 over 30 to 3,000 upstream cells, D8
+  downslope gradient, a 32nd-of-width border margin dropped so the outlet boundary cannot dominate).
+  An equilibrium fluvial landscape has a NEGATIVE gradient of roughly 0.3 to 0.6 (Flint's law). A
+  finite-iteration stream-power stack with no uplift term is not an equilibrium landscape, so this may
+  be exactly what the model should do and the answer may be "nothing to fix, write it down". But it is
+  worth an afternoon, because if it is not expected then every mountain preset's valley profile is
+  wrong in a way no visual check has caught, and the fix would be an uplift term rather than a knob.
+  Not G5's to resolve: the gate scores a mask against the engine's own output, and the masked bakes
+  land at +0.414 to +0.432 beside the null's +0.322 while a mask with no erosion gives -0.143 to
+  -0.207, so the statistic discriminates cleanly whatever its sign means. Open, cheap, and it belongs
+  with the terrain engine rather than with this integration.
 - **D12 The other three Omni control modes.** `Hy3DOmniVoxelGenerate`, `…BBoxGenerate` and
   `…PoseGenerate` are installed and unmeasured. The bounding-box one is the interesting one for a
   suite like this: Bob knows every proxy's bbox for free, it is the cheapest control there is, and it
