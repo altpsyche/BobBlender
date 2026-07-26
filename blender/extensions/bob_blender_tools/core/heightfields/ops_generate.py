@@ -121,6 +121,55 @@ def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.9
     return field
 
 
+def macro(h, xp, path=None, mix="replace", amount=1.0, smooth=0.02, invert=False, seed=0):
+    """An IMAGE as the stack's macro base: read a mask PNG, resample it to the field, blur it, mix.
+
+    This is what a prompted macro mask enters the stack as (docs/COMFYUI.md track E). It is a
+    generator like the others, which is the whole point: the engine starts every stack from a zero
+    field, so "feeding the op stack's first input" is exactly "being op 0", and everything after it
+    -- fluvial incision, thermal relaxation, amplify -- treats the mask's landform as the macro it
+    would otherwise have generated from noise.
+
+    A MASK, not a heightfield (R7). Two of these parameters are the reason that distinction holds
+    rather than being a caveat in a document:
+
+      smooth   a gaussian blur as a fraction of the field width, applied AFTER the resample. It is
+               what keeps the mask low-frequency no matter what the image did: quantisation steps,
+               VAE ringing and any detail the prompt smuggled in are gone before erosion sees them.
+      amount   the mask's share of the base relief. `params.with_macro` demotes the stack's own
+               generator to an ADD of the remainder, so the artist's silhouette and the preset's
+               procedural character are one weighted sum rather than a replacement.
+
+    `invert` for a mask a model painted dark-is-high, which is a coin flip on any given prompt.
+    """
+    from . import io, ops_erode
+    if not path:
+        return h
+    field = xp.asarray(io.read_png(path), dtype=xp.float64)
+    n = int(h.shape[0])
+    if field.shape[0] != n or field.shape[1] != n:
+        # order 1 (bilinear): the mask is about to be blurred anyway, so a higher-order resample
+        # would only add overshoot at the massif's edge.
+        ndi = ops_erode._ndimage(xp)
+        field = ndi.zoom(field, (n / field.shape[0], n / field.shape[1]), order=1, mode="nearest")
+    if invert:
+        field = 1.0 - field
+    sigma = float(smooth) * n
+    if sigma > 1e-3:
+        field = ops_erode._ndimage(xp).gaussian_filter(field, sigma, mode="nearest")
+    # Restretch after the blur: a gaussian pulls the extremes in, and the stack downstream reads
+    # this as an elevation ordering, so the basin floor should still be 0 and the summit 1.
+    field = field - field.min()
+    field = field / xp.maximum(field.max(), 1e-9)
+    if mix == "max":
+        return xp.maximum(h, float(amount) * field)
+    if mix == "multiply":
+        return h * (1.0 - float(amount) + float(amount) * field)
+    if mix == "add":
+        return h + float(amount) * field
+    return float(amount) * field   # replace, scaled: the mask IS the base at `amount` of full relief
+
+
 def voronoi(h, xp, seed=0, cells=8.0, pattern="mesa", jitter=0.85, mix="multiply", amount=0.7):
     """Jittered-grid Voronoi (Worley) cellular structure. pattern='mesa' gives flat-topped cells
     (plateaus/tablelands); pattern='crack' gives the ridged cell borders (cracked hardpan, joints)."""

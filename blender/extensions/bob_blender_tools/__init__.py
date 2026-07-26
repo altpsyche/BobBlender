@@ -683,16 +683,47 @@ class BBT_HeightfieldProps(PropertyGroup):
     ops: CollectionProperty(type=BBT_TerrainOp)
     active_op: IntProperty(name="Active op", default=0)
 
+    # Generate Base (docs/COMFYUI.md track E): a prompted low-frequency MACRO MASK as the op
+    # stack's first input. Not a terrain generator, and the panel says so in those words: the mask
+    # decides where the massif and the basin are, and the erosion stack still makes every slope.
+    macro_prompt: StringProperty(
+        name="Prompt", default="",
+        description="The landform to lay out, e.g. 'a broad basin ringed by high ground'. The "
+                    "top-down elevation framing clause is appended for you")
+    macro_seed: IntProperty(name="Seed", default=0, min=0)
+    macro_weight: FloatProperty(
+        name="Mask Weight", default=0.6, min=0.0, max=1.0,
+        description="The mask's share of the base relief. The rest is the preset's own generator, "
+                    "so the prompted silhouette and the landscape family are a weighted sum; "
+                    "erosion runs on the result either way")
+    macro_invert: BoolProperty(
+        name="Invert", default=False,
+        description="Read the mask dark-is-high. Which way a model paints an elevation map is a "
+                    "coin flip per prompt, so this is a fix, not a style")
+    macro_path: StringProperty(
+        name="Macro mask", default="",
+        description="The generated mask PNG the next bake reads as its macro base")
+    use_macro: BoolProperty(
+        name="Use macro mask", default=False,
+        description="Bake with the generated mask as the op stack's first input. Off bakes the "
+                    "preset exactly as before")
+
 
 class BBT_OT_random_seed(Operator):
     bl_idname = "bob_blender_tools.random_seed"
     bl_label = "Randomize Seed"
     bl_description = "Pick a new random terrain seed"
 
+    # Which of Terrain's two seeds to reshuffle: the bake's, or Generate Base's. One operator rather
+    # than a second copy of the same three lines, the same way the Scatter panel's reshuffle serves
+    # both a layer socket and the Generate Asset seed.
+    target: StringProperty(default="terrain", options={"HIDDEN"})
+
     def execute(self, context):
         import random
 
-        context.scene.bbt_hf.seed = random.randint(0, 99999)
+        hf = context.scene.bbt_hf
+        setattr(hf, "macro_seed" if self.target == "macro" else "seed", random.randint(0, 99999))
         return {"FINISHED"}
 
 
@@ -702,7 +733,11 @@ def _resolve_bake_params(hf_mod, knobs, params, maps):
     via build_params; a params dict resolves its `preset` over the base preset."""
     if knobs is not None:
         if "stack" in knobs:
-            resolved = {k: knobs[k] for k in ("size", "seed", "backend", "stack") if k in knobs}
+            # `macro` rides along: pipeline._stack_for composes it onto an explicit stack as well as
+            # onto a resolved preset, so the custom-stack editor is not a route where Generate Base
+            # silently stops working, and the composition has one owner rather than two.
+            resolved = {k: knobs[k] for k in ("size", "seed", "backend", "stack", "macro")
+                        if k in knobs}
         else:
             resolved = hf_mod.build_params(knobs)
     else:
@@ -895,6 +930,67 @@ class BBT_OT_enable_compute(Operator):
         return {"FINISHED"}
 
 
+def _macro_knob(hf):
+    """The `macro` bake knob for the panel's state, or None when there is no mask to use.
+
+    One reader for both bake branches and for the MCP tool G6 will wrap; the composition itself
+    lives in `heightfields.params.with_macro`, so nothing about how a mask enters a stack is
+    decided here."""
+    if not (hf.use_macro and hf.macro_path and os.path.exists(bpy.path.abspath(hf.macro_path))):
+        return None
+    return {"path": bpy.path.abspath(hf.macro_path), "weight": float(hf.macro_weight),
+            "invert": bool(hf.macro_invert)}
+
+
+class BBT_OT_terrain_generate_base(Operator):
+    bl_idname = "bob_blender_tools.terrain_generate_base"
+    bl_label = "Generate Base"
+    bl_description = ("Generate a low-frequency MACRO MASK from the prompt with ComfyUI and use it "
+                      "as the op stack's first input. It decides where the high ground and the "
+                      "basins are; the erosion stack still makes every slope, channel and rill. "
+                      "Runs in the background. Needs a local ComfyUI server; without one nothing "
+                      "else changes")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from .core import comfy
+        from .ui.shaders import _COMFY_STATE, _comfy_job_running, _submit
+
+        hf = context.scene.bbt_hf
+        prompt = (hf.macro_prompt or "").strip()
+        if not prompt:
+            self.report({"ERROR"}, "Describe the landform to lay out first")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+
+        out_dir = os.path.join(_output_dir(), "macro")
+        os.makedirs(out_dir, exist_ok=True)
+        # R16: a second press on the same prompt is a new mask, not a replaced one, because the
+        # terrain currently on screen was baked from the old file.
+        out_path = comfy.unique_file_name(out_dir, comfy.slugify(prompt) + "_macro", ".png")
+        seed = int(hf.macro_seed)
+
+        def work(job):
+            # No size widget: the mask is generated at SDXL's native 1024 and then resampled to
+            # whatever resolution the stack's macro level runs at, so a second resolution knob
+            # would only be a way to generate a worse composition.
+            return comfy.heightmap_macro(prompt, out_path, seed=seed,
+                                         on_queued=job.note_prompt_id, on_progress=job.report)
+
+        def landed(job):
+            info = job.result or {}
+            hf.macro_path = info.get("path", "")
+            hf.use_macro = True
+            _COMFY_STATE.update(ok=True, detail=f"macro mask in {info.get('seconds', 0):.0f}s: "
+                                                f"{os.path.basename(info.get('path', ''))}")
+
+        _submit(f"macro: {prompt[:32]}", work, landed)
+        self.report({"INFO"}, "Generating the macro mask in the background; then Bake + Build")
+        return {"FINISHED"}
+
+
 class BBT_OT_bake_terrain(Operator):
     bl_idname = "bob_blender_tools.bake_terrain"
     bl_label = "Bake + Build Terrain"
@@ -917,6 +1013,14 @@ class BBT_OT_bake_terrain(Operator):
                 "preset": hf.preset, "relief": hf.relief, "detail": hf.detail,
                 "erosion": hf.erosion, "warp": hf.warp,
             }
+        macro = _macro_knob(hf)
+        if macro:
+            knobs["macro"] = macro
+        elif hf.use_macro:
+            # The mask is switched on and its file is gone. Baking the preset anyway is the right
+            # behaviour, but doing it silently is not: the whole point of the mask is that the
+            # result is supposed to look like the thing the artist asked for.
+            self.report({"WARNING"}, "Macro mask file is missing; baked the preset without it")
 
         # Blocking bake with feedback (wait cursor + progress spinner) via the shared host-bake runner.
         t0 = time.perf_counter()
@@ -1408,6 +1512,40 @@ class BBT_PT_panel(Panel):
         layout.operator("bob_blender_tools.rescan_packs", icon="FILE_REFRESH")
 
 
+def _draw_generate_base(layout, hf):
+    """Generate Base, inside the Terrain panel rather than in a panel of its own: it is an INPUT to
+    the bake below it, and the caption says mask because a row labelled "generate terrain" beside a
+    terrain generator would be read as a competing one (docs/COMFYUI.md track E, R7)."""
+    from .ui.scatter import _comfy_reachable_cached
+
+    state = _comfy_reachable_cached()
+    box = layout.box()
+    row = box.row()
+    row.label(text="Generate Base", icon="SHADERFX")
+    row.label(text="macro mask")
+    if not state.get("ok"):
+        cap = box.row()
+        cap.enabled = False
+        cap.label(text=state.get("detail") or "ComfyUI not connected", icon="UNLINKED")
+    box.prop(hf, "macro_prompt", text="")
+    helpers.seed_row(box, hf, "macro_seed", "bob_blender_tools.random_seed",
+                     op_props={"target": "macro"})
+    run = box.row()
+    run.enabled = bool(state.get("ok")) and bool((hf.macro_prompt or "").strip())
+    run.operator("bob_blender_tools.terrain_generate_base", icon="PLAY")
+    cap = box.row()
+    cap.enabled = False
+    cap.label(text="a prompted silhouette; the erosion stack still makes every slope")
+    if hf.macro_path:
+        row = box.row(align=True)
+        row.prop(hf, "use_macro", text="")
+        row.prop(hf, "macro_weight")
+        row.prop(hf, "macro_invert", toggle=True)
+        got = box.row()
+        got.enabled = False
+        got.label(text=os.path.basename(hf.macro_path), icon="IMAGE_DATA")
+
+
 class BBT_PT_heightfield(Panel):
     bl_label = "Terrain"
     bl_idname = "BBT_PT_heightfield"
@@ -1458,6 +1596,8 @@ class BBT_PT_heightfield(Panel):
         row = layout.row(align=True)
         row.prop(hf, "resolution")
         layout.prop(hf, "emit_maps")
+
+        _draw_generate_base(layout, hf)
 
         # P3: Bake + Build is STRUCTURAL (bakes a heightfield, then builds the mesh); the
         # Shape/Erosion/Displace knobs below are its inputs. Shade the result in Shaders.
@@ -1595,6 +1735,7 @@ _CLASSES = (
     BBT_OT_hf_apply_preset,
     BBT_OT_detect_backends,
     BBT_OT_enable_compute,
+    BBT_OT_terrain_generate_base,
     BBT_OT_bake_terrain,
     BBT_OT_terrain_op_add,
     BBT_OT_terrain_op_remove,

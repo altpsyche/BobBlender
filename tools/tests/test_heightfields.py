@@ -625,3 +625,161 @@ def test_gpu_bake_deterministic(tmp_path):
     a = io.read_png16(str(tmp_path / "g1.png"))
     b = io.read_png16(str(tmp_path / "g2.png"))
     assert np.array_equal(a, b)
+
+
+# The macro mask (docs/COMFYUI.md track E): an image as the stack's first input.
+
+def _mask_png(path, n=256, seed=1, bits=8):
+    """A synthetic macro mask: one broad dome, written the way the shipped route writes one."""
+    y, x = np.mgrid[0:n, 0:n] / n
+    field = np.exp(-(((x - 0.35) ** 2 + (y - 0.4) ** 2) / 0.06))
+    field = (field - field.min()) / (field.max() - field.min())
+    if bits == 16:
+        io.to_png16(field, str(path))
+    else:
+        grey = np.round(field * 255).astype(np.uint8)
+        # An 8-bit grey PNG through the same minimal writer core/comfy_maps.py uses, so the op is
+        # exercised on the file format it will actually be handed.
+        import struct
+        import zlib
+        rows = np.concatenate([np.zeros((n, 1), np.uint8), grey], axis=1)
+
+        def chunk(kind, body):
+            return (struct.pack(">I", len(body)) + kind + body
+                    + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+        with open(path, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+            fh.write(chunk(b"IHDR", struct.pack(">IIBBBBB", n, n, 8, 0, 0, 0, 0)))
+            fh.write(chunk(b"IDAT", zlib.compress(rows.tobytes(), 6)))
+            fh.write(chunk(b"IEND", b""))
+    return field
+
+
+def test_read_png_takes_eight_bit_and_read_png16_refuses_it(tmp_path):
+    """The strict entry stays strict: an 8-bit file accepted as a terrain BASE would terrace it into
+    256 benches and nothing downstream would report a problem. The permissive one exists for the
+    foreign inputs (a generated mask, a hand-painted one)."""
+    eight = tmp_path / "eight.png"
+    field = _mask_png(eight, n=64)
+    got = io.read_png(str(eight))
+    assert got.shape == (64, 64)
+    assert np.abs(got - field).max() < 1.5 / 255.0
+    with pytest.raises(ValueError, match="16-bit"):
+        io.read_png16(str(eight))
+    sixteen = tmp_path / "sixteen.png"
+    _mask_png(sixteen, n=64, bits=16)
+    assert io.read_png16(str(sixteen)).shape == (64, 64)
+
+
+def test_macro_op_resamples_blurs_and_restretches(tmp_path):
+    """The op is what makes an 8-bit picture usable as a macro base: it lands on the field's own grid
+    whatever size the file was, it is low-frequency afterwards no matter what the file carried, and it
+    still spans the full range so the stack reads it as an elevation ordering."""
+    path = tmp_path / "mask.png"
+    _mask_png(path, n=256)
+    bk = backend.select("cpu")
+    field = np.zeros((96, 96))
+    out = engine.run_stack(field, [{"kind": "macro", "path": str(path), "mix": "replace",
+                                    "amount": 1.0, "smooth": 0.02}], bk, normalize=False)
+    assert out.shape == (96, 96)
+    assert out.min() < 0.02 and out.max() > 0.98
+    # Low-frequency: no adjacent-cell step anywhere near what an 8-bit level would be.
+    step = max(np.abs(np.diff(out, axis=0)).max(), np.abs(np.diff(out, axis=1)).max())
+    assert step < 0.05, f"the blur left a {step:.4f} step"
+
+
+def test_macro_op_is_a_no_op_without_a_path():
+    """A stack carrying a macro op whose file was never generated must bake, not raise: the panel can
+    hold a mask op with an empty path between a preset load and a Generate Base."""
+    bk = backend.select("cpu")
+    field = np.full((32, 32), 0.25)
+    out = engine.run_stack(field, [{"kind": "macro", "path": ""}], bk, normalize=False)
+    assert np.allclose(out, 0.25)
+
+
+def test_with_macro_demotes_the_stack_s_own_generator(tmp_path):
+    """The composition, and the reason it is not just an insert: every shipped preset opens with a
+    generator whose mix is `replace`, so a mask prepended in front of one would be overwritten on the
+    very next op and the feature would silently do nothing."""
+    path = tmp_path / "mask.png"
+    _mask_png(path)
+    base = presets.stack("alpine")
+    out = params.with_macro(base, str(path), weight=0.75)
+    assert [op["kind"] for op in out] == ["macro"] + [op["kind"] for op in base]
+    assert out[0]["amount"] == 0.75 and out[0]["mix"] == "replace"
+    assert out[1]["mix"] == "add" and abs(out[1]["amount"] - 0.25) < 1e-9
+    assert base[0].get("mix", "replace") == "replace", "the preset itself is not mutated"
+    # And it reaches the bake through the knobs, so the panel, the CLI and MCP share one line.
+    built = params.build_params({"preset": "alpine", "macro": {"path": str(path)}})
+    assert built["stack"][0]["kind"] == "macro"
+    assert params.build_params({"preset": "alpine"})["stack"][0]["kind"] == "noise"
+
+
+def test_a_mask_pulls_the_bake_toward_its_shape(tmp_path):
+    """The measurement the G5 gate makes at 768 with real generations, in miniature: the same preset
+    and seed, baked with and without a mask, and the mask's shape has to show up in one and not the
+    other."""
+    path = tmp_path / "mask.png"
+    field = _mask_png(path, n=128)
+    # 256, not something smaller: every shipped preset ends in an amplify op, whose macro level runs
+    # at params.AMPLIFY_BASE, so a bake asked for less than that comes back at the macro resolution.
+    knobs = {"size": params.AMPLIFY_BASE, "seed": 3, "backend": "cpu", "preset": "hills"}
+    plain = hf.bake(str(tmp_path / "plain.png"), params.build_params(knobs), force=True)
+    masked = hf.bake(str(tmp_path / "masked.png"),
+                     params.build_params({**knobs, "macro": {"path": str(path), "weight": 0.7}}),
+                     force=True)
+    assert plain["hash"] != masked["hash"]
+    small = zoom(field, params.AMPLIFY_BASE / field.shape[0], order=1)
+
+    def corr(a, b):
+        a = a.ravel() - a.mean()
+        b = b.ravel() - b.mean()
+        return float((a * b).sum() / np.sqrt((a * a).sum() * (b * b).sum()))
+
+    with_mask = corr(small, io.read_png16(str(tmp_path / "masked.png")))
+    without = corr(small, io.read_png16(str(tmp_path / "plain.png")))
+    assert with_mask > 0.8, f"the mask did not survive the bake (r {with_mask:.3f})"
+    assert with_mask > without + 0.4, f"masked {with_mask:.3f} against unmasked {without:.3f}"
+
+
+def test_the_cache_notices_an_edited_mask_at_the_same_path(tmp_path):
+    """The cache keys on the resolved recipe, and a recipe naming a file is only as identified as that
+    file's contents: a regenerated mask at the same name is a different terrain."""
+    path = tmp_path / "mask.png"
+    _mask_png(path, n=128, seed=1)
+    stack = [{"kind": "macro", "path": str(path), "mix": "replace", "amount": 1.0, "smooth": 0.02}]
+    recipe = {"size": 64, "seed": 1, "backend": "cpu", "stack": stack}
+    out = str(tmp_path / "t.png")
+    first = hf.bake(out, recipe, force=True)
+    assert hf.bake(out, recipe)["cached"] is True
+    y, x = np.mgrid[0:128, 0:128] / 128
+    io_field = np.exp(-(((x - 0.8) ** 2 + (y - 0.8) ** 2) / 0.03))
+    grey = np.round((io_field - io_field.min()) / np.ptp(io_field) * 255).astype(np.uint8)
+    io.to_png16(grey / 255.0, str(path))   # a different mask, the same name
+    again = hf.bake(out, recipe)
+    assert again["cached"] is False and again["hash"] != first["hash"]
+
+
+def test_a_resolved_stack_plus_a_macro_is_not_a_silent_no_op(tmp_path):
+    """The MCP tool hands `bake` a params dict that ALREADY carries a resolved stack (presets.get
+    returns one), so a `macro` beside it has to compose rather than be accepted and ignored. That is
+    the failure this asserts against: it raises nothing and produces the unmasked terrain."""
+    path = tmp_path / "mask.png"
+    _mask_png(path, n=128)
+    resolved = params.build_params({"preset": "hills", "size": params.AMPLIFY_BASE, "seed": 4})
+    resolved["backend"] = "cpu"
+    plain = hf.bake(str(tmp_path / "plain.png"), dict(resolved), force=True)
+    masked = hf.bake(str(tmp_path / "masked.png"),
+                     {**resolved, "macro": {"path": str(path), "weight": 0.7}}, force=True)
+    assert masked["stack"][0]["kind"] == "macro" and plain["stack"][0]["kind"] == "noise"
+    assert masked["hash"] != plain["hash"]
+    # And applying it twice is the same bake, because build_params has already done it on the
+    # preset+knobs route and pipeline must not compose a second mask on top.
+    once = params.build_params({"preset": "hills", "size": params.AMPLIFY_BASE, "seed": 4,
+                                "macro": {"path": str(path), "weight": 0.7}})
+    once["backend"] = "cpu"
+    twice = hf.bake(str(tmp_path / "twice.png"),
+                    {**once, "macro": {"path": str(path), "weight": 0.7}}, force=True)
+    assert [op["kind"] for op in twice["stack"]] == [op["kind"] for op in masked["stack"]]
+    assert twice["hash"] == masked["hash"]

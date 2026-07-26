@@ -26,10 +26,36 @@ from .params import AMPLIFY_PREVIEW, PREVIEW_SIZE
 
 
 def _stack_for(params: dict) -> list:
-    """The op stack to run: an explicit `stack`, else resolve `preset` + global knobs."""
-    if params.get("stack"):
-        return params["stack"]
-    return params_mod.build_params(params)["stack"]
+    """The op stack to run: an explicit `stack`, else resolve `preset` + global knobs.
+
+    A `macro` entry (a prompted macro mask, docs/COMFYUI.md track E) composes onto EITHER, because
+    this is the one place a bake resolves its stack and the alternative is a silent no-op: a caller
+    that hands over both a resolved stack and a macro -- which is what the MCP tool does, since
+    `presets.get()` returns a params dict with the stack already in it -- would otherwise have its
+    mask accepted and ignored. Idempotent, so `build_params` having already applied it is not a
+    second application.
+    """
+    stack = params["stack"] if params.get("stack") else params_mod.build_params(params)["stack"]
+    if params.get("macro") and not (stack and stack[0].get("kind") == "macro"):
+        stack = params_mod.with_macro(stack, **params["macro"])
+    return stack
+
+
+def _stack_file_sig(stack) -> dict:
+    """Content digests of every file the stack's ops READ, keyed by path.
+
+    The cache keys on the resolved recipe, and a recipe that names a file is only as identified as
+    that file's contents: a macro mask regenerated to the same path is a different terrain. Generic
+    over any op carrying a `path`, so the next op that reads a file needs no change here.
+    """
+    sigs = {}
+    for op in stack:
+        path = op.get("path")
+        if not isinstance(path, str) or not os.path.exists(path):
+            continue
+        with open(path, "rb") as fh:
+            sigs[path] = hashlib.sha256(fh.read()).hexdigest()[:12]
+    return sigs
 
 
 def _preview_size(params: dict) -> int:
@@ -90,7 +116,7 @@ def bake(out_path: str, params: dict, force: bool = False, preview: bool = False
     # cache.py invalidates it when the op math changes. A base_png bake also keys on the
     # base's content so re-eroding an edited terrain re-runs.
     resolved = {"size": size, "seed": seed, "backend": backend.name, "stack": stack,
-                "maps": want_maps, "base": base_sig}
+                "maps": want_maps, "base": base_sig, "files": _stack_file_sig(stack)}
     key = cache.params_hash(resolved)
     if not force:
         side = io.read_sidecar(out_path)

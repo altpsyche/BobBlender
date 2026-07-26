@@ -6,6 +6,11 @@ PNG is lossless, so the round-trip is bit-exact regardless of codec; the writer 
 filter 0 on every row and the reader fast-paths that (vectorised), falling back to full
 per-row unfiltering for any foreign PNG.
 
+Reading comes in two strengths. `read_png` takes any non-interlaced 8 or 16-bit grey or RGB(A)
+file, which is what a foreign input is (a diffusion-generated macro mask, a hand-painted mask);
+`read_png16` is the strict entry for Bob's own bake, and it stays strict because an 8-bit file
+accepted as a terrain base would terrace it into 256 benches without a word.
+
 The sidecar (`<name>.json`) written beside each PNG is the full recipe that produced the
 field, so any heightfield is reproducible and the cache can tell whether a re-bake is
 needed. Absolute paths only; the caller resolves them.
@@ -85,14 +90,23 @@ def _unfilter_general(dec, rows, stride, bpp):
     return out
 
 
-def read_png16(path):
-    """Read a 16-bit grayscale PNG back to a [0, 1] float64 array."""
+_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}   # grey, RGB, grey+alpha, RGBA. Palette (3) is unsupported.
+
+
+def read_png(path):
+    """Read a non-interlaced PNG to a [0, 1] float64 2D array, averaging colour channels.
+
+    8 or 16 bits per sample, grey or RGB(A). Both depths, because the two things a heightfield reads
+    are not the same file: a baked terrain is Bob's own 16-bit grey (`to_png16`), and a macro mask
+    (docs/COMFYUI.md track E) is whatever a diffusion model saved, which is 8-bit RGB. Alpha is
+    dropped rather than composited: a mask has no background to composite over.
+    """
     with open(path, "rb") as fh:
         raw = fh.read()
     if raw[:8] != _PNG_SIG:
         raise ValueError(f"not a PNG: {path}")
     pos = 8
-    cols = rows = bitdepth = colortype = None
+    cols = rows = bitdepth = colortype = interlace = None
     idat = bytearray()
     while pos + 8 <= len(raw):
         length = struct.unpack(">I", raw[pos:pos + 4])[0]
@@ -100,24 +114,45 @@ def read_png16(path):
         data = raw[pos + 8:pos + 8 + length]
         pos += 12 + length  # length + tag + data + CRC
         if tag == b"IHDR":
-            cols, rows, bitdepth, colortype = struct.unpack(">IIBB", data[:10])
+            cols, rows, bitdepth, colortype, _, _, interlace = struct.unpack(">IIBBBBB", data[:13])
         elif tag == b"IDAT":
             idat += data
         elif tag == b"IEND":
             break
-    if bitdepth != 16 or colortype != 0:
-        raise ValueError(f"expected 16-bit grayscale PNG, got bitdepth={bitdepth} colortype={colortype}")
+    channels = _CHANNELS.get(colortype)
+    if bitdepth not in (8, 16) or channels is None or interlace:
+        raise ValueError(f"unsupported PNG {path}: bitdepth={bitdepth} colortype={colortype} "
+                         f"interlace={interlace} (8/16-bit grey or RGB(A), non-interlaced)")
     dec = zlib.decompress(bytes(idat))
-    bpp = 2  # 1 channel * 16-bit
+    bpp = channels * (bitdepth // 8)
     stride = cols * bpp
     grid = np.frombuffer(dec, dtype=np.uint8).reshape(rows, stride + 1)
     if np.all(grid[:, 0] == 0):  # fast path: every row filter 0 (our writer)
         body = grid[:, 1:]
     else:
         body = _unfilter_general(dec, rows, stride, bpp)
-    samples = body.reshape(rows, cols, bpp)
-    vals = (samples[..., 0].astype(np.uint32) << 8) | samples[..., 1].astype(np.uint32)
-    return vals.astype(np.float64) / 65535.0
+    if bitdepth == 16:
+        samples = body.reshape(rows, cols, channels, 2)
+        vals = (((samples[..., 0].astype(np.uint32) << 8) | samples[..., 1])
+                .astype(np.float64) / 65535.0)
+    else:
+        vals = body.reshape(rows, cols, channels).astype(np.float64) / 255.0
+    colour = channels - (1 if colortype in (4, 6) else 0)   # drop the alpha channel
+    # Take the one channel rather than averaging it: the common case here is a 4096-square terrain
+    # bake, and a mean over a single channel is a second full-size array for no result.
+    return vals[..., 0] if colour == 1 else vals[..., :colour].mean(axis=2)
+
+
+def read_png16(path):
+    """`read_png` restricted to Bob's own 16-bit grayscale write, which is what a baked heightfield
+    is. Strict on purpose: silently accepting an 8-bit file as a terrain base would terrace it into
+    256 benches and nothing downstream would report a problem."""
+    with open(path, "rb") as fh:
+        head = fh.read(26)
+    bitdepth, colortype = (head[24], head[25]) if head[:8] == _PNG_SIG else (None, None)
+    if bitdepth != 16 or colortype != 0:
+        raise ValueError(f"expected 16-bit grayscale PNG, got bitdepth={bitdepth} colortype={colortype}")
+    return read_png(path)
 
 
 def sidecar_path(png_path):

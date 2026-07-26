@@ -1643,6 +1643,108 @@ def texture_chain(route=None):
     return paint_views if (route or DEFAULT_TEXTURE_ROUTE) == "stylised" else mesh_texture
 
 
+# -- Terrain macro mask (track E) -------------------------------------------------------------
+# W13's prompt suffix, and the same argument as PROMPT_SUFFIX and SUBJECT_SUFFIX: the failure mode
+# is silent and costs a whole generation, so the clause that prevents it is not the artist's job to
+# remember. Here the failure is a picture OF a mountain instead of a plan view of one.
+MACRO_SUFFIX = ("top-down orthographic aerial elevation map, greyscale, white is the highest ground "
+                "and black is the lowest, one large-scale landform, smooth broad gradients, "
+                "no texture detail, no contour lines")
+
+# Whether W13's circular padding stays in the graph. A route is a value in one place, beside
+# `asset_chain()` and `texture_chain()`.
+#
+# "open" is the default and it is a measured decision rather than an inherited one. Circular padding
+# is what makes track A's textures tile (D4), and it is exactly wrong here: a tiling macro mask has
+# to put the same elevation on both borders, so the massif it invents repeats and the basin drains
+# off one edge into a copy of itself. A terrain tile is one place, not a torus. "tiled" is kept for
+# the case that genuinely wants it, an endless-terrain sheet where neighbouring tiles must join.
+MACRO_ROUTES = ("open", "tiled")
+DEFAULT_MACRO_ROUTE = "open"
+
+
+def macro_tiling(route=None):
+    """True when W13 keeps its two circular-padding nodes. The one place THAT route is decided."""
+    route = route or DEFAULT_MACRO_ROUTE
+    if route not in MACRO_ROUTES:
+        raise ComfyError(f"unknown macro route {route!r} (have: {', '.join(MACRO_ROUTES)})")
+    return route == "tiled"
+
+
+def macro_prompt(prompt_text):
+    return ", ".join(p for p in ((prompt_text or "").strip(), MACRO_SUFFIX) if p)
+
+
+def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, negative=None,
+                    checkpoint=None, url=None, workflow="heightmap_macro", timeout=600,
+                    on_progress=None, on_queued=None, invert=False, keep_source=False):
+    """Generate one terrain macro mask and write it to `out_path`. Returns info.
+
+    The whole Bob half of track E is these twenty lines plus one op, because the mask is derived by
+    the SAME normalise-then-write path track A's height channel takes (`comfy_maps`): a generated
+    image, one cutoff of its luminance, one 8-bit PNG. What differs is which side of the cutoff is
+    kept, and that is one constant (`comfy_maps.MACRO_LOWPASS_FRACTION`).
+
+    8-bit on purpose (R7). The claim is not that 8 bits carries a heightfield, it is that 8 bits
+    carries a MASK that is about to be resampled, blurred and then eroded, and G5 measures that
+    rather than asserting it. A sidecar records the prompt, the route and the cutoff so a terrain
+    baked from a mask can say where its silhouette came from (R10).
+
+    `keep_source` also writes the raw generation beside the mask. Off by default because an artist
+    has no use for it; the G5 gate turns it on, because the 8-bit claim can only be AUDITED against
+    the image the mask was derived from. The derivation averages thousands of pixels across three
+    channels, so the float mask carries far more precision than any single 8-bit sample does, and
+    that is the whole reason the quantisation question has a measurable answer.
+    """
+    graph, prov = load_workflow(workflow)
+    full = macro_prompt(prompt_text)
+    values = {"BOB_PROMPT": {"text": full},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_SIZE": {"width": int(size), "height": int(size)}}
+    if negative:
+        values["BOB_NEG"] = {"text": negative}
+    ckpt = checkpoint or prov.get("default_checkpoint")
+    if ckpt:
+        values["BOB_CKPT"] = {"ckpt_name": ckpt}
+    tiled = macro_tiling(route)
+    if not tiled:
+        # The same argument as dropping BOB_LORA (see `drop_node`): a tiling node switched to
+        # "disable" would still be a node whose pack has to be installed, and the honest default is
+        # a graph that does not contain it.
+        graph = drop_node(graph, "BOB_TILE", {0: "model"})
+        graph = drop_node(graph, "BOB_TILE_VAE", {0: "vae"})
+
+    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
+
+    t1 = time.time()
+    rgb = comfy_maps.read_png(png)
+    mask = comfy_maps.macro_from(rgb, wrap=tiled)
+    if invert:
+        mask = 255 - mask
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    comfy_maps.write_png(out_path, mask)
+    source_path = None
+    if keep_source:
+        source_path = os.path.splitext(out_path)[0] + "_source.png"
+        with open(source_path, "wb") as fh:
+            fh.write(png)
+    meta = {"artist_prompt": (prompt_text or "").strip(), "prompt": full, "seed": int(seed),
+            "size": int(size), "route": route or DEFAULT_MACRO_ROUTE, "tiled": tiled,
+            "invert": bool(invert), "workflow": workflow,
+            "derived_from": prov.get("derived_from"), "checkpoint": ckpt,
+            "lowpass_fraction": comfy_maps.MACRO_LOWPASS_FRACTION,
+            "note": "a low-frequency macro MASK for the terrain op stack, not a heightfield (R7)",
+            "source": source_path,
+            "seconds": {"generate": gen["seconds"], "derive": time.time() - t1}}
+    with open(os.path.splitext(out_path)[0] + ".json", "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return {"path": out_path, "meta": meta, "prompt": full, "tiled": tiled,
+            "source": source_path,
+            "seconds": gen["seconds"] + (time.time() - t1), "prompt_id": gen["prompt_id"]}
+
+
 def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
                            texture_size=1024, checkpoint=None, url=None, timeout=1800,
                            on_progress=None, on_queued=None, subject=None, remesh=True, size=1024):
