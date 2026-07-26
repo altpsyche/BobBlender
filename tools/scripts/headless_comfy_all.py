@@ -66,6 +66,10 @@ GATES = [
     # and reaches Blender only through the executor, which is the whole point of it.
     {"key": "g6", "script": "headless_comfy_g6.py", "phase": "G6 the agent-facing surface",
      "fast": ["--part", "a"], "slow": 8, "server": True, "runner": "python"},
+    # G7's --fast is parts A and D: A costs a second and D re-scores the G3b cache with no GPU at
+    # all, so the cheap run still measures the route decision and the dense-mesh answer.
+    {"key": "g7", "script": "headless_comfy_g7.py", "phase": "G7 the geometry A/B",
+     "fast": ["--part", "a,d"], "slow": 30, "server": True},
 ]
 
 FAIL_RE = re.compile(r"(\d+)\s+(?:failure\(s\)|FAILED)")

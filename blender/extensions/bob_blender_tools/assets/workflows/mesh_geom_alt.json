@@ -1,0 +1,223 @@
+{
+  "_bob": {
+    "id": "mesh_geom_alt",
+    "plan": "W8, docs/COMFYUI.md track C, the geometry A/B slot decided at G7",
+    "purpose": "The challenger geometry model behind the same inputs and the same output contract as W5t, so swapping the geometry model is a config change rather than a rewrite. The slot's occupant is Hunyuan3D 2.1, which is what G7 benchmarks TRELLIS.2 against.",
+    "derived_from": "mesh_geom.json (W5), itself comfyui_workflow_templates_json/templates/3d_hunyuan3d-v2.1.json",
+    "deviations_from_source": [
+      "The reference image is COMPOSITED over a plain plate through its own alpha before CLIPVisionEncode sees it, which is the whole reason this graph exists beside W5. W4 writes RGBA whose RGB is still the SDXL frame, background and all, and ComfyUI's LoadImage drops alpha rather than compositing it, so W5 hands Hunyuan the generated background while TRELLIS.2 gets a real cutout through the mask socket. Benchmarking those two against each other would have measured the background, not the model.",
+      "EmptyImage(BOB_PLATE) is the plate and it is WHITE, which is what Hunyuan3D's own preprocessing composites onto. InvertMask(BOB_ALPHA) is load-bearing and inverted from the obvious wiring for W4's reason: LoadImage returns mask = 1 - alpha, and ImageCompositeMasked applies the SOURCE where the mask is 1, so the mask has to be turned back into the alpha.",
+      "Everything downstream is W5's, unchanged: latent 4096, 30 steps, cfg 5, euler + normal, VAEDecodeHunyuan3D(8000, 256), VoxelToMesh(surface net, 0.6). Swap BOB_3D_MODEL to hunyuan3d-dit-v2_fp16 with latent 3072, 20 steps and cfg 8 for the faster 2.0 variant.",
+      "SaveGLB's filename_prefix is bob_mesh_alt, so a challenger run is identifiable in the output folder."
+    ],
+    "requires_nodes": [
+      "ImageOnlyCheckpointLoader",
+      "ImageCompositeMasked",
+      "EmptyImage",
+      "InvertMask",
+      "Hunyuan3Dv2Conditioning",
+      "VAEDecodeHunyuan3D",
+      "VoxelToMesh",
+      "SaveGLB"
+    ],
+    "requires_pack": "none, all of it is ComfyUI core",
+    "runtime_inputs": [
+      "BOB_IMAGE.image"
+    ],
+    "notes": "Watertight SDF-voxel output, so this graph structurally cannot return an open surface: VoxelToMesh extracts an isosurface and a leaf comes back as a leaf-shaped bag whatever the caller asks for. That is the structural half of the G7 verdict rather than a defect. It also produces NO texture, which is why the challenger route runs mesh_process (W8p) and then mesh_texture (W9t): the shared Trellis2ProcessMesh is what keeps the face budget, the UV unwrap and the remesh setting identical on both sides of the grid."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "ImageOnlyCheckpointLoader",
+      "inputs": {
+        "ckpt_name": "hunyuan_3d_v2.1.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_3D_MODEL"
+      }
+    },
+    "2": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "11": {
+      "class_type": "InvertMask",
+      "inputs": {
+        "mask": [
+          "2",
+          1
+        ]
+      },
+      "_meta": {
+        "title": "BOB_ALPHA"
+      }
+    },
+    "12": {
+      "class_type": "EmptyImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1,
+        "color": 16777215
+      },
+      "_meta": {
+        "title": "BOB_PLATE"
+      }
+    },
+    "14": {
+      "class_type": "ImageCompositeMasked",
+      "inputs": {
+        "destination": [
+          "12",
+          0
+        ],
+        "source": [
+          "2",
+          0
+        ],
+        "mask": [
+          "11",
+          0
+        ],
+        "x": 0,
+        "y": 0,
+        "resize_source": true
+      },
+      "_meta": {
+        "title": "BOB_SUBJECT"
+      }
+    },
+    "13": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": [
+          "1",
+          1
+        ],
+        "image": [
+          "14",
+          0
+        ],
+        "crop": "center"
+      },
+      "_meta": {
+        "title": "BOB_VISION"
+      }
+    },
+    "6": {
+      "class_type": "Hunyuan3Dv2Conditioning",
+      "inputs": {
+        "clip_vision_output": [
+          "13",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "BOB_COND"
+      }
+    },
+    "3": {
+      "class_type": "ModelSamplingAuraFlow",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "shift": 1
+      },
+      "_meta": {
+        "title": "BOB_SHIFT"
+      }
+    },
+    "4": {
+      "class_type": "EmptyLatentHunyuan3Dv2",
+      "inputs": {
+        "resolution": 4096,
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "BOB_LATENT"
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "3",
+          0
+        ],
+        "positive": [
+          "6",
+          0
+        ],
+        "negative": [
+          "6",
+          1
+        ],
+        "latent_image": [
+          "4",
+          0
+        ],
+        "seed": 0,
+        "steps": 30,
+        "cfg": 5.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "8": {
+      "class_type": "VAEDecodeHunyuan3D",
+      "inputs": {
+        "samples": [
+          "7",
+          0
+        ],
+        "vae": [
+          "1",
+          2
+        ],
+        "num_chunks": 8000,
+        "octree_resolution": 256
+      },
+      "_meta": {
+        "title": "BOB_DECODE"
+      }
+    },
+    "9": {
+      "class_type": "VoxelToMesh",
+      "inputs": {
+        "voxel": [
+          "8",
+          0
+        ],
+        "algorithm": "surface net",
+        "threshold": 0.6
+      },
+      "_meta": {
+        "title": "BOB_VOXEL"
+      }
+    },
+    "10": {
+      "class_type": "SaveGLB",
+      "inputs": {
+        "mesh": [
+          "9",
+          0
+        ],
+        "filename_prefix": "bob_mesh_alt"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

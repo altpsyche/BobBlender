@@ -746,18 +746,124 @@ def test_w9b_is_a_one_shot_route_beside_the_staged_one(mods):
 
 
 def test_the_route_is_a_value_and_maps_onto_the_finish_passes(mods):
-    """Both routes reach `finish_asset` through one mapping, which is what makes the G3b verdict a
-    config change. The one-shot route's single file goes in as the SIMPLIFIED mesh with no texture
-    pass: passing it as `texture_pass` instead would have Blender decimate and unwrap a mesh it is
-    about to throw away."""
+    """Every route reaches `finish_asset` through one mapping, which is what makes the G3b and G7
+    verdicts config changes. The one-shot route's single file goes in as the SIMPLIFIED mesh with no
+    texture pass: passing it as `texture_pass` instead would have Blender decimate and unwrap a mesh
+    it is about to throw away."""
     comfy, _ = mods
     assert comfy.DEFAULT_ASSET_ROUTE == "oneshot", "G3b's verdict"
-    assert set(comfy.ASSET_ROUTES) == {"oneshot", "staged"}
+    assert set(comfy.ASSET_ROUTES) == {"oneshot", "staged", "alt"}
     assert comfy.asset_chain() is comfy.generate_asset_oneshot
     assert comfy.asset_chain("staged") is comfy.generate_asset_chain
+    assert comfy.asset_chain("alt") is comfy.generate_asset_alt
     assert comfy.finish_passes({"raw_mesh": "r.glb", "textured_mesh": "t.glb"}) == ("t.glb", None)
     assert comfy.finish_passes({"raw_mesh": "r.glb", "simplified_mesh": "s.glb",
                                 "textured_mesh": "t.glb"}) == ("s.glb", "t.glb")
+
+
+def test_the_per_class_verdict_is_one_table_and_a_control_still_wins(mods, monkeypatch):
+    """G7's verdict is per asset class, so `asset_chain` takes the kind; `KIND_ROUTE` is the only
+    place that mapping exists, and a control beats all of it because neither W9b nor W8 takes one."""
+    comfy, _ = mods
+    assert comfy.KIND_ROUTE == {} or set(comfy.KIND_ROUTE.values()) <= set(comfy.ASSET_ROUTES)
+    monkeypatch.setattr(comfy, "KIND_ROUTE", {"rocks": "alt"})
+    assert comfy.asset_chain(kind="rocks") is comfy.generate_asset_alt
+    assert comfy.asset_chain(kind="plants") is comfy.generate_asset_oneshot, "not named, so default"
+    assert comfy.asset_chain(route="oneshot", kind="rocks") is comfy.generate_asset_oneshot, \
+        "an explicit route beats the table"
+    assert comfy.asset_chain(kind="rocks", control="b.glb") is comfy.generate_asset_chain
+    assert comfy.asset_chain(route="alt", control="b.glb") is comfy.generate_asset_chain
+    assert comfy.asset_chain(kind="nonsense") is comfy.generate_asset_oneshot
+
+
+def test_foliage_is_one_value_because_it_decides_two_stages(mods):
+    """`is_foliage` was a `kind in ("plants", "grass")` literal in the panel, the MCP tool and every
+    benchmark. It turns off the ComfyUI remesh AND Blender's pinhole fill, so a drift between two
+    copies of it would half-close a leaf."""
+    comfy, _ = mods
+    assert comfy.is_foliage("plants") and comfy.is_foliage("grass")
+    assert not comfy.is_foliage("rocks") and not comfy.is_foliage("trees")
+    assert not comfy.is_foliage(None) and not comfy.is_foliage("")
+
+
+def test_w8_composites_the_subject_onto_a_plate_before_the_vision_encoder(mods):
+    """The one reason W8 exists beside W5. W4 writes RGBA whose RGB is still the SDXL frame and
+    `LoadImage` drops alpha rather than compositing it, so the challenger would be conditioned on a
+    background TRELLIS.2 never sees, and the G7 grid would have measured the background."""
+    comfy, _ = mods
+    graph, prov = comfy.load_workflow("mesh_geom_alt")
+    by_title = comfy.titles(graph)
+    plate, composite = by_title["BOB_PLATE"], by_title["BOB_SUBJECT"]
+    assert graph[plate]["class_type"] == "EmptyImage"
+    assert graph[plate]["inputs"]["color"] == 16777215, "white, as Hunyuan3D's own preprocessing"
+    node = graph[composite]
+    assert node["class_type"] == "ImageCompositeMasked"
+    assert node["inputs"]["destination"] == [plate, 0] and node["inputs"]["source"][0] == \
+        by_title["BOB_IMAGE"], "the subject goes ON the plate, not the other way round"
+    # The mask has to be the ALPHA, so an InvertMask sits between: LoadImage returns 1 - alpha and
+    # ImageCompositeMasked applies the source where the mask is 1. Wired direct, it pastes the
+    # background over the subject.
+    assert node["inputs"]["mask"] == [by_title["BOB_ALPHA"], 0]
+    assert graph[by_title["BOB_ALPHA"]]["class_type"] == "InvertMask"
+    assert graph[by_title["BOB_VISION"]]["inputs"]["image"] == [composite, 0]
+    assert graph[by_title["BOB_OUT"]]["class_type"] == "SaveGLB", "no turn to undo, unlike Trellis"
+    assert prov["runtime_inputs"] == ["BOB_IMAGE.image"]
+
+
+def test_w8p_normalises_before_it_processes(mods):
+    """Both halves of W8p, and both are load-bearing. Hunyuan returns [-1, 1] where TRELLIS.2
+    returns [-0.5, 0.5], so without the normalise W9t voxelises outside the unit cube and the albedo
+    comes back BLACK (G7: in-chart std 0.0064 against 0.1810). It has to run BEFORE the process node
+    as well, or `remesh_band` and `floater_threshold` mean different sizes on the two models."""
+    comfy, _ = mods
+    graph, prov = comfy.load_workflow("mesh_process")
+    by_title = comfy.titles(graph)
+    norm = graph[by_title["BOB_NORM"]]
+    assert norm["class_type"] == "GeomPackNormalizeMeshToBBox"
+    assert norm["inputs"]["target_size"] == 1.0, "1.0 is a [-0.5, 0.5] box"
+    assert norm["inputs"]["trimesh"] == [by_title["BOB_MESH"], 0]
+    process = graph[by_title["BOB_PROCESS"]]
+    assert process["class_type"] == "Trellis2ProcessMesh"
+    assert process["inputs"]["trimesh"] == [by_title["BOB_NORM"], 0]
+    assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_PROCESS"], 0]
+    assert prov["runtime_inputs"] == ["BOB_MESH.mesh_path"]
+    # And it takes the same binding W5t and W9b take, or the grid would not be controlled.
+    values = {}
+    bound = comfy.bind_process(graph, values, remesh=False, faces=4000)
+    assert values["BOB_PROCESS"] == {"remesh": "off", "remesh.fill_holes": False,
+                                     "remesh.fill_holes_perimeter": 0.03,
+                                     "target_face_count": 4000}
+    assert not [k for k in bound[by_title["BOB_PROCESS"]]["inputs"] if k.startswith("remesh.")]
+
+
+def test_the_alt_chain_stages_the_same_keys_as_the_staged_one(mods, monkeypatch, tmp_path):
+    """The challenger is a route and not a pipeline: same three staged files, so `finish_passes`,
+    `stage_exports` and `finish_asset` need no case for it."""
+    comfy, _ = mods
+    calls = []
+
+    def fake(name):
+        def record(*args, **kwargs):
+            calls.append(name)
+            path = str(tmp_path / f"{name}.glb")
+            open(path, "wb").close()
+            return {"path": path, "seconds": 1.0}
+        return record
+
+    monkeypatch.setattr(comfy, "mesh_geom_alt", fake("w8"))
+    monkeypatch.setattr(comfy, "mesh_process", fake("w8p"))
+    monkeypatch.setattr(comfy, "mesh_texture", fake("w9t"))
+    subject = tmp_path / "subject.png"
+    subject.write_bytes(b"")
+
+    staged = comfy.generate_asset_alt("a rock", str(tmp_path / "pack"), subject=str(subject))
+    assert calls == ["w8", "w8p", "w9t"]
+    assert set(staged) >= {"raw_mesh", "simplified_mesh", "textured_mesh", "subject", "meta"}
+    assert staged["meta"]["workflows"] == ["mesh_subject", "mesh_geom_alt", "mesh_process",
+                                           "mesh_texture"]
+    assert staged["meta"]["model"] == "hunyuan3d-2.1"
+    assert comfy.finish_passes(staged) == (staged["simplified_mesh"], staged["textured_mesh"])
+    assert comfy.stage_exports(staged) == {"raw": 0, "simplified": 1, "textured": 2}
 
 
 # -- The UI-to-API converter (G3 corrections) ----------------------------------------------------
@@ -1026,6 +1132,26 @@ def test_w7_conditions_on_a_control_mesh_and_ends_in_a_retrievable_output(mods):
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
     assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_CONTROL.mesh_path",
                                            "BOB_OMNI.repo_or_path"}
+
+
+def test_the_comfy_folder_falls_back_to_the_environment(mods, monkeypatch, tmp_path):
+    """Only the ADDON can register a preference, and the MCP server is not the addon. Without this
+    fallback `upload_mesh` cannot copy into `<comfy>/input/3d`, and G7 measured that the HTTP route
+    it falls back to does not work on this fork: the pack's loader runs in a pixi worker whose
+    working directory is not the ComfyUI root, so a relative path fails inside the graph."""
+    comfy, _ = mods
+    monkeypatch.setattr(comfy, "_PREF_COMFY_DIR", None)
+    monkeypatch.delenv("BOB_COMFY_DIR", raising=False)
+    assert comfy.comfy_dir() is None and comfy.input_3d_dir() is None
+    monkeypatch.setenv("BOB_COMFY_DIR", str(tmp_path / "nowhere"))
+    assert comfy.comfy_dir() is None, "a path that does not exist is not a ComfyUI folder"
+    monkeypatch.setenv("BOB_COMFY_DIR", str(tmp_path))
+    assert comfy.comfy_dir() == str(tmp_path)
+    # And the preference still wins over the environment.
+    other = tmp_path / "pref"
+    other.mkdir()
+    monkeypatch.setattr(comfy, "_PREF_COMFY_DIR", str(other))
+    assert comfy.comfy_dir() == str(other)
 
 
 def test_w7_binds_the_local_weights_only_when_they_are_there(mods, monkeypatch, tmp_path):

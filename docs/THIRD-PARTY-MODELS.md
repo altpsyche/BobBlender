@@ -15,8 +15,8 @@ mesh's sidecar JSON both record the model and its licence, so when a generated p
 terms travel with the asset (item 3).
 
 This file was written by inspecting the install rather than the plan: node-pack licences are read
-from the `LICENSE` file in each pinned submodule, and model files are the ones the 16 shipped graphs
-actually name, checked against what is on disk. Verified 2026-07-26 against ComfyUI 0.28.0 at
+from the `LICENSE` file in each pinned submodule, and model files are the ones the 18 shipped graphs
+actually name, checked against what is on disk. Verified 2026-07-27 against ComfyUI 0.28.0 at
 `/home/siva/dev/ComfyUI`. Where a licence is not shipped inside the install, the column says so and
 names the upstream source to confirm it against; those are marked **upstream**.
 
@@ -31,7 +31,7 @@ catalogue) that reference the model, so a licence term can be traced to the feat
 | **TRELLIS-image-large** (sparse-structure decoder only) | `microsoft/TRELLIS-image-large` | MIT (**upstream**) | inside the 15 GB above | pulled by `pipeline.json` as one component of the TRELLIS.2 pipeline |
 | **BiRefNet** | `ZhengPeng7/BiRefNet` | MIT (**upstream**) | 424 MB | W4's background cutout (`Trellis2RemoveBackground`) |
 | **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | W7, the block-out control route |
-| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | W5, the zero-install geometry smoke test |
+| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | W5, the zero-install geometry smoke test; **W8**, the `alt` geometry route measured at G7 |
 | **Hunyuan3D-2mv** | `hunyuan3d-dit-v2-mv_fp16.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 4.6 GB | W6, multi-view geometry |
 | **RealVisXL V5.0** (fp16) | `SG161222/RealVisXL_V5.0` | OpenRAIL++ (**upstream**) | 6.5 GB | every raster route: W1, W2, W3, W4's reference image, W12, W12e, W9, W13 |
 | **CLIP-ViT-H-14-laion2B-s32B-b79K** | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` | MIT (**upstream**) | 2.4 GB | W2 and W9, as the IPAdapter vision encoder |
@@ -59,9 +59,13 @@ catalogue) that reference the model, so a licence term can be traced to the feat
    > may grant to You in its sole discretion, and You are not authorized to exercise any of the
    > rights under this Agreement unless or until Tencent otherwise expressly grants You such rights.
 
-   Where this lands: **W7 (block-out control), W5 (smoke test) and W6 (multi-view)**. Nothing else.
-   TRELLIS.2 is MIT and is the primary model for exactly this reason, so an artist in the EU, the UK
-   or South Korea can use every default route in this integration and simply not use those three.
+   Where this lands: **W7 (block-out control), W5 (smoke test), W6 (multi-view) and W8 (the `alt`
+   geometry route)**. Nothing else, and none of the four is a default. That is now a decision with
+   numbers rather than a happy accident: G7 measured Hunyuan 2.1 as **2.1x faster on solids** and the
+   only one of the two that closes every shell, and the default still did not move, because a default
+   an artist in the EU, the UK or South Korea may not use is worth more than 46 seconds an asset
+   (docs/COMFYUI.md, What G7 measured). TRELLIS.2 is MIT and stays primary, so every default route in
+   this integration is usable in those territories.
 
 2. **Depth Anything V2 Large is CC-BY-NC-4.0: non-commercial.** It is used by **W12e alone**, the
    estimated stylise route. G4 measured that the estimated route and the real-passes route are within
@@ -89,7 +93,7 @@ the artist's install raises no distribution question for Bob either. Licences be
 | Pack | Pinned SHA | Licence | Needed by |
 |---|---|---|---|
 | `ComfyUI-TRELLIS2` | `9b87851` | MIT (`LICENSE`) | every geometry and mesh-texture route |
-| `ComfyUI-GeometryPack` | `c67199d` | **GPL-3.0** (`LICENSE`) | required by TRELLIS2's own `node_reqs`; W9t names `GeomPackUVUnwrap` |
+| `ComfyUI-GeometryPack` | `c67199d` | **GPL-3.0** (`LICENSE`) | required by TRELLIS2's own `node_reqs`; W9t names `GeomPackUVUnwrap` and W8p names `GeomPackNormalizeMeshToBBox` |
 | `ComfyUI-Hy3D-Omni` | `e513cd0` | **NO LICENCE FILE AT ALL** | W7 only |
 | `ComfyUI-seamless-tiling` | `9225ed5` | **GPL-3.0** (`LICENSE`) | W1, W2, W3, and W13's tiled route |
 | `ComfyUI_IPAdapter_plus` | `a0f451a` | **GPL-3.0** (`LICENSE`) | W2, W9 |

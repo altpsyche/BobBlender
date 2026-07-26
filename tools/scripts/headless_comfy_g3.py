@@ -101,6 +101,20 @@ def image_stats(path):
     return float(px.mean()), float(px.std()), float(px.min()), float(px.max())
 
 
+def neighbour_detail(path):
+    """The mean absolute difference between neighbouring texels, over RGB.
+
+    High frequency by construction, so it is 0.0 on a constant image whatever that constant is,
+    which is the property a flatness check needs and a standard deviation does not have.
+    """
+    img = bpy.data.images.load(path, check_existing=False)
+    px = np.empty(len(img.pixels), dtype=np.float32)
+    img.pixels.foreach_get(px)
+    rgb = px.reshape(img.size[1], img.size[0], 4)[..., :3]
+    bpy.data.images.remove(img)
+    return float((np.abs(np.diff(rgb, axis=1)).mean() + np.abs(np.diff(rgb, axis=0)).mean()) / 2.0)
+
+
 def alpha_stats(path):
     img = bpy.data.images.load(path, check_existing=False)
     px = np.empty(len(img.pixels), dtype=np.float32)
@@ -260,8 +274,13 @@ def assert_finished(entry, report):
           report["master_type"] == "surface", str(report["master_type"]))
     if "normal" in report["maps"]:
         mean, std, lo, hi = image_stats(report["maps"]["normal"])
-        check(f"{key}: the baked normal is not flat", std > 0.01,
-              f"std {std:.4f}, range {lo:.3f} to {hi:.3f}")
+        # NOT std: a perfectly flat tangent-space normal is (0.5, 0.5, 1.0), whose channel spread
+        # gives std 0.2357, so the "not flat" check this gate shipped with could not fail. G7 found
+        # that on a route whose bake really did write a flat map. The honest measure is the mean
+        # absolute neighbour difference, which is 0.0 on a constant image by construction.
+        detail = neighbour_detail(report["maps"]["normal"])
+        check(f"{key}: the baked normal is not flat", detail > 1e-4,
+              f"neighbour detail {detail:.5f}, std {std:.4f}, range {lo:.3f} to {hi:.3f}")
     else:
         check(f"{key}: a baked normal exists", False, "no normal map written")
     check(f"{key}: the sidecar records provenance",

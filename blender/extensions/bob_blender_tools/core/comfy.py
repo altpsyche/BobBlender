@@ -75,8 +75,17 @@ def set_pref_comfy_dir(path):
 
 
 def comfy_dir():
-    """The registered ComfyUI folder if it exists on this machine, else None."""
-    return _PREF_COMFY_DIR if (_PREF_COMFY_DIR and os.path.isdir(_PREF_COMFY_DIR)) else None
+    """The registered ComfyUI folder if it exists on this machine, else `$BOB_COMFY_DIR`, else None.
+
+    The env fallback is the same shape and the same reason as `assets.generated_root`'s
+    `$BOB_GENERATED` (G6): only the ADDON can register a preference, and two of the three processes
+    this code runs in are not the addon. Without it the MCP server cannot transport a mesh at all,
+    which G7 found by driving the `alt` route through the real tool: see `upload_mesh`.
+    """
+    for path in (_PREF_COMFY_DIR, os.environ.get("BOB_COMFY_DIR")):
+        if path and os.path.isdir(str(path)):
+            return str(path)
+    return None
 
 
 # Where the shipped graphs live. Derived from templates, API format, bound by node title.
@@ -597,9 +606,14 @@ def upload_mesh(path, url=None, subfolder="3d"):
     1. The ComfyUI folder preference points at a local checkout: copy into `<comfy>/input/3d/` and
        return the absolute path. No HTTP, no size limit, no multipart.
     2. Otherwise `POST /upload/image`, which writes raw bytes to an arbitrary subfolder with a
-       `commonpath` guard and no image-specific handling, and return `input/<sub>/<name>`, which
-       `Trellis2LoadMesh` resolves because it calls `os.path.exists` and the server's working
-       directory is the ComfyUI root.
+       `commonpath` guard and no image-specific handling, and return `input/<sub>/<name>`.
+
+    Route 2 is the fallback for a server that is not on this machine, and G7 measured that on THIS
+    fork it does not actually work: the upload lands correctly, but `Trellis2LoadMesh` runs inside a
+    comfy-env pixi worker whose working directory is not the ComfyUI root, so a relative path fails
+    with "Mesh file not found: input/3d/...". Route 1 is therefore effectively required for every
+    mesh-uploading graph (W9t, W9c, W7, W8p), which is why `comfy_dir` takes `$BOB_COMFY_DIR` as
+    well as the addon preference: the MCP server is not the addon and cannot read a preference.
 
     NOT `GeomPackLoadMesh`: its `file_path` is a COMBO whose options are a directory listing, and
     comfy-env caches each node's scanned schema, so a file written a second ago is absent from the
@@ -1256,6 +1270,40 @@ def mesh_geometry(image_path, out_path, *, seed=0, tier="default", url=None, rem
                               "remesh": bool(remesh), "subject": image_path})
 
 
+def mesh_geom_alt(image_path, out_path, *, seed=0, url=None, workflow="mesh_geom_alt",
+                  checkpoint=None, size=1024, timeout=1800, on_progress=None, on_queued=None,
+                  preflight_graph=True):
+    """W8: the same subject PNG to a mesh through the CHALLENGER model, Hunyuan3D 2.1.
+
+    Same inputs and the same output contract as `mesh_geometry`, which is what makes the geometry
+    A/B a config change rather than a rewrite. Two differences are structural rather than settings,
+    and both are the G7 verdict rather than defects:
+
+    - the output is watertight whatever the caller wants, because `VoxelToMesh` extracts an
+      isosurface, so there is no `remesh` argument here to turn open surfaces on with;
+    - it carries no texture and no UVs at all, so the challenger route runs `mesh_process` (W8p)
+      and then `mesh_texture` (W9t) behind it. `generate_asset_alt` is that chain.
+
+    `size` is the plain plate the subject is composited onto through its own alpha. W4's RGB is
+    still the SDXL frame behind the cutout and `LoadImage` drops alpha rather than compositing it,
+    so without the plate this model would be conditioned on a background TRELLIS.2 never sees.
+    """
+    graph, prov = load_workflow(workflow)
+    values = {"BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_PLATE": {"width": int(size), "height": int(size)}}
+    ckpt = checkpoint or prov.get("default_checkpoint")
+    if ckpt and "BOB_3D_MODEL" in titles(graph):
+        values["BOB_3D_MODEL"] = {"ckpt_name": ckpt}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "subject": image_path, "plate": int(size),
+                              "model": "hunyuan3d-2.1"})
+
+
 def mesh_texture(mesh_path, image_path, out_path, *, seed=0, texture_size=1024, url=None,
                  workflow="mesh_texture", timeout=1800, on_progress=None, on_queued=None,
                  preflight_graph=True):
@@ -1424,6 +1472,37 @@ def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mes
                        extra={"faces_requested": int(faces), "source_mesh": mesh_path})
 
 
+def mesh_process(mesh_path, out_path, *, faces=4000, remesh=True, url=None,
+                 workflow="mesh_process", timeout=900, on_progress=None, on_queued=None,
+                 preflight_graph=True):
+    """W8p: normalise into the unit cube, then `Trellis2ProcessMesh`, i.e. steps 3 and 4 in ONE node.
+
+    W9c's replacement on any route that did not generate its own topology. It exists because a
+    challenger model has to be scored through the same processing the shipped route applies to its
+    own output: same face budget, same weld, same chart parameters, same `remesh` branch. G3b
+    measured what using W9c instead would have cost, and it is not small (1,467 to 3,050 boundary
+    edges against 10 to 146 on the same prompts), so processing the two halves of a grid through
+    different nodes would score the node rather than the model.
+
+    The normalise is not tidiness. Hunyuan returns [-1, 1] where TRELLIS.2 returns [-0.5, 0.5] and
+    `Trellis2ProcessMesh` rescales neither, so without it every W9t texture on this route comes back
+    BLACK (G7: in-chart albedo std 0.0064 against 0.1810), and the two models' meshes would meet the
+    same `remesh_band` at different sizes.
+
+    No model is loaded, so this costs wall clock and no VRAM of its own.
+    """
+    graph, prov = load_workflow(workflow)
+    values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)}}
+    graph = bind_process(graph, values, remesh=remesh, faces=faces)
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_MESH", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"faces_requested": int(faces), "remesh": bool(remesh),
+                              "source_mesh": mesh_path})
+
+
 def _write_mesh(out_path, data, gen, *, workflow, prov, extra):
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     with open(out_path, "wb") as fh:
@@ -1449,6 +1528,33 @@ def list_mesh_variants(pack_dir):
             if any(n.lower().endswith(MESH_EXTS) for n in sorted(os.listdir(d)))]
 
 
+def _stage_dir(prompt_text, pack_dir, seed):
+    """A fresh `<pack>/_staging/<slug>_s<seed>/` for one generation, and its name."""
+    base = staging_dir(pack_dir)
+    os.makedirs(base, exist_ok=True)
+    name = unique_set_name(base, f"{slugify(prompt_text)}_s{int(seed)}")
+    out_dir = os.path.join(base, name)
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir, name
+
+
+def _stage_subject(prompt_text, out_dir, *, seed=0, size=1024, checkpoint=None, url=None,
+                   subject=None, on_progress=None, on_queued=None):
+    """Pipeline step 1 for whichever chain is running: W4, or the image the artist already has.
+
+    `subject` skips W4 entirely and is reported as costing nothing, which is true and is what makes
+    a benchmark able to hand every route the SAME reference image.
+    """
+    if subject:
+        return {"path": subject, "artist_prompt": (prompt_text or "").strip(),
+                "prompt": subject, "seed": int(seed), "seconds": 0.0}
+    if on_progress:
+        on_progress("reference image")
+    return subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed, size=size,
+                         checkpoint=checkpoint, url=url, timeout=600, on_progress=on_progress,
+                         on_queued=on_queued)
+
+
 def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size=1024,
                           checkpoint=None, url=None, timeout=1800, on_progress=None,
                           on_queued=None, subject=None, remesh=True, control=None, points=8192):
@@ -1463,23 +1569,11 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
     (W9c, W9t, and all of `finish_asset`) is identical -- which is also why the block-out route runs
     the STAGED chain and not the one-shot one: W9b generates its own geometry and takes no control.
     """
-    base = staging_dir(pack_dir)
-    os.makedirs(base, exist_ok=True)
-    stem = slugify(prompt_text)
-    name = unique_set_name(base, f"{stem}_s{int(seed)}")
-    out_dir = os.path.join(base, name)
-    os.makedirs(out_dir, exist_ok=True)
-
+    out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
-    if subject:
-        subject_info = {"path": subject, "artist_prompt": (prompt_text or "").strip(),
-                        "prompt": subject, "seed": int(seed), "seconds": 0.0}
-    else:
-        if on_progress:
-            on_progress("reference image")
-        subject_info = subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed,
-                                     size=size, checkpoint=checkpoint, url=url, timeout=600,
-                                     on_progress=on_progress, on_queued=on_queued)
+    subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
+                                  url=url, subject=subject, on_progress=on_progress,
+                                  on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
     if on_progress:
@@ -1553,11 +1647,68 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
     return staged
 
 
-# Which ComfyUI chain Generate Asset runs. A route, not a rewrite: both functions below stage the
-# same paths and `core.gen_assets.finish_asset` consumes either.
+def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
+                       texture_size=1024, checkpoint=None, url=None, timeout=1800,
+                       on_progress=None, on_queued=None, subject=None, remesh=True, size=1024):
+    """Every ComfyUI stage of one asset through the CHALLENGER geometry model: W4, W8, W8p, W9t.
+
+    `generate_asset_chain`'s shape with Hunyuan 2.1 in place of W5t and the shared
+    `Trellis2ProcessMesh` (W8p) in place of W9c, so it stages the same three files and every
+    consumer stays route-agnostic. `tier` is accepted and unused: Hunyuan has no resolution tier,
+    which is one of the things the caller does not have to know.
+
+    `remesh=False` reaches W8p and nothing else. The geometry is watertight before it gets there,
+    because `VoxelToMesh` extracts an isosurface, so this route cannot make an open surface at all
+    and asking it to is not an error. That is the structural half of the G7 verdict.
+    """
+    out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
+    steps = {}
+    subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
+                                  url=url, subject=subject, on_progress=on_progress,
+                                  on_queued=on_queued)
+    steps["subject"] = subject_info["seconds"]
+
+    if on_progress:
+        on_progress("geometry")
+    raw = mesh_geom_alt(subject_info["path"], os.path.join(out_dir, name + "_raw.glb"), seed=seed,
+                        size=size, url=url, timeout=timeout, on_progress=on_progress,
+                        on_queued=on_queued)
+    steps["geometry"] = raw["seconds"]
+
+    if on_progress:
+        on_progress("simplify and unwrap")
+    simp = mesh_process(raw["path"], os.path.join(out_dir, name + "_simp.glb"), faces=faces,
+                        remesh=remesh, url=url, on_progress=on_progress, on_queued=on_queued)
+    steps["simplify"] = simp["seconds"]
+
+    if on_progress:
+        on_progress("PBR texture")
+    tex = mesh_texture(simp["path"], subject_info["path"],
+                       os.path.join(out_dir, name + "_tex.glb"), seed=seed,
+                       texture_size=texture_size, url=url, timeout=timeout,
+                       on_progress=on_progress, on_queued=on_queued)
+    steps["texture"] = tex["seconds"]
+
+    meta = {"artist_prompt": (prompt_text or "").strip(), "prompt": subject_info.get("prompt"),
+            "seed": int(seed), "tier": tier, "remesh": bool(remesh), "route": "alt",
+            "subject": subject_info["path"], "raw_mesh": raw["path"],
+            "simplified_mesh": simp["path"], "textured_mesh": tex["path"],
+            "faces_requested": int(faces),
+            "workflows": ["mesh_subject", "mesh_geom_alt", "mesh_process", "mesh_texture"],
+            "model": "hunyuan3d-2.1", "license": "Tencent Hunyuan3D community", "seconds": steps}
+    with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return {"dir": out_dir, "name": name, "meta": meta, "raw_mesh": raw["path"],
+            "simplified_mesh": simp["path"], "textured_mesh": tex["path"],
+            "subject": subject_info["path"], "seconds": steps}
+
+
+# Which ComfyUI chain Generate Asset runs. A route, not a rewrite: every function below stages the
+# same paths and `core.gen_assets.finish_asset` consumes any of them.
 #
 #   "oneshot" W4 -> W9b. Two jobs, one model load, no mesh round trip, and no dense mesh.
 #   "staged"  W4 -> W5t -> W9c -> W9t. Four jobs, and the one that keeps a DENSE mesh on disk.
+#   "alt"     W4 -> W8 -> W8p -> W9t. The same shape with Hunyuan 2.1 as the geometry model.
 #
 # G3b measured both on ten prompts and the one-shot route won, which is why it is the default. Short
 # version, full numbers in docs/COMFYUI.md: a wash on wall clock (593 s against 584 s for all ten),
@@ -1571,14 +1722,68 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
 # "staged" stays wired and is not dead code: it is the only route that leaves a dense mesh on disk
 # for a future higher-budget or hero path, and W9t on its own is still track B, texturing a mesh Bob
 # already has. W9b can only texture geometry it generated itself.
-ASSET_ROUTES = ("oneshot", "staged")
+#
+# "alt" is the G7 grid's challenger and it stays wired for the same kind of reason: it is the only
+# route whose geometry model needs no custom pack at all, so it is what still generates an asset on
+# an install with ComfyUI-TRELLIS2 missing or broken. G7 measured it against the default on ten
+# prompts and the verdict is per asset class, not global; `KIND_ROUTE` below is where that lands.
+ASSET_ROUTES = ("oneshot", "staged", "alt")
 DEFAULT_ASSET_ROUTE = "oneshot"
 
+# The G7 verdict, and the ONE place a per-asset-class geometry decision lives. A kind not named here
+# takes `DEFAULT_ASSET_ROUTE`; naming one routes that class to a different chain with no branch
+# anywhere else and no widget.
+#
+# It is EMPTY, and that is a decision with numbers behind it rather than an unfinished table. G7 ran
+# ten prompts through both models off one shared subject each, with `Trellis2ProcessMesh` and its
+# `remesh` setting identical on both sides. Full numbers in docs/COMFYUI.md; the short version:
+#
+#   foliage (5 prompts, remesh off): TRELLIS.2, decisively. Median 15.0 s against 31.3 s, peak
+#     4,964 MiB against 9,620, and 2.9x the boundary edges (median 984 against 344) because the
+#     challenger CANNOT return an open surface -- `VoxelToMesh` extracts an isosurface, so the holes
+#     it does have come from the simplifier rather than from the model. One of its five textures came
+#     back black.
+#   solids (5 prompts, remesh on): the challenger wins two columns and loses three. It is 2.1x
+#     faster (median 40.4 s against 86.1 s) and returns properly closed shells (median 0 boundary
+#     edges against 116, and nothing downstream closes those on either route). It costs 3.7 GB more
+#     VRAM (9,688 MiB against 5,958), returns a flatter albedo (median std 0.1259 against 0.1555),
+#     hit the black-albedo trap once in ten where W9b cannot hit it at all, and carries a
+#     non-permissive licence with a territorial exclusion where TRELLIS.2 is MIT. Two wins on speed
+#     and cleanliness do not buy a DEFAULT that an artist in the EU, the UK or South Korea may not
+#     use, so solids stay on the default route and "alt" stays an explicit, documented choice.
+#   block-out: Hunyuan, but through Omni and W7 rather than through this route, decided at G4c on
+#     footprint IoU (0.9079 mean against the multi-view baseline's 0.6748). `asset_chain` routes a
+#     control to the staged chain, which is where W7 lives.
+KIND_ROUTE = {}
 
-def asset_chain(route=None):
-    """The staging function for a route name. The one place the route becomes a decision."""
-    return generate_asset_oneshot if (route or DEFAULT_ASSET_ROUTE) == "oneshot" \
-        else generate_asset_chain
+# Which scatter kinds are FOLIAGE, which decides two stages at once and was a literal in three
+# places before G7. On the ComfyUI side it turns off `Trellis2ProcessMesh`'s dual-contouring remesh,
+# which otherwise returns a watertight shell and makes a leaf a leaf-shaped bag; on the Blender side
+# it leaves the pinhole fill alone, which would weld the blade shut for the same reason.
+FOLIAGE_KINDS = ("plants", "grass")
+
+
+def is_foliage(kind):
+    """Whether a scatter kind wants open surfaces kept. See `FOLIAGE_KINDS`."""
+    return str(kind or "") in FOLIAGE_KINDS
+
+
+def asset_chain(route=None, kind=None, control=None):
+    """The staging function for one asset. The one place the route becomes a decision.
+
+    Three inputs, in priority order, and every caller passes what it knows rather than deciding:
+
+    - `control` forces the staged chain, because W9b generates its own geometry from the image and
+      takes no control mesh, and the challenger's Hunyuan graph takes none either. There is no
+      one-shot version of the block-out route to choose.
+    - `route` is an explicit override, from the MCP tool or a benchmark.
+    - `kind` picks up the G7 per-class verdict in `KIND_ROUTE`.
+    """
+    if control:
+        return generate_asset_chain
+    name = route or KIND_ROUTE.get(str(kind or "")) or DEFAULT_ASSET_ROUTE
+    return {"oneshot": generate_asset_oneshot, "staged": generate_asset_chain,
+            "alt": generate_asset_alt}.get(name, generate_asset_oneshot)
 
 
 def finish_passes(staged):
@@ -1607,6 +1812,10 @@ def stage_exports(staged):
     alone and the later files are merely brought into line with it. With a control it means
     everything, so the raw mesh's own turn is undone as well and the finished asset lands facing the
     way the block-out did.
+
+    The "alt" chain needs no case of its own, and that is arithmetic rather than luck: Hunyuan's
+    `SaveGLB` adds no turn where W5t's `Trellis2ExportTrimesh` adds one, and every later hop on both
+    chains is a Trellis export, so the two differ by a constant that a relative correction cancels.
     """
     base = 1 if (staged.get("meta") or {}).get("control") else 0
     if not staged.get("simplified_mesh"):
@@ -1911,23 +2120,11 @@ def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", fac
     intermediate simplify. Pass it as `simplify_pass` with no `texture_pass` and Blender skips both
     its own decimate and its own unwrap, which is the point.
     """
-    base = staging_dir(pack_dir)
-    os.makedirs(base, exist_ok=True)
-    stem = slugify(prompt_text)
-    name = unique_set_name(base, f"{stem}_s{int(seed)}")
-    out_dir = os.path.join(base, name)
-    os.makedirs(out_dir, exist_ok=True)
-
+    out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
-    if subject:
-        subject_info = {"path": subject, "artist_prompt": (prompt_text or "").strip(),
-                        "prompt": subject, "seed": int(seed), "seconds": 0.0}
-    else:
-        if on_progress:
-            on_progress("reference image")
-        subject_info = subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed,
-                                     size=size, checkpoint=checkpoint, url=url, timeout=600,
-                                     on_progress=on_progress, on_queued=on_queued)
+    subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
+                                  url=url, subject=subject, on_progress=on_progress,
+                                  on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
     if on_progress:
