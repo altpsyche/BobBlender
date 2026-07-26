@@ -25,7 +25,10 @@ bbt_shaders. Coverage has one authority: the shader computes it the same way on 
 keyed off the env snow line, so terrain and assets obey the same line (no attribute switch).
 """
 
+import os
+
 import bpy
+import bpy.utils.previews  # not implied by `import bpy`, and shaders.py can register standalone
 from bpy.props import (
     EnumProperty,
     IntProperty,
@@ -266,6 +269,70 @@ def _has_biome_terrain():
     return any(assets.biome_terrain(n) is not None for n in assets.list_biomes())
 
 
+# Texture-set enum: every `<pack>/textures/<set>/` on the search path, plus the explicit "none"
+# that clears a slot back to a solid tint. Cached module-side for the same enum GC pitfall as the
+# biome enum above (Blender does not keep a reference to the returned strings).
+_TEXTURE_SET_ITEMS = [("NONE", "(none)", "Solid tint: no texture set on this layer", "", 0)]
+_TEXTURE_SET_IDS = {"NONE": 0}
+
+
+def _texture_set_items(self, context):
+    global _TEXTURE_SET_ITEMS
+    from ..core import assets
+
+    items = [("NONE", "(none)", "Solid tint: no texture set on this layer", "", 0)]
+    for n in assets.list_texture_sets():
+        if n not in _TEXTURE_SET_IDS:
+            _TEXTURE_SET_IDS[n] = len(_TEXTURE_SET_IDS)  # next unused id, fixed for this session
+        items.append((n, n.replace("_", " ").title(), f"Sample the {n} texture set", "",
+                      _TEXTURE_SET_IDS[n]))
+    _TEXTURE_SET_ITEMS = items
+    return _TEXTURE_SET_ITEMS
+
+
+def _generated_pack():
+    """The generated asset pack root, or None when the addon has not registered one."""
+    from ..core import assets
+
+    return assets.generated_root()
+
+
+def _staged_variants():
+    """Absolute paths of the variants waiting for a decision, oldest first. A listdir, so it is
+    safe to call from draw(); nothing here touches a socket."""
+    from ..core import comfy
+
+    pack = _generated_pack()
+    return comfy.list_variants(pack) if pack else []
+
+
+def _staged_variant_items(self, context):
+    """Enum items over the staging folder, the variant path as the identifier.
+
+    Cached on the module for the same reason the texture-set enum is: Blender does not keep a
+    reference to the strings an items callback returns. The empty-staging sentinel is "NONE", not
+    "", because Blender silently drops an empty identifier and then refuses to assign it.
+    """
+    global _STAGED_ITEMS
+    items = []
+    for i, path in enumerate(_staged_variants()):
+        name = os.path.basename(path)
+        items.append((path, name.replace("_", " "), f"Staged variant {name}", "", i + 1))
+    _STAGED_ITEMS = items or [(STAGED_NONE, "(none staged)",
+                               "Nothing is waiting for a decision", "", 0)]
+    return _STAGED_ITEMS
+
+
+STAGED_NONE = "NONE"
+_STAGED_ITEMS = []
+
+
+def _staged_pick(scn):
+    """The selected staged variant's path, or "" when nothing is staged."""
+    path = scn.gen_staged
+    return path if path and path != STAGED_NONE else ""
+
+
 class BBT_ShadersProps(PropertyGroup):
     """BobShaders' own UI state (not the shared world, which is bbt_env; not the material
     identity, which is the active object's active slot)."""
@@ -290,6 +357,31 @@ class BBT_ShadersProps(PropertyGroup):
         name="Asset Material",
         description="Which material of the active scatter layer's instanced assets the Surface / "
                     "Weather sub-panels edit (the assets' sources are not viewport-selectable)")
+    texture_set: EnumProperty(
+        name="Texture Set", items=_texture_set_items,
+        description="The texture set the Apply button samples into the active terrain layer (or "
+                    "the surface material). Staged, not instant: assigning one rewires the "
+                    "material's sampler nodes")
+    gen_prompt: StringProperty(
+        name="Prompt", default="cracked dry desert soil with small pebbles",
+        description="What the ground is made of. ComfyUI generates a seamless albedo from this; "
+                    "the top-view, flat-lighting part of the prompt is added for you")
+    gen_seed: IntProperty(
+        name="Seed", default=0, min=0,
+        description="Same prompt and seed give the same texture, so a set can be reproduced")
+    gen_variants: IntProperty(
+        name="Variants", default=3, min=1, max=8,
+        description="How many textures to generate, one seed apart, into the staging folder. "
+                    "Texture generation is a pick-one-of-several loop, so Generate makes several "
+                    "and nothing lands in the pack until you Accept one")
+    gen_staged: EnumProperty(
+        name="Variant", items=_staged_variant_items,
+        description="The staged variant Accept writes into the generated pack. Reject deletes it")
+    gen_reference: StringProperty(
+        name="Reference", subtype="FILE_PATH", default="",
+        description="Optional photo of the real surface. With one set, generation runs the "
+                    "reference workflow instead: img2img from your photo with its palette locked, "
+                    "so the result is that surface rather than the model's idea of the words")
     # The Live Environment toggle folded into the one World-panel master (bbt_world.live_env);
     # Shaders subscribes _apply_world to drive its S_EnvState feed (docs/UX-REDESIGN.md 5.4/7).
 
@@ -530,6 +622,299 @@ class BBT_OT_shaders_terrain_stack_preset(Operator):
         return {"FINISHED"}
 
 
+def _apply_texture_set(context, index, name):
+    """Assign texture set `name` ("" clears it) to the editing material: a terrain layer slot
+    (`index`) or a surface material (index < 0). Returns (report_label, error), so the Apply and
+    the Generate operators share one assignment path instead of each carrying a copy."""
+    mats = _materials()
+    mat = _editing_material(context)
+    kind = mats.master_type(mat)
+    if kind == "terrain":
+        obj = _active_object(context)
+        if obj is None:
+            return None, "No active mesh to read the terrain's drainage maps from"
+        i = max(0, min(index, mats.MAX_TERRAIN_LAYERS - 1))
+        shading.set_terrain_texture(obj, mat, i, name)
+        return f"Layer {i}: {name or 'solid tint'}", None
+    if kind == "surface":
+        shading.set_surface_texture(mat, name)
+        return f"Surface: {name or 'solid tint'}", None
+    return None, "Active material is not a surface or terrain BobShader"
+
+
+class BBT_OT_shaders_texture_set(Operator):
+    bl_idname = "bob_blender_tools.shaders_texture_set"
+    bl_label = "Apply Texture Set"
+    bl_description = ("Sample the staged texture set into this layer's Albedo / Roughness / "
+                      "Detail Height inputs, with its height driving a bump. Structural: it "
+                      "rewires the material's sampler nodes")
+    bl_options = {"REGISTER", "UNDO"}
+
+    # The terrain layer slot, or -1 for a surface material (which has one set, not six).
+    index: IntProperty(default=-1)
+
+    def execute(self, context):
+        name = context.scene.bbt_shaders.texture_set
+        label, err = _apply_texture_set(context, self.index, "" if name == "NONE" else name)
+        if err:
+            self.report({"ERROR"}, err)
+            return {"CANCELLED"}
+        self.report({"INFO"}, label)
+        return {"FINISHED"}
+
+
+# Last known ComfyUI state, so the panel row can read "not connected" without an HTTP call in
+# draw(). Refreshed by Test Connection (the Advanced panel), by Generate, and by the job ticker;
+# never in draw(), because a socket call in a draw handler freezes the UI for the timeout in
+# exactly the case the row exists to report.
+_COMFY_STATE = {"ok": None, "detail": "not checked"}
+
+# The staged-variant thumbnail. A preview collection rather than a bpy Image, so the panel can
+# show the pick without adding a datablock the file then carries around.
+_variant_previews = None
+_variant_preview_key = None
+
+
+def _variant_preview(path):
+    """The icon id for a staged variant's basecolor, or 0 when there is nothing to show.
+
+    0 is also what `--background` returns for a perfectly good preview (there is no icon manager
+    without a UI), which is why the panel treats it as "draw no thumbnail" rather than an error.
+    """
+    global _variant_preview_key
+    if _variant_previews is None or not path:
+        return 0
+    name = os.path.basename(path)
+    png = os.path.join(path, f"{name}_basecolor.png")
+    if not os.path.isfile(png):
+        return 0
+    if _variant_preview_key != png:
+        _variant_previews.clear()
+        try:
+            _variant_previews.load(name, png, "IMAGE")
+        except (KeyError, RuntimeError):
+            return 0
+        _variant_preview_key = png
+    entry = _variant_previews.get(name)
+    return entry.icon_id if entry else 0
+
+
+def _redraw():
+    """Tag every 3D-view side region, so a job finishing on the timer is visible without the
+    artist having to move the mouse."""
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
+def _jobs():
+    from ..core import comfy_jobs
+
+    return comfy_jobs
+
+
+def _comfy_job_running():
+    return bool(_jobs().active())
+
+
+def _submit(label, fn, on_done):
+    """Queue a ComfyUI job on the shared worker and refresh the panel when it lands."""
+    def done(job):
+        if job.error is not None:
+            _COMFY_STATE.update(ok=False, detail=str(job.error)[:90])
+        else:
+            on_done(job)
+        _redraw()
+
+    def progress(_job):
+        _redraw()
+
+    return _jobs().submit(label, fn, on_done=done, on_progress=progress)
+
+
+class BBT_OT_shaders_generate_set(Operator):
+    bl_idname = "bob_blender_tools.shaders_generate_set"
+    bl_label = "Generate Variants"
+    bl_description = ("Generate seamless texture variants from the prompt with ComfyUI into the "
+                      "staging folder, then Accept the one you want. Runs in the background: the "
+                      "viewport stays usable. Needs a local ComfyUI server; without one nothing "
+                      "else changes")
+    bl_options = {"REGISTER"}
+
+    index: IntProperty(default=-1)
+
+    def execute(self, context):
+        from ..core import comfy
+
+        scn = context.scene.bbt_shaders
+        prompt = (scn.gen_prompt or "").strip()
+        if not prompt:
+            self.report({"ERROR"}, "Describe the ground first (the Prompt field)")
+            return {"CANCELLED"}
+        pack = _generated_pack()
+        if not pack:
+            self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
+                                   "add-on preferences)")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+        count = int(scn.gen_variants)
+        seed = int(scn.gen_seed)
+        reference = bpy.path.abspath(scn.gen_reference) if scn.gen_reference else None
+        if reference and not os.path.isfile(reference):
+            self.report({"ERROR"}, f"Reference image not found: {reference}")
+            return {"CANCELLED"}
+
+        # Everything below the closure runs on the worker thread: no bpy, no context, only the
+        # values captured here (docs/COMFYUI.md, Bob-side constraint 2).
+        def work(job):
+            def variant_done(i, total, info):
+                job.report(f"variant {i}/{total}, seam {info['seam']['ratio']:.2f}")
+
+            # note_prompt_id is what lets Cancel reach the server rather than only the registry.
+            return comfy.texture_variants(prompt, pack, count=count, seed=seed,
+                                          reference=reference, on_variant=variant_done,
+                                          on_queued=job.note_prompt_id,
+                                          on_progress=job.report)
+
+        def landed(job):
+            infos = job.result or []
+            _COMFY_STATE.update(ok=True, detail=f"{len(infos)} variant(s) staged")
+            items = _staged_variant_items(None, None)
+            scn.gen_staged = infos[0]["dir"] if infos else items[0][0]
+
+        _submit(f"texture x{count}: {prompt[:32]}", work, landed)
+        self.report({"INFO"}, f"Generating {count} variant(s) in the background")
+        return {"FINISHED"}
+
+
+class BBT_OT_shaders_variant_accept(Operator):
+    bl_idname = "bob_blender_tools.shaders_variant_accept"
+    bl_label = "Accept"
+    bl_description = ("Move the staged variant into the generated asset pack under a unique name "
+                      "and sample it into this layer. Structural: it rewires the material's "
+                      "sampler nodes")
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(default=-1)
+
+    def execute(self, context):
+        from ..core import comfy
+
+        scn = context.scene.bbt_shaders
+        pack = _generated_pack()
+        staged = _staged_pick(scn)
+        if not pack or not staged:
+            self.report({"ERROR"}, "Nothing staged to accept")
+            return {"CANCELLED"}
+        try:
+            name = comfy.accept_variant(staged, pack)
+        except (comfy.ComfyError, OSError) as exc:
+            self.report({"ERROR"}, f"Accept failed: {exc}")
+            return {"CANCELLED"}
+        global _variant_preview_key
+        _variant_preview_key = None
+        # _texture_set_items rescans the packs on every call, so the accepted set is in the enum
+        # by the time this assignment is validated.
+        scn.texture_set = name
+        label, err = _apply_texture_set(context, self.index, name)
+        if err:
+            self.report({"WARNING"}, f"Accepted {name} but could not apply it: {err}")
+            return {"FINISHED"}
+        self.report({"INFO"}, f"{label} (accepted as {name})")
+        return {"FINISHED"}
+
+
+class BBT_OT_shaders_variant_reject(Operator):
+    bl_idname = "bob_blender_tools.shaders_variant_reject"
+    bl_label = "Reject"
+    bl_description = ("Delete the staged variant. Reject is a delete, so staging holds exactly "
+                      "the results still waiting for a decision")
+    bl_options = {"REGISTER"}
+
+    all_of_them: bpy.props.BoolProperty(default=False)
+
+    def execute(self, context):
+        from ..core import comfy
+
+        scn = context.scene.bbt_shaders
+        targets = _staged_variants() if self.all_of_them else [_staged_pick(scn)]
+        gone = sum(1 for t in targets if t and comfy.reject_variant(t))
+        global _variant_preview_key
+        _variant_preview_key = None
+        scn.gen_staged = _staged_variant_items(None, None)[0][0]
+        self.report({"INFO"}, f"Rejected {gone} variant(s)")
+        return {"FINISHED"}
+
+
+class BBT_OT_shaders_variant_upres(Operator):
+    bl_idname = "bob_blender_tools.shaders_variant_upres"
+    bl_label = "Upres 2x"
+    bl_description = ("Upscale the staged variant to 2K through ComfyUI and re-derive its maps, "
+                      "wrap-padded so the upscale does not put the seam back. Runs in the "
+                      "background; the variant stays staged")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from ..core import comfy
+
+        staged = _staged_pick(context.scene.bbt_shaders)
+        if not staged:
+            self.report({"ERROR"}, "Nothing staged to upscale")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+
+        def work(job):
+            job.report("upscaling")
+            return comfy.upres_variant(staged, scale=2.0, on_queued=job.note_prompt_id,
+                                       on_progress=job.report)
+
+        def landed(job):
+            global _variant_preview_key
+            _variant_preview_key = None
+            info = job.result or {}
+            _COMFY_STATE.update(ok=True,
+                                detail=f"upres to {info.get('size', '?')}, "
+                                       f"seam {info.get('seam', {}).get('ratio', 0):.2f}")
+
+        _submit(f"upres: {os.path.basename(staged)}", work, landed)
+        self.report({"INFO"}, "Upscaling in the background")
+        return {"FINISHED"}
+
+
+class BBT_OT_shaders_texture_triplanar(Operator):
+    bl_idname = "bob_blender_tools.shaders_texture_triplanar"
+    bl_label = "Triplanar"
+    bl_description = ("Toggle box (triplanar) projection for this material's texture sets. Off "
+                      "is a top-down planar projection on terrain, and the mesh's own UVs on a "
+                      "surface. Structural: projection is a property of each image node")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        mats = _materials()
+        mat = _editing_material(context)
+        kind = mats.master_type(mat)
+        count = mats.MAX_TERRAIN_LAYERS if kind == "terrain" else 1
+        _sets, box = mats.stored_sets(mat, count)
+        if kind == "terrain":
+            obj = _active_object(context)
+            if obj is None:
+                self.report({"ERROR"}, "No active mesh")
+                return {"CANCELLED"}
+            shading.set_terrain_triplanar(obj, mat, not box)
+        elif kind == "surface":
+            shading.set_surface_triplanar(mat, not box)
+        else:
+            self.report({"ERROR"}, "Active material is not a surface or terrain BobShader")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Triplanar {'off' if box else 'on'}")
+        return {"FINISHED"}
+
+
 class BBT_OT_shaders_biome_terrain(Operator):
     bl_idname = "bob_blender_tools.shaders_biome_terrain"
     bl_label = "Biome Terrain"
@@ -626,6 +1011,97 @@ def _draw_layer_inputs(layout, node, i, names):
         sock = node.inputs.get(f"L{i} {nm}")
         if sock is not None:
             col.prop(sock, "default_value", text=nm)
+
+
+# The sampler's live knobs, on the S_TexSet instance for that slot. Tiling lives on the Mapping
+# node and the bump strength on the shared Bump, so both are drawn separately below.
+_TEXSET_KNOBS = ("AO Amount", "Roughness Amount", "Detail Height")
+
+
+def _draw_texture_set(layout, context, mat, index=None):
+    """The texture-set block (S3), for a terrain layer slot (`index`) or a surface material
+    (index None). A staged picker plus Apply, because assigning a set rewires the graph rather
+    than setting a value (P3/P4, the staged_preset_row idiom), then the sampler's live knobs once
+    a set is actually on. One implementation for both masters: they differ only in how many slots
+    they have."""
+    mats = _materials()
+    scn = context.scene.bbt_shaders
+    terrain = index is not None
+    key = f"L{index}" if terrain else "S"
+    sets, box = mats.stored_sets(mat, mats.MAX_TERRAIN_LAYERS if terrain else 1)
+    current = sets[index if terrain else 0]
+
+    layout.label(text=f"Texture Set: {current or '(none)'}", icon="TEXTURE")
+    op = helpers.staged_preset_row(layout, scn, "texture_set",
+                                   "bob_blender_tools.shaders_texture_set", text="Set",
+                                   apply_text="Apply Texture Set",
+                                   note="rebuilds: this material's sampler nodes")
+    op.index = index if terrain else -1
+
+    # Generate a set instead of picking one (docs/COMFYUI.md, track A). Same slot, same
+    # assignment path, so a generated set is a texture set like any other from here on.
+    slot = index if terrain else -1
+    gen = layout.column(align=True)
+    gen.prop(scn, "gen_prompt", text="", icon="SHADERFX")
+    gen.prop(scn, "gen_reference", text="", icon="IMAGE_REFERENCE")
+    row = gen.row(align=True)
+    row.prop(scn, "gen_seed", text="Seed")
+    row.prop(scn, "gen_variants", text="x")
+    running = _jobs().active()
+    if running:
+        job = running[0]
+        bar = gen.row(align=True)
+        bar.label(text=f"{job.label} -- {job.progress or job.state} ({job.seconds:.0f}s)",
+                  icon="SORTTIME")
+        bar.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
+    else:
+        gen.operator("bob_blender_tools.shaders_generate_set", text="Generate",
+                     icon=helpers.STRUCTURAL_ICON).index = slot
+
+    # Staged variants: pick one, look at it, Accept or Reject. Nothing reaches the pack (and so
+    # nothing reaches the picker above) until Accept moves it there (R9).
+    staged = _staged_variants()
+    if staged:
+        box = layout.box()
+        box.label(text=f"Staged variants: {len(staged)}", icon="FILE_HIDDEN")
+        icon_id = _variant_preview(_staged_pick(scn))
+        if icon_id:
+            box.template_icon(icon_value=icon_id, scale=6)
+        box.prop(scn, "gen_staged", text="")
+        row = box.row(align=True)
+        row.operator("bob_blender_tools.shaders_variant_accept", text="Accept",
+                     icon="CHECKMARK").index = slot
+        row.operator("bob_blender_tools.shaders_variant_reject", text="Reject",
+                     icon="TRASH").all_of_them = False
+        row = box.row(align=True)
+        row.operator("bob_blender_tools.shaders_variant_upres", icon="FULLSCREEN_ENTER")
+        row.operator("bob_blender_tools.shaders_variant_reject", text="Reject All",
+                     icon="TRASH").all_of_them = True
+
+    cap = gen.row()
+    cap.enabled = False
+    cap.label(text=f"ComfyUI: {_COMFY_STATE['detail']}"
+              if _COMFY_STATE["ok"] is not False else "ComfyUI: not connected",
+              icon="INFO" if _COMFY_STATE["ok"] is not False else "ERROR")
+
+    grp = mat.node_tree.nodes.get(mats.TEXSET_NODE_PREFIX + key)
+    if grp is None:
+        return
+    col = layout.column(align=True)
+    col.operator("bob_blender_tools.shaders_texture_triplanar", depress=box,
+                 icon="MOD_UVPROJECT")
+    mapping = mat.node_tree.nodes.get(mats.TEXSET_NODE_PREFIX + key + " Mapping")
+    if mapping is not None:
+        col.prop(mapping.inputs["Scale"], "default_value", text="Tiling")
+    for nm in _TEXSET_KNOBS:
+        sock = grp.inputs.get(nm)
+        if sock is not None:
+            col.prop(sock, "default_value", text=nm)
+    # One bump per material (terrain blends every layer's detail height before it), so it is
+    # drawn with the slot that is on screen rather than given a row of its own elsewhere.
+    bump = mat.node_tree.nodes.get(mats.TEXSET_NODE_PREFIX + "Bump")
+    if bump is not None:
+        col.prop(bump.inputs["Strength"], "default_value", text="Bump Strength")
 
 
 # Per-row slot status icons and labels by detected master type.
@@ -793,6 +1269,7 @@ class BBT_PT_shaders_surface(Panel):
             cap.enabled = False
             cap.label(text="scattered asset: above tints/modulates its look")
             return
+        _draw_texture_set(layout, context, mat)
         # Macro break-up modulates the base albedo off a low-frequency world noise, so the solid
         # colour surface does not read as one flat sheet. Amount 0 = off.
         layout.label(text="Macro break-up", icon="MOD_NOISE")
@@ -928,6 +1405,7 @@ class BBT_PT_shaders_terrain(Panel):
         helpers.preset_row(layout, "bob_blender_tools.shaders_terrain_layer_preset",
                               text="Layer Preset")
         _draw_layer_inputs(layout, node, i, _LAYER_SURFACE)
+        _draw_texture_set(layout, context, mat, index=i)
 
 
 class BBT_PT_shaders_terrain_masks(Panel):
@@ -1031,6 +1509,12 @@ CLASSES = (
     BBT_OT_shaders_terrain_toggle,
     BBT_OT_shaders_terrain_layer_preset,
     BBT_OT_shaders_terrain_stack_preset,
+    BBT_OT_shaders_texture_set,
+    BBT_OT_shaders_generate_set,
+    BBT_OT_shaders_variant_accept,
+    BBT_OT_shaders_variant_reject,
+    BBT_OT_shaders_variant_upres,
+    BBT_OT_shaders_texture_triplanar,
     BBT_OT_shaders_biome_terrain,
     BBT_OT_shaders_snow_shell_add,
     BBT_OT_shaders_snow_shell_remove,
@@ -1046,9 +1530,10 @@ CLASSES = (
 
 
 def register():
-    global _env, _env_owned
+    global _env, _env_owned, _variant_previews
     from ..core import env
     _env = env
+    _variant_previews = bpy.utils.previews.new()
     # Firmament owns the shared world; register it here only if running standalone (e.g. a
     # headless verify), and record ownership so unregister only removes what it created.
     if getattr(bpy.types.Scene, "bbt_env", None) is None:
@@ -1062,7 +1547,10 @@ def register():
 
 
 def unregister():
-    global _env_owned
+    global _env_owned, _variant_previews, _variant_preview_key
+    if _variant_previews is not None:
+        bpy.utils.previews.remove(_variant_previews)
+        _variant_previews, _variant_preview_key = None, None
     world.unregister_applier(_apply_world)
     del bpy.types.Scene.bbt_shaders
     for cls in reversed(CLASSES):

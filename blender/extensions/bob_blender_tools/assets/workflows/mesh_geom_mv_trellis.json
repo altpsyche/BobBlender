@@ -1,0 +1,229 @@
+{
+ "_bob": {
+  "id": "mesh_geom_mv_trellis",
+  "plan": "W6t, docs/COMFYUI.md family 2 (track C). The TRELLIS.2 side of the multi-view A/B",
+  "purpose": "Four views of a subject to a UV-unwrapped mesh through Trellis2MultiViewImageToShape, so the multi-view comparison is between two real implementations rather than between Hunyuan and an assumption.",
+  "derived_from": "mesh_geom_trellis.json (W5t), with Trellis2ImageToShape and its Trellis2GetConditioning replaced by Trellis2MultiViewImageToShape, which takes the images and masks directly",
+  "deviations_from_source": [
+   "Trellis2GetConditioning is GONE. Trellis2MultiViewImageToShape takes image and mask pairs itself, so there is no separate conditioning stage to bind.",
+   "Four LoadImage and four InvertMask nodes instead of one pair. The InvertMask is load-bearing for the same reason it is in W5t: LoadImage returns mask = 1 - alpha, so the mask reaching a Trellis node has to be inverted back into a foreground mask.",
+   "front_axis stays 'z' and background_color 'black', the node's own defaults, matching what W5t's conditioning does.",
+   "Trellis2ProcessMesh, Trellis2ExportTrimesh and Preview3D are W5t's, unchanged, so the two graphs' outputs are comparable file for file."
+  ],
+  "requires_nodes": [
+   "LoadTrellis2Models",
+   "Trellis2MultiViewImageToShape",
+   "Trellis2ProcessMesh",
+   "Trellis2ExportTrimesh"
+  ],
+  "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack",
+  "runtime_inputs": [
+   "BOB_VIEW_FRONT.image",
+   "BOB_VIEW_LEFT.image",
+   "BOB_VIEW_BACK.image",
+   "BOB_VIEW_RIGHT.image"
+  ],
+  "notes": "Same four cardinal views, same order, and the same alpha contract as W6, so one set of Blender renders drives both graphs and the comparison is of models rather than of framing."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "LoadTrellis2Models",
+   "inputs": {
+    "resolution": "1024",
+    "precision": "auto",
+    "attn_backend": "auto"
+   },
+   "_meta": {
+    "title": "BOB_MODEL"
+   }
+  },
+  "2": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_FRONT"
+   }
+  },
+  "3": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_LEFT"
+   }
+  },
+  "4": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_BACK"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_RIGHT"
+   }
+  },
+  "6": {
+   "class_type": "InvertMask",
+   "inputs": {
+    "mask": [
+     "2",
+     1
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ALPHA_FRONT"
+   }
+  },
+  "7": {
+   "class_type": "InvertMask",
+   "inputs": {
+    "mask": [
+     "3",
+     1
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ALPHA_LEFT"
+   }
+  },
+  "8": {
+   "class_type": "InvertMask",
+   "inputs": {
+    "mask": [
+     "4",
+     1
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ALPHA_BACK"
+   }
+  },
+  "9": {
+   "class_type": "InvertMask",
+   "inputs": {
+    "mask": [
+     "5",
+     1
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ALPHA_RIGHT"
+   }
+  },
+  "10": {
+   "class_type": "Trellis2MultiViewImageToShape",
+   "inputs": {
+    "model_config": [
+     "1",
+     0
+    ],
+    "front_image": [
+     "2",
+     0
+    ],
+    "front_mask": [
+     "6",
+     0
+    ],
+    "left_image": [
+     "3",
+     0
+    ],
+    "left_mask": [
+     "7",
+     0
+    ],
+    "back_image": [
+     "4",
+     0
+    ],
+    "back_mask": [
+     "8",
+     0
+    ],
+    "right_image": [
+     "5",
+     0
+    ],
+    "right_mask": [
+     "9",
+     0
+    ],
+    "seed": 0,
+    "ss_guidance_strength": 6.5,
+    "ss_guidance_rescale": 0.05,
+    "ss_sampling_steps": 12,
+    "shape_guidance_strength": 6.5,
+    "shape_guidance_rescale": 0.05,
+    "shape_sampling_steps": 12,
+    "max_tokens": 49152,
+    "front_axis": "z",
+    "blend_temperature": 2.0,
+    "background_color": "black"
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "11": {
+   "class_type": "Trellis2ProcessMesh",
+   "inputs": {
+    "trimesh": [
+     "10",
+     0
+    ],
+    "remesh": "on",
+    "remesh.remesh_band": 1.0,
+    "remesh.remove_inner_faces": true,
+    "target_face_count": 500000,
+    "floater_threshold": 0.001,
+    "weld_vertices": true,
+    "weld_digits": 4,
+    "chart_cone_angle": 90.0,
+    "chart_refine_iterations": 1,
+    "chart_global_iterations": 1,
+    "chart_smooth_strength": 1
+   },
+   "_meta": {
+    "title": "BOB_PROCESS"
+   }
+  },
+  "12": {
+   "class_type": "Trellis2ExportTrimesh",
+   "inputs": {
+    "trimesh": [
+     "11",
+     0
+    ],
+    "filename_prefix": "bob_mesh",
+    "file_format": "glb"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  },
+  "13": {
+   "class_type": "Preview3D",
+   "inputs": {
+    "model_file": [
+     "12",
+     0
+    ]
+   },
+   "_meta": {
+    "title": "BOB_VIEW"
+   }
+  }
+ }
+}

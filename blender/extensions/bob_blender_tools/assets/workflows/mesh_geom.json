@@ -1,0 +1,128 @@
+{
+  "_bob": {
+    "id": "mesh_geom",
+    "plan": "W5, docs/COMFYUI.md track C, the Hunyuan fallback and zero-submodule smoke test",
+    "purpose": "Single-view image to a watertight mesh with no custom pack involved, so the Bob-side plumbing can be proved without ComfyUI-TRELLIS2.",
+    "derived_from": "comfyui_workflow_templates_json/templates/3d_hunyuan3d-v2.1.json, converted by tools/scripts/comfy_ui_to_api.py",
+    "deviations_from_source": [
+      "BOB_* titles added on the templated nodes. BOB_3D_MODEL is meaningful HERE and only here: ImageOnlyCheckpointLoader does name a checkpoint file, where LoadTrellis2Models does not.",
+      "SaveGLB's filename_prefix moved from mesh/ComfyUI to bob_mesh, so a Bob run is identifiable in the output folder and Bob knows the stem it is looking for.",
+      "Nothing else. Latent 4096, 30 steps, cfg 5, euler + normal are the template's own 2.1 values; swap BOB_3D_MODEL to hunyuan3d-dit-v2_fp16 with latent 3072, 20 steps and cfg 8 for the faster 2.0 variant."
+    ],
+    "requires_nodes": ["ImageOnlyCheckpointLoader", "Hunyuan3Dv2Conditioning", "VAEDecodeHunyuan3D", "VoxelToMesh", "SaveGLB"],
+    "requires_pack": "none, all four are ComfyUI core",
+    "runtime_inputs": ["BOB_IMAGE.image"],
+    "notes": "Watertight SDF-voxel output, so this graph structurally cannot make a leaf (G0.5). It is the zero-install smoke test and the hard-surface fallback, not the primary route. SaveGLB is a core output node and reports its own filename, so this graph needs no Preview3D."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "ImageOnlyCheckpointLoader",
+      "inputs": {
+        "ckpt_name": "hunyuan_3d_v2.1.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_3D_MODEL"
+      }
+    },
+    "2": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "13": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": ["1", 1],
+        "image": ["2", 0],
+        "crop": "center"
+      },
+      "_meta": {
+        "title": "BOB_VISION"
+      }
+    },
+    "6": {
+      "class_type": "Hunyuan3Dv2Conditioning",
+      "inputs": {
+        "clip_vision_output": ["13", 0]
+      },
+      "_meta": {
+        "title": "BOB_COND"
+      }
+    },
+    "3": {
+      "class_type": "ModelSamplingAuraFlow",
+      "inputs": {
+        "model": ["1", 0],
+        "shift": 1
+      },
+      "_meta": {
+        "title": "BOB_SHIFT"
+      }
+    },
+    "4": {
+      "class_type": "EmptyLatentHunyuan3Dv2",
+      "inputs": {
+        "resolution": 4096,
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "BOB_LATENT"
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["3", 0],
+        "positive": ["6", 0],
+        "negative": ["6", 1],
+        "latent_image": ["4", 0],
+        "seed": 0,
+        "steps": 30,
+        "cfg": 5.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "8": {
+      "class_type": "VAEDecodeHunyuan3D",
+      "inputs": {
+        "samples": ["7", 0],
+        "vae": ["1", 2],
+        "num_chunks": 8000,
+        "octree_resolution": 256
+      },
+      "_meta": {
+        "title": "BOB_DECODE"
+      }
+    },
+    "9": {
+      "class_type": "VoxelToMesh",
+      "inputs": {
+        "voxel": ["8", 0],
+        "algorithm": "surface net",
+        "threshold": 0.6
+      },
+      "_meta": {
+        "title": "BOB_VOXEL"
+      }
+    },
+    "10": {
+      "class_type": "SaveGLB",
+      "inputs": {
+        "mesh": ["9", 0],
+        "filename_prefix": "bob_mesh"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

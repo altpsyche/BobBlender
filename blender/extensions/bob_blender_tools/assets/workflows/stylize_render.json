@@ -1,0 +1,289 @@
+{
+ "_bob": {
+  "id": "stylize_render",
+  "plan": "W12, docs/COMFYUI.md track D (look-dev stylise), and the graph W9 grows out of",
+  "purpose": "A Bob render restyled under Blender's TRUE depth and normal passes, so the silhouette and the surface orientation are held by measured geometry rather than by an estimator's guess.",
+  "derived_from": "tex_tileable_ref.json (W2), with the tiling pair removed, the reference IPAdapter removed, and a two-stage SDXL ControlNet chain added; the ControlNet wiring follows ComfyUI's own ControlNetApplyAdvanced convention (positive and negative through the same node, chained)",
+  "deviations_from_source": [
+   "SeamlessTile and MakeCircularVAE dropped. A render is not a tile, so circular padding would only wrap a frame that has no business wrapping.",
+   "IPAdapterAdvanced dropped. W12 restyles the render it is given; the palette lock is W9's problem, where several views have to agree.",
+   "Two ControlNetApplyAdvanced nodes in series, depth then normal. Chained rather than merged because ComfyUI has no multi-hint apply node: each pass gets its own strength, which is what makes the depth-strong / normal-soft split below a value rather than a graph edit.",
+   "The normal ControlNet is the UNION model plus SetUnionControlNetType(normal), because there is no standalone SDXL normal ControlNet on disk and the promax union carries the normal head. The depth ControlNet is the dedicated depth model.",
+   "LoraLoader added at strength 0 and declared a runtime input. Track D is the one route with real LoRA style control (R19/R20), and core.comfy.drop_node removes the node entirely when no LoRA is asked for, so a machine with no LoRAs installed never fails the validator on a placeholder filename.",
+   "ImageScale(BOB_SIZE) kept on the render, so the latent is a multiple of 8 whatever the scene resolution is. The depth and normal hints are NOT scaled: ComfyUI resizes a ControlNet hint to the latent itself."
+  ],
+  "requires_nodes": [
+   "ControlNetLoader",
+   "ControlNetApplyAdvanced",
+   "SetUnionControlNetType"
+  ],
+  "requires_pack": "none, all three are ComfyUI core",
+  "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+  "runtime_inputs": [
+   "BOB_IMAGE.image",
+   "BOB_DEPTH.image",
+   "BOB_NORMAL.image",
+   "BOB_LORA.lora_name"
+  ],
+  "notes": "The three images are Bob renders uploaded just before the queue, so all three are runtime inputs. Depth is near-white / far-black over a Bob-computed near and far; the normal is camera space, encoded 0.5 + 0.5n, with the channel convention core.gen_views picks to agree with NormalBAE, which is what the union normal head was trained on. Denoise 0.55, depth strength 0.85 and normal strength 0.45 are the shipped defaults and every one of them is a binding point."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "CheckpointLoaderSimple",
+   "inputs": {
+    "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CKPT"
+   }
+  },
+  "2": {
+   "class_type": "LoraLoader",
+   "inputs": {
+    "model": [
+     "1",
+     0
+    ],
+    "clip": [
+     "1",
+     1
+    ],
+    "lora_name": "bob_placeholder.safetensors",
+    "strength_model": 0.0,
+    "strength_clip": 0.0
+   },
+   "_meta": {
+    "title": "BOB_LORA"
+   }
+  },
+  "3": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "concept art of a forest clearing"
+   },
+   "_meta": {
+    "title": "BOB_PROMPT"
+   }
+  },
+  "4": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "blurry, low detail, text, watermark, signature, frame, border, distorted proportions, extra objects, changed layout"
+   },
+   "_meta": {
+    "title": "BOB_NEG"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_IMAGE"
+   }
+  },
+  "6": {
+   "class_type": "ImageScale",
+   "inputs": {
+    "image": [
+     "5",
+     0
+    ],
+    "upscale_method": "lanczos",
+    "width": 1024,
+    "height": 1024,
+    "crop": "disabled"
+   },
+   "_meta": {
+    "title": "BOB_SIZE"
+   }
+  },
+  "7": {
+   "class_type": "VAEEncode",
+   "inputs": {
+    "pixels": [
+     "6",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ENCODE"
+   }
+  },
+  "8": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_DEPTH"
+   }
+  },
+  "9": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_NORMAL"
+   }
+  },
+  "10": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-depth-sdxl-1.0/diffusion_pytorch_model.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_DEPTH"
+   }
+  },
+  "11": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-union-sdxl-1.0/diffusion_pytorch_model_promax.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_NORMAL"
+   }
+  },
+  "12": {
+   "class_type": "SetUnionControlNetType",
+   "inputs": {
+    "control_net": [
+     "11",
+     0
+    ],
+    "type": "normal"
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_TYPE"
+   }
+  },
+  "13": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "3",
+     0
+    ],
+    "negative": [
+     "4",
+     0
+    ],
+    "control_net": [
+     "10",
+     0
+    ],
+    "image": [
+     "8",
+     0
+    ],
+    "strength": 0.85,
+    "start_percent": 0.0,
+    "end_percent": 0.9
+   },
+   "_meta": {
+    "title": "BOB_DEPTH_APPLY"
+   }
+  },
+  "14": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "13",
+     0
+    ],
+    "negative": [
+     "13",
+     1
+    ],
+    "control_net": [
+     "12",
+     0
+    ],
+    "image": [
+     "9",
+     0
+    ],
+    "strength": 0.45,
+    "start_percent": 0.0,
+    "end_percent": 0.7
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_APPLY"
+   }
+  },
+  "15": {
+   "class_type": "KSampler",
+   "inputs": {
+    "model": [
+     "2",
+     0
+    ],
+    "positive": [
+     "14",
+     0
+    ],
+    "negative": [
+     "14",
+     1
+    ],
+    "latent_image": [
+     "7",
+     0
+    ],
+    "seed": 0,
+    "steps": 25,
+    "cfg": 6.0,
+    "sampler_name": "dpmpp_2m",
+    "scheduler": "karras",
+    "denoise": 0.55
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "16": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "15",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_DECODE"
+   }
+  },
+  "17": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "images": [
+     "16",
+     0
+    ],
+    "filename_prefix": "bob/stylize_render"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  }
+ }
+}

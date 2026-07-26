@@ -1,0 +1,346 @@
+{
+ "_bob": {
+  "id": "mesh_paint_views",
+  "plan": "W9, docs/COMFYUI.md family 3 (track B), the style-control paint route",
+  "purpose": "One turntable view of an unwrapped mesh restyled under its own TRUE depth and normal passes, with the front view locked in as an IPAdapter reference so the views agree on palette. Blender renders the views and projection-bakes the results; this graph is the per-view restyle.",
+  "derived_from": "stylize_render.json (W12), with the IPAdapter trio from tex_tileable_ref.json (W2) added back for cross-view palette agreement",
+  "deviations_from_source": [
+   "IPAdapterModelLoader + CLIPVisionLoader + IPAdapterAdvanced patch the model between the LoRA and the sampler, taking BOB_REF as the reference. W12 has no reference because it restyles one frame; W9 runs N times and every run has to land in the same palette, which is the consistency loss R20 names.",
+   "weight_type is 'style transfer' at weight 0.75: the reference carries the look, not the layout, and the layout is already held by the two ControlNets.",
+   "Denoise defaults to 0.40 rather than W12's 0.55, the middle of the 0.3 to 0.45 band R20 specifies: the real render has to keep dominating or the views drift apart faster than the projection can average them out.",
+   "Normal ControlNet strength raised from 0.45 to 0.60. On a single frame the normal pass mostly adds surface plausibility; across a turntable it is what stops the same texel being lit differently per view."
+  ],
+  "requires_nodes": [
+   "ControlNetApplyAdvanced",
+   "SetUnionControlNetType",
+   "IPAdapterAdvanced",
+   "IPAdapterModelLoader"
+  ],
+  "requires_pack": "ComfyUI_IPAdapter_plus (the ControlNet nodes are core)",
+  "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+  "runtime_inputs": [
+   "BOB_IMAGE.image",
+   "BOB_DEPTH.image",
+   "BOB_NORMAL.image",
+   "BOB_REF.image",
+   "BOB_LORA.lora_name"
+  ],
+  "notes": "Bob runs this once per view in ONE worker job. The front view goes first with the front render as its own reference; every later view takes the STYLISED front as the reference, which is what makes the palette a decision made once. Blender then projects each result back through the same camera it rendered from and blends by the camera-space normal, so a texel is written mostly by the view that saw it most face-on."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "CheckpointLoaderSimple",
+   "inputs": {
+    "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CKPT"
+   }
+  },
+  "2": {
+   "class_type": "LoraLoader",
+   "inputs": {
+    "model": [
+     "1",
+     0
+    ],
+    "clip": [
+     "1",
+     1
+    ],
+    "lora_name": "bob_placeholder.safetensors",
+    "strength_model": 0.0,
+    "strength_clip": 0.0
+   },
+   "_meta": {
+    "title": "BOB_LORA"
+   }
+  },
+  "3": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "a mossy granite boulder, painted concept art"
+   },
+   "_meta": {
+    "title": "BOB_PROMPT"
+   }
+  },
+  "4": {
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "2",
+     1
+    ],
+    "text": "blurry, low detail, text, watermark, signature, frame, border, flat lighting, cast shadow, another object, background scenery"
+   },
+   "_meta": {
+    "title": "BOB_NEG"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_IMAGE"
+   }
+  },
+  "6": {
+   "class_type": "ImageScale",
+   "inputs": {
+    "image": [
+     "5",
+     0
+    ],
+    "upscale_method": "lanczos",
+    "width": 1024,
+    "height": 1024,
+    "crop": "disabled"
+   },
+   "_meta": {
+    "title": "BOB_SIZE"
+   }
+  },
+  "7": {
+   "class_type": "VAEEncode",
+   "inputs": {
+    "pixels": [
+     "6",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_ENCODE"
+   }
+  },
+  "8": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_DEPTH"
+   }
+  },
+  "9": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_NORMAL"
+   }
+  },
+  "10": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-depth-sdxl-1.0/diffusion_pytorch_model.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_DEPTH"
+   }
+  },
+  "11": {
+   "class_type": "ControlNetLoader",
+   "inputs": {
+    "control_net_name": "SDXL/controlnet-union-sdxl-1.0/diffusion_pytorch_model_promax.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CN_NORMAL"
+   }
+  },
+  "12": {
+   "class_type": "SetUnionControlNetType",
+   "inputs": {
+    "control_net": [
+     "11",
+     0
+    ],
+    "type": "normal"
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_TYPE"
+   }
+  },
+  "13": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "3",
+     0
+    ],
+    "negative": [
+     "4",
+     0
+    ],
+    "control_net": [
+     "10",
+     0
+    ],
+    "image": [
+     "8",
+     0
+    ],
+    "strength": 0.85,
+    "start_percent": 0.0,
+    "end_percent": 0.9
+   },
+   "_meta": {
+    "title": "BOB_DEPTH_APPLY"
+   }
+  },
+  "14": {
+   "class_type": "ControlNetApplyAdvanced",
+   "inputs": {
+    "positive": [
+     "13",
+     0
+    ],
+    "negative": [
+     "13",
+     1
+    ],
+    "control_net": [
+     "12",
+     0
+    ],
+    "image": [
+     "9",
+     0
+    ],
+    "strength": 0.6,
+    "start_percent": 0.0,
+    "end_percent": 0.8
+   },
+   "_meta": {
+    "title": "BOB_NORMAL_APPLY"
+   }
+  },
+  "18": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_REF"
+   }
+  },
+  "19": {
+   "class_type": "IPAdapterModelLoader",
+   "inputs": {
+    "ipadapter_file": "ip-adapter_sdxl_vit-h.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_IPADAPTER_MODEL"
+   }
+  },
+  "20": {
+   "class_type": "CLIPVisionLoader",
+   "inputs": {
+    "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_CLIP_VISION"
+   }
+  },
+  "21": {
+   "class_type": "IPAdapterAdvanced",
+   "inputs": {
+    "model": [
+     "2",
+     0
+    ],
+    "ipadapter": [
+     "19",
+     0
+    ],
+    "image": [
+     "18",
+     0
+    ],
+    "clip_vision": [
+     "20",
+     0
+    ],
+    "weight": 0.75,
+    "weight_type": "style transfer",
+    "combine_embeds": "concat",
+    "start_at": 0.0,
+    "end_at": 1.0,
+    "embeds_scaling": "V only"
+   },
+   "_meta": {
+    "title": "BOB_IPADAPTER"
+   }
+  },
+  "15": {
+   "class_type": "KSampler",
+   "inputs": {
+    "model": [
+     "21",
+     0
+    ],
+    "positive": [
+     "14",
+     0
+    ],
+    "negative": [
+     "14",
+     1
+    ],
+    "latent_image": [
+     "7",
+     0
+    ],
+    "seed": 0,
+    "steps": 25,
+    "cfg": 6.0,
+    "sampler_name": "dpmpp_2m",
+    "scheduler": "karras",
+    "denoise": 0.4
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "16": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "15",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ]
+   },
+   "_meta": {
+    "title": "BOB_DECODE"
+   }
+  },
+  "17": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "images": [
+     "16",
+     0
+    ],
+    "filename_prefix": "bob/mesh_paint_views"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  }
+ }
+}

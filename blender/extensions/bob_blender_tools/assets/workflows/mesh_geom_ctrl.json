@@ -1,0 +1,105 @@
+{
+  "_bob": {
+    "id": "mesh_geom_ctrl",
+    "plan": "W7, docs/COMFYUI.md track C, pipeline step 2 (the block-out control route)",
+    "purpose": "A block-out proxy plus a reference image to a mesh that keeps the block-out's silhouette and footprint, so a generated asset drops into a layout already composed.",
+    "derived_from": "ComfyUI-Hy3D-Omni ships no workflow JSON, so this is built from its node schemas plus Hunyuan3D-Omni/inference.py:infer_point, whose defaults it follows (50 steps, guidance 4.5, normalize_scale 0.98, mc_level 0, box_v 1.01).",
+    "deviations_from_source": [
+      "sample_point_count is 8192 rather than the node's own 0. Zero means 'use the control mesh's raw VERTICES', which is right for the scanned point clouds upstream conditions on and wrong for a Bob block-out proxy: a six-sided cone has thirteen vertices. Bob names a budget and the node area-samples the surface.",
+      "octree_resolution is 256 rather than 512. Measured at G4c: 512 returns roughly 700,000 faces and 256 roughly 200,000, and Bob's next step is a 4,000-face budget either way, so the extra resolution is decoded and thrown away.",
+      "Trellis2LoadMesh reads the control, because ComfyUI-Hy3D-Omni provides no mesh loader of its own and its control_mesh socket is TRELLIS.2's TRIMESH type. Trellis2ExportTrimesh plus Preview3D is the same tail W5t uses, for the same reason: the export node reports its path only as a STRING, and Preview3D is what turns that into an output entry Bob can fetch.",
+      "BOB_OMNI.repo_or_path ships as the HuggingFace repo id so the graph is portable, and Bob rebinds it to <comfy>/models/hunyuan3d-omni when it knows the ComfyUI folder (R6: a shipped default cannot know what is on this machine)."
+    ],
+    "requires_nodes": [
+      "Hy3DOmniLoadPipeline",
+      "Hy3DOmniPointGenerate",
+      "Trellis2LoadMesh",
+      "Trellis2ExportTrimesh"
+    ],
+    "requires_pack": "ComfyUI-Hy3D-Omni (Rizzlord, NO license file, last push 2025-10-03) plus ComfyUI-TRELLIS2 for the mesh IO",
+    "requires_models": "tencent/Hunyuan3D-Omni, 13.5 GB, and it needs tools/scripts/comfy_omni_fix.py run once or the control signal is silently random",
+    "runtime_inputs": [
+      "BOB_IMAGE.image",
+      "BOB_CONTROL.mesh_path",
+      "BOB_OMNI.repo_or_path"
+    ],
+    "notes": "Two things are silent failures rather than errors. The control mesh MUST be unit-normalised on the way out, exactly as track B's texture route must be: Omni voxelises in unit-cube space, and an unseen control returns a plausible unconditioned generation with no warning anywhere (core.gen_assets.export_control is that round trip). And the result comes back turned -90 degrees about X, because Trellis2ExportTrimesh converts internal Z-up to Y-up on glb output and Trellis2LoadMesh converts nothing on the way in; core.gen_assets.CONTROL_RETURN_TURN undoes it. Omni takes NO text prompt, so the artist's words reach this graph only through the W4 reference image."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "2": {
+      "class_type": "Trellis2LoadMesh",
+      "inputs": {
+        "mesh_path": ""
+      },
+      "_meta": {
+        "title": "BOB_CONTROL"
+      }
+    },
+    "3": {
+      "class_type": "Hy3DOmniLoadPipeline",
+      "inputs": {
+        "repo_or_path": "tencent/Hunyuan3D-Omni",
+        "variant": "default",
+        "torch_dtype": "auto",
+        "resume_download": true,
+        "force_reload": false
+      },
+      "_meta": {
+        "title": "BOB_OMNI"
+      }
+    },
+    "4": {
+      "class_type": "Hy3DOmniPointGenerate",
+      "inputs": {
+        "pipeline": ["3", 0],
+        "image": ["1", 0],
+        "control_mesh": ["2", 0],
+        "num_inference_steps": 50,
+        "guidance_scale": 4.5,
+        "normalize_scale": 0.98,
+        "sample_point_count": 8192,
+        "octree_resolution": 256,
+        "mc_level": 0.0,
+        "box_v": 1.01,
+        "num_chunks": 8000,
+        "mc_mode": "mc",
+        "seed": 0,
+        "fast_decode": false,
+        "remove_floaters": true,
+        "remove_degenerate_faces": true
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "5": {
+      "class_type": "Trellis2ExportTrimesh",
+      "inputs": {
+        "trimesh": ["4", 0],
+        "filename_prefix": "bob_mesh_ctrl",
+        "file_format": "glb"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    },
+    "6": {
+      "class_type": "Preview3D",
+      "inputs": {
+        "model_file": ["5", 0]
+      },
+      "_meta": {
+        "title": "BOB_VIEW"
+      }
+    }
+  }
+}

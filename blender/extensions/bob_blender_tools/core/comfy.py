@@ -1,0 +1,1694 @@
+"""Stdlib-only ComfyUI client, preflight, and the texture-set recipe that uses them.
+
+Two Python worlds share this file (docs/COMFYUI.md, Bob-side constraint 1): `bpy` runs on
+Blender's bundled interpreter, which has no `httpx`, and the tools venv has its own. So the client
+is `urllib.request` and `json` only and lives HERE, inside the extension, as the single source --
+the same shape `core/heightfields` already uses. Nothing in this module imports `bpy`, so the
+headless scripts and the venv can drive it directly.
+
+ComfyUI is never required. Every entry point either returns a value or raises `ComfyError` with a
+sentence a panel can print; `reachable()` is the cheap check a UI row uses to read
+"not connected" and change nothing else.
+
+Job status comes from this fork's jobs API (`GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`),
+which is a proper per-job primitive rather than `/interrupt`'s "kill whatever is running" (R5).
+`/history/{id}` is the fallback for a vanilla upstream server that lacks it.
+
+This module is the CLIENT plus the texture-set recipe. Job orchestration (the worker thread, the
+timer tick, the registry that clears on a file load) is `core/comfy_jobs.py`; it calls in here and
+nothing here calls back out, so the client stays drivable from a script with no scheduler.
+
+`preflight()` is the highest-value function in the file. Every realistic failure -- a pack that is
+not installed, a model that was never downloaded, a graph pasted in from a community workflow that
+reaches for a cloud node, a subgraph, a title typo -- becomes a sentence before anything is
+queued, instead of an HTTP 400 with a validator dump in it.
+"""
+
+import json
+import mimetypes
+import os
+import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid as _uuid
+
+try:
+    from . import comfy_maps
+except ImportError:  # `core` itself on sys.path (the venv / headless route, core.heightfields' own
+    import comfy_maps  # pattern via tools/bobtools/_hfpath.py), where there is no parent package
+
+# The server Bob talks to, most specific first: an explicit argument, then the addon preference
+# (pushed in by the addon, which owns bpy, the same bpy-free hand-off `assets.set_pref_roots`
+# uses), then the env var, then the default.
+DEFAULT_URL = "http://127.0.0.1:8188"
+_PREF_URL = None
+
+
+def set_pref_url(url):
+    """Register the addon-preference ComfyUI URL. None or "" unregisters it."""
+    global _PREF_URL
+    _PREF_URL = (str(url).strip().rstrip("/") or None) if url else None
+
+
+# The ComfyUI checkout, when the artist has pointed the preference at one and it is local. Only
+# needed for Start Server before G3; the mesh transport uses it too, because writing straight into
+# `<comfy>/input/3d/` is both faster than a multipart POST and one less failure mode.
+_PREF_COMFY_DIR = None
+
+
+def set_pref_comfy_dir(path):
+    """Register the addon-preference ComfyUI folder. None or "" unregisters it."""
+    global _PREF_COMFY_DIR
+    _PREF_COMFY_DIR = (str(path).strip() or None) if path else None
+
+
+def comfy_dir():
+    """The registered ComfyUI folder if it exists on this machine, else None."""
+    return _PREF_COMFY_DIR if (_PREF_COMFY_DIR and os.path.isdir(_PREF_COMFY_DIR)) else None
+
+
+# Where the shipped graphs live. Derived from templates, API format, bound by node title.
+WORKFLOW_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", "workflows")
+
+# W1's prompt suffix. A generated albedo with baked lighting is unusable and no amount of Bob-side
+# maths removes it, so the flat-lighting clause is not the artist's job to remember.
+PROMPT_SUFFIX = ("seamless tileable texture, orthographic top view, flat even lighting, "
+                 "no shadows, no vignette, no highlights")
+
+# W4's prompt suffix, and the same argument as PROMPT_SUFFIX: the geometry model's failure mode on
+# a cropped, grouped or busy reference is silent and costs a whole 87 s generation, so the clause
+# that prevents it is not the artist's job to remember.
+SUBJECT_SUFFIX = ("single object, centred in frame, full view, not cropped, plain background, "
+                  "even diffuse studio lighting, sharp focus")
+
+# File extensions the mesh transport recognises, which is the set Load3D accepts plus the formats
+# Trellis2ExportTrimesh can write.
+MESH_EXTS = (".glb", ".gltf", ".obj", ".ply", ".stl", ".fbx", ".off", ".3mf", ".dae")
+
+# Statuses the jobs API reports. Anything not terminal means keep polling.
+_DONE = ("completed",)
+_FAILED = ("failed", "cancelled")
+
+# Widget fields whose value names a file on disk. A value missing from one of these enums is the
+# normal failure ("you never downloaded that checkpoint"), so it gets the "missing model" wording;
+# anything else missing from an enum is a graph bug and gets "invalid option".
+_MODEL_FIELDS = ("ckpt_name", "vae_name", "lora_name", "model_name", "unet_name", "clip_name",
+                 "control_net_name", "style_model_name", "clip_vision_name", "ipadapter_file",
+                 "gligen_name", "upscale_model", "config_name")
+
+
+class ComfyError(RuntimeError):
+    """A ComfyUI call failed in a way worth showing an artist verbatim."""
+
+
+def base_url(url=None):
+    return (url or _PREF_URL or os.environ.get("BOB_COMFY_URL") or DEFAULT_URL).rstrip("/")
+
+
+# -- HTTP ------------------------------------------------------------------------------------
+def _request(url, path, *, data=None, timeout=30, raw=False):
+    full = base_url(url) + path
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(full, data=body, method="POST" if body else "GET",
+                                headers={"Content-Type": "application/json"} if body else {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = (exc.read() or b"").decode("utf-8", "replace")[:400]
+        raise ComfyError(f"ComfyUI {exc.code} on {path}: {detail or exc.reason}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise ComfyError(f"ComfyUI not reachable at {base_url(url)} ({exc})") from exc
+    if raw:
+        return payload
+    if not payload.strip():
+        # An empty 200 is a legitimate answer, not a broken one: `POST /free` returns exactly that
+        # (measured: status 200, zero bytes, no content type). Treating it as non-JSON is what made
+        # the Advanced panel's Free VRAM button report an error on every successful press.
+        return {}
+    try:
+        return json.loads(payload)
+    except ValueError as exc:
+        raise ComfyError(f"ComfyUI returned non-JSON on {path}") from exc
+
+
+def reachable(url=None, timeout=3):
+    """(True, "<device>") when the server answers, (False, reason) when it does not. The check a
+    UI row makes before offering Generate; never raises."""
+    try:
+        stats = _request(url, "/system_stats", timeout=timeout)
+    except ComfyError as exc:
+        return False, str(exc)
+    devices = stats.get("devices") or [{}]
+    name = devices[0].get("name") or "unknown device"
+    free = devices[0].get("vram_free")
+    return True, f"{name}" + (f", {free // (1 << 20)} MiB free" if free else "")
+
+
+def service_status(url=None, timeout=3):
+    """Everything the Advanced panel's ComfyUI block shows, in one call: reachability, device,
+    free VRAM in MiB, and the queue depth. Never raises; a dead server is `ok: False` plus the
+    reason. Called from a button or the job ticker, NEVER from `draw()` -- a socket call in a draw
+    handler freezes the UI for the timeout in exactly the case the row exists to report."""
+    out = {"ok": False, "url": base_url(url), "device": "", "vram_free_mib": None,
+           "running": None, "pending": None, "detail": ""}
+    try:
+        stats = _request(url, "/system_stats", timeout=timeout)
+    except ComfyError as exc:
+        out["detail"] = str(exc)
+        return out
+    device = (stats.get("devices") or [{}])[0]
+    free = device.get("vram_free")
+    out.update(ok=True, device=device.get("name") or "unknown device",
+               vram_free_mib=(free // (1 << 20)) if free else None)
+    try:
+        out["running"], out["pending"] = queue_depth(url)
+    except ComfyError:
+        pass  # reachable but the queue endpoint failed: still report the device
+    bits = [out["device"]]
+    if out["vram_free_mib"] is not None:
+        bits.append(f"{out['vram_free_mib']} MiB free")
+    if out["running"] is not None:
+        bits.append(f"queue {out['running']}+{out['pending']}")
+    out["detail"] = ", ".join(bits)
+    return out
+
+
+def features(url=None):
+    """The `/features` dict. `has_jobs_api()` is what actually decides the polling route, because
+    this fork does not advertise the jobs API here."""
+    try:
+        return _request(url, "/features", timeout=5)
+    except ComfyError:
+        return {}
+
+
+def has_jobs_api(url=None):
+    """True when `GET /api/jobs` exists, so per-job status and cancel are available (R5). Probed
+    once rather than read from /features, which does not list it on this fork."""
+    try:
+        _request(url, "/api/jobs?limit=1", timeout=5)
+        return True
+    except ComfyError:
+        return False
+
+
+def _entry_options(entry):
+    """The option list of one `/object_info` input entry, or None when it is not a COMBO.
+
+    Two shapes are live on this fork and BOTH have to be handled. The old one puts the options
+    first (`[[...], {opts}]`, e.g. `LoadImage.image`); the newer one declares the type as the
+    literal string `"COMBO"` and hides the options in the options dict
+    (`["COMBO", {"options": [...]}]`, e.g. `UpscaleModelLoader.model_name`). G1 read only the old
+    shape, so a missing upscale model would have sailed through the check that exists to catch it.
+    """
+    if not isinstance(entry, (list, tuple)) or not entry:
+        return None
+    typ = entry[0]
+    if isinstance(typ, list):
+        return list(typ)
+    opts = entry[1] if len(entry) > 1 else None
+    if typ == "COMBO" and isinstance(opts, dict) and isinstance(opts.get("options"), list):
+        return list(opts["options"])
+    return None
+
+
+def _field_entry(schema, field):
+    """One class's input spec for `field`, from either section, or None."""
+    spec = (schema or {}).get("input", {})
+    for section in ("required", "optional"):
+        entry = (spec.get(section) or {}).get(field)
+        if entry is not None:
+            return entry
+    return None
+
+
+def combo_options(class_type, field, url=None, info=None):
+    """The option list of one node's COMBO widget, e.g. the installed checkpoints. What the
+    model-enum resolution (R6) is built on, so a graph fails with "missing model: X" instead of an
+    HTTP 400. `info` reuses a cached `/object_info` instead of fetching one class."""
+    if info is None:
+        info = _request(url, "/object_info/" + urllib.parse.quote(class_type), timeout=30)
+    return _entry_options(_field_entry(info.get(class_type), field)) or []
+
+
+# `/object_info` is ~1778 classes and several MB on a loaded install, and preflight reads it once
+# per graph, so it is cached per base URL. Refreshed by hand (the Test Connection button) rather
+# than on a clock: node classes do not appear without a server restart.
+_OBJECT_INFO = {}
+
+
+def object_info(url=None, refresh=False):
+    """The full `/object_info` dict, cached per server URL."""
+    key = base_url(url)
+    if refresh or key not in _OBJECT_INFO:
+        _OBJECT_INFO[key] = _request(url, "/object_info", timeout=120)
+    return _OBJECT_INFO[key]
+
+
+def forget_object_info(url=None):
+    """Drop the cache, so the next preflight sees a newly installed pack or model."""
+    _OBJECT_INFO.pop(base_url(url), None) if url is not None else _OBJECT_INFO.clear()
+
+
+def queue_depth(url=None):
+    """(running, pending) from `/queue`. The Advanced panel's queue-depth row, and the thing that
+    explains a job sitting at "pending" for a minute because something else owns the card."""
+    data = _request(url, "/queue", timeout=10)
+    return len(data.get("queue_running") or []), len(data.get("queue_pending") or [])
+
+
+def free(url=None, unload_models=True, free_memory=True):
+    """Ask ComfyUI to unload its models and release its allocator (R8, layer two of three).
+
+    Not a Stop Server: the process and its CUDA context stay up. That is the honest limit of what
+    the HTTP API can do, and it is why the panel offers both.
+    """
+    _request(url, "/free", data={"unload_models": bool(unload_models),
+                                 "free_memory": bool(free_memory)}, timeout=60)
+    return True
+
+
+def upload_image(path, url=None, subfolder="", overwrite=True, timeout=120):
+    """Upload a file to the server's input folder via `POST /upload/image`, returning the name
+    `LoadImage` will accept (`<subfolder>/<name>` when a subfolder is used).
+
+    Multipart by hand, because the client is stdlib only. The endpoint writes raw bytes with a
+    `commonpath` traversal guard and no image-specific handling, which is what makes it the mesh
+    transport in G3 as well as the reference-photo transport for W2.
+    """
+    name = os.path.basename(path)
+    with open(path, "rb") as fh:
+        payload = fh.read()
+    boundary = "----bob" + _uuid.uuid4().hex
+    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    parts = []
+    for field, value in (("subfolder", subfolder), ("overwrite", "true" if overwrite else "false"),
+                         ("type", "input")):
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"\r\n\r\n'
+                     f"{value}\r\n".encode())
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+                 f'filename="{name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode())
+    body = b"".join(parts) + payload + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(base_url(url) + "/upload/image", data=body, method="POST",
+                                 headers={"Content-Type":
+                                          f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = (exc.read() or b"").decode("utf-8", "replace")[:300]
+        raise ComfyError(f"ComfyUI rejected the upload of {name}: {detail or exc.reason}") from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise ComfyError(f"ComfyUI upload of {name} failed ({exc})") from exc
+    got_sub = out.get("subfolder") or ""
+    got_name = out.get("name") or name
+    return f"{got_sub}/{got_name}" if got_sub else got_name
+
+
+def queue(prompt, url=None, client_id="bob_blender_tools"):
+    """POST a prompt graph, returning its prompt_id."""
+    out = _request(url, "/prompt", data={"prompt": prompt, "client_id": client_id}, timeout=60)
+    pid = out.get("prompt_id")
+    if not pid:
+        raise ComfyError(f"ComfyUI accepted no prompt id: {str(out)[:200]}")
+    return pid
+
+
+def job(prompt_id, url=None, jobs_api=True):
+    """One job's status dict, normalised to {"status", "outputs"}. Uses the jobs API when the
+    server has it and `/history/{id}` otherwise."""
+    if jobs_api:
+        try:
+            data = _request(url, f"/api/jobs/{urllib.parse.quote(prompt_id)}", timeout=15)
+            return {"status": data.get("status") or "pending",
+                    "outputs": data.get("outputs") or {},
+                    "error": data.get("execution_error")}
+        except ComfyError as exc:
+            if "404" not in str(exc):
+                raise
+            return {"status": "pending", "outputs": {}, "error": None}
+    hist = _request(url, f"/history/{urllib.parse.quote(prompt_id)}", timeout=15)
+    entry = hist.get(prompt_id)
+    if not entry:
+        return {"status": "pending", "outputs": {}, "error": None}
+    status_str = (entry.get("status") or {}).get("status_str")
+    return {"status": "completed" if status_str == "success" else "failed",
+            "outputs": entry.get("outputs") or {}, "error": None}
+
+
+def cancel(prompt_id, url=None):
+    """Cancel one job by id. Idempotent server-side, so a finished id is a no-op, not an error."""
+    return bool(_request(url, f"/api/jobs/{urllib.parse.quote(prompt_id)}/cancel",
+                         data={}, timeout=15).get("cancelled"))
+
+
+def wait(prompt_id, url=None, timeout=600, poll=0.5, on_progress=None):
+    """Block until a job is terminal, returning its outputs dict. Raises on failure or timeout.
+
+    Blocking, and it stays that way: `core.comfy_jobs` runs this loop on its worker thread, so
+    the client keeps working from a plain script with no scheduler in sight. `on_progress` is how
+    a caller reports without owning the loop.
+    """
+    jobs_api = has_jobs_api(url)
+    deadline = time.time() + timeout
+    while True:
+        state = job(prompt_id, url=url, jobs_api=jobs_api)
+        if state["status"] in _DONE:
+            return state["outputs"]
+        if state["status"] in _FAILED:
+            err = state.get("error") or {}
+            detail = err.get("exception_message") or err.get("exception_type") or state["status"]
+            raise ComfyError(f"ComfyUI job {state['status']}: {detail}")
+        if time.time() > deadline:
+            cancel(prompt_id, url=url)
+            raise ComfyError(f"ComfyUI job timed out after {timeout:.0f}s (cancelled)")
+        if on_progress:
+            on_progress(state["status"])
+        time.sleep(poll)
+
+
+def images(outputs):
+    """[{"filename", "subfolder", "type"}, ...] over every image in a job's outputs, in node
+    order. The jobs API and `/history` nest these differently, so both shapes are walked."""
+    found = []
+    for node_out in (outputs or {}).values():
+        items = node_out.get("images") if isinstance(node_out, dict) else node_out
+        if isinstance(node_out, dict) and items is None:
+            items = [v for v in node_out.values() if isinstance(v, list)]
+            items = items[0] if items else None
+        for item in items or []:
+            if not isinstance(item, dict) or not item.get("filename"):
+                continue
+            # Not a whitelist of image extensions, an exclusion of mesh ones: the fallback branch
+            # above takes any list of dicts, so in a graph that saves both a preview PNG and a GLB
+            # it would otherwise hand the caller a GLB to run through the PNG decoder.
+            if item["filename"].lower().endswith(MESH_EXTS):
+                continue
+            found.append({"filename": item["filename"],
+                          "subfolder": item.get("subfolder", ""),
+                          "type": item.get("type", "output")})
+    return found
+
+
+def view(image, url=None, timeout=120):
+    """The bytes of one output artifact, via `/view`. Serves meshes as well as images: the route
+    only special-cases a `preview` query, and otherwise returns the file.
+
+    `filename` is basenamed because a mesh node reports an ABSOLUTE server-side path and `/view`
+    rejects a leading slash outright (`server.py:539`).
+    """
+    query = urllib.parse.urlencode({"filename": os.path.basename(image["filename"]),
+                                    "subfolder": image.get("subfolder", ""),
+                                    "type": image.get("type", "output")})
+    return _request(url, "/view?" + query, timeout=timeout, raw=True)
+
+
+# -- Meshes ----------------------------------------------------------------------------------
+# A mesh is not an image, and the difference is entirely in how the job REPORTS it.
+#
+# `Trellis2ExportTrimesh` is the only exporter in the pack that converts the pack's internal Z-up
+# to glTF's Y-up and flips the UV V, so it is the one Bob's graphs end with. But it is a V3 node
+# returning a plain STRING, and ComfyUI records a node's `ui` dict as its outputs, not its return
+# value, so the job comes back with `outputs: {}` and `outputs_count: 0`. Measured, not assumed.
+#
+# `Preview3D` takes that string and emits a real `{filename, type, subfolder, mediaType}` entry.
+# So every mesh graph is export-then-preview, and the preview node is load-bearing plumbing rather
+# than a viewer. `SaveGLB` (the Hunyuan route) is a core output node and reports itself, which is
+# why W5 needs no Preview3D.
+def meshes(outputs):
+    """[{"filename", "subfolder", "type"}, ...] over every mesh file in a job's outputs.
+
+    Walks the same two nestings `images()` does, and selects on the file EXTENSION rather than on
+    a key name, because `Preview3D` files its entry under `result` and `SaveGLB` under `3d`.
+    """
+    found = []
+    for node_out in (outputs or {}).values():
+        if not isinstance(node_out, dict):
+            continue
+        for value in node_out.values():
+            for item in (value if isinstance(value, list) else []):
+                name = item.get("filename") if isinstance(item, dict) else None
+                if name and name.lower().endswith(MESH_EXTS):
+                    found.append({"filename": name, "subfolder": item.get("subfolder", ""),
+                                  "type": item.get("type", "output")})
+    return found
+
+
+def input_3d_dir():
+    """`<comfy>/input/3d`, created, when the ComfyUI folder preference points at a local checkout;
+    None otherwise, which is the signal to upload over HTTP instead."""
+    base = comfy_dir()
+    if base is None:
+        return None
+    path = os.path.join(base, "input", "3d")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        return None
+    return path
+
+
+def upload_mesh(path, url=None, subfolder="3d"):
+    """Put a mesh where the server can load it, and return the path string `Trellis2LoadMesh`
+    takes. Two routes, both verified:
+
+    1. The ComfyUI folder preference points at a local checkout: copy into `<comfy>/input/3d/` and
+       return the absolute path. No HTTP, no size limit, no multipart.
+    2. Otherwise `POST /upload/image`, which writes raw bytes to an arbitrary subfolder with a
+       `commonpath` guard and no image-specific handling, and return `input/<sub>/<name>`, which
+       `Trellis2LoadMesh` resolves because it calls `os.path.exists` and the server's working
+       directory is the ComfyUI root.
+
+    NOT `GeomPackLoadMesh`: its `file_path` is a COMBO whose options are a directory listing, and
+    comfy-env caches each node's scanned schema, so a file written a second ago is absent from the
+    enum even across a server restart (G0.5). `Trellis2LoadMesh` takes a free-form string.
+    """
+    import shutil
+
+    name = os.path.basename(path)
+    local = input_3d_dir()
+    if local is not None:
+        dest = os.path.join(local, name)
+        if os.path.abspath(dest) != os.path.abspath(path):
+            shutil.copyfile(path, dest)
+        return dest
+    return "input/" + upload_image(path, url=url, subfolder=subfolder)
+
+
+def generate_mesh(workflow, values, *, url=None, timeout=1800, on_progress=None, on_queued=None,
+                  required_titles=(), preflight_graph=True):
+    """Run one graph and return (mesh bytes, info). `generate_image`'s twin, with a longer default
+    timeout because a geometry job is 87 s warm and 680 s on the run that pulls 15 GB of weights.
+    """
+    graph, prov = load_workflow(workflow) if isinstance(workflow, str) else workflow
+    bound = template(graph, values)
+    if preflight_graph:
+        check(bound, url=url, required_titles=required_titles,
+              runtime_inputs=prov.get("runtime_inputs") or ())
+    t0 = time.time()
+    pid = queue(bound, url=url)
+    if on_queued:
+        on_queued(pid)
+    outputs = wait(pid, url=url, timeout=timeout, poll=1.0, on_progress=on_progress)
+    found = meshes(outputs)
+    if not found:
+        raise ComfyError("ComfyUI job produced no mesh (is BOB_OUT followed by a Preview3D?)")
+    data = view(found[-1], url=url, timeout=600)
+    return data, {"prompt_id": pid, "seconds": time.time() - t0, "provenance": prov,
+                  "server_file": found[-1]["filename"]}
+
+
+# -- Workflows -------------------------------------------------------------------------------
+def load_workflow(name):
+    """A shipped graph as (prompt, provenance). The files wrap the API prompt as
+    `{"_bob": {...}, "prompt": {...}}` so provenance travels with the graph without the `/prompt`
+    validator seeing a key that is not a node."""
+    path = name if os.path.isabs(name) else os.path.join(WORKFLOW_DIR, name)
+    if not path.endswith(".json"):
+        path += ".json"
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ComfyError(f"workflow {os.path.basename(path)} unreadable: {exc}") from exc
+    prompt = data.get("prompt") if isinstance(data, dict) else None
+    if not isinstance(prompt, dict):
+        raise ComfyError(f"workflow {os.path.basename(path)} has no 'prompt' graph")
+    return prompt, (data.get("_bob") or {})
+
+
+def titles(prompt):
+    """{title: node_id} over a graph. Duplicate titles collide, which is why `preflight()`
+    asserts BOB_* titles are unique (R12); the lookup itself takes the last one and says nothing."""
+    return {(node.get("_meta") or {}).get("title"): nid for nid, node in prompt.items()}
+
+
+def drop_node(prompt, title, passthrough):
+    """A copy of `prompt` with the node titled `title` REMOVED and its consumers rewired.
+
+    `passthrough` maps the dropped node's output index onto one of its own input keys, so a
+    pass-through node can leave the graph without breaking the chain it sat in:
+    `{0: "model", 1: "clip"}` for a `LoraLoader`.
+
+    Why a graph edit rather than a zero strength: a `LoraLoader` at strength 0 still has to NAME an
+    installed file, and the shipped default cannot know what is installed on this machine (R6). A
+    graph with no LoRA in it is the honest default, and the node comes back the moment a style is
+    asked for. Returns the graph unchanged when the title is absent.
+    """
+    by_title = titles(prompt)
+    nid = by_title.get(title)
+    if nid is None:
+        return prompt
+    node = prompt[nid]
+    sources = {}
+    for out_index, field in passthrough.items():
+        link = (node.get("inputs") or {}).get(field)
+        if not isinstance(link, (list, tuple)):
+            raise ComfyError(f"cannot drop {title}: its {field} input is a value, not a link")
+        sources[int(out_index)] = list(link)
+    out = {}
+    for other_id, other in prompt.items():
+        if other_id == nid:
+            continue
+        inputs = dict(other.get("inputs") or {})
+        for field, value in inputs.items():
+            if isinstance(value, (list, tuple)) and len(value) == 2 and value[0] == nid:
+                replacement = sources.get(int(value[1]))
+                if replacement is None:
+                    raise ComfyError(f"cannot drop {title}: output {value[1]} has no passthrough")
+                inputs[field] = replacement
+        out[other_id] = {**other, "inputs": inputs}
+    return out
+
+
+def template(prompt, values):
+    """A copy of `prompt` with inputs overridden by node TITLE, not node id: `_meta.title`
+    survives a GUI re-export and node ids do not (R6/R12).
+
+    values: {"BOB_SEED": {"seed": 12}, ...}. A title absent from the graph raises, because a
+    silently-unapplied prompt or seed is the failure mode that wastes a generation.
+    """
+    by_title = titles(prompt)
+    out = {nid: {**node, "inputs": dict(node.get("inputs") or {})}
+           for nid, node in prompt.items()}
+    for title, fields in values.items():
+        nid = by_title.get(title)
+        if nid is None:
+            raise ComfyError(f"workflow has no node titled {title} "
+                             f"(has: {sorted(t for t in by_title if t)})")
+        out[nid]["inputs"].update(fields)
+    return out
+
+
+# -- Preflight -------------------------------------------------------------------------------
+# A ComfyUI subgraph node's `type` is the subgraph's UUID and its real nodes live under
+# `definitions.subgraphs`, which title-based templating cannot see into. The shipped default
+# text-to-image template is subgraphed, so this is the common case, not a corner one.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _node_label(nid, node):
+    title = (node.get("_meta") or {}).get("title")
+    return f"node {nid}" + (f" ({title})" if title and title != node.get("class_type") else "")
+
+
+def preflight(prompt, url=None, info=None, required_titles=(), runtime_inputs=()):
+    """Every reason this graph would fail, as a list of sentences. Empty means queue it.
+
+    Five classes of failure, which is every one seen so far and the whole reason the function
+    exists (R6, R12, R18):
+
+    1. a `class_type` the server does not have, i.e. a pack that is not installed;
+    2. a node carrying `api_node: true`, i.e. a cloud node -- the check that keeps local-only
+       true over time rather than by intention (R18/D7);
+    3. a COMBO value the server does not offer, i.e. a model that was never downloaded;
+    4. a `BOB_*` title that is missing or duplicated, so templating cannot bind (R12);
+    5. a UUID-typed subgraph node.
+
+    `runtime_inputs` names `TITLE.field` or `ClassType.field` pairs that Bob binds just before
+    queueing (an uploaded reference image, say), so their placeholder value is not checked against
+    an enum it is legitimately absent from. Shipped graphs declare theirs in `_bob`.
+    """
+    if info is None:
+        info = object_info(url)
+    skip = {str(s) for s in runtime_inputs}
+    problems = []
+
+    by_title = {}
+    for nid, node in sorted(prompt.items()):
+        title = (node.get("_meta") or {}).get("title")
+        if title:
+            by_title.setdefault(title, []).append(nid)
+        cls = node.get("class_type") or ""
+        if _UUID_RE.match(cls):
+            problems.append(f"subgraph node rejected: {_node_label(nid, node)} has a UUID type "
+                            f"({cls}); flatten it, title templating cannot see inside a subgraph")
+            continue
+        schema = info.get(cls)
+        if schema is None:
+            problems.append(f"unknown node: {cls} at {_node_label(nid, node)} "
+                            f"(the pack that provides it is not installed)")
+            continue
+        if schema.get("api_node"):
+            problems.append(f"cloud node rejected: {cls} at {_node_label(nid, node)} "
+                            f"(this integration is local only)")
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if isinstance(value, (list, tuple)) or not isinstance(value, str):
+                continue  # a link, or a number/bool: nothing to resolve
+            if f"{title}.{field}" in skip or f"{cls}.{field}" in skip:
+                continue
+            options = _entry_options(_field_entry(schema, field))
+            if options is None or value in options:
+                continue
+            shown = ", ".join(options[:6]) + (", ..." if len(options) > 6 else "")
+            if field in _MODEL_FIELDS:
+                problems.append(f"missing model: {value} ({cls}.{field}); "
+                                f"installed: {shown or 'nothing'}")
+            else:
+                problems.append(f"invalid option: {value} for {cls}.{field}; "
+                                f"allowed: {shown or 'nothing'}")
+
+    for title, ids in sorted(by_title.items()):
+        if title.startswith("BOB_") and len(ids) > 1:
+            problems.append(f"duplicate title: {title} on nodes {', '.join(ids)} "
+                            f"(templating binds by title, so one of them would be unreachable)")
+    for title in required_titles:
+        if title not in by_title:
+            problems.append(f"missing title: {title} (the graph has no node Bob can bind it to)")
+    return problems
+
+
+def check(prompt, url=None, **kwargs):
+    """Preflight or raise. One `ComfyError` listing every problem, not just the first: a machine
+    missing two models should say so once."""
+    problems = preflight(prompt, url=url, **kwargs)
+    if problems:
+        raise ComfyError("; ".join(problems))
+    return True
+
+
+# -- Texture sets ----------------------------------------------------------------------------
+def slugify(text, limit=40):
+    """A prompt as a filesystem-safe set name stem."""
+    slug = re.sub(r"[^a-z0-9]+", "_", (text or "").lower()).strip("_")
+    return (slug[:limit].rstrip("_") or "texture")
+
+
+def unique_set_name(textures_dir, stem):
+    """`stem`, or `stem_02`, `stem_03`, ... -- the first name no set already occupies. Never an
+    implicit overwrite (R16): a second "mossy rock" is a new set, not a replaced one."""
+    if not os.path.isdir(os.path.join(textures_dir, stem)):
+        return stem
+    for n in range(2, 1000):
+        cand = f"{stem}_{n:02d}"
+        if not os.path.isdir(os.path.join(textures_dir, cand)):
+            return cand
+    raise ComfyError(f"too many sets named {stem}")
+
+
+def unique_file_name(directory, stem, ext):
+    """`unique_set_name`'s twin for a single FILE, and for the same reason (R16): a second block-out
+    control export is a new file, not a replaced one."""
+    for n in range(1, 1000):
+        cand = os.path.join(directory, stem + ("" if n == 1 else f"_{n:02d}") + ext)
+        if not os.path.exists(cand):
+            return cand
+    raise ComfyError(f"too many files named {stem}{ext}")
+
+
+def generate_image(workflow, values, *, url=None, timeout=600, on_progress=None,
+                   on_queued=None, required_titles=(), preflight_graph=True):
+    """Run one graph and return (png bytes, info). The single path every raster job takes.
+
+    Preflight first, so a missing model or an uninstalled pack is a sentence rather than an HTTP
+    400 from the validator. `preflight_graph=False` skips the `/object_info` fetch for a caller
+    that has already checked the same graph this session.
+
+    `on_queued(prompt_id)` fires the moment the server accepts the graph. That is what makes a
+    cancel reach the server rather than only the local registry, so a cancelled job stops costing
+    VRAM instead of running to completion unwatched.
+    """
+    graph, prov = load_workflow(workflow) if isinstance(workflow, str) else workflow
+    bound = template(graph, values)
+    if preflight_graph:
+        check(bound, url=url, required_titles=required_titles,
+              runtime_inputs=prov.get("runtime_inputs") or ())
+    t0 = time.time()
+    pid = queue(bound, url=url)
+    if on_queued:
+        on_queued(pid)
+    outputs = wait(pid, url=url, timeout=timeout, on_progress=on_progress)
+    found = images(outputs)
+    if not found:
+        raise ComfyError("ComfyUI job produced no image (is BOB_OUT a SaveImage node?)")
+    png = view(found[0], url=url)
+    return png, {"prompt_id": pid, "seconds": time.time() - t0, "provenance": prov}
+
+
+def _texture_values(prompt_text, *, seed, size, negative, checkpoint, prov):
+    """The BOB_* bindings W1, W2 and W3 all share."""
+    full = ", ".join(p for p in ((prompt_text or "").strip(), PROMPT_SUFFIX) if p)
+    values = {"BOB_PROMPT": {"text": full},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_SIZE": {"width": int(size), "height": int(size)}}
+    if negative:
+        values["BOB_NEG"] = {"text": negative}
+    ckpt = checkpoint or prov.get("default_checkpoint")
+    if ckpt:
+        values["BOB_CKPT"] = {"ckpt_name": ckpt}
+    return values, full, ckpt
+
+
+def write_texture_set(out_dir, name, maps, source_text, meta=None):
+    """Write `<out_dir>/<name>_<role>.png` for each map, plus `SOURCE.txt` and, when given, a
+    `meta.json` (R10: provenance travels with the artifact). Returns {role: path}."""
+    os.makedirs(out_dir, exist_ok=True)
+    written = {}
+    for role, array in maps.items():
+        path = os.path.join(out_dir, f"{name}_{role}.png")
+        comfy_maps.write_png(path, array)
+        written[role] = path
+    with open(os.path.join(out_dir, "SOURCE.txt"), "w") as fh:
+        fh.write(source_text)
+    if meta is not None:
+        with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+            json.dump(meta, fh, indent=2, sort_keys=True)
+    return written
+
+
+def _source_text(workflow, prov, ckpt, seed, size, full_prompt, reference=None):
+    return (f"basecolor: generated by ComfyUI, workflow {workflow} "
+            f"({prov.get('derived_from', 'derived')}), checkpoint {ckpt or 'graph default'}, "
+            f"seed {int(seed)}, {size}x{size}.\n"
+            f"prompt: {full_prompt}\n"
+            + (f"reference image: {reference}\n" if reference else "")
+            + "roughness, height, normal, ao: derived from the albedo by BobBlenderTools "
+              "(core/comfy_maps.py).\n"
+              "Output licensing follows the model that produced it.\n")
+
+
+def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, checkpoint=None,
+                    url=None, workflow="tex_tileable", reference=None, denoise=0.65,
+                    timeout=600, on_progress=None, on_queued=None, preflight_graph=True):
+    """Generate ONE seamless texture set into `out_dir` (which is created), returning info.
+
+    `reference` is a local image path: passing one switches the default workflow to W2, uploads
+    the file, and runs img2img at `denoise` with the reference's palette locked by IPAdapter.
+    """
+    if reference and workflow == "tex_tileable":
+        workflow = "tex_tileable_ref"
+    graph, prov = load_workflow(workflow)
+    values, full_prompt, ckpt = _texture_values(prompt_text, seed=seed, size=size,
+                                                negative=negative, checkpoint=checkpoint,
+                                                prov=prov)
+    if reference:
+        values["BOB_IMAGE"] = {"image": upload_image(reference, url=url, subfolder="bob")}
+        values["BOB_SEED"]["denoise"] = float(denoise)
+
+    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
+
+    t1 = time.time()
+    maps = comfy_maps.derive(png)
+    seam = comfy_maps.seam_report(maps["basecolor"])
+    t_derive = time.time() - t1
+
+    t2 = time.time()
+    name = os.path.basename(out_dir.rstrip("/\\"))
+    meta = {"prompt": full_prompt, "artist_prompt": (prompt_text or "").strip(),
+            "workflow": workflow, "derived_from": prov.get("derived_from"),
+            "checkpoint": ckpt, "seed": int(seed), "size": int(size),
+            "reference": reference, "seam": seam, "prompt_id": gen["prompt_id"]}
+    written = write_texture_set(out_dir, name, maps,
+                                _source_text(workflow, prov, ckpt, seed, size, full_prompt,
+                                             reference),
+                                meta=meta)
+    t_write = time.time() - t2
+
+    info = dict(meta)
+    info.update(dir=out_dir, name=name, maps=written,
+                seconds={"generate": gen["seconds"], "derive": t_derive, "write": t_write,
+                         "total": gen["seconds"] + t_derive + t_write})
+    return info
+
+
+def staging_dir(pack_dir):
+    """`<pack>/_staging`, where unaccepted variants live (R9).
+
+    Deliberately a SIBLING of `textures/`, not a set inside it: `assets.list_texture_sets()`
+    unions every `textures/` directory it finds under a pack root, so a variant staged in there
+    would appear in the picker before anyone accepted it.
+    """
+    return os.path.join(pack_dir, "_staging")
+
+
+def list_variants(pack_dir):
+    """Staged variant directories, oldest first, as absolute paths."""
+    base = staging_dir(pack_dir)
+    if not os.path.isdir(base):
+        return []
+    dirs = [os.path.join(base, n) for n in sorted(os.listdir(base))]
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+def texture_variants(prompt_text, pack_dir, *, count=1, seed=0, on_variant=None, **kwargs):
+    """Generate `count` variants into `<pack>/_staging/`, one seed apart, and return their infos.
+
+    Nothing is written into the pack proper: the artist picks one with `accept_variant()` and the
+    rest are deleted (R9). `on_variant(index, count, info_or_None)` is called after each, so a
+    caller can report progress without waiting for the whole batch. It runs on whatever thread
+    this does, so it must not touch `bpy`.
+    """
+    base = staging_dir(pack_dir)
+    os.makedirs(base, exist_ok=True)
+    stem = slugify(prompt_text)
+    out = []
+    for i in range(max(1, int(count))):
+        this_seed = int(seed) + i
+        name = unique_set_name(base, f"{stem}_s{this_seed}")
+        info = texture_variant(prompt_text, os.path.join(base, name), seed=this_seed,
+                               # /object_info is fetched once for the batch, not once per variant
+                               preflight_graph=(i == 0), **kwargs)
+        out.append(info)
+        if on_variant:
+            on_variant(i + 1, count, info)
+    return out
+
+
+def accept_variant(variant_dir, pack_dir, name=None):
+    """Move one staged variant into `<pack>/textures/` under a unique name, and return that name.
+
+    A MOVE, not a copy: an accepted variant leaves staging, so the staging list is exactly the set
+    of undecided results and nothing needs a retention sweep. The per-file stems are renamed with
+    the folder because `assets.texture_set_maps()` resolves `<set>/<set>_<role>.<ext>`, so a
+    folder whose files still carry the staging stem would resolve to no maps at all.
+    """
+    variant_dir = os.path.abspath(variant_dir)
+    if not os.path.isdir(variant_dir):
+        raise ComfyError(f"no staged variant at {variant_dir}")
+    old = os.path.basename(variant_dir)
+    textures = os.path.join(pack_dir, "textures")
+    os.makedirs(textures, exist_ok=True)
+    # Default to the prompt slug rather than the staging name, which carries a seed suffix nobody
+    # wants to read in a picker.
+    stem = name or _meta_stem(variant_dir) or re.sub(r"_s\d+(_\d+)?$", "", old) or old
+    final = unique_set_name(textures, slugify(stem))
+    dest = os.path.join(textures, final)
+    os.rename(variant_dir, dest)
+    for entry in sorted(os.listdir(dest)):
+        if entry.startswith(old + "_"):
+            os.rename(os.path.join(dest, entry),
+                      os.path.join(dest, final + entry[len(old):]))
+    return final
+
+
+def _meta_stem(variant_dir):
+    try:
+        with open(os.path.join(variant_dir, "meta.json")) as fh:
+            return (json.load(fh) or {}).get("artist_prompt") or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def reject_variant(variant_dir):
+    """Delete one staged variant. Reject is a delete (R9), so nothing accumulates unasked."""
+    import shutil
+
+    variant_dir = os.path.abspath(variant_dir)
+    if os.path.isdir(variant_dir):
+        shutil.rmtree(variant_dir)
+        return True
+    return False
+
+
+# How much of the opposite edge is wrapped around a tile before it is sent to W3, in pixels at
+# input resolution. Measured, not guessed: without it the upscale comes back at seam ratio 3.43
+# from an input measuring 0.94, because UltimateSDUpscale's ESRGAN pass and its per-tile crops
+# both pad at the image border and a circular-padded UNet never sees the wrap. 128 is one
+# UltimateSDUpscale tile_padding plus a mask_blur band, with room to spare.
+UPRES_WRAP_PAD = 128
+
+
+def upres_variant(variant_dir, *, scale=2.0, url=None, workflow="tex_upres", denoise=0.2,
+                  checkpoint=None, timeout=1200, on_progress=None, on_queued=None,
+                  wrap_pad=UPRES_WRAP_PAD):
+    """Upscale a staged variant's basecolor through W3 and re-derive its maps in place.
+
+    Runs on the STAGED copy on purpose: an upres is another iteration, so it belongs in front of
+    Accept rather than behind it.
+
+    The tile is wrap-padded on the way out and cropped on the way back, because the upscaler
+    cannot be told the image is a torus; see `UPRES_WRAP_PAD`.
+    """
+    name = os.path.basename(variant_dir.rstrip("/\\"))
+    src = os.path.join(variant_dir, f"{name}_basecolor.png")
+    if not os.path.isfile(src):
+        raise ComfyError(f"staged variant {name} has no basecolor to upscale")
+    meta = {}
+    try:
+        with open(os.path.join(variant_dir, "meta.json")) as fh:
+            meta = json.load(fh) or {}
+    except (OSError, ValueError):
+        pass
+
+    with open(src, "rb") as fh:
+        tile = comfy_maps.read_png(fh.read())
+    send = src
+    if wrap_pad:
+        send = os.path.join(variant_dir, f"{name}_upres_input.png")
+        comfy_maps.write_png(send, comfy_maps.wrap_pad(tile, wrap_pad))
+
+    graph, prov = load_workflow(workflow)
+    values, full_prompt, ckpt = _texture_values(meta.get("artist_prompt", ""),
+                                                seed=meta.get("seed", 0), size=1024,
+                                                negative=None, checkpoint=checkpoint, prov=prov)
+    values.pop("BOB_SIZE", None)  # W3's size comes from the image, not an empty latent
+    values["BOB_IMAGE"] = {"image": upload_image(send, url=url, subfolder="bob")}
+    values["BOB_SEED"].update(denoise=float(denoise), upscale_by=float(scale))
+
+    try:
+        png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+                                  on_progress=on_progress, on_queued=on_queued,
+                                  required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    finally:
+        if send != src and os.path.isfile(send):
+            os.remove(send)
+    upscaled = comfy_maps.read_png(png)
+    if wrap_pad:
+        # The pad scaled with the image, so the crop does too. Trust the measured factor rather
+        # than the requested one: UltimateSDUpscale rounds to whole tiles.
+        upscaled = comfy_maps.crop_wrap_blend(
+            upscaled, int(round(wrap_pad * upscaled.shape[0] / (tile.shape[0] + 2 * wrap_pad))))
+    maps = comfy_maps.derive(upscaled)
+    seam = comfy_maps.seam_report(maps["basecolor"])
+    size = maps["basecolor"].shape[0]
+    meta.update(upres={"scale": scale, "denoise": denoise, "workflow": workflow,
+                       "seam_before": meta.get("seam"), "prompt_id": gen["prompt_id"]},
+                seam=seam, size=size)
+    written = write_texture_set(variant_dir, name, maps,
+                                _source_text(workflow, prov, ckpt, meta.get("seed", 0), size,
+                                             full_prompt),
+                                meta=meta)
+    return {"dir": variant_dir, "name": name, "maps": written, "seam": seam, "size": size,
+            "seconds": {"generate": gen["seconds"]}}
+
+
+def texture_set_from_prompt(prompt_text, pack_dir, *, seed=0, size=1024, negative=None,
+                            checkpoint=None, url=None, workflow="tex_tileable",
+                            timeout=600, on_progress=None, reference=None):
+    """Generate one seamless texture set straight into `<pack>/textures/`, skipping staging.
+
+    The one-shot path: what the G1 spike measured and what a headless script or an MCP tool wants
+    when there is nobody there to pick between variants. Returns (set_name, info).
+
+    Blocking. The caller owns the wait cursor, or runs it through `core.comfy_jobs`.
+    """
+    textures = os.path.join(pack_dir, "textures")
+    os.makedirs(textures, exist_ok=True)
+    name = unique_set_name(textures, slugify(prompt_text))
+    info = texture_variant(prompt_text, os.path.join(textures, name), seed=seed, size=size,
+                           negative=negative, checkpoint=checkpoint, url=url, workflow=workflow,
+                           reference=reference, timeout=timeout, on_progress=on_progress)
+    return name, info
+
+
+# -- Generated meshes (track C, ComfyUI half) --------------------------------------------------
+# Everything below runs on the worker thread and touches no bpy. It gets a raw generated GLB into
+# `<pack>/_staging/<variant>/`; turning that into a scattered BobShader asset is `core.gen_assets`,
+# which needs Blender and owns pipeline steps 6 to 8.
+#
+# The tiers are the resolution combo on `LoadTrellis2Models`, NOT a model file. `geometry_only_1536`
+# turns out to be `1536_cascade`: a plain "1536" is not one of the four options the node offers.
+MESH_TIERS = {"preview": "512", "default": "1024", "hero": "1536_cascade"}
+
+
+def subject_prompt(prompt_text):
+    """The artist's prompt with W4's single-subject clause appended."""
+    return ", ".join(p for p in ((prompt_text or "").strip(), SUBJECT_SUFFIX) if p)
+
+
+def subject_image(prompt_text, out_path, *, seed=0, size=1024, negative=None, checkpoint=None,
+                  url=None, workflow="mesh_subject", timeout=600, on_progress=None,
+                  on_queued=None, preflight_graph=True):
+    """W4: prompt to one single-subject RGBA reference PNG at `out_path`. Returns info.
+
+    The alpha is the contract, not the white background. The geometry graphs feed `LoadImage`'s
+    (inverted) mask into `Trellis2GetConditioning`, so an opaque PNG makes the whole square frame
+    the subject and the result is the object sealed inside a transparent shell (G0.5).
+    """
+    graph, prov = load_workflow(workflow)
+    full = subject_prompt(prompt_text)
+    values = {"BOB_PROMPT": {"text": full},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_SIZE": {"width": int(size), "height": int(size)}}
+    if negative:
+        values["BOB_NEG"] = {"text": negative}
+    ckpt = checkpoint or prov.get("default_checkpoint")
+    if ckpt:
+        values["BOB_CKPT"] = {"ckpt_name": ckpt}
+
+    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    with open(out_path, "wb") as fh:
+        fh.write(png)
+    return {"path": out_path, "prompt": full, "artist_prompt": (prompt_text or "").strip(),
+            "checkpoint": ckpt, "seed": int(seed), "size": int(size),
+            "workflow": workflow, "prompt_id": gen["prompt_id"], "seconds": gen["seconds"]}
+
+
+def process_mesh_values(remesh=True):
+    """The `Trellis2ProcessMesh` binding, and the one knob on it that changes what TRELLIS.2 IS.
+
+    `remesh` runs a dual-contouring remesh that returns a WATERTIGHT shell. On the bundled
+    `geometry_only_*` graphs it is on, and G3 measured what that costs: the same leaf comes back
+    with 0 boundary edges with it on and 11,620 with it off, at the same 0.04 thinnest/longest axis
+    ratio. So the open-surface capability that makes TRELLIS.2 primary (R21) is present in the
+    model and switched OFF by the shipped graph's default. Foliage wants `remesh=False`; a rock
+    wants it on, because a closed shell is what a rock should be and the remesh cleans the
+    isosurface up.
+
+    The sub-widgets are branch-specific, so the two cases name different fields. Sending the other
+    branch's fields is what a dynamic combo cannot take.
+    """
+    if remesh:
+        return {"remesh": "on", "remesh.remesh_band": 1.0, "remesh.remove_inner_faces": True}
+    return {"remesh": "off", "remesh.fill_holes": False, "remesh.fill_holes_perimeter": 0.03}
+
+
+def bind_process(graph, values, *, remesh=True, faces=None):
+    """Bind `BOB_PROCESS` (a `Trellis2ProcessMesh`) and return the graph the binding needs.
+
+    Separate from `template()` because a dynamic combo cannot simply be merged into: the selected
+    key owns its sub-widgets, so the OTHER branch's `remesh.*` fields have to be dropped from the
+    graph rather than overridden. Shared by W5t and W9b, which both carry the node.
+
+    `faces` binds `target_face_count`. On W5t that stays at the graph's 500000, because Bob's
+    simplify budget is applied later; on W9b it IS the budget, because `Trellis2ProcessMesh` is
+    simplify plus weld plus unwrap in one node and that is what makes the one-shot route one-shot.
+    """
+    nid = titles(graph).get("BOB_PROCESS")
+    if nid is None:
+        return graph
+    bound = process_mesh_values(remesh)
+    if faces is not None:
+        bound["target_face_count"] = int(faces)
+    values["BOB_PROCESS"] = bound
+    return {k: ({**n, "inputs": {f: v for f, v in n["inputs"].items()
+                                 if not f.startswith("remesh.")}} if k == nid else n)
+            for k, n in graph.items()}
+
+
+def mesh_geometry(image_path, out_path, *, seed=0, tier="default", url=None, remesh=True,
+                  workflow="mesh_geom_trellis", timeout=1800, on_progress=None, on_queued=None,
+                  preflight_graph=True):
+    """W5t: a subject PNG with alpha to a dense UV-unwrapped GLB at `out_path`. Returns info.
+
+    `remesh=False` keeps open surfaces; see `process_mesh_values`. It is the difference between a
+    leaf and a leaf-shaped bag.
+    """
+    graph, prov = load_workflow(workflow)
+    resolution = MESH_TIERS.get(tier, tier)
+    values = {"BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed)}}
+    if "BOB_MODEL" in titles(graph):
+        values["BOB_MODEL"] = {"resolution": resolution}
+    graph = bind_process(graph, values, remesh=remesh)
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "tier": tier, "resolution": resolution,
+                              "remesh": bool(remesh), "subject": image_path})
+
+
+def mesh_texture(mesh_path, image_path, out_path, *, seed=0, texture_size=1024, url=None,
+                 workflow="mesh_texture", timeout=1800, on_progress=None, on_queued=None,
+                 preflight_graph=True):
+    """W9t: PBR-texture an existing mesh in its own UVs, writing the textured GLB to `out_path`.
+
+    `mesh_path` MUST already be unit-normalised. `Trellis2EncodeMesh` voxelises in unit-cube space,
+    so a metre-scale mesh lands outside the grid, the encoder sees nothing, and the albedo comes
+    back silently black. `core.gen_assets` does the normalise-then-rescale round trip; this
+    function does not, because it has no bpy and no idea what the mesh means.
+    """
+    graph, prov = load_workflow(workflow)
+    values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)},
+              "BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_TEXSIZE": {"texture_size": int(texture_size)}}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_MESH", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "texture_size": int(texture_size),
+                              "source_mesh": mesh_path, "subject": image_path})
+
+
+def mesh_geom_texture(image_path, out_path, *, seed=0, tier="default", faces=4000,
+                      texture_size=1024, remesh=True, url=None, workflow="mesh_geom_texture",
+                      timeout=1800, on_progress=None, on_queued=None, preflight_graph=True):
+    """W9b: a subject PNG with alpha to a simplified, unwrapped, PBR-TEXTURED GLB in one job.
+
+    The one-shot alternative to W5t plus W9c plus W9t, and it is one graph rather than three
+    because `Trellis2ProcessMesh` already simplifies, welds and unwraps: bind `faces` and
+    `Trellis2RasterizePBR` bakes the PBR into the budget mesh's own charts.
+
+    What it does NOT produce is a dense mesh, so there is no high-poly surface left to bake a detail
+    normal or AO from. That is the whole trade G3b measured; the numbers are in docs/COMFYUI.md.
+    """
+    graph, prov = load_workflow(workflow)
+    resolution = MESH_TIERS.get(tier, tier)
+    values = {"BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed)},
+              "BOB_TEXSEED": {"seed": int(seed)},
+              "BOB_TEXSIZE": {"texture_size": int(texture_size)}}
+    if "BOB_MODEL" in titles(graph):
+        values["BOB_MODEL"] = {"resolution": resolution}
+    graph = bind_process(graph, values, remesh=remesh, faces=faces)
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "tier": tier, "resolution": resolution,
+                              "remesh": bool(remesh), "faces_requested": int(faces),
+                              "texture_size": int(texture_size), "subject": image_path})
+
+
+def mesh_geom_mv(view_paths, out_path, *, seed=0, url=None, workflow="mesh_geom_mv",
+                 timeout=1800, on_progress=None, on_queued=None, preflight_graph=True):
+    """W6: four cardinal views to a watertight GLB through Hunyuan3D multi-view conditioning.
+
+    `view_paths` is (front, left, back, right) in that order, which is the order
+    `Hunyuan3Dv2ConditioningMultiView`'s own sockets name. Views come from Blender when a block-out
+    exists, which is what makes them consistent by construction rather than by luck.
+    """
+    graph, prov = load_workflow(workflow)
+    values = {}
+    for title, path in zip(("BOB_VIEW_FRONT", "BOB_VIEW_LEFT", "BOB_VIEW_BACK", "BOB_VIEW_RIGHT"),
+                           view_paths):
+        values[title] = {"image": upload_image(path, url=url, subfolder="bob")}
+    values["BOB_SEED"] = {"seed": int(seed)}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_VIEW_FRONT", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "views": list(view_paths),
+                              "model": "hunyuan3d-dit-v2-mv"})
+
+
+def mesh_geom_mv_trellis(view_paths, out_path, *, seed=0, tier="default", remesh=True, faces=None,
+                         url=None, workflow="mesh_geom_mv_trellis", timeout=1800, on_progress=None,
+                         on_queued=None, preflight_graph=True):
+    """W6t: the same four views through `Trellis2MultiViewImageToShape`, the TRELLIS.2 challenger.
+
+    Same inputs and the same output contract as `mesh_geom_mv`, so the multi-view A/B is a config
+    change rather than two pipelines (R21's G7 slot, brought forward because W4's framing turned out
+    to be what decides an asset's shape).
+    """
+    graph, prov = load_workflow(workflow)
+    resolution = MESH_TIERS.get(tier, tier)
+    values = {}
+    for title, path in zip(("BOB_VIEW_FRONT", "BOB_VIEW_LEFT", "BOB_VIEW_BACK", "BOB_VIEW_RIGHT"),
+                           view_paths):
+        values[title] = {"image": upload_image(path, url=url, subfolder="bob")}
+    values["BOB_SEED"] = {"seed": int(seed)}
+    if "BOB_MODEL" in titles(graph):
+        values["BOB_MODEL"] = {"resolution": resolution}
+    graph = bind_process(graph, values, remesh=remesh, faces=faces)
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_VIEW_FRONT", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "tier": tier, "resolution": resolution,
+                              "remesh": bool(remesh), "views": list(view_paths),
+                              "model": "TRELLIS.2-4B"})
+
+
+def omni_model_dir():
+    """`<comfy>/models/hunyuan3d-omni` when the ComfyUI folder preference points at a checkout that
+    has it, else None, which leaves W7's shipped HuggingFace repo id in place (R6)."""
+    base = comfy_dir()
+    if base is None:
+        return None
+    path = os.path.join(base, "models", "hunyuan3d-omni")
+    return path if os.path.isdir(path) else None
+
+
+def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, steps=50,
+                   guidance=4.5, octree=256, url=None, workflow="mesh_geom_ctrl", timeout=1800,
+                   on_progress=None, on_queued=None, preflight_graph=True):
+    """W7: a block-out proxy plus a reference image to a mesh that keeps the block-out's shape.
+
+    The one route in track C whose input is a mesh Bob already has rather than a picture of one, and
+    the only one whose OUTPUT ORIENTATION means anything, so two Bob-side rules travel with it:
+
+    - `control_path` MUST be unit-normalised. `core.gen_assets.export_control` is that round trip.
+      Omni normalises into the unit cube and a metre-scale control lands outside it, which returns a
+      plausible unconditioned generation rather than an error (the G0.5 trap, a second time).
+    - the result comes back needing `gen_assets.CONTROL_RETURN_TURN`. Measured, per exporter, at
+      G4c; see that constant for why the chain is asymmetric.
+
+    `points` is the control density. The node's own default is the control mesh's raw vertices,
+    which for a block-out proxy is a few dozen of them.
+    """
+    graph, prov = load_workflow(workflow)
+    values = {"BOB_CONTROL": {"mesh_path": upload_mesh(control_path, url=url)},
+              "BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed), "sample_point_count": int(points),
+                           "num_inference_steps": int(steps), "guidance_scale": float(guidance),
+                           "octree_resolution": int(octree)}}
+    local = omni_model_dir()
+    if local:
+        values["BOB_OMNI"] = {"repo_or_path": local}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_CONTROL", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "control": control_path, "subject": image_path,
+                              "points": int(points), "steps": int(steps),
+                              "octree_resolution": int(octree), "model": "Hunyuan3D-Omni"})
+
+
+def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mesh_simplify_uv",
+                     timeout=900, on_progress=None, on_queued=None, preflight_graph=True):
+    """W9c: `Trellis2Simplify` then `Trellis2UVUnwrap`, the ComfyUI side of the steps 3 and 4 A/B.
+    No model is loaded, so the wall clock here is the algorithm and not a checkpoint read."""
+    graph, prov = load_workflow(workflow)
+    values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)},
+              "BOB_SIMPLIFY": {"target_face_count": int(faces)}}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_MESH", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"faces_requested": int(faces), "source_mesh": mesh_path})
+
+
+def _write_mesh(out_path, data, gen, *, workflow, prov, extra):
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    with open(out_path, "wb") as fh:
+        fh.write(data)
+    info = {"path": out_path, "bytes": len(data), "workflow": workflow,
+            "derived_from": prov.get("derived_from"), "prompt_id": gen["prompt_id"],
+            "server_file": gen.get("server_file"), "seconds": gen["seconds"]}
+    info.update(extra)
+    return info
+
+
+def mesh_staging_dir(pack_dir):
+    """`<pack>/_staging`, shared with the texture-set variants. One undecided-results folder, and
+    it is a SIBLING of both `textures/` and `models/` for the same reason: the resolvers union
+    every `textures/` and every `models/<name>/manifest.json` they find under a pack root, so a
+    variant staged inside either would show up in a picker before anyone accepted it."""
+    return staging_dir(pack_dir)
+
+
+def list_mesh_variants(pack_dir):
+    """Staged variant directories that hold a generated mesh, oldest first."""
+    return [d for d in list_variants(pack_dir)
+            if any(n.lower().endswith(MESH_EXTS) for n in sorted(os.listdir(d)))]
+
+
+def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size=1024,
+                          checkpoint=None, url=None, timeout=1800, on_progress=None,
+                          on_queued=None, subject=None, remesh=True, control=None, points=8192):
+    """W4 then W5t into a fresh `<pack>/_staging/<variant>/`, returning that variant's info.
+
+    The ComfyUI half of Generate Asset, whole. `subject` is a local image path that SKIPS W4, for
+    the artist who already has the reference they want; it still has to carry alpha.
+
+    `control` is a unit-normalised block-out proxy, and it swaps step 2 from W5t to W7: same
+    reference image, same output contract, geometry conditioned on a shape the layout was composed
+    around. It is a value here rather than a separate staging function because everything downstream
+    (W9c, W9t, and all of `finish_asset`) is identical -- which is also why the block-out route runs
+    the STAGED chain and not the one-shot one: W9b generates its own geometry and takes no control.
+    """
+    base = staging_dir(pack_dir)
+    os.makedirs(base, exist_ok=True)
+    stem = slugify(prompt_text)
+    name = unique_set_name(base, f"{stem}_s{int(seed)}")
+    out_dir = os.path.join(base, name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    steps = {}
+    if subject:
+        subject_info = {"path": subject, "artist_prompt": (prompt_text or "").strip(),
+                        "prompt": subject, "seed": int(seed), "seconds": 0.0}
+    else:
+        if on_progress:
+            on_progress("reference image")
+        subject_info = subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed,
+                                     size=size, checkpoint=checkpoint, url=url, timeout=600,
+                                     on_progress=on_progress, on_queued=on_queued)
+    steps["subject"] = subject_info["seconds"]
+
+    if on_progress:
+        on_progress("geometry from block-out" if control else "geometry")
+    raw = os.path.join(out_dir, name + "_raw.glb")
+    if control:
+        mesh_info = mesh_geom_ctrl(control, subject_info["path"], raw, seed=seed, points=points,
+                                   url=url, timeout=timeout, on_progress=on_progress,
+                                   on_queued=on_queued)
+    else:
+        mesh_info = mesh_geometry(subject_info["path"], raw, seed=seed, tier=tier, url=url,
+                                  timeout=timeout, remesh=remesh, on_progress=on_progress,
+                                  on_queued=on_queued)
+    steps["geometry"] = mesh_info["seconds"]
+
+    meta = {"artist_prompt": (prompt_text or "").strip(), "prompt": subject_info.get("prompt"),
+            "seed": int(seed), "tier": tier, "remesh": bool(remesh),
+            "subject": subject_info["path"], "control": control,
+            "raw_mesh": mesh_info["path"],
+            "workflows": ["mesh_subject", "mesh_geom_ctrl" if control else "mesh_geom_trellis"],
+            "model": "Hunyuan3D-Omni" if control else "TRELLIS.2-4B",
+            "license": "Tencent Hunyuan3D community" if control else "MIT", "seconds": steps}
+    with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return {"dir": out_dir, "name": name, "meta": meta, "raw_mesh": mesh_info["path"],
+            "subject": subject_info["path"], "seconds": steps}
+
+
+def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
+                         texture_size=1024, checkpoint=None, url=None, timeout=1800,
+                         on_progress=None, on_queued=None, subject=None, remesh=True,
+                         control=None, points=8192):
+    """Every ComfyUI stage of one asset, in order, on ONE thread: W4, W5t, W9c, W9t.
+
+    This is the shape the panel uses, and the ordering is why it works. Steps 3 and 4 are done by
+    W9c on the server, so its output IS the low mesh W9t textures, and Blender has nothing to do
+    between them. That makes the whole ComfyUI half a single worker job with no main-thread work
+    in the middle, which is the only arrangement that keeps a five-minute run off the UI thread.
+
+    Returns the staged paths. `core.gen_assets.finish_asset` takes them and does steps 6 to 8.
+    """
+    staged = generate_asset_source(prompt_text, pack_dir, seed=seed, tier=tier, remesh=remesh,
+                                   checkpoint=checkpoint, url=url, timeout=timeout,
+                                   on_progress=on_progress, on_queued=on_queued, subject=subject,
+                                   control=control, points=points)
+    out_dir, name = staged["dir"], staged["name"]
+
+    if on_progress:
+        on_progress("simplify and unwrap")
+    simp = mesh_simplify_uv(staged["raw_mesh"], os.path.join(out_dir, name + "_simp.glb"),
+                            faces=faces, url=url, on_progress=on_progress, on_queued=on_queued)
+    staged["simplified_mesh"] = simp["path"]
+    staged["seconds"]["simplify"] = simp["seconds"]
+
+    if on_progress:
+        on_progress("PBR texture")
+    tex = mesh_texture(simp["path"], staged["subject"],
+                       os.path.join(out_dir, name + "_tex.glb"), seed=seed,
+                       texture_size=texture_size, url=url, timeout=timeout,
+                       on_progress=on_progress, on_queued=on_queued)
+    staged["textured_mesh"] = tex["path"]
+    staged["seconds"]["texture"] = tex["seconds"]
+
+    meta = staged["meta"]
+    meta["workflows"] = [meta["workflows"][0], meta["workflows"][1],
+                         "mesh_simplify_uv", "mesh_texture"]
+    meta.update(simplified_mesh=simp["path"], textured_mesh=tex["path"],
+                seconds=staged["seconds"])
+    with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return staged
+
+
+# Which ComfyUI chain Generate Asset runs. A route, not a rewrite: both functions below stage the
+# same paths and `core.gen_assets.finish_asset` consumes either.
+#
+#   "oneshot" W4 -> W9b. Two jobs, one model load, no mesh round trip, and no dense mesh.
+#   "staged"  W4 -> W5t -> W9c -> W9t. Four jobs, and the one that keeps a DENSE mesh on disk.
+#
+# G3b measured both on ten prompts and the one-shot route won, which is why it is the default. Short
+# version, full numbers in docs/COMFYUI.md: a wash on wall clock (593 s against 584 s for all ten),
+# both 10/10 inside the face budget with the same UV quality, a lower VRAM peak, and two things that
+# decided it. It returns a far cleaner mesh (10 to 662 boundary edges against 1,467 to 3,050 on the
+# same prompts, with foliage openness and thinness preserved to within 1%), and it cannot hit the
+# black-albedo trap, because it never re-encodes a mesh: the staged route's W9t returned one fully
+# black texture in ten. The dense mesh the one-shot route gives up bought no measurable detail in
+# the baked normal at a 4,000-face budget, which is what the plan assumed it was for.
+#
+# "staged" stays wired and is not dead code: it is the only route that leaves a dense mesh on disk
+# for a future higher-budget or hero path, and W9t on its own is still track B, texturing a mesh Bob
+# already has. W9b can only texture geometry it generated itself.
+ASSET_ROUTES = ("oneshot", "staged")
+DEFAULT_ASSET_ROUTE = "oneshot"
+
+
+def asset_chain(route=None):
+    """The staging function for a route name. The one place the route becomes a decision."""
+    return generate_asset_oneshot if (route or DEFAULT_ASSET_ROUTE) == "oneshot" \
+        else generate_asset_chain
+
+
+def finish_passes(staged):
+    """(simplify_pass, texture_pass) for `core.gen_assets.finish_asset`, from either route's staging.
+
+    The routes differ by exactly this, and putting it here keeps every caller route-agnostic. The
+    staged route hands over three files, so steps 3 and 4 come from W9c and step 5 from W9t. The
+    one-shot route hands over ONE file that is already simplified, unwrapped and textured, so it
+    goes in as the simplified mesh with no texture pass at all: passing it as `texture_pass` instead
+    would make Blender decimate and unwrap a mesh it is about to throw away.
+    """
+    if staged.get("simplified_mesh"):
+        return staged["simplified_mesh"], staged.get("textured_mesh")
+    return staged.get("textured_mesh"), None
+
+
+def stage_exports(staged):
+    """How many `Trellis2ExportTrimesh` glb writes `finish_asset` has to undo on each staged file.
+
+    Every one of those writes turns the subject -90 degrees about X and the turns accumulate along a
+    chain, so the staged route hands over three files in three different frames. Measured hop by hop
+    at G4c; the maths and the two bugs it fixes are on `gen_assets.undo_exports`.
+
+    Relative on the image routes and absolute on the block-out route, which is the only asymmetry
+    here: with no control the incoming orientation means nothing, so the raw mesh's frame is left
+    alone and the later files are merely brought into line with it. With a control it means
+    everything, so the raw mesh's own turn is undone as well and the finished asset lands facing the
+    way the block-out did.
+    """
+    base = 1 if (staged.get("meta") or {}).get("control") else 0
+    if not staged.get("simplified_mesh"):
+        # The one-shot route: W9b returns ONE file that is both the raw and the low mesh, and it
+        # takes no control, so there is nothing to bring into line and nothing to face.
+        return {"raw": base, "simplified": base}
+    return {"raw": base, "simplified": base + 1, "textured": base + 2}
+
+
+# -- Stylised renders and painted meshes (track D, and track B stylised) -------------------------
+# One graph shape serves both, which is why W12 is built first and W9 grows out of it: a per-view
+# restyle IS a stylised render that happens to be one of six. The difference is the IPAdapter
+# reference W9 carries so the views agree on a palette, and the lower denoise that keeps the real
+# render dominant (R20).
+#
+# Two hint routes, and the whole point of track D is that the first one exists:
+#   "passes"    W12, Blender's TRUE depth and normal passes, exported by core.gen_views
+#   "estimated" W12e, Depth Anything V2 plus NormalBAE reading the render itself
+# The estimated route is not a fallback nobody wants: it is the control the real-passes claim is
+# measured against, and the only route available for an image Bob did not render.
+STYLISE_WORKFLOWS = {"passes": "stylize_render", "estimated": "stylize_render_est"}
+DEFAULT_STYLISE_ROUTE = "passes"
+
+# Shipped sampler defaults. Denoise is the knob that trades style for silhouette, so it is the one
+# the panel exposes; the ControlNet strengths are values here rather than widgets.
+STYLISE_DENOISE = 0.55
+PAINT_DENOISE = 0.40
+
+# A style prompt has the same problem W1's did: the artist types the look and forgets the framing
+# clause that keeps the result usable as a restyle rather than a new picture.
+STYLISE_SUFFIX = "same composition, same camera, same layout, coherent lighting"
+
+
+def _round8(value):
+    """SDXL latents are eighths of a pixel, so a render's odd resolution has to land on a multiple
+    of 8 before it becomes a latent."""
+    return max(8, int(round(float(value) / 8.0)) * 8)
+
+
+def _stylise_size(size):
+    width, height = (size, size) if isinstance(size, (int, float)) else size[:2]
+    return _round8(width), _round8(height)
+
+
+def stylise_prompt(prompt_text):
+    """The artist's style prompt with the composition-preserving clause appended."""
+    return ", ".join(p for p in ((prompt_text or "").strip(), STYLISE_SUFFIX) if p)
+
+
+def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None, seed=0,
+                   denoise=STYLISE_DENOISE, size=1024, negative=None, checkpoint=None,
+                   lora=None, lora_strength=0.8, depth_strength=None, normal_strength=None,
+                   reference=None, url=None, workflow=None, timeout=900, on_progress=None,
+                   on_queued=None, preflight_graph=True):
+    """W12 (or W9, or W12e): one image restyled under depth and normal ControlNet, written to
+    `out_path`. Returns info.
+
+    Pass `depth` and `normal` (Bob's real passes) for the W12 route; omit both and the estimated
+    route runs instead, which is the same graph with two preprocessors in place of the two loads.
+    `reference` selects W9, whose IPAdapter locks the palette across a turntable.
+
+    `lora` is a filename from the server's own LoRA enum. None DROPS the LoraLoader from the graph
+    rather than running it at strength 0, because a placeholder filename fails the validator on a
+    machine with no LoRAs installed (`drop_node`).
+    """
+    if workflow is None:
+        workflow = ("mesh_paint_views" if reference
+                    else STYLISE_WORKFLOWS["passes" if (depth and normal) else "estimated"])
+    graph, prov = load_workflow(workflow)
+    by_title = titles(graph)
+    if "BOB_DEPTH" in by_title and not (depth and normal):
+        raise ComfyError(f"{workflow} needs Blender's depth and normal passes "
+                         f"(core.gen_views.render_passes writes both); pass none of them to run "
+                         f"the estimated route instead")
+    width, height = _stylise_size(size)
+    full = stylise_prompt(prompt_text)
+    values = {"BOB_PROMPT": {"text": full},
+              "BOB_SIZE": {"width": width, "height": height},
+              "BOB_SEED": {"seed": int(seed), "denoise": float(denoise)},
+              "BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")}}
+    if negative:
+        values["BOB_NEG"] = {"text": negative}
+    ckpt = checkpoint or prov.get("default_checkpoint")
+    if ckpt:
+        values["BOB_CKPT"] = {"ckpt_name": ckpt}
+    if depth and "BOB_DEPTH" in by_title:
+        values["BOB_DEPTH"] = {"image": upload_image(depth, url=url, subfolder="bob")}
+    if normal and "BOB_NORMAL" in by_title:
+        values["BOB_NORMAL"] = {"image": upload_image(normal, url=url, subfolder="bob")}
+    if reference and "BOB_REF" in by_title:
+        values["BOB_REF"] = {"image": upload_image(reference, url=url, subfolder="bob")}
+    if depth_strength is not None:
+        values["BOB_DEPTH_APPLY"] = {"strength": float(depth_strength)}
+    if normal_strength is not None:
+        values["BOB_NORMAL_APPLY"] = {"strength": float(normal_strength)}
+    if lora:
+        values["BOB_LORA"] = {"lora_name": lora, "strength_model": float(lora_strength),
+                              "strength_clip": float(lora_strength)}
+    else:
+        graph = drop_node(graph, "BOB_LORA", {0: "model", 1: "clip"})
+
+    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    with open(out_path, "wb") as fh:
+        fh.write(png)
+    return {"path": out_path, "workflow": workflow, "prompt": full,
+            "artist_prompt": (prompt_text or "").strip(), "seed": int(seed),
+            "denoise": float(denoise), "size": [width, height], "checkpoint": ckpt,
+            "lora": lora, "lora_strength": float(lora_strength) if lora else 0.0,
+            "hints": "passes" if (depth and normal) else "estimated",
+            "reference": reference, "prompt_id": gen["prompt_id"], "seconds": gen["seconds"],
+            "derived_from": prov.get("derived_from")}
+
+
+def paint_views(views, out_dir, prompt_text, *, seed=0, denoise=PAINT_DENOISE, size=1024,
+                negative=None, checkpoint=None, lora=None, lora_strength=0.8, url=None,
+                workflow="mesh_paint_views", timeout=900, on_progress=None, on_queued=None):
+    """W9's ComfyUI half: restyle every turntable view in ONE worker job. Returns info.
+
+    `views` is what `core.gen_views.turntable_views` produced, so each entry already carries its
+    beauty, depth and normal paths. The FRONT view goes first and is its own reference; every later
+    view takes the stylised front as the IPAdapter reference, so the palette is decided once instead
+    of drifting per view. That ordering is the cheap half of R20's consistency mitigation, and
+    `core.gen_paint` measures what it bought.
+
+    The stylised images land beside the renders as `<stem>_styled.png`, in view order, which is the
+    order `gen_paint.paint_maps` expects.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    out, reference, seconds = [], None, {}
+    for i, view in enumerate(views):
+        if on_progress:
+            on_progress(f"stylise view {i + 1}/{len(views)}")
+        stem = os.path.splitext(os.path.basename(view["beauty"]))[0]
+        target = os.path.join(out_dir, stem + "_styled.png")
+        info = stylize_render(view["beauty"], target, prompt_text,
+                             depth=view.get("depth"), normal=view.get("normal"),
+                             reference=reference or view["beauty"], seed=int(seed), size=size,
+                             denoise=denoise, negative=negative, checkpoint=checkpoint,
+                             lora=lora, lora_strength=lora_strength, url=url, workflow=workflow,
+                             timeout=timeout, on_progress=on_progress, on_queued=on_queued,
+                             preflight_graph=(i == 0))
+        if reference is None:
+            reference = target  # the stylised FRONT, from here on
+        seconds[f"view_{i:02d}"] = info["seconds"]
+        out.append(info)
+    return {"images": [info["path"] for info in out], "views": len(out), "reference": reference,
+            "infos": out, "seconds": seconds,
+            "total_seconds": float(sum(seconds.values()))}
+
+
+# Which route paints a mesh Bob already has. Both texture a mesh in ITS OWN UVs, and both stage a
+# file per view or per mesh that `core.gen_paint` or `core.gen_assets` then consumes, so the choice
+# is a value in one place -- the same shape `asset_chain` gave the geometry decision at G3b.
+#
+#   "pbr"      W9t, Trellis2TextureMesh: plausible native PBR, no style control, one job.
+#   "stylised" W9, this module's paint_views plus core.gen_paint: LoRA and prompt style control,
+#              N jobs, and a colour map rather than a PBR set.
+#
+# "pbr" stays the default because a plausible material is what a scatter prop needs; "stylised" is
+# for the case R19 named, where the target look is stylised rather than photographic, and it is the
+# only route that has real style control at all.
+TEXTURE_ROUTES = ("pbr", "stylised")
+DEFAULT_TEXTURE_ROUTE = "pbr"
+
+
+def texture_chain(route=None):
+    """The texturing function for a route name. The one place THAT route becomes a decision.
+
+    The two have different signatures on purpose and the difference is honest: `mesh_texture` takes
+    one mesh and returns one textured mesh, while `paint_views` takes N rendered views and returns N
+    images for Blender to project. A wrapper that hid that would hide the fact that the stylised
+    route needs Blender in the middle.
+    """
+    return paint_views if (route or DEFAULT_TEXTURE_ROUTE) == "stylised" else mesh_texture
+
+
+def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
+                           texture_size=1024, checkpoint=None, url=None, timeout=1800,
+                           on_progress=None, on_queued=None, subject=None, remesh=True, size=1024):
+    """Every ComfyUI stage of one asset through the ONE-SHOT route: W4 then W9b.
+
+    `generate_asset_chain`'s twin, staging the same keys so `core.gen_assets.finish_asset` takes
+    either. The one difference a caller has to know about is that `raw_mesh` and `textured_mesh` are
+    the SAME file: W9b returns budget topology already textured, so there is no dense mesh and no
+    intermediate simplify. Pass it as `simplify_pass` with no `texture_pass` and Blender skips both
+    its own decimate and its own unwrap, which is the point.
+    """
+    base = staging_dir(pack_dir)
+    os.makedirs(base, exist_ok=True)
+    stem = slugify(prompt_text)
+    name = unique_set_name(base, f"{stem}_s{int(seed)}")
+    out_dir = os.path.join(base, name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    steps = {}
+    if subject:
+        subject_info = {"path": subject, "artist_prompt": (prompt_text or "").strip(),
+                        "prompt": subject, "seed": int(seed), "seconds": 0.0}
+    else:
+        if on_progress:
+            on_progress("reference image")
+        subject_info = subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed,
+                                     size=size, checkpoint=checkpoint, url=url, timeout=600,
+                                     on_progress=on_progress, on_queued=on_queued)
+    steps["subject"] = subject_info["seconds"]
+
+    if on_progress:
+        on_progress("geometry and PBR")
+    mesh_info = mesh_geom_texture(subject_info["path"], os.path.join(out_dir, name + "_tex.glb"),
+                                  seed=seed, tier=tier, faces=faces, texture_size=texture_size,
+                                  remesh=remesh, url=url, timeout=timeout,
+                                  on_progress=on_progress, on_queued=on_queued)
+    steps["geometry_texture"] = mesh_info["seconds"]
+
+    meta = {"artist_prompt": (prompt_text or "").strip(), "prompt": subject_info.get("prompt"),
+            "seed": int(seed), "tier": tier, "remesh": bool(remesh), "route": "oneshot",
+            "subject": subject_info["path"], "raw_mesh": mesh_info["path"],
+            "textured_mesh": mesh_info["path"], "faces_requested": int(faces),
+            "workflows": ["mesh_subject", "mesh_geom_texture"],
+            "model": "TRELLIS.2-4B", "license": "MIT", "seconds": steps}
+    with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return {"dir": out_dir, "name": name, "meta": meta, "raw_mesh": mesh_info["path"],
+            "textured_mesh": mesh_info["path"], "subject": subject_info["path"],
+            "seconds": steps}

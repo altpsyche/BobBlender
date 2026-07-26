@@ -1,0 +1,4580 @@
+{
+  "BAE-NormalMapPreprocessor": {
+    "category": "ControlNet Preprocessors/Normal and Depth Estimators",
+    "description": "",
+    "display_name": "BAE Normal Map",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "resolution": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 64,
+            "step": 64
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "resolution"
+      ],
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "name": "BAE-NormalMapPreprocessor",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.comfyui_controlnet_aux",
+    "search_aliases": []
+  },
+  "CLIPTextEncode": {
+    "category": "model/conditioning",
+    "description": "Encodes a text prompt using a CLIP model into an embedding that can be used to guide the diffusion model towards generating specific images.",
+    "display_name": "CLIP Text Encode (Prompt)",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "The CLIP model used for encoding the text."
+          }
+        ],
+        "text": [
+          "STRING",
+          {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "tooltip": "The text to be encoded."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "text",
+        "clip"
+      ]
+    },
+    "is_input_list": false,
+    "name": "CLIPTextEncode",
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "A conditioning containing the embedded text used to guide the diffusion model."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "text",
+      "prompt",
+      "text prompt",
+      "positive prompt",
+      "negative prompt",
+      "encode text",
+      "text encoder",
+      "encode prompt"
+    ]
+  },
+  "CLIPVisionEncode": {
+    "category": "model/conditioning",
+    "description": "",
+    "display_name": "CLIP Vision Encode",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "clip_vision": [
+          "CLIP_VISION"
+        ],
+        "crop": [
+          [
+            "center",
+            "none"
+          ]
+        ],
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip_vision",
+        "image",
+        "crop"
+      ]
+    },
+    "is_input_list": false,
+    "name": "CLIPVisionEncode",
+    "output": [
+      "CLIP_VISION_OUTPUT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CLIP_VISION_OUTPUT"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": []
+  },
+  "CLIPVisionLoader": {
+    "category": "model/loaders",
+    "description": "",
+    "display_name": "Load CLIP Vision",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "clip_name": [
+          [
+            "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip_name"
+      ]
+    },
+    "is_input_list": false,
+    "name": "CLIPVisionLoader",
+    "output": [
+      "CLIP_VISION"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CLIP_VISION"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": []
+  },
+  "CheckpointLoaderSimple": {
+    "category": "model/loaders",
+    "description": "Loads a diffusion model checkpoint, diffusion models are used to denoise latents.",
+    "display_name": "Load Checkpoint",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "ckpt_name": [
+          [
+            "RealVisXL_V5.0_fp16.safetensors",
+            "amanatsuIllustrious_v11.safetensors",
+            "oneObsession_v19Atypical.safetensors"
+          ],
+          {
+            "tooltip": "The name of the checkpoint (model) to load."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "ckpt_name"
+      ]
+    },
+    "is_input_list": false,
+    "name": "CheckpointLoaderSimple",
+    "output": [
+      "MODEL",
+      "CLIP",
+      "VAE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "MODEL",
+      "CLIP",
+      "VAE"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The model used for denoising latents.",
+      "The CLIP model used for encoding text prompts.",
+      "The VAE model used for encoding and decoding images to and from latent space."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "load model",
+      "checkpoint",
+      "model loader",
+      "load checkpoint",
+      "ckpt",
+      "model"
+    ]
+  },
+  "ControlNetApplyAdvanced": {
+    "category": "model/conditioning/controlnet",
+    "description": "",
+    "display_name": "Apply ControlNet",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "vae": [
+          "VAE"
+        ]
+      },
+      "required": {
+        "control_net": [
+          "CONTROL_NET"
+        ],
+        "end_percent": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "start_percent": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001
+          }
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "vae"
+      ],
+      "required": [
+        "positive",
+        "negative",
+        "control_net",
+        "image",
+        "strength",
+        "start_percent",
+        "end_percent"
+      ]
+    },
+    "is_input_list": false,
+    "name": "ControlNetApplyAdvanced",
+    "output": [
+      "CONDITIONING",
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "negative"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": [
+      "controlnet",
+      "apply controlnet",
+      "use controlnet",
+      "control net"
+    ]
+  },
+  "ControlNetLoader": {
+    "category": "model/loaders",
+    "description": "",
+    "display_name": "Load ControlNet Model",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "control_net_name": [
+          [
+            "SDXL/controlnet-depth-sdxl-1.0/diffusion_pytorch_model.safetensors",
+            "SDXL/controlnet-union-sdxl-1.0/diffusion_pytorch_model_promax.safetensors"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "control_net_name"
+      ]
+    },
+    "is_input_list": false,
+    "name": "ControlNetLoader",
+    "output": [
+      "CONTROL_NET"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CONTROL_NET"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": [
+      "controlnet",
+      "control net",
+      "cn",
+      "load controlnet",
+      "controlnet loader"
+    ]
+  },
+  "DepthAnythingV2Preprocessor": {
+    "category": "ControlNet Preprocessors/Normal and Depth Estimators",
+    "description": "",
+    "display_name": "Depth Anything V2 - Relative",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "ckpt_name": [
+          [
+            "depth_anything_v2_vitg.pth",
+            "depth_anything_v2_vitl.pth",
+            "depth_anything_v2_vitb.pth",
+            "depth_anything_v2_vits.pth"
+          ],
+          {
+            "default": "depth_anything_v2_vitl.pth"
+          }
+        ],
+        "resolution": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 64,
+            "step": 64
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "ckpt_name",
+        "resolution"
+      ],
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "name": "DepthAnythingV2Preprocessor",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.comfyui_controlnet_aux",
+    "search_aliases": []
+  },
+  "EmptyLatentHunyuan3Dv2": {
+    "api_node": false,
+    "category": "model/latent/hunyuan 3d",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": null,
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "max": 4096,
+            "min": 1,
+            "tooltip": "The number of latent images in the batch."
+          }
+        ],
+        "resolution": [
+          "INT",
+          {
+            "default": 3072,
+            "max": 8192,
+            "min": 1
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "resolution",
+        "batch_size"
+      ]
+    },
+    "is_input_list": false,
+    "name": "EmptyLatentHunyuan3Dv2",
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "LATENT"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_hunyuan3d",
+    "search_aliases": null
+  },
+  "EmptyLatentImage": {
+    "category": "model/latent",
+    "description": "Create a new batch of empty latent images to be denoised via sampling.",
+    "display_name": "Empty Latent Image",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "max": 4096,
+            "min": 1,
+            "tooltip": "The number of latent images in the batch."
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 16,
+            "step": 8,
+            "tooltip": "The height of the latent images in pixels."
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 16,
+            "step": 8,
+            "tooltip": "The width of the latent images in pixels."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "width",
+        "height",
+        "batch_size"
+      ]
+    },
+    "is_input_list": false,
+    "name": "EmptyLatentImage",
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The empty latent image batch."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "empty",
+      "empty latent",
+      "new latent",
+      "create latent",
+      "blank latent",
+      "blank"
+    ]
+  },
+  "GeomPackUVUnwrap": {
+    "category": "geompack/uv",
+    "description": "",
+    "display_name": "UV Unwrap",
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "extra_pnginfo": "EXTRA_PNGINFO",
+        "prompt": "PROMPT"
+      },
+      "optional": {
+        "backend.angle_limit": [
+          "FLOAT",
+          {
+            "default": 66.0,
+            "max": 89.0,
+            "min": 1.0,
+            "step": 1.0
+          }
+        ],
+        "backend.chart_cone_angle": [
+          "FLOAT",
+          {
+            "default": 90.0,
+            "max": 359.9,
+            "min": 0.0,
+            "step": 1.0
+          }
+        ],
+        "backend.chart_global_iterations": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "backend.chart_refine_iterations": [
+          "INT",
+          {
+            "default": 0,
+            "max": 10,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "backend.chart_smooth_strength": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "backend.cube_size": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 0.1,
+            "step": 0.1
+          }
+        ],
+        "backend.cylinder_radius": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 0.1,
+            "step": 0.1
+          }
+        ],
+        "backend.island_margin": [
+          "FLOAT",
+          {
+            "default": 0.02,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "backend.iterations": [
+          "INT",
+          {
+            "default": 10,
+            "max": 100,
+            "min": 1,
+            "step": 1
+          }
+        ],
+        "backend.scale_to_bounds": [
+          "COMBO",
+          {
+            "default": "true",
+            "multiselect": false,
+            "options": [
+              "true",
+              "false"
+            ]
+          }
+        ]
+      },
+      "required": {
+        "backend": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "inputs": {
+                  "required": {}
+                },
+                "key": "xatlas"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "chart_cone_angle": [
+                      "FLOAT",
+                      {
+                        "default": 90.0,
+                        "max": 359.9,
+                        "min": 0.0,
+                        "step": 1.0
+                      }
+                    ],
+                    "chart_global_iterations": [
+                      "INT",
+                      {
+                        "default": 1,
+                        "max": 10,
+                        "min": 0,
+                        "step": 1
+                      }
+                    ],
+                    "chart_refine_iterations": [
+                      "INT",
+                      {
+                        "default": 0,
+                        "max": 10,
+                        "min": 0,
+                        "step": 1
+                      }
+                    ],
+                    "chart_smooth_strength": [
+                      "INT",
+                      {
+                        "default": 1,
+                        "max": 10,
+                        "min": 0,
+                        "step": 1
+                      }
+                    ]
+                  }
+                },
+                "key": "cumesh"
+              },
+              {
+                "inputs": {
+                  "required": {}
+                },
+                "key": "libigl_lscm"
+              },
+              {
+                "inputs": {
+                  "required": {}
+                },
+                "key": "libigl_harmonic"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "iterations": [
+                      "INT",
+                      {
+                        "default": 10,
+                        "max": 100,
+                        "min": 1,
+                        "step": 1
+                      }
+                    ]
+                  }
+                },
+                "key": "libigl_arap"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "angle_limit": [
+                      "FLOAT",
+                      {
+                        "default": 66.0,
+                        "max": 89.0,
+                        "min": 1.0,
+                        "step": 1.0
+                      }
+                    ],
+                    "island_margin": [
+                      "FLOAT",
+                      {
+                        "default": 0.02,
+                        "max": 1.0,
+                        "min": 0.0,
+                        "step": 0.01
+                      }
+                    ],
+                    "scale_to_bounds": [
+                      "COMBO",
+                      {
+                        "default": "true",
+                        "multiselect": false,
+                        "options": [
+                          "true",
+                          "false"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "key": "blender_smart"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "cube_size": [
+                      "FLOAT",
+                      {
+                        "default": 1.0,
+                        "max": 10.0,
+                        "min": 0.1,
+                        "step": 0.1
+                      }
+                    ],
+                    "scale_to_bounds": [
+                      "COMBO",
+                      {
+                        "default": "true",
+                        "multiselect": false,
+                        "options": [
+                          "true",
+                          "false"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "key": "blender_cube"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "cylinder_radius": [
+                      "FLOAT",
+                      {
+                        "default": 1.0,
+                        "max": 10.0,
+                        "min": 0.1,
+                        "step": 0.1
+                      }
+                    ],
+                    "scale_to_bounds": [
+                      "COMBO",
+                      {
+                        "default": "true",
+                        "multiselect": false,
+                        "options": [
+                          "true",
+                          "false"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "key": "blender_cylinder"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "scale_to_bounds": [
+                      "COMBO",
+                      {
+                        "default": "true",
+                        "multiselect": false,
+                        "options": [
+                          "true",
+                          "false"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "key": "blender_sphere"
+              }
+            ]
+          }
+        ],
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "optional": [
+        "backend.chart_cone_angle",
+        "backend.chart_refine_iterations",
+        "backend.chart_global_iterations",
+        "backend.chart_smooth_strength",
+        "backend.iterations",
+        "backend.angle_limit",
+        "backend.island_margin",
+        "backend.scale_to_bounds",
+        "backend.cube_size",
+        "backend.cylinder_radius"
+      ],
+      "required": [
+        "trimesh",
+        "backend"
+      ]
+    },
+    "is_input_list": false,
+    "name": "GeomPackUVUnwrap",
+    "output": [
+      "TRIMESH",
+      "STRING"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "unwrapped_mesh",
+      "info"
+    ],
+    "output_node": true,
+    "python_module": "custom_nodes.ComfyUI-GeometryPack",
+    "search_aliases": []
+  },
+  "Hunyuan3Dv2Conditioning": {
+    "api_node": false,
+    "category": "model/conditioning/hunyuan 3d",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": null,
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "clip_vision_output": [
+          "CLIP_VISION_OUTPUT",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip_vision_output"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Hunyuan3Dv2Conditioning",
+    "output": [
+      "CONDITIONING",
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "positive",
+      "negative"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_hunyuan3d",
+    "search_aliases": null
+  },
+  "Hunyuan3Dv2ConditioningMultiView": {
+    "api_node": false,
+    "category": "model/conditioning/hunyuan 3d",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": null,
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "back": [
+          "CLIP_VISION_OUTPUT",
+          {}
+        ],
+        "front": [
+          "CLIP_VISION_OUTPUT",
+          {}
+        ],
+        "left": [
+          "CLIP_VISION_OUTPUT",
+          {}
+        ],
+        "right": [
+          "CLIP_VISION_OUTPUT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "input_order": {
+      "optional": [
+        "front",
+        "left",
+        "back",
+        "right"
+      ],
+      "required": []
+    },
+    "is_input_list": false,
+    "name": "Hunyuan3Dv2ConditioningMultiView",
+    "output": [
+      "CONDITIONING",
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "positive",
+      "negative"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_hunyuan3d",
+    "search_aliases": null
+  },
+  "Hy3DOmniLoadPipeline": {
+    "category": "Hy3D.Omni",
+    "description": "",
+    "display_name": "Hy3D Omni: Load Pipeline",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "force_reload": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "resume_download": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      },
+      "required": {
+        "repo_or_path": [
+          "STRING",
+          {
+            "default": "tencent/Hunyuan3D-Omni"
+          }
+        ],
+        "torch_dtype": [
+          [
+            "auto",
+            "fp16",
+            "bf16",
+            "fp32"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "variant": [
+          [
+            "default",
+            "ema"
+          ],
+          {
+            "default": "default"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "resume_download",
+        "force_reload"
+      ],
+      "required": [
+        "repo_or_path",
+        "variant",
+        "torch_dtype"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Hy3DOmniLoadPipeline",
+    "output": [
+      "HY3DOMNI_PIPELINE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "pipeline"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-Hy3D-Omni",
+    "search_aliases": []
+  },
+  "Hy3DOmniPointGenerate": {
+    "category": "Hy3D.Omni",
+    "description": "",
+    "display_name": "Hy3D Omni: Point Control",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "box_v": [
+          "FLOAT",
+          {
+            "default": 1.01,
+            "max": 5.0,
+            "min": 0.1,
+            "step": 0.01
+          }
+        ],
+        "fast_decode": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "guidance_scale": [
+          "FLOAT",
+          {
+            "default": 4.5,
+            "max": 20.0,
+            "min": 0.0,
+            "step": 0.1
+          }
+        ],
+        "mc_level": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": -1.0,
+            "step": 0.01
+          }
+        ],
+        "mc_mode": [
+          [
+            "mc",
+            "dmc"
+          ],
+          {
+            "default": "mc"
+          }
+        ],
+        "normalize_scale": [
+          "FLOAT",
+          {
+            "default": 0.98,
+            "max": 1.0,
+            "min": 0.1,
+            "step": 0.01
+          }
+        ],
+        "num_chunks": [
+          "INT",
+          {
+            "default": 8000,
+            "max": 200000,
+            "min": 1,
+            "step": 100
+          }
+        ],
+        "num_inference_steps": [
+          "INT",
+          {
+            "default": 50,
+            "max": 200,
+            "min": 1
+          }
+        ],
+        "octree_resolution": [
+          "INT",
+          {
+            "default": 512,
+            "max": 2048,
+            "min": 16,
+            "step": 16
+          }
+        ],
+        "remove_degenerate_faces": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "remove_floaters": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "sample_point_count": [
+          "INT",
+          {
+            "default": 0,
+            "max": 2000000,
+            "min": 0,
+            "step": 1024
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 1234,
+            "max": 4294967295,
+            "min": 0
+          }
+        ]
+      },
+      "required": {
+        "control_mesh": [
+          "TRIMESH"
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "pipeline": [
+          "HY3DOMNI_PIPELINE"
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "num_inference_steps",
+        "guidance_scale",
+        "normalize_scale",
+        "sample_point_count",
+        "octree_resolution",
+        "mc_level",
+        "box_v",
+        "num_chunks",
+        "mc_mode",
+        "seed",
+        "fast_decode",
+        "remove_floaters",
+        "remove_degenerate_faces"
+      ],
+      "required": [
+        "pipeline",
+        "image",
+        "control_mesh"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Hy3DOmniPointGenerate",
+    "output": [
+      "TRIMESH",
+      "TENSOR"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "trimesh",
+      "sampled_points"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-Hy3D-Omni",
+    "search_aliases": []
+  },
+  "Hy3DOmniVoxelGenerate": {
+    "category": "Hy3D.Omni",
+    "description": "",
+    "display_name": "Hy3D Omni: Voxel Control",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "apply_input_rotation": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "box_v": [
+          "FLOAT",
+          {
+            "default": 1.01,
+            "max": 5.0,
+            "min": 0.1,
+            "step": 0.01
+          }
+        ],
+        "fast_decode": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "guidance_scale": [
+          "FLOAT",
+          {
+            "default": 4.5,
+            "max": 20.0,
+            "min": 0.0,
+            "step": 0.1
+          }
+        ],
+        "mc_level": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": -1.0,
+            "step": 0.01
+          }
+        ],
+        "mc_mode": [
+          [
+            "mc",
+            "dmc"
+          ],
+          {
+            "default": "mc"
+          }
+        ],
+        "normalize_scale": [
+          "FLOAT",
+          {
+            "default": 0.9999,
+            "max": 1.0,
+            "min": 0.1,
+            "step": 0.01
+          }
+        ],
+        "num_chunks": [
+          "INT",
+          {
+            "default": 8000,
+            "max": 200000,
+            "min": 1,
+            "step": 100
+          }
+        ],
+        "num_inference_steps": [
+          "INT",
+          {
+            "default": 50,
+            "max": 200,
+            "min": 1
+          }
+        ],
+        "octree_resolution": [
+          "INT",
+          {
+            "default": 512,
+            "max": 2048,
+            "min": 16,
+            "step": 16
+          }
+        ],
+        "remove_degenerate_faces": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "remove_floaters": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "sample_point_count": [
+          "INT",
+          {
+            "default": 81920,
+            "max": 4000000,
+            "min": 1024,
+            "step": 1024
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 1234,
+            "max": 4294967295,
+            "min": 0
+          }
+        ]
+      },
+      "required": {
+        "control_mesh": [
+          "TRIMESH"
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "pipeline": [
+          "HY3DOMNI_PIPELINE"
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "num_inference_steps",
+        "guidance_scale",
+        "normalize_scale",
+        "sample_point_count",
+        "apply_input_rotation",
+        "octree_resolution",
+        "mc_level",
+        "box_v",
+        "num_chunks",
+        "mc_mode",
+        "seed",
+        "fast_decode",
+        "remove_floaters",
+        "remove_degenerate_faces"
+      ],
+      "required": [
+        "pipeline",
+        "image",
+        "control_mesh"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Hy3DOmniVoxelGenerate",
+    "output": [
+      "TRIMESH",
+      "TENSOR"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "trimesh",
+      "sampled_points"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-Hy3D-Omni",
+    "search_aliases": []
+  },
+  "IPAdapterAdvanced": {
+    "category": "ipadapter",
+    "description": "",
+    "display_name": "IPAdapter Advanced",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "attn_mask": [
+          "MASK"
+        ],
+        "clip_vision": [
+          "CLIP_VISION"
+        ],
+        "image_negative": [
+          "IMAGE"
+        ]
+      },
+      "required": {
+        "combine_embeds": [
+          [
+            "concat",
+            "add",
+            "subtract",
+            "average",
+            "norm average"
+          ]
+        ],
+        "embeds_scaling": [
+          [
+            "V only",
+            "K+V",
+            "K+V w/ C penalty",
+            "K+mean(V) w/ C penalty"
+          ]
+        ],
+        "end_at": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "ipadapter": [
+          "IPADAPTER"
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "start_at": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001
+          }
+        ],
+        "weight": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 5,
+            "min": -1,
+            "step": 0.05
+          }
+        ],
+        "weight_type": [
+          [
+            "linear",
+            "ease in",
+            "ease out",
+            "ease in-out",
+            "reverse in-out",
+            "weak input",
+            "weak output",
+            "weak middle",
+            "strong middle",
+            "style transfer",
+            "composition",
+            "strong style transfer",
+            "style and composition",
+            "style transfer precise",
+            "composition precise"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "image_negative",
+        "attn_mask",
+        "clip_vision"
+      ],
+      "required": [
+        "model",
+        "ipadapter",
+        "image",
+        "weight",
+        "weight_type",
+        "combine_embeds",
+        "start_at",
+        "end_at",
+        "embeds_scaling"
+      ]
+    },
+    "is_input_list": false,
+    "name": "IPAdapterAdvanced",
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI_IPAdapter_plus",
+    "search_aliases": []
+  },
+  "IPAdapterModelLoader": {
+    "category": "ipadapter/loaders",
+    "description": "",
+    "display_name": "IPAdapter Model Loader",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "ipadapter_file": [
+          [
+            "ip-adapter-plus-face_sdxl_vit-h.safetensors",
+            "ip-adapter-plus_sdxl_vit-h.safetensors",
+            "ip-adapter_sdxl_vit-h.safetensors"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "ipadapter_file"
+      ]
+    },
+    "is_input_list": false,
+    "name": "IPAdapterModelLoader",
+    "output": [
+      "IPADAPTER"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IPADAPTER"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI_IPAdapter_plus",
+    "search_aliases": []
+  },
+  "ImageOnlyCheckpointLoader": {
+    "category": "model/loaders",
+    "description": "",
+    "display_name": "Load Checkpoint Image Only (img2vid model)",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "ckpt_name": [
+          [
+            "RealVisXL_V5.0_fp16.safetensors",
+            "amanatsuIllustrious_v11.safetensors",
+            "oneObsession_v19Atypical.safetensors",
+            "hunyuan_3d_v2.1.safetensors",
+            "hunyuan3d-dit-v2-mv_fp16.safetensors"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "ckpt_name"
+      ]
+    },
+    "is_input_list": false,
+    "name": "ImageOnlyCheckpointLoader",
+    "output": [
+      "MODEL",
+      "CLIP_VISION",
+      "VAE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "MODEL",
+      "CLIP_VISION",
+      "VAE"
+    ],
+    "output_node": false,
+    "python_module": "comfy_extras.nodes_video_model",
+    "search_aliases": []
+  },
+  "ImageScale": {
+    "category": "image/upscaling",
+    "description": "",
+    "display_name": "Upscale Image",
+    "essentials_category": "Image Tools",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "crop": [
+          [
+            "disabled",
+            "center"
+          ]
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "upscale_method": [
+          [
+            "nearest-exact",
+            "bilinear",
+            "area",
+            "bicubic",
+            "lanczos"
+          ]
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 0,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "upscale_method",
+        "width",
+        "height",
+        "crop"
+      ]
+    },
+    "is_input_list": false,
+    "name": "ImageScale",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": [
+      "resize",
+      "resize image",
+      "scale image",
+      "image resize",
+      "zoom",
+      "zoom in",
+      "change size"
+    ]
+  },
+  "InvertMask": {
+    "api_node": false,
+    "category": "image/mask",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": "Invert Mask",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "mask": [
+          "MASK",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "mask"
+      ]
+    },
+    "is_input_list": false,
+    "name": "InvertMask",
+    "output": [
+      "MASK"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "MASK"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_mask",
+    "search_aliases": [
+      "reverse mask",
+      "flip mask"
+    ]
+  },
+  "JoinImageWithAlpha": {
+    "api_node": false,
+    "category": "image/compositing",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": "Join Image with Alpha",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "alpha": [
+          "MASK",
+          {}
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "alpha"
+      ]
+    },
+    "is_input_list": false,
+    "name": "JoinImageWithAlpha",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_compositing",
+    "search_aliases": [
+      "add transparency",
+      "apply alpha",
+      "composite alpha",
+      "RGBA"
+    ]
+  },
+  "KSampler": {
+    "category": "model/sampling",
+    "description": "Uses the provided model, positive and negative conditioning to denoise the latent image.",
+    "display_name": "KSampler",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 8.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.1,
+            "tooltip": "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality."
+          }
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The amount of denoising applied, lower values will maintain the structure of the initial image allowing for image to image sampling."
+          }
+        ],
+        "latent_image": [
+          "LATENT",
+          {
+            "tooltip": "The latent image to denoise."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The model used for denoising the input latent."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {
+            "tooltip": "The conditioning describing the attributes you want to exclude from the image."
+          }
+        ],
+        "positive": [
+          "CONDITIONING",
+          {
+            "tooltip": "The conditioning describing the attributes you want to include in the image."
+          }
+        ],
+        "sampler_name": [
+          [
+            "euler",
+            "euler_cfg_pp",
+            "euler_ancestral",
+            "euler_ancestral_cfg_pp",
+            "heun",
+            "heunpp2",
+            "exp_heun_2_x0",
+            "exp_heun_2_x0_sde",
+            "dpm_2",
+            "dpm_2_ancestral",
+            "lms",
+            "dpm_fast",
+            "dpm_adaptive",
+            "dpmpp_2s_ancestral",
+            "dpmpp_2s_ancestral_cfg_pp",
+            "dpmpp_sde",
+            "dpmpp_sde_gpu",
+            "dpmpp_2m",
+            "dpmpp_2m_cfg_pp",
+            "dpmpp_2m_sde",
+            "dpmpp_2m_sde_gpu",
+            "dpmpp_2m_sde_heun",
+            "dpmpp_2m_sde_heun_gpu",
+            "dpmpp_3m_sde",
+            "dpmpp_3m_sde_gpu",
+            "ddpm",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "deis",
+            "res_multistep",
+            "res_multistep_cfg_pp",
+            "res_multistep_ancestral",
+            "res_multistep_ancestral_cfg_pp",
+            "gradient_estimation",
+            "gradient_estimation_cfg_pp",
+            "er_sde",
+            "seeds_2",
+            "seeds_3",
+            "sa_solver",
+            "sa_solver_pece",
+            "ddim",
+            "uni_pc",
+            "uni_pc_bh2"
+          ],
+          {
+            "tooltip": "The algorithm used when sampling, this can affect the quality, speed, and style of the generated output."
+          }
+        ],
+        "scheduler": [
+          [
+            "simple",
+            "sgm_uniform",
+            "karras",
+            "exponential",
+            "ddim_uniform",
+            "beta",
+            "normal",
+            "linear_quadratic",
+            "kl_optimal"
+          ],
+          {
+            "tooltip": "The scheduler controls how noise is gradually removed to form the image."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "control_after_generate": true,
+            "default": 0,
+            "max": 18446744073709551615,
+            "min": 0,
+            "tooltip": "The random seed used for creating the noise."
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 20,
+            "max": 10000,
+            "min": 1,
+            "tooltip": "The number of steps used in the denoising process."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "seed",
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "positive",
+        "negative",
+        "latent_image",
+        "denoise"
+      ]
+    },
+    "is_input_list": false,
+    "name": "KSampler",
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The denoised latent."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "sampler",
+      "sample",
+      "generate",
+      "denoise",
+      "diffuse",
+      "txt2img",
+      "img2img"
+    ]
+  },
+  "LoadImage": {
+    "category": "image",
+    "description": "",
+    "display_name": "Load Image",
+    "essentials_category": "Basics",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "image": [
+          [
+            "bike.webp",
+            "bob_leaf.png",
+            "bob_leaf_rgba.png",
+            "cannon.webp",
+            "damiane.jpg",
+            "example.png",
+            "icon.png",
+            "pineapple.webp",
+            "t_logo.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "name": "LoadImage",
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": [
+      "load image",
+      "open image",
+      "import image",
+      "image input",
+      "upload image",
+      "read image",
+      "image loader"
+    ]
+  },
+  "LoadTrellis2Models": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "(Down)Load TRELLIS.2 Models",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "attn_backend": [
+          "COMBO",
+          {
+            "default": "auto",
+            "multiselect": false,
+            "options": [
+              "auto",
+              "flash_attn",
+              "xformers",
+              "sdpa",
+              "sageattn"
+            ],
+            "tooltip": "Attention backend. auto: best available (sageattn > flash_attn > xformers > sdpa)."
+          }
+        ],
+        "precision": [
+          "COMBO",
+          {
+            "default": "auto",
+            "multiselect": false,
+            "options": [
+              "auto",
+              "bf16",
+              "fp16",
+              "fp32"
+            ],
+            "tooltip": "Model precision. auto: best for your GPU (bf16 on Ampere+, fp16 on Volta/Turing, fp32 on older)."
+          }
+        ]
+      },
+      "required": {
+        "resolution": [
+          "COMBO",
+          {
+            "default": "1024_cascade",
+            "multiselect": false,
+            "options": [
+              "512",
+              "1024",
+              "1024_cascade",
+              "1536_cascade"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "precision",
+        "attn_backend"
+      ],
+      "required": [
+        "resolution"
+      ]
+    },
+    "is_input_list": false,
+    "name": "LoadTrellis2Models",
+    "output": [
+      "TRELLIS2_MODEL_CONFIG"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "model_config"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "LoraLoader": {
+    "category": "model/loaders",
+    "description": "This LoRA loader is used to modify both diffusion and CLIP models, altering the way in which latents are denoised such as applying styles. Multiple LoRA nodes can be linked together.",
+    "display_name": "Load LoRA (Model and CLIP)",
+    "essentials_category": "Image Generation",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "The CLIP model the LoRA will be applied to."
+          }
+        ],
+        "lora_name": [
+          [
+            "Anime_in_real.safetensors",
+            "Expressive_H-000001.safetensors",
+            "Hyperrealistic_illustrious.safetensors",
+            "MSS_v2_IL.safetensors",
+            "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+            "Smooth_Booster_v3.safetensors",
+            "_xyplot/aria_gala_v1-000001.safetensors",
+            "_xyplot/aria_gala_v1-000002.safetensors",
+            "_xyplot/aria_gala_v1-000003.safetensors",
+            "_xyplot/aria_gala_v1.safetensors",
+            "anime-detailer-xl.safetensors",
+            "aria_v1.safetensors",
+            "illustriousXLv01_stabilizer_v1.185c.safetensors",
+            "lcm-lora-sdxl.safetensors",
+            "princess_xl_v2.safetensors",
+            "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+          ],
+          {
+            "tooltip": "The name of the LoRA."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The diffusion model the LoRA will be applied to."
+          }
+        ],
+        "strength_clip": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": -100.0,
+            "step": 0.01,
+            "tooltip": "How strongly to modify the CLIP model. This value can be negative."
+          }
+        ],
+        "strength_model": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": -100.0,
+            "step": 0.01,
+            "tooltip": "How strongly to modify the diffusion model. This value can be negative."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "clip",
+        "lora_name",
+        "strength_model",
+        "strength_clip"
+      ]
+    },
+    "is_input_list": false,
+    "name": "LoraLoader",
+    "output": [
+      "MODEL",
+      "CLIP"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "MODEL",
+      "CLIP"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The modified diffusion model.",
+      "The modified CLIP model."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora loader",
+      "lora model"
+    ]
+  },
+  "MakeCircularVAE": {
+    "category": "latent",
+    "description": "",
+    "display_name": "Make Circular VAE",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "copy_vae": [
+          [
+            "Make a copy",
+            "Modify in place"
+          ]
+        ],
+        "tiling": [
+          [
+            "enable",
+            "x_only",
+            "y_only",
+            "disable"
+          ]
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "vae",
+        "tiling",
+        "copy_vae"
+      ]
+    },
+    "is_input_list": false,
+    "name": "MakeCircularVAE",
+    "output": [
+      "VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "VAE"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-seamless-tiling",
+    "search_aliases": []
+  },
+  "ModelSamplingAuraFlow": {
+    "category": "model/patch",
+    "description": "",
+    "display_name": "ModelSamplingAuraFlow",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "shift": [
+          "FLOAT",
+          {
+            "default": 1.73,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "shift"
+      ]
+    },
+    "is_input_list": false,
+    "name": "ModelSamplingAuraFlow",
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_node": false,
+    "python_module": "comfy_extras.nodes_model_advanced",
+    "search_aliases": []
+  },
+  "Preview3D": {
+    "api_node": false,
+    "category": "3d",
+    "deprecated": false,
+    "description": "Preview a 3D model file without saving it to the ComfyUI output directory.",
+    "dev_only": false,
+    "display_name": "Preview 3D & Animation",
+    "essentials_category": null,
+    "experimental": true,
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ],
+        "prompt": [
+          "PROMPT"
+        ]
+      },
+      "optional": {
+        "bg_image": [
+          "IMAGE",
+          {
+            "advanced": true
+          }
+        ],
+        "camera_info": [
+          "LOAD3D_CAMERA",
+          {
+            "advanced": true
+          }
+        ]
+      },
+      "required": {
+        "model_file": [
+          "STRING,FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_FBX,FILE_3D_OBJ,FILE_3D_STL,FILE_3D_USDZ,FILE_3D",
+          {
+            "default": "",
+            "multiline": false,
+            "tooltip": "3D model file or path string",
+            "widgetType": "STRING"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "optional": [
+        "camera_info",
+        "bg_image"
+      ],
+      "required": [
+        "model_file"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Preview3D",
+    "output": [],
+    "output_is_list": [],
+    "output_matchtypes": null,
+    "output_name": [],
+    "output_node": true,
+    "output_tooltips": [],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_load_3d",
+    "search_aliases": [
+      "view mesh",
+      "3d viewer"
+    ]
+  },
+  "SaveGLB": {
+    "api_node": false,
+    "category": "3d",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": "Save 3D Model",
+    "essentials_category": "Basics",
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ],
+        "prompt": [
+          "PROMPT"
+        ]
+      },
+      "required": {
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "3d/ComfyUI",
+            "multiline": false
+          }
+        ],
+        "mesh": [
+          "MESH,FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_OBJ,FILE_3D_FBX,FILE_3D_STL,FILE_3D_USDZ,FILE_3D_PLY,FILE_3D_SPLAT,FILE_3D_SPZ,FILE_3D_KSPLAT,FILE_3D_SPLAT_ANY,FILE_3D_POINT_CLOUD_ANY,FILE_3D",
+          {
+            "tooltip": "Mesh or 3D file to save"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "required": [
+        "mesh",
+        "filename_prefix"
+      ]
+    },
+    "is_input_list": false,
+    "name": "SaveGLB",
+    "output": [],
+    "output_is_list": [],
+    "output_matchtypes": null,
+    "output_name": [],
+    "output_node": true,
+    "output_tooltips": [],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_save_3d",
+    "search_aliases": [
+      "export 3d model",
+      "save mesh"
+    ]
+  },
+  "SaveImage": {
+    "category": "image",
+    "description": "Saves the input images to your ComfyUI output directory.",
+    "display_name": "Save Image",
+    "essentials_category": "Basics",
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "extra_pnginfo": "EXTRA_PNGINFO",
+        "prompt": "PROMPT"
+      },
+      "required": {
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "ComfyUI",
+            "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes."
+          }
+        ],
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "The images to save."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "required": [
+        "images",
+        "filename_prefix"
+      ]
+    },
+    "is_input_list": false,
+    "name": "SaveImage",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "images"
+    ],
+    "output_node": true,
+    "python_module": "nodes",
+    "search_aliases": [
+      "save",
+      "save image",
+      "export image",
+      "output image",
+      "write image",
+      "download"
+    ]
+  },
+  "SeamlessTile": {
+    "category": "conditioning",
+    "description": "",
+    "display_name": "Seamless Tile",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "copy_model": [
+          [
+            "Make a copy",
+            "Modify in place"
+          ]
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "tiling": [
+          [
+            "enable",
+            "x_only",
+            "y_only",
+            "disable"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "tiling",
+        "copy_model"
+      ]
+    },
+    "is_input_list": false,
+    "name": "SeamlessTile",
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-seamless-tiling",
+    "search_aliases": []
+  },
+  "SetUnionControlNetType": {
+    "api_node": false,
+    "category": "model/conditioning/controlnet",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": "Set Union ControlNet Type",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "control_net": [
+          "CONTROL_NET",
+          {}
+        ],
+        "type": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "auto",
+              "openpose",
+              "depth",
+              "hed/pidi/scribble/ted",
+              "canny/lineart/anime_lineart/mlsd",
+              "normal",
+              "segment",
+              "tile",
+              "repaint"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "control_net",
+        "type"
+      ]
+    },
+    "is_input_list": false,
+    "name": "SetUnionControlNetType",
+    "output": [
+      "CONTROL_NET"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "CONTROL_NET"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_controlnet",
+    "search_aliases": [
+      "set controlnet type",
+      "union controlnet type"
+    ]
+  },
+  "Tencent3DPartNode": {
+    "api_node": true,
+    "category": "partner/3d/Tencent",
+    "deprecated": false,
+    "description": "Automatically perform component identification and generation based on the model structure.",
+    "dev_only": false,
+    "display_name": "Hunyuan3D: 3D Part",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "api_key_comfy_org": [
+          "API_KEY_COMFY_ORG"
+        ],
+        "auth_token_comfy_org": [
+          "AUTH_TOKEN_COMFY_ORG"
+        ],
+        "comfy_usage_source": [
+          "COMFY_USAGE_SOURCE"
+        ],
+        "unique_id": [
+          "UNIQUE_ID"
+        ]
+      },
+      "required": {
+        "model_3d": [
+          "FILE_3D_FBX,FILE_3D",
+          {
+            "tooltip": "3D model in FBX format. Model should have less than 30000 faces."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "control_after_generate": true,
+            "default": 0,
+            "display": "number",
+            "max": 2147483647,
+            "min": 0,
+            "tooltip": "Seed controls whether the node should re-run; results are non-deterministic regardless of seed."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "auth_token_comfy_org",
+        "api_key_comfy_org",
+        "unique_id",
+        "comfy_usage_source"
+      ],
+      "required": [
+        "model_3d",
+        "seed"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Tencent3DPartNode",
+    "output": [
+      "FILE_3D_FBX"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "FBX"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": {
+      "depends_on": {
+        "input_groups": [],
+        "inputs": [],
+        "widgets": []
+      },
+      "engine": "jsonata",
+      "expr": "{\"type\":\"usd\",\"usd\":0.6}"
+    },
+    "python_module": "comfy_api_nodes.nodes_hunyuan3d",
+    "search_aliases": null
+  },
+  "Trellis2EncodeMesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Encode Mesh",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "resolution": [
+          "INT",
+          {
+            "default": 1024,
+            "max": 2048,
+            "min": 256,
+            "step": 128,
+            "tooltip": "Encoding grid resolution. Higher = more detail but slower. 1024 recommended."
+          }
+        ]
+      },
+      "required": {
+        "mesh": [
+          "TRIMESH",
+          {
+            "tooltip": "Input mesh to encode"
+          }
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {
+            "tooltip": "Model config from Load TRELLIS.2 Models node"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "resolution"
+      ],
+      "required": [
+        "model_config",
+        "mesh"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2EncodeMesh",
+    "output": [
+      "TRELLIS2_SHAPE_LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "shape_latent"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2ExportTrimesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Export Trimesh",
+    "has_intermediate_output": false,
+    "input": {
+      "hidden": {
+        "extra_pnginfo": "EXTRA_PNGINFO",
+        "prompt": "PROMPT"
+      },
+      "optional": {
+        "file_format": [
+          "COMBO",
+          {
+            "default": "glb",
+            "multiselect": false,
+            "options": [
+              "glb",
+              "obj",
+              "ply",
+              "stl",
+              "3mf",
+              "dae"
+            ]
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "trellis2",
+            "multiline": false
+          }
+        ]
+      },
+      "required": {
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "optional": [
+        "filename_prefix",
+        "file_format"
+      ],
+      "required": [
+        "trimesh"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2ExportTrimesh",
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "file_path"
+    ],
+    "output_node": true,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2GetConditioning": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Get Conditioning",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "background_color": [
+          "COMBO",
+          {
+            "default": "black",
+            "multiselect": false,
+            "options": [
+              "black",
+              "gray",
+              "white"
+            ]
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "mask": [
+          "MASK",
+          {}
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "background_color"
+      ],
+      "required": [
+        "model_config",
+        "image",
+        "mask"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2GetConditioning",
+    "output": [
+      "TRELLIS2_CONDITIONING",
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "conditioning",
+      "preprocessed_image"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2ImageToShape": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Image to Shape",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "max_tokens": [
+          "INT",
+          {
+            "default": 49152,
+            "max": 262144,
+            "min": 16384,
+            "step": 4096,
+            "tooltip": "Max tokens for 1024 cascade. Lower = less VRAM but potentially lower quality. Default 49152 (~9GB), try 32768 (~7GB) or 24576 (~6GB) for lower VRAM."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 2147483647,
+            "min": 0,
+            "tooltip": "Random seed for reproducible generation"
+          }
+        ],
+        "shape_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Shape guidance rescale. Reduces artifacts from high CFG"
+          }
+        ],
+        "shape_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 6.5,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Shape CFG scale. Higher = stronger adherence to input image"
+          }
+        ],
+        "shape_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Shape sampling steps. More steps = better quality but slower"
+          }
+        ],
+        "ss_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Sparse structure guidance rescale. Reduces artifacts from high CFG"
+          }
+        ],
+        "ss_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 6.5,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Sparse structure CFG scale. Higher = stronger adherence to input image"
+          }
+        ],
+        "ss_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Sparse structure sampling steps. More steps = better quality but slower"
+          }
+        ]
+      },
+      "required": {
+        "conditioning": [
+          "TRELLIS2_CONDITIONING",
+          {
+            "tooltip": "Image conditioning from Get Conditioning node"
+          }
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {
+            "tooltip": "Model config from Load TRELLIS.2 Models node"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "seed",
+        "ss_guidance_strength",
+        "ss_guidance_rescale",
+        "ss_sampling_steps",
+        "shape_guidance_strength",
+        "shape_guidance_rescale",
+        "shape_sampling_steps",
+        "max_tokens"
+      ],
+      "required": [
+        "model_config",
+        "conditioning"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2ImageToShape",
+    "output": [
+      "TRIMESH",
+      "TRELLIS2_SHAPE_SLAT",
+      "TRELLIS2_SUBS"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "mesh",
+      "shape_slat",
+      "subs"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2LoadMesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Load Mesh",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "mesh_path": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false,
+            "tooltip": "Absolute path to mesh file (GLB, OBJ, PLY, STL, etc.)"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "mesh_path"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2LoadMesh",
+    "output": [
+      "TRIMESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "mesh"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2MultiViewImageToShape": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Multi-View Image to Shape",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "back_image": [
+          "IMAGE",
+          {
+            "tooltip": "Back view image"
+          }
+        ],
+        "back_mask": [
+          "MASK",
+          {
+            "tooltip": "Back view mask"
+          }
+        ],
+        "background_color": [
+          "COMBO",
+          {
+            "default": "black",
+            "multiselect": false,
+            "options": [
+              "black",
+              "gray",
+              "white"
+            ],
+            "tooltip": "Background color for masked regions"
+          }
+        ],
+        "blend_temperature": [
+          "FLOAT",
+          {
+            "default": 2.0,
+            "max": 10.0,
+            "min": 0.1,
+            "step": 0.1,
+            "tooltip": "Softmax temperature for view blending. Higher = sharper transitions between views."
+          }
+        ],
+        "bottom_image": [
+          "IMAGE",
+          {
+            "tooltip": "Bottom view image"
+          }
+        ],
+        "bottom_mask": [
+          "MASK",
+          {
+            "tooltip": "Bottom view mask"
+          }
+        ],
+        "front_axis": [
+          "COMBO",
+          {
+            "default": "z",
+            "multiselect": false,
+            "options": [
+              "z",
+              "x"
+            ],
+            "tooltip": "Which 3D axis the front view faces. Z for most models."
+          }
+        ],
+        "left_image": [
+          "IMAGE",
+          {
+            "tooltip": "Left view image"
+          }
+        ],
+        "left_mask": [
+          "MASK",
+          {
+            "tooltip": "Left view mask"
+          }
+        ],
+        "max_tokens": [
+          "INT",
+          {
+            "default": 49152,
+            "max": 262144,
+            "min": 16384,
+            "step": 4096,
+            "tooltip": "Max tokens for cascade. Lower = less VRAM."
+          }
+        ],
+        "right_image": [
+          "IMAGE",
+          {
+            "tooltip": "Right view image"
+          }
+        ],
+        "right_mask": [
+          "MASK",
+          {
+            "tooltip": "Right view mask"
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 2147483647,
+            "min": 0,
+            "tooltip": "Random seed for reproducible generation"
+          }
+        ],
+        "shape_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Shape guidance rescale"
+          }
+        ],
+        "shape_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 6.5,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Shape CFG scale"
+          }
+        ],
+        "shape_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Shape sampling steps"
+          }
+        ],
+        "ss_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Sparse structure guidance rescale"
+          }
+        ],
+        "ss_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 6.5,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Sparse structure CFG scale"
+          }
+        ],
+        "ss_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Sparse structure sampling steps"
+          }
+        ],
+        "top_image": [
+          "IMAGE",
+          {
+            "tooltip": "Top view image"
+          }
+        ],
+        "top_mask": [
+          "MASK",
+          {
+            "tooltip": "Top view mask"
+          }
+        ]
+      },
+      "required": {
+        "front_image": [
+          "IMAGE",
+          {
+            "tooltip": "Front view image (required)"
+          }
+        ],
+        "front_mask": [
+          "MASK",
+          {
+            "tooltip": "Front view mask (required)"
+          }
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {
+            "tooltip": "Model config from Load TRELLIS.2 Models node"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "back_image",
+        "back_mask",
+        "left_image",
+        "left_mask",
+        "right_image",
+        "right_mask",
+        "top_image",
+        "top_mask",
+        "bottom_image",
+        "bottom_mask",
+        "seed",
+        "ss_guidance_strength",
+        "ss_guidance_rescale",
+        "ss_sampling_steps",
+        "shape_guidance_strength",
+        "shape_guidance_rescale",
+        "shape_sampling_steps",
+        "max_tokens",
+        "front_axis",
+        "blend_temperature",
+        "background_color"
+      ],
+      "required": [
+        "model_config",
+        "front_image",
+        "front_mask"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2MultiViewImageToShape",
+    "output": [
+      "TRIMESH",
+      "TRELLIS2_SHAPE_SLAT",
+      "TRELLIS2_SUBS"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "mesh",
+      "shape_slat",
+      "subs"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2ProcessMesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Process Mesh",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "chart_cone_angle": [
+          "FLOAT",
+          {
+            "default": 90.0,
+            "max": 359.9,
+            "min": 0.0,
+            "step": 1.0
+          }
+        ],
+        "chart_global_iterations": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0
+          }
+        ],
+        "chart_refine_iterations": [
+          "INT",
+          {
+            "default": 0,
+            "max": 10,
+            "min": 0
+          }
+        ],
+        "chart_smooth_strength": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0
+          }
+        ],
+        "floater_threshold": [
+          "FLOAT",
+          {
+            "default": 0.001,
+            "max": 0.1,
+            "min": 0.0,
+            "step": 0.001,
+            "tooltip": "Area threshold for removing small disconnected components. 0 = disabled."
+          }
+        ],
+        "remesh.fill_holes": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "remesh.fill_holes_perimeter": [
+          "FLOAT",
+          {
+            "default": 0.03,
+            "max": 0.5,
+            "min": 0.001,
+            "step": 0.001
+          }
+        ],
+        "remesh.remesh_band": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 5.0,
+            "min": 0.1,
+            "step": 0.1
+          }
+        ],
+        "remesh.remove_inner_faces": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "weld_digits": [
+          "INT",
+          {
+            "default": 4,
+            "max": 8,
+            "min": 1
+          }
+        ],
+        "weld_vertices": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      },
+      "required": {
+        "remesh": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "inputs": {
+                  "required": {
+                    "fill_holes": [
+                      "BOOLEAN",
+                      {
+                        "default": true
+                      }
+                    ],
+                    "fill_holes_perimeter": [
+                      "FLOAT",
+                      {
+                        "default": 0.03,
+                        "max": 0.5,
+                        "min": 0.001,
+                        "step": 0.001
+                      }
+                    ]
+                  }
+                },
+                "key": "off"
+              },
+              {
+                "inputs": {
+                  "required": {
+                    "remesh_band": [
+                      "FLOAT",
+                      {
+                        "default": 1.0,
+                        "max": 5.0,
+                        "min": 0.1,
+                        "step": 0.1
+                      }
+                    ],
+                    "remove_inner_faces": [
+                      "BOOLEAN",
+                      {
+                        "default": false
+                      }
+                    ]
+                  }
+                },
+                "key": "on"
+              }
+            ]
+          }
+        ],
+        "target_face_count": [
+          "INT",
+          {
+            "default": 500000,
+            "max": 5000000,
+            "min": 1000,
+            "step": 1000
+          }
+        ],
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "floater_threshold",
+        "weld_vertices",
+        "weld_digits",
+        "chart_cone_angle",
+        "chart_refine_iterations",
+        "chart_global_iterations",
+        "chart_smooth_strength",
+        "remesh.fill_holes",
+        "remesh.fill_holes_perimeter",
+        "remesh.remesh_band",
+        "remesh.remove_inner_faces"
+      ],
+      "required": [
+        "trimesh",
+        "remesh",
+        "target_face_count"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2ProcessMesh",
+    "output": [
+      "TRIMESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "trimesh"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2RasterizePBR": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Rasterize PBR",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "original_mesh": [
+          "TRIMESH",
+          {
+            "tooltip": "Original mesh (pre-simplification) for BVH projection. Improves texture accuracy by projecting texel positions back to the original surface."
+          }
+        ]
+      },
+      "required": {
+        "texture_size": [
+          "INT",
+          {
+            "default": 2048,
+            "max": 16384,
+            "min": 512,
+            "step": 512
+          }
+        ],
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ],
+        "voxelgrid": [
+          "TRELLIS2_VOXELGRID",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "original_mesh"
+      ],
+      "required": [
+        "trimesh",
+        "voxelgrid",
+        "texture_size"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2RasterizePBR",
+    "output": [
+      "TRIMESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "trimesh"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2RemoveBackground": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Remove Background",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "low_vram": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "low_vram"
+      ],
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2RemoveBackground",
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "image",
+      "mask"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2ShapeToTexturedMesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Shape to Textured Mesh",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 2147483647,
+            "min": 0,
+            "tooltip": "Random seed for texture variation"
+          }
+        ],
+        "tex_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.2,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Texture guidance rescale. Reduces artifacts from high CFG"
+          }
+        ],
+        "tex_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Texture CFG scale. Higher = stronger adherence to input image"
+          }
+        ],
+        "tex_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Texture sampling steps. More steps = better quality but slower"
+          }
+        ]
+      },
+      "required": {
+        "conditioning": [
+          "TRELLIS2_CONDITIONING",
+          {
+            "tooltip": "Image conditioning from Get Conditioning node (same as used for shape)"
+          }
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {
+            "tooltip": "Model config from Load TRELLIS.2 Models node"
+          }
+        ],
+        "shape_slat": [
+          "TRELLIS2_SHAPE_SLAT",
+          {
+            "tooltip": "Shape structured latent from Image to Shape node"
+          }
+        ],
+        "subs": [
+          "TRELLIS2_SUBS",
+          {
+            "tooltip": "Subdivision guides from Image to Shape node"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "seed",
+        "tex_guidance_strength",
+        "tex_guidance_rescale",
+        "tex_sampling_steps"
+      ],
+      "required": [
+        "model_config",
+        "conditioning",
+        "shape_slat",
+        "subs"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2ShapeToTexturedMesh",
+    "output": [
+      "TRELLIS2_VOXELGRID"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "voxelgrid"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2Simplify": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Simplify Mesh",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "fill_holes": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "fill_holes_perimeter": [
+          "FLOAT",
+          {
+            "default": 0.03,
+            "max": 0.5,
+            "min": 0.001,
+            "step": 0.001
+          }
+        ],
+        "remesh": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "remesh_band": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 5.0,
+            "min": 0.1,
+            "step": 0.1
+          }
+        ]
+      },
+      "required": {
+        "target_face_count": [
+          "INT",
+          {
+            "default": 500000,
+            "max": 5000000,
+            "min": 1000,
+            "step": 1000
+          }
+        ],
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "fill_holes",
+        "fill_holes_perimeter",
+        "remesh",
+        "remesh_band"
+      ],
+      "required": [
+        "trimesh",
+        "target_face_count"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2Simplify",
+    "output": [
+      "TRIMESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "trimesh"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2TextureMesh": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 Texture Mesh (Standalone)",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 2147483647,
+            "min": 0,
+            "tooltip": "Random seed for texture variation"
+          }
+        ],
+        "tex_guidance_rescale": [
+          "FLOAT",
+          {
+            "default": 0.2,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Texture guidance rescale. Reduces artifacts from high CFG"
+          }
+        ],
+        "tex_guidance_strength": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "max": 99.99,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Texture CFG scale. Higher = stronger adherence to input image"
+          }
+        ],
+        "tex_sampling_steps": [
+          "INT",
+          {
+            "default": 12,
+            "max": 50,
+            "min": 1,
+            "step": 1,
+            "tooltip": "Texture sampling steps"
+          }
+        ]
+      },
+      "required": {
+        "conditioning": [
+          "TRELLIS2_CONDITIONING",
+          {
+            "tooltip": "Image conditioning from Get Conditioning node (the new texture reference)"
+          }
+        ],
+        "model_config": [
+          "TRELLIS2_MODEL_CONFIG",
+          {
+            "tooltip": "Model config from Load TRELLIS.2 Models node"
+          }
+        ],
+        "shape_latent": [
+          "TRELLIS2_SHAPE_LATENT",
+          {
+            "tooltip": "Encoded shape latent from Encode Mesh node"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "seed",
+        "tex_guidance_strength",
+        "tex_guidance_rescale",
+        "tex_sampling_steps"
+      ],
+      "required": [
+        "model_config",
+        "conditioning",
+        "shape_latent"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2TextureMesh",
+    "output": [
+      "TRELLIS2_VOXELGRID"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "voxelgrid"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "Trellis2UVUnwrap": {
+    "category": "TRELLIS2",
+    "description": "",
+    "display_name": "TRELLIS.2 UV Unwrap",
+    "has_intermediate_output": false,
+    "input": {
+      "optional": {
+        "chart_cone_angle": [
+          "FLOAT",
+          {
+            "default": 90.0,
+            "max": 359.9,
+            "min": 0.0,
+            "step": 1.0
+          }
+        ],
+        "chart_global_iterations": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0
+          }
+        ],
+        "chart_refine_iterations": [
+          "INT",
+          {
+            "default": 0,
+            "max": 10,
+            "min": 0
+          }
+        ],
+        "chart_smooth_strength": [
+          "INT",
+          {
+            "default": 1,
+            "max": 10,
+            "min": 0
+          }
+        ]
+      },
+      "required": {
+        "trimesh": [
+          "TRIMESH",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "optional": [
+        "chart_cone_angle",
+        "chart_refine_iterations",
+        "chart_global_iterations",
+        "chart_smooth_strength"
+      ],
+      "required": [
+        "trimesh"
+      ]
+    },
+    "is_input_list": false,
+    "name": "Trellis2UVUnwrap",
+    "output": [
+      "TRIMESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "trimesh"
+    ],
+    "output_node": false,
+    "python_module": "custom_nodes.ComfyUI-TRELLIS2",
+    "search_aliases": []
+  },
+  "UltimateSDUpscale": {
+    "category": "image/upscaling",
+    "description": "Upscales an image and runs image-to-image on tiles from the input image.",
+    "display_name": "Ultimate SD Upscale",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "max": 4096,
+            "min": 1,
+            "step": 1,
+            "tooltip": "The number of tiles to process in a batch. Higher values can reduce processing time but use more VRAM. Yields different results than individual tiles. Only affects the main redraw step, not the seam fix step."
+          }
+        ],
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 8.0,
+            "max": 100.0,
+            "min": 0.0,
+            "tooltip": "The CFG scale to use for each tile."
+          }
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 0.2,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The denoising strength to use for each tile."
+          }
+        ],
+        "force_uniform_tiles": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Force all tiles to be the same as the set tile size, even when tiles could be smaller. This can help prevent the model from working with irregular tile sizes."
+          }
+        ],
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "The image to upscale."
+          }
+        ],
+        "mask_blur": [
+          "INT",
+          {
+            "default": 8,
+            "max": 64,
+            "min": 0,
+            "step": 1,
+            "tooltip": "The blur radius for the mask."
+          }
+        ],
+        "mode_type": [
+          [
+            "Linear",
+            "Chess",
+            "None"
+          ],
+          {
+            "tooltip": "The tiling order to use for the redraw step."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The model to use for image-to-image."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {
+            "tooltip": "The negative conditioning for each tile."
+          }
+        ],
+        "positive": [
+          "CONDITIONING",
+          {
+            "tooltip": "The positive conditioning for each tile."
+          }
+        ],
+        "sampler_name": [
+          [
+            "euler",
+            "euler_cfg_pp",
+            "euler_ancestral",
+            "euler_ancestral_cfg_pp",
+            "heun",
+            "heunpp2",
+            "exp_heun_2_x0",
+            "exp_heun_2_x0_sde",
+            "dpm_2",
+            "dpm_2_ancestral",
+            "lms",
+            "dpm_fast",
+            "dpm_adaptive",
+            "dpmpp_2s_ancestral",
+            "dpmpp_2s_ancestral_cfg_pp",
+            "dpmpp_sde",
+            "dpmpp_sde_gpu",
+            "dpmpp_2m",
+            "dpmpp_2m_cfg_pp",
+            "dpmpp_2m_sde",
+            "dpmpp_2m_sde_gpu",
+            "dpmpp_2m_sde_heun",
+            "dpmpp_2m_sde_heun_gpu",
+            "dpmpp_3m_sde",
+            "dpmpp_3m_sde_gpu",
+            "ddpm",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "deis",
+            "res_multistep",
+            "res_multistep_cfg_pp",
+            "res_multistep_ancestral",
+            "res_multistep_ancestral_cfg_pp",
+            "gradient_estimation",
+            "gradient_estimation_cfg_pp",
+            "er_sde",
+            "seeds_2",
+            "seeds_3",
+            "sa_solver",
+            "sa_solver_pece",
+            "ddim",
+            "uni_pc",
+            "uni_pc_bh2"
+          ],
+          {
+            "tooltip": "The sampler to use for each tile."
+          }
+        ],
+        "scheduler": [
+          [
+            "simple",
+            "sgm_uniform",
+            "karras",
+            "exponential",
+            "ddim_uniform",
+            "beta",
+            "normal",
+            "linear_quadratic",
+            "kl_optimal"
+          ],
+          {
+            "tooltip": "The scheduler to use for each tile."
+          }
+        ],
+        "seam_fix_denoise": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The denoising strength to use for the seam fix."
+          }
+        ],
+        "seam_fix_mask_blur": [
+          "INT",
+          {
+            "default": 8,
+            "max": 64,
+            "min": 0,
+            "step": 1,
+            "tooltip": "The blur radius for the seam fix mask."
+          }
+        ],
+        "seam_fix_mode": [
+          [
+            "None",
+            "Band Pass",
+            "Half Tile",
+            "Half Tile + Intersections"
+          ],
+          {
+            "tooltip": "The seam fix mode to use."
+          }
+        ],
+        "seam_fix_padding": [
+          "INT",
+          {
+            "default": 16,
+            "max": 8192,
+            "min": 0,
+            "step": 8,
+            "tooltip": "The padding to apply for the seam fix tiles."
+          }
+        ],
+        "seam_fix_width": [
+          "INT",
+          {
+            "default": 64,
+            "max": 8192,
+            "min": 0,
+            "step": 8,
+            "tooltip": "The width of the bands used for the Band Pass seam fix mode."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 18446744073709551615,
+            "min": 0,
+            "tooltip": "The seed to use for image-to-image."
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 20,
+            "max": 10000,
+            "min": 1,
+            "step": 1,
+            "tooltip": "The number of steps to use for each tile."
+          }
+        ],
+        "tile_height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 8192,
+            "min": 64,
+            "step": 8,
+            "tooltip": "The height of each tile."
+          }
+        ],
+        "tile_padding": [
+          "INT",
+          {
+            "default": 32,
+            "max": 8192,
+            "min": 0,
+            "step": 8,
+            "tooltip": "The padding to apply between tiles."
+          }
+        ],
+        "tile_width": [
+          "INT",
+          {
+            "default": 512,
+            "max": 8192,
+            "min": 64,
+            "step": 8,
+            "tooltip": "The width of each tile."
+          }
+        ],
+        "tiled_decode": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Whether to use tiled decoding when decoding tiles."
+          }
+        ],
+        "upscale_by": [
+          "FLOAT",
+          {
+            "default": 2,
+            "max": 4,
+            "min": 0.05,
+            "step": 0.05,
+            "tooltip": "The factor to upscale the image by."
+          }
+        ],
+        "upscale_model": [
+          "UPSCALE_MODEL",
+          {
+            "tooltip": "The upscaler model for upscaling the image."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE model to use for tiles."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "model",
+        "positive",
+        "negative",
+        "vae",
+        "upscale_by",
+        "seed",
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "denoise",
+        "upscale_model",
+        "mode_type",
+        "tile_width",
+        "tile_height",
+        "mask_blur",
+        "tile_padding",
+        "seam_fix_mode",
+        "seam_fix_denoise",
+        "seam_fix_width",
+        "seam_fix_mask_blur",
+        "seam_fix_padding",
+        "force_uniform_tiles",
+        "tiled_decode",
+        "batch_size"
+      ]
+    },
+    "is_input_list": false,
+    "name": "UltimateSDUpscale",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The final upscaled image."
+    ],
+    "python_module": "custom_nodes.ComfyUI_UltimateSDUpscale",
+    "search_aliases": []
+  },
+  "UpscaleModelLoader": {
+    "api_node": false,
+    "category": "model/loaders",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": "Load Upscale Model",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "model_name": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "4x-AnimeSharp.pth",
+              "4x-UltraSharp.pth",
+              "4x_APISR_GRL_GAN_generator.pth"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model_name"
+      ]
+    },
+    "is_input_list": false,
+    "name": "UpscaleModelLoader",
+    "output": [
+      "UPSCALE_MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "UPSCALE_MODEL"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_upscale_model",
+    "search_aliases": null
+  },
+  "VAEDecode": {
+    "category": "model/latent",
+    "description": "Decodes latent images back into pixel space images.",
+    "display_name": "VAE Decode",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT",
+          {
+            "tooltip": "The latent to be decoded."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE model used for decoding the latent."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "vae"
+      ]
+    },
+    "is_input_list": false,
+    "name": "VAEDecode",
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      "The decoded image."
+    ],
+    "python_module": "nodes",
+    "search_aliases": [
+      "decode",
+      "decode latent",
+      "latent to image",
+      "render latent"
+    ]
+  },
+  "VAEDecodeHunyuan3D": {
+    "api_node": false,
+    "category": "model/latent/hunyuan 3d",
+    "deprecated": false,
+    "description": "",
+    "dev_only": false,
+    "display_name": null,
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "num_chunks": [
+          "INT",
+          {
+            "advanced": true,
+            "default": 8000,
+            "max": 500000,
+            "min": 1000
+          }
+        ],
+        "octree_resolution": [
+          "INT",
+          {
+            "advanced": true,
+            "default": 256,
+            "max": 512,
+            "min": 16
+          }
+        ],
+        "samples": [
+          "LATENT",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "vae",
+        "num_chunks",
+        "octree_resolution"
+      ]
+    },
+    "is_input_list": false,
+    "name": "VAEDecodeHunyuan3D",
+    "output": [
+      "VOXEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "VOXEL"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_hunyuan3d",
+    "search_aliases": null
+  },
+  "VAEEncode": {
+    "category": "model/latent",
+    "description": "",
+    "display_name": "VAE Encode",
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "pixels": [
+          "IMAGE"
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "pixels",
+        "vae"
+      ]
+    },
+    "is_input_list": false,
+    "name": "VAEEncode",
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "output_node": false,
+    "python_module": "nodes",
+    "search_aliases": [
+      "encode",
+      "encode image",
+      "image to latent"
+    ]
+  },
+  "VoxelToMesh": {
+    "api_node": false,
+    "category": "3d",
+    "deprecated": false,
+    "description": "Converts a voxel grid to a mesh.",
+    "dev_only": false,
+    "display_name": "Voxel to Mesh",
+    "essentials_category": null,
+    "experimental": false,
+    "has_intermediate_output": false,
+    "input": {
+      "required": {
+        "algorithm": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "surface net",
+              "basic"
+            ]
+          }
+        ],
+        "threshold": [
+          "FLOAT",
+          {
+            "default": 0.6,
+            "max": 1.0,
+            "min": -1.0,
+            "step": 0.01
+          }
+        ],
+        "voxel": [
+          "VOXEL",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "voxel",
+        "algorithm",
+        "threshold"
+      ]
+    },
+    "is_input_list": false,
+    "name": "VoxelToMesh",
+    "output": [
+      "MESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_matchtypes": null,
+    "output_name": [
+      "MESH"
+    ],
+    "output_node": false,
+    "output_tooltips": [
+      null
+    ],
+    "price_badge": null,
+    "python_module": "comfy_extras.nodes_hunyuan3d",
+    "search_aliases": null
+  }
+}

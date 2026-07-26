@@ -1,0 +1,134 @@
+{
+  "_bob": {
+    "id": "tex_upres",
+    "plan": "W3, docs/COMFYUI.md track A",
+    "purpose": "A 1K tile to 2K or 4K, tiled, without reintroducing the seam W1 removed.",
+    "derived_from": "tex_tileable.json (W1) for the circular halves, plus the stock UltimateSDUpscale single-node recipe from ComfyUI_UltimateSDUpscale's README",
+    "deviations_from_source": [
+      "The model and the VAE both arrive circular-padded (SeamlessTile + MakeCircularVAE), because UltimateSDUpscale re-samples and re-decodes every tile: with a stock VAE the wrap seam comes straight back, which is the same failure the W1 measurements found.",
+      "seam_fix_mode is None. Its seam fixer is for the seams BETWEEN internal tiles, which Linear mode plus mask_blur already handles here, and running it re-denoises bands of the image for no measured gain.",
+      "force_uniform_tiles is true, so the tile grid divides the image evenly and no undersized edge tile gets a different effective denoise.",
+      "The upscale model is templated as BOB_UPSCALE_MODEL rather than hardcoded (R6)."
+    ],
+    "requires_nodes": ["UltimateSDUpscale", "SeamlessTile", "MakeCircularVAE"],
+    "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0), ComfyUI_UltimateSDUpscale",
+    "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+    "runtime_inputs": ["BOB_IMAGE.image"],
+    "notes": "BOB_SEED titles the UltimateSDUpscale node, which carries seed, denoise and upscale_by as fields (see tex_tileable_ref.json's denoise_is_a_field note). Denoise 0.2 by default: the 4x ESRGAN pass does the resolution and the diffusion pass only adds grain, so a higher denoise starts inventing a different texture than the one that was accepted."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_CKPT"
+      }
+    },
+    "2": {
+      "class_type": "SeamlessTile",
+      "inputs": {
+        "model": ["1", 0],
+        "tiling": "enable",
+        "copy_model": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "rocky ground with moss"
+      },
+      "_meta": {
+        "title": "BOB_PROMPT"
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "shadow, cast shadow, vignette, lighting gradient, specular highlight, glare, blur, depth of field, perspective, horizon, sky, plant closeup, object, text, watermark, signature, border, frame, seam"
+      },
+      "_meta": {
+        "title": "BOB_NEG"
+      }
+    },
+    "11": {
+      "class_type": "MakeCircularVAE",
+      "inputs": {
+        "vae": ["1", 2],
+        "tiling": "enable",
+        "copy_vae": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE_VAE"
+      }
+    },
+    "20": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "21": {
+      "class_type": "UpscaleModelLoader",
+      "inputs": {
+        "model_name": "4x-UltraSharp.pth"
+      },
+      "_meta": {
+        "title": "BOB_UPSCALE_MODEL"
+      }
+    },
+    "22": {
+      "class_type": "UltimateSDUpscale",
+      "inputs": {
+        "image": ["20", 0],
+        "model": ["2", 0],
+        "positive": ["3", 0],
+        "negative": ["5", 0],
+        "vae": ["11", 0],
+        "upscale_model": ["21", 0],
+        "upscale_by": 2.0,
+        "seed": 0,
+        "steps": 20,
+        "cfg": 5.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 0.2,
+        "mode_type": "Linear",
+        "tile_width": 1024,
+        "tile_height": 1024,
+        "mask_blur": 16,
+        "tile_padding": 32,
+        "seam_fix_mode": "None",
+        "seam_fix_denoise": 1.0,
+        "seam_fix_width": 64,
+        "seam_fix_mask_blur": 8,
+        "seam_fix_padding": 16,
+        "force_uniform_tiles": true,
+        "tiled_decode": false,
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "13": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["22", 0],
+        "filename_prefix": "bob/tex_upres"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

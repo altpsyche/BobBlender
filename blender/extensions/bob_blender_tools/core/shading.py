@@ -243,6 +243,35 @@ def terrain_add_layer(node):
     return nxt
 
 
+def set_terrain_texture(obj, mat, index, set_name):
+    """Assign texture set `set_name` ("" clears it) to terrain layer slot `index` and rebuild the
+    wrapper. Structural rather than a live knob: the sampler is graph, not a socket value. The
+    other slots' sets and the projection mode carry forward, and the rebuild restores every tuned
+    input it had. Returns the material."""
+    sets, box = materials.stored_sets(mat, materials.MAX_TERRAIN_LAYERS)
+    sets[index] = set_name or ""
+    return materials.terrain_material_for(obj, mat_name=mat.name, texsets=sets, box=box)
+
+
+def set_terrain_triplanar(obj, mat, box):
+    """Switch a terrain material between box (triplanar) and top-down planar projection. Also
+    structural: it is a property on each image node, not a socket."""
+    sets, _ = materials.stored_sets(mat, materials.MAX_TERRAIN_LAYERS)
+    return materials.terrain_material_for(obj, mat_name=mat.name, texsets=sets, box=box)
+
+
+def set_surface_texture(mat, set_name):
+    """set_terrain_texture's single-slot counterpart for a surface BobShader."""
+    return materials.surface_material(mat.name, texset_name=set_name or "")
+
+
+def set_surface_triplanar(mat, box):
+    """set_terrain_triplanar's counterpart for a surface BobShader (box = un-UV'd projection,
+    flat = the prop's own UVs)."""
+    sets, _ = materials.stored_sets(mat, 1)
+    return materials.surface_material(mat.name, texset_name=sets[0], box=box)
+
+
 def snow_shell_add(surface):
     """Add the snow-accumulation shell modifier and keep the Set-Material modifier last. Returns
     (had_coverage, mod_name): had_coverage is False when no BOB_Snow pass feeds the shell yet."""

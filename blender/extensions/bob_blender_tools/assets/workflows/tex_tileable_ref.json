@@ -1,0 +1,179 @@
+{
+  "_bob": {
+    "id": "tex_tileable_ref",
+    "plan": "W2, docs/COMFYUI.md track A",
+    "purpose": "A reference photo to a seamless set: img2img at BOB_DENOISE with the reference's palette locked by IPAdapter, so the result is that surface rather than the checkpoint's idea of the words.",
+    "derived_from": "tex_tileable.json (W1), with the empty latent replaced by an encoded reference and an IPAdapter pair added",
+    "deviations_from_source": [
+      "EmptyLatentImage replaced by ImageScale(BOB_SIZE) -> VAEEncode, so the sampler starts from the reference rather than from noise. BOB_SIZE therefore binds to the resize, not to a latent.",
+      "The reference is encoded through the CIRCULAR VAE, not the stock one: a zero-padded encode writes the reference's own edge discontinuity into the starting latent, which is the seam W1 exists to avoid.",
+      "IPAdapterModelLoader + CLIPVisionLoader + IPAdapterAdvanced patch the tiled model, so the palette survives a denoise high enough to remove the photo's lighting.",
+      "The KSampler carries BOB_DENOISE as a FIELD, not as a node of its own: see denoise_is_a_field below."
+    ],
+    "denoise_is_a_field": "The plan's templated-title list names BOB_DENOISE alongside BOB_SEED as if they were separate nodes. They cannot be: templating binds a node by its single _meta.title, and seed and denoise are two widgets on ONE KSampler. Bob binds {'BOB_SEED': {'seed': s, 'denoise': d}} instead. Corrected in docs/COMFYUI.md at G2.",
+    "requires_nodes": ["SeamlessTile", "MakeCircularVAE", "IPAdapterAdvanced", "IPAdapterModelLoader"],
+    "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0), ComfyUI_IPAdapter_plus",
+    "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+    "runtime_inputs": ["BOB_IMAGE.image"],
+    "notes": "BOB_IMAGE's value is a filename in the server's input folder, uploaded by core.comfy.upload_image just before the queue, so it is declared a runtime input and preflight does not check the placeholder against the LoadImage enum. Denoise 0.65 is the default: low enough that the reference's structure survives, high enough that its baked lighting does not."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "RealVisXL_V5.0_fp16.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_CKPT"
+      }
+    },
+    "2": {
+      "class_type": "SeamlessTile",
+      "inputs": {
+        "model": ["1", 0],
+        "tiling": "enable",
+        "copy_model": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "rocky ground with moss"
+      },
+      "_meta": {
+        "title": "BOB_PROMPT"
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["1", 1],
+        "text": "shadow, cast shadow, vignette, lighting gradient, specular highlight, glare, blur, depth of field, perspective, horizon, sky, plant closeup, object, text, watermark, signature, border, frame, seam"
+      },
+      "_meta": {
+        "title": "BOB_NEG"
+      }
+    },
+    "20": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "BOB_IMAGE"
+      }
+    },
+    "21": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["20", 0],
+        "upscale_method": "lanczos",
+        "width": 1024,
+        "height": 1024,
+        "crop": "center"
+      },
+      "_meta": {
+        "title": "BOB_SIZE"
+      }
+    },
+    "11": {
+      "class_type": "MakeCircularVAE",
+      "inputs": {
+        "vae": ["1", 2],
+        "tiling": "enable",
+        "copy_vae": "Make a copy"
+      },
+      "_meta": {
+        "title": "BOB_TILE_VAE"
+      }
+    },
+    "22": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": ["21", 0],
+        "vae": ["11", 0]
+      },
+      "_meta": {
+        "title": "BOB_ENCODE"
+      }
+    },
+    "23": {
+      "class_type": "IPAdapterModelLoader",
+      "inputs": {
+        "ipadapter_file": "ip-adapter_sdxl_vit-h.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_IPADAPTER_MODEL"
+      }
+    },
+    "24": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+      },
+      "_meta": {
+        "title": "BOB_CLIP_VISION"
+      }
+    },
+    "25": {
+      "class_type": "IPAdapterAdvanced",
+      "inputs": {
+        "model": ["2", 0],
+        "ipadapter": ["23", 0],
+        "image": ["21", 0],
+        "clip_vision": ["24", 0],
+        "weight": 0.7,
+        "weight_type": "style transfer",
+        "combine_embeds": "concat",
+        "start_at": 0.0,
+        "end_at": 1.0,
+        "embeds_scaling": "V only"
+      },
+      "_meta": {
+        "title": "BOB_IPADAPTER"
+      }
+    },
+    "6": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["25", 0],
+        "positive": ["3", 0],
+        "negative": ["5", 0],
+        "latent_image": ["22", 0],
+        "seed": 0,
+        "steps": 25,
+        "cfg": 5.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 0.65
+      },
+      "_meta": {
+        "title": "BOB_SEED"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["6", 0],
+        "vae": ["11", 0]
+      },
+      "_meta": {
+        "title": "BOB_DECODE"
+      }
+    },
+    "13": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["12", 0],
+        "filename_prefix": "bob/tex_tileable_ref"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    }
+  }
+}

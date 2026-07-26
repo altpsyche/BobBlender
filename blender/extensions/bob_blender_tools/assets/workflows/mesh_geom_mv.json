@@ -1,0 +1,266 @@
+{
+ "_bob": {
+  "id": "mesh_geom_mv",
+  "plan": "W6, docs/COMFYUI.md family 2 (track C), the multi-view geometry challenger",
+  "purpose": "Four views of a subject to a watertight mesh, for when a single view guesses the back wrong. Views come from Blender when a block-out exists, so they are consistent by construction rather than by luck.",
+  "derived_from": "comfyui_workflow_templates_json/templates/3d_hunyuan3d_multiview_to_model.json, converted by tools/scripts/comfy_ui_to_api.py",
+  "deviations_from_source": [
+   "BOB_* titles added on the templated nodes. BOB_3D_MODEL is meaningful here for the same reason it is in W5: ImageOnlyCheckpointLoader does name a checkpoint file.",
+   "SaveGLB's filename_prefix moved from mesh/ComfyUI to bob_mesh, matching W5, so a Bob run is identifiable in the output folder.",
+   "MarkdownNote nodes dropped; they are GUI documentation.",
+   "Nothing else. Latent 3072, 20 steps, cfg 7.5, euler + normal are the template's own multi-view values."
+  ],
+  "requires_nodes": [
+   "ImageOnlyCheckpointLoader",
+   "Hunyuan3Dv2ConditioningMultiView",
+   "VAEDecodeHunyuan3D",
+   "VoxelToMesh",
+   "SaveGLB"
+  ],
+  "requires_pack": "none, all five are ComfyUI core",
+  "runtime_inputs": [
+   "BOB_VIEW_FRONT.image",
+   "BOB_VIEW_LEFT.image",
+   "BOB_VIEW_BACK.image",
+   "BOB_VIEW_RIGHT.image"
+  ],
+  "notes": "CLIPVisionEncode crop is 'none' here, not 'center' as in W5: cropping four views independently would centre each one differently and the four would stop describing one object. That is the template's own choice and it is load-bearing. The four views are the four cardinal angles at the same elevation, in the order front, left, back, right, which is the order Hunyuan3Dv2ConditioningMultiView's sockets name. Output is watertight SDF-voxel geometry, so this graph structurally cannot make a leaf; it is the hard-surface and back-facing route. Swap BOB_3D_MODEL to hunyuan3d-dit-v2-mv-turbo_fp16 with cfg 4 for the turbo variant, which additionally needs a FluxGuidance node."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "ImageOnlyCheckpointLoader",
+   "inputs": {
+    "ckpt_name": "hunyuan3d-dit-v2-mv_fp16.safetensors"
+   },
+   "_meta": {
+    "title": "BOB_3D_MODEL"
+   }
+  },
+  "2": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_FRONT"
+   }
+  },
+  "3": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_LEFT"
+   }
+  },
+  "4": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_BACK"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_VIEW_RIGHT"
+   }
+  },
+  "6": {
+   "class_type": "CLIPVisionEncode",
+   "inputs": {
+    "clip_vision": [
+     "1",
+     1
+    ],
+    "image": [
+     "2",
+     0
+    ],
+    "crop": "none"
+   },
+   "_meta": {
+    "title": "BOB_VISION_FRONT"
+   }
+  },
+  "7": {
+   "class_type": "CLIPVisionEncode",
+   "inputs": {
+    "clip_vision": [
+     "1",
+     1
+    ],
+    "image": [
+     "3",
+     0
+    ],
+    "crop": "none"
+   },
+   "_meta": {
+    "title": "BOB_VISION_LEFT"
+   }
+  },
+  "8": {
+   "class_type": "CLIPVisionEncode",
+   "inputs": {
+    "clip_vision": [
+     "1",
+     1
+    ],
+    "image": [
+     "4",
+     0
+    ],
+    "crop": "none"
+   },
+   "_meta": {
+    "title": "BOB_VISION_BACK"
+   }
+  },
+  "9": {
+   "class_type": "CLIPVisionEncode",
+   "inputs": {
+    "clip_vision": [
+     "1",
+     1
+    ],
+    "image": [
+     "5",
+     0
+    ],
+    "crop": "none"
+   },
+   "_meta": {
+    "title": "BOB_VISION_RIGHT"
+   }
+  },
+  "10": {
+   "class_type": "Hunyuan3Dv2ConditioningMultiView",
+   "inputs": {
+    "front": [
+     "6",
+     0
+    ],
+    "left": [
+     "7",
+     0
+    ],
+    "back": [
+     "8",
+     0
+    ],
+    "right": [
+     "9",
+     0
+    ]
+   },
+   "_meta": {
+    "title": "BOB_COND"
+   }
+  },
+  "11": {
+   "class_type": "ModelSamplingAuraFlow",
+   "inputs": {
+    "model": [
+     "1",
+     0
+    ],
+    "shift": 1
+   },
+   "_meta": {
+    "title": "BOB_SHIFT"
+   }
+  },
+  "12": {
+   "class_type": "EmptyLatentHunyuan3Dv2",
+   "inputs": {
+    "resolution": 3072,
+    "batch_size": 1
+   },
+   "_meta": {
+    "title": "BOB_LATENT"
+   }
+  },
+  "13": {
+   "class_type": "KSampler",
+   "inputs": {
+    "model": [
+     "11",
+     0
+    ],
+    "positive": [
+     "10",
+     0
+    ],
+    "negative": [
+     "10",
+     1
+    ],
+    "latent_image": [
+     "12",
+     0
+    ],
+    "seed": 0,
+    "steps": 20,
+    "cfg": 7.5,
+    "sampler_name": "euler",
+    "scheduler": "normal",
+    "denoise": 1
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "14": {
+   "class_type": "VAEDecodeHunyuan3D",
+   "inputs": {
+    "samples": [
+     "13",
+     0
+    ],
+    "vae": [
+     "1",
+     2
+    ],
+    "num_chunks": 8000,
+    "octree_resolution": 256
+   },
+   "_meta": {
+    "title": "BOB_DECODE"
+   }
+  },
+  "15": {
+   "class_type": "VoxelToMesh",
+   "inputs": {
+    "voxel": [
+     "14",
+     0
+    ],
+    "algorithm": "surface net",
+    "threshold": 0.6
+   },
+   "_meta": {
+    "title": "BOB_VOXEL"
+   }
+  },
+  "16": {
+   "class_type": "SaveGLB",
+   "inputs": {
+    "mesh": [
+     "15",
+     0
+    ],
+    "filename_prefix": "bob_mesh"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  }
+ }
+}

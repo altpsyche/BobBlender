@@ -1,0 +1,76 @@
+{
+  "_bob": {
+    "id": "mesh_simplify_uv",
+    "plan": "W9c, docs/COMFYUI.md pipeline steps 3 and 4, the A/B against Blender",
+    "purpose": "Trellis2Simplify and Trellis2UVUnwrap as their own graph, so steps 3 and 4 can be measured against Blender Decimate / Quadriflow / Smart UV Project without touching the other stages.",
+    "derived_from": "ComfyUI-TRELLIS2/workflows/refinement.json for the load-and-export skeleton, with Trellis2Simplify and Trellis2UVUnwrap in place of Trellis2RefineMesh",
+    "deviations_from_source": [
+      "Trellis2RefineMesh, Trellis2EncodeMesh, Trellis2GetConditioning, LoadImage and LoadTrellis2Models are all dropped. Refinement needs the 4B model loaded; simplify and unwrap do not, so this graph runs with no model resident at all, which is what makes it a fair timing comparison against Blender.",
+      "mesh_audit.json was named as a second source in the plan and is NOT usable: it is built on PulseMeshAudit, from a pack that is not installed and is not a declared dependency of ComfyUI-TRELLIS2.",
+      "GeomPackLoadMesh replaced by Trellis2LoadMesh for the free-form path, same reason as W9t.",
+      "Trellis2ExportTrimesh plus Preview3D for the retrievable output."
+    ],
+    "requires_nodes": ["Trellis2LoadMesh", "Trellis2Simplify", "Trellis2UVUnwrap", "Trellis2ExportTrimesh"],
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT)",
+    "runtime_inputs": ["BOB_MESH.mesh_path"],
+    "notes": "No model load, so this is also the cheapest graph to smoke-test the mesh transport with."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "Trellis2LoadMesh",
+      "inputs": {
+        "mesh_path": ""
+      },
+      "_meta": {
+        "title": "BOB_MESH"
+      }
+    },
+    "2": {
+      "class_type": "Trellis2Simplify",
+      "inputs": {
+        "trimesh": ["1", 0],
+        "target_face_count": 4000,
+        "fill_holes": false,
+        "fill_holes_perimeter": 0.03,
+        "remesh": false,
+        "remesh_band": 1.0
+      },
+      "_meta": {
+        "title": "BOB_SIMPLIFY"
+      }
+    },
+    "3": {
+      "class_type": "Trellis2UVUnwrap",
+      "inputs": {
+        "trimesh": ["2", 0],
+        "chart_cone_angle": 90.0,
+        "chart_refine_iterations": 1,
+        "chart_global_iterations": 1,
+        "chart_smooth_strength": 1
+      },
+      "_meta": {
+        "title": "BOB_UV"
+      }
+    },
+    "4": {
+      "class_type": "Trellis2ExportTrimesh",
+      "inputs": {
+        "trimesh": ["3", 0],
+        "filename_prefix": "bob_simplify",
+        "file_format": "glb"
+      },
+      "_meta": {
+        "title": "BOB_OUT"
+      }
+    },
+    "5": {
+      "class_type": "Preview3D",
+      "inputs": {
+        "model_file": ["4", 0]
+      },
+      "_meta": {
+        "title": "BOB_VIEW"
+      }
+    }
+  }
+}
