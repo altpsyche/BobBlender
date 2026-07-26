@@ -1213,3 +1213,241 @@ def test_heightmap_macro_writes_an_eight_bit_mask_and_its_provenance(mods, monke
     # keep_source is what makes the 8-bit claim auditable rather than asserted; off by default.
     info = comfy.heightmap_macro("a broad basin", str(tmp_path / "again.png"), keep_source=True)
     assert info["source"] and os.path.exists(info["source"])
+
+
+# -- Websocket progress (G6, core/comfy_ws.py) ------------------------------------------------
+# The reader is hand-rolled because the client is stdlib-only (Bob-side constraint 1), so the frame
+# framing is Bob's code and has to be tested as such. What is NOT tested here is termination, on
+# purpose: `wait` decides a job is finished from the jobs API, and the last test below is the one that
+# proves a missing websocket costs progress detail and nothing else.
+def _ws_frame(payload, opcode=0x1, fin=True):
+    """A server-to-client frame: unmasked, which is what the reader has to accept."""
+    head = bytes([(0x80 if fin else 0) | opcode])
+    if len(payload) < 126:
+        head += bytes([len(payload)])
+    else:
+        head += bytes([126]) + struct.pack(">H", len(payload))
+    return head + payload
+
+
+@pytest.fixture
+def ws_server():
+    """A socket that completes the websocket handshake and then sends whatever it is told to.
+
+    `frames` is set by each test before connecting; `pongs` records what the client sent back, which
+    is how the ping reply is measured rather than assumed.
+    """
+    import socket
+
+    state = {"frames": [], "pongs": [], "upgrade": True}
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def serve():
+        try:
+            conn, _ = listener.accept()
+        except OSError:
+            return
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return
+            head += chunk
+        state["request"] = head.decode("latin-1")
+        if not state["upgrade"]:
+            conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            conn.close()
+            return
+        conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                     b"Connection: Upgrade\r\n\r\n")
+        for frame in state["frames"]:
+            conn.sendall(frame)
+        try:
+            conn.settimeout(1.0)
+            state["pongs"].append(conn.recv(4096))
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    state["start"] = thread.start
+    state["url"] = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    yield state
+    try:
+        listener.close()
+    except OSError:
+        pass
+
+
+@pytest.fixture(scope="module")
+def ws(mods):
+    sys.path.insert(0, str(CORE))
+    return importlib.import_module("comfy_ws")
+
+
+def test_ws_reads_text_frames_and_reassembles_a_fragmented_one(ws, ws_server):
+    ws_server["frames"] = [
+        _ws_frame(b'{"type": "progress", "data": {"value": 3, "max": 20}}'),
+        _ws_frame(b'{"type": "exec', opcode=0x1, fin=False),   # fragment 1
+        _ws_frame(b'uting", "data": {"node": "12"}}', opcode=0x0),  # continuation, fin
+        _ws_frame(b"\x89PNG-preview-bytes", opcode=0x2),  # a live preview; must be dropped
+    ]
+    ws_server["start"]()
+    sock = ws.connect(ws_server["url"], "bob-test")
+    assert sock is not None, "the handshake should complete"
+    assert "clientId=bob-test" in ws_server["request"]
+    seen = []
+    sock.pump(1.0, seen.append)
+    sock.close()
+    assert [e["type"] for e in seen] == ["progress", "executing"], "binary frames are dropped"
+    assert seen[1]["data"]["node"] == "12", "a fragmented message reassembles"
+
+
+def test_ws_answers_a_ping_with_a_masked_pong(ws, ws_server):
+    ws_server["frames"] = [_ws_frame(b"hb", opcode=0x9),
+                           _ws_frame(b'{"type": "status", "data": {}}')]
+    ws_server["start"]()
+    sock = ws.connect(ws_server["url"], "bob-test")
+    seen = []
+    sock.pump(1.0, seen.append)
+    sock.close()
+    time.sleep(0.2)
+    assert seen and seen[0]["type"] == "status"
+    reply = b"".join(ws_server["pongs"])
+    assert reply[:1] == b"\x8a", "opcode 10, pong"
+    assert reply[1] & 0x80, "a client frame MUST be masked (RFC 6455 5.3)"
+
+
+def test_ws_connect_returns_none_when_the_server_will_not_upgrade(ws, ws_server):
+    ws_server["upgrade"] = False
+    ws_server["start"]()
+    assert ws.connect(ws_server["url"], "bob-test") is None, "None, not an exception"
+
+
+def test_progress_text_reads_the_event_vocabulary_and_ignores_the_rest(ws):
+    assert ws.progress_text({"type": "progress", "data": {"value": 7, "max": 20}}) == "step 7/20"
+    assert ws.progress_text({"type": "executing", "data": {"node": "5"}}) == "node 5"
+    assert ws.progress_text({"type": "execution_cached", "data": {"nodes": ["1", "2"]}}) \
+        == "2 cached"
+    assert ws.progress_text({"type": "status", "data": {
+        "status": {"exec_info": {"queue_remaining": 3}}}}) == "queued, 3 ahead"
+    # A queue of one is this job, so it is not news; and an unknown type is not guessed at.
+    assert ws.progress_text({"type": "status", "data": {
+        "status": {"exec_info": {"queue_remaining": 1}}}}) is None
+    assert ws.progress_text({"type": "progress_state", "data": {"nodes": {}}}) is None
+    # Another client's job on the same server is filtered out by prompt id.
+    event = {"type": "progress", "data": {"value": 1, "max": 4, "prompt_id": "other"}}
+    assert ws.progress_text(event, prompt_id="mine") is None
+    assert ws.progress_text(event, prompt_id="other") == "step 1/4"
+
+
+def test_wait_still_finishes_when_there_is_no_websocket(mods, fake_server):
+    """The safety property the design rests on: the fake serves no /ws, so `connect` returns None and
+    `wait` falls back to the status string. A dropped or absent socket must cost granularity and never
+    a result."""
+    comfy, _ = mods
+    seen = []
+    outputs = comfy.wait("p1", url=fake_server, timeout=10, poll=0.01, on_progress=seen.append)
+    assert comfy.images(outputs)[0]["filename"] == "a.png"
+    assert seen and set(seen) <= {"pending", "in_progress"}, "status strings, not per-node detail"
+
+
+# -- Circular padding applied in place, and undone (G6, the copied-VAE segfault) --------------
+# The crash this exists for is in ComfyUI, not in Bob: a deepcopied VAE owns a staged host buffer
+# whose destructor faults, and it kills the server on the second decode of a session. Bob's half of
+# the fix is to stop asking for the copy, which mutates the SESSION's shared model instead -- so the
+# tests that matter are the ones proving the mutation is undone before anything that must not wrap.
+def test_the_tiling_binding_is_a_value_in_one_place(mods):
+    comfy, _ = mods
+    on, off = comfy.tiling_values(True), comfy.tiling_values(False)
+    assert on[comfy.TILE_TITLE]["tiling"] == "enable"
+    assert off[comfy.TILE_VAE_TITLE]["tiling"] == "disable"
+    # BOTH nodes in place, and both of them matter: W1 copies the UNet as well as the VAE, so a fix
+    # that only spared the VAE would still deepcopy 5 GB of SDXL and still crash.
+    assert on[comfy.TILE_TITLE]["copy_model"] == comfy.TILING_COPY_MODE
+    assert on[comfy.TILE_VAE_TITLE]["copy_vae"] == comfy.TILING_COPY_MODE
+    assert comfy.TILING_COPY_MODE == "Modify in place"
+
+
+def test_a_texture_set_binds_tiling_on_and_marks_the_model_dirty(mods, monkeypatch, tmp_path):
+    comfy, _ = mods
+    seen = {}
+
+    def fake_generate(workflow, values, **kwargs):
+        graph, _prov = workflow
+        seen.setdefault("calls", []).append(values)
+        n = 8
+        rgb = np.zeros((n, n, 3), dtype=np.uint8)
+        return _paeth_png(rgb), {"prompt_id": "p1", "seconds": 1.0}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    comfy.mark_tiling_applied(None, False)
+    comfy.texture_variant("stone", str(tmp_path / "set"), seed=1)
+    values = seen["calls"][-1]
+    assert values[comfy.TILE_TITLE] == {"tiling": "enable", "copy_model": "Modify in place"}
+    assert comfy._TILING_DIRTY[comfy.base_url(None)] is True, "the shared model is now padded"
+
+
+def test_a_subject_image_resets_the_padding_first(mods, monkeypatch, tmp_path):
+    """W4 must not wrap: it is one centred object, and a circular UNet carries its edge round the
+    frame. Measured at G6 without this: seam ratio 1.059, i.e. tiled, where untiled reads 3.9 to 8.5."""
+    comfy, _ = mods
+    order = []
+
+    def fake_generate(workflow, values, **kwargs):
+        order.append("reset" if values.get(comfy.TILE_TITLE, {}).get("tiling") == "disable"
+                     else "subject")
+        return _paeth_png(np.zeros((8, 8, 3), dtype=np.uint8)), {"prompt_id": "p", "seconds": 1.0}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    comfy.mark_tiling_applied(None, True)          # a texture set ran earlier in the session
+    comfy.subject_image("a boulder", str(tmp_path / "s.png"), seed=1)
+    assert order == ["reset", "subject"], "the reset runs BEFORE the subject, not after"
+    assert comfy._TILING_DIRTY[comfy.base_url(None)] is False
+
+    # Lazy: a second subject in the same session pays nothing, which is what makes this cheap.
+    order.clear()
+    comfy.subject_image("a log", str(tmp_path / "s2.png"), seed=2)
+    assert order == ["subject"]
+
+
+def test_the_open_macro_route_resets_too(mods, monkeypatch, tmp_path):
+    """The open route DROPS the padding nodes, so it runs on the shared model. Without the reset a
+    texture set earlier in the session would make the mask tile, and G5 measured that a tiling macro
+    mask repeats the landform across the border (seam 0.80 tiled against 86.18 open)."""
+    comfy, maps = mods
+    order = []
+
+    def fake_generate(workflow, values, **kwargs):
+        graph, _prov = workflow
+        classes = {n["class_type"] for n in graph.values()}
+        order.append("reset" if "SeamlessTile" in classes else "macro")
+        n = 64
+        y, x = np.mgrid[0:n, 0:n] / n
+        rgb = (np.repeat((x * 0.8 + 0.1)[:, :, None], 3, axis=2) * 255).astype(np.uint8)
+        return _paeth_png(rgb), {"prompt_id": "p", "seconds": 1.0}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    comfy.mark_tiling_applied(None, True)
+    comfy.heightmap_macro("a massif", str(tmp_path / "m.png"), seed=1)  # open is the default
+    assert order == ["reset", "macro"]
+
+
+def test_a_failed_reset_does_not_stop_the_generation(mods, monkeypatch, tmp_path):
+    """The reset is a convenience, not a precondition: if it cannot run, the caller still gets the
+    image it asked for, and the dirty flag stays set so the next call tries again."""
+    comfy, _ = mods
+    calls = []
+
+    def fake_generate(workflow, values, **kwargs):
+        if values.get(comfy.TILE_TITLE, {}).get("tiling") == "disable":
+            raise comfy.ComfyError("reset could not run")
+        calls.append("subject")
+        return _paeth_png(np.zeros((8, 8, 3), dtype=np.uint8)), {"prompt_id": "p", "seconds": 1.0}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    comfy.mark_tiling_applied(None, True)
+    comfy.subject_image("a boulder", str(tmp_path / "s.png"), seed=1)
+    assert calls == ["subject"]
+    assert comfy._TILING_DIRTY[comfy.base_url(None)] is True, "still dirty, so it retries"

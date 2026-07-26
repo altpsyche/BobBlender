@@ -4,6 +4,7 @@ from . import (
     atmosphere,
     biome,
     camera,
+    gen_assets,
     geonodes,
     images,
     mesh,
@@ -47,6 +48,11 @@ _HANDLERS = {
     "build_snow_cover": atmosphere.build_snow_cover,
     "apply_season": atmosphere.apply_season,
     "scene_preset": atmosphere.scene_preset,
+    # Generation, the Blender half (docs/COMFYUI.md, Ops and MCP). Everything that talks to ComfyUI
+    # runs in the MCP process with no bpy; these three are the steps that need Blender.
+    "apply_texture_set": shading.apply_texture_set,
+    "import_generated": gen_assets.import_generated_op,
+    "export_control": gen_assets.export_control_op,
     # Typed paths + water + erosion (core/splines_build.py)
     "make_curve": splines_build.make_curve,
     "curve_build": splines_build.curve_build,

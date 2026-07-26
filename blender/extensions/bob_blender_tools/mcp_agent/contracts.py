@@ -158,6 +158,46 @@ class SnowShell(BaseModel):
     object: str  # the surface to shell (needs a snow_cover pass to read thickness)
 
 
+# Generation, the Blender half (docs/COMFYUI.md, Ops and MCP). The ComfyUI half needs no bpy and is
+# the comfy_* TOOLS in server.py, which talk HTTP directly; these three ops are the steps that do
+# need Blender. The terrain macro mask deliberately has no op: it reaches a bake as the `macro` key
+# of bake_heightfield's params, which every bake path already takes.
+class ApplyTextureSet(BaseModel):
+    op: Literal["apply_texture_set"] = "apply_texture_set"
+    # A texture-set folder name on the asset-pack search path (comfy_texture_set returns one; ""
+    # clears the slot back to a solid tint). Checked against the resolver, so a set that no pack
+    # provides is an error rather than a material wired to nothing.
+    set: str = ""
+    object: str | None = None  # the mesh the material is on; required for a terrain master
+    material: str | None = None  # a material by name, else the object's active material
+    index: int = 0  # terrain layer slot; ignored by a surface master, which has one set
+
+
+class ImportGenerated(BaseModel):
+    op: Literal["import_generated"] = "import_generated"
+    kind: str = "rocks"  # trees / rocks / plants / grass: BOB_Assets_<Kind> is where it lands
+    # Either `staged` (the dict comfy_mesh returned, which runs pipeline steps 6 to 8 first: bake,
+    # scale to height_m, origin to base, weighted normals, LOD chain, BobShader, write the pack) or
+    # `name` alone (import an asset the pack already holds). One op, because an agent has no main
+    # thread to split the finish and the import across the way the panel does.
+    staged: dict | None = None
+    name: str | None = None
+    height_m: float = 2.0  # the real-world height; mandatory in the manifest for a reason (R11)
+    faces: int = 4000
+    lods: list[float] | None = None  # LOD decimate ratios, else the shipped (0.5, 0.15)
+    hero: bool = False  # 2K bake and 2048 texture rather than 1K/1024
+    pack_dir: str | None = None  # else the registered or $BOB_GENERATED generated pack
+    cleanup: bool = True  # delete the staged intermediates once the asset is written
+
+
+class ExportControl(BaseModel):
+    op: Literal["export_control"] = "export_control"
+    object: str  # the block-out proxy whose shape should condition generation (W7)
+    out_file: str | None = None  # else a unique name in the generated pack's _staging/
+    points: int = 8192  # how densely Omni samples the control mesh
+    pack_dir: str | None = None
+
+
 # Biome: one call that shades terrain + scatters + sets the world for a named biome.
 class ApplyBiome(BaseModel):
     op: Literal["apply_biome"] = "apply_biome"
@@ -284,6 +324,9 @@ Operation = Annotated[
         ShadeTerrain,
         ApplyShader,
         SnowShell,
+        ApplyTextureSet,
+        ImportGenerated,
+        ExportControl,
         ApplyBiome,
         WorldBiome,
         BuildClouds,
@@ -315,6 +358,11 @@ class OpResult(BaseModel):
     op: str
     created: list[str] = Field(default_factory=list)
     info: str = ""
+    # Machine-readable result, for the ops whose output the NEXT call needs: export_control's control
+    # path and height, import_generated's face count, UV overlap, height and warnings. `info` is the
+    # sentence a human reads; this is what an agent checks instead of trusting it. Empty for the ops
+    # whose whole result is the objects they created.
+    data: dict = Field(default_factory=dict)
 
 
 class BuildResult(BaseModel):

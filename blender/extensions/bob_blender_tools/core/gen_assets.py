@@ -20,7 +20,9 @@ Three of the steps are load-bearing in a way that is easy to miss:
 
 Nothing here talks to ComfyUI. `core.comfy` gets a raw GLB into `<pack>/_staging/`; this module
 turns it into a finished asset in `<pack>/models/generated/`, and `import_generated` links it into
-the `BOB_Assets_<Kind>` collection a scatter layer already instances.
+the `BOB_Assets_<Kind>` collection a scatter layer already instances. It does read `core.comfy` for
+the two route mappings (`finish_passes`, `stage_exports`) so the op handler and the panel agree on
+which staged file is which, and that import costs nothing: `core.comfy` is bpy-free.
 """
 
 import json
@@ -1132,7 +1134,10 @@ def import_generated(name, kind="rocks", pack_dir=None):
     if not fresh:
         raise ValueError(f"no mesh in {os.path.basename(path)}")
 
-    target = proxies.ensure_collection(kind)
+    # `collection`, not `ensure_collection`: the pool is where this asset goes, and populating an
+    # empty pool with procedural block-out proxies would put three blobs in the scatter beside the
+    # asset the caller just generated (measured at G6). Make Proxies is how proxies get asked for.
+    target = proxies.collection(kind)
     lods = _lod_collection()
     lod0 = None
     for obj in fresh:
@@ -1161,3 +1166,116 @@ def import_generated(name, kind="rocks", pack_dir=None):
         else:
             lods.objects.link(obj)
     return lod0
+
+
+# -- MCP handlers ----------------------------------------------------------------------------
+# The Blender half of the generation surface, and the reason it is only two ops. Everything that
+# talks to ComfyUI runs in the MCP process over HTTP with no bpy (`mcp_agent/server.py`'s comfy_*
+# tools); what has to cross the bridge is the work that needs Blender, which is exactly this module
+# plus `shading.apply_texture_set`.
+def _resolve_pack(pack_dir):
+    """The generated pack an op works in: explicit, else the registered or `$BOB_GENERATED` root."""
+    pack = pack_dir or assets.generated_root()
+    if not pack:
+        raise ValueError(
+            "no generated pack: pass pack_dir, or set $BOB_GENERATED (the MCP tools return the "
+            "pack they wrote into), or set the addon's output folder in a live session")
+    return assets.ensure_generated_pack(pack)
+
+
+def import_generated_op(op: dict) -> dict:
+    """MCP op: finish a staged generated mesh and/or import a finished one into `BOB_Assets_<kind>`.
+
+    Two shapes, because the agent-facing route has two moments. With `staged` (what `comfy_mesh()`
+    returned) this runs pipeline steps 6 to 8 -- bake, scale to `height_m`, origin to base, weighted
+    normals, LOD chain, BobShader, write the pack -- and then imports the result. With `name` alone
+    it imports an asset the pack already holds. The panel does the same two calls in its `landed`
+    callback; this is one op because an agent has no main thread to split them across.
+
+    Every ComfyUI stage has already run by the time this is called, so `finish_asset`'s two callbacks
+    are files rather than callables and nothing here touches the network.
+    """
+    from . import comfy  # bpy-free; imported here so a bpy-less unit test can still read this module
+
+    pack = _resolve_pack(op.get("pack_dir"))
+    kind = op.get("kind") or "rocks"
+    staged = op.get("staged")
+    created, info, data = [], "", {}
+
+    if staged:
+        raw = staged.get("raw_mesh")
+        if not raw or not os.path.isfile(raw):
+            raise ValueError(f"staged mesh missing: {raw!r} (re-run comfy_mesh)")
+        # `kind` decides two stages, the same way it does in the panel: foliage keeps its holes, so
+        # the pinhole fill is off for plants and grass or the blade is welded shut (G3).
+        foliage = kind in ("plants", "grass")
+        simplify_pass, texture_pass = comfy.finish_passes(staged)
+        name = op.get("name") or comfy.slugify(
+            (staged.get("meta") or {}).get("artist_prompt") or staged.get("name") or "generated")
+        hero = bool(op.get("hero", False))
+        report = finish_asset(
+            raw, pack, kind=kind, name=name,
+            height_m=float(op.get("height_m", 2.0)),
+            faces=int(op.get("faces", DEFAULT_FACES)), hero=hero,
+            lods=tuple(op.get("lods") or DEFAULT_LODS),
+            bake_size=2048 if hero else DEFAULT_BAKE_SIZE,
+            fill_pinholes=not foliage, exports=comfy.stage_exports(staged),
+            simplify_pass=simplify_pass, texture_pass=texture_pass,
+            provenance=dict(staged.get("meta") or {}))
+        asset_name = report["name"]
+        info = (f"{asset_name}: {report['lod_faces'][0]} faces, {report['height_m']} m, "
+                f"UV overlap {report.get('uv_overlap', 0.0):.6f}")
+        # What an agent has to be able to CHECK without opening the file: the budget it asked for,
+        # the height it asked for, the UV it needs, and every warning the finish raised.
+        data = {k: report[k] for k in
+                ("name", "faces", "lod_faces", "height_m", "uv_overlap", "origin_above_base",
+                 "master_type", "opacity", "maps", "file", "warnings", "seconds")
+                if k in report}
+        if op.get("cleanup", True) and staged.get("dir"):
+            comfy.reject_variant(staged["dir"])  # the staged intermediates are spent
+    else:
+        asset_name = op.get("name")
+        if not asset_name:
+            raise ValueError("import_generated needs either `staged` (from comfy_mesh) or `name`")
+        info = f"{asset_name}: imported"
+
+    lod0 = import_generated(asset_name, kind=kind, pack_dir=pack)
+    if lod0 is not None:
+        created.append(lod0.name)
+    collection = proxies.collection(kind).name
+    data.update(object=lod0.name if lod0 is not None else None, collection=collection,
+                pack_dir=pack, kind=kind)
+    return {"op": "import_generated", "created": created, "data": data,
+            "info": f"{info}, in {collection}"}
+
+
+def export_control_op(op: dict) -> dict:
+    """MCP op: write a block-out proxy out as the control mesh W7 conditions geometry on.
+
+    The one op in this group whose output is an INPUT to generation: an agent exports a proxy it
+    placed, then passes the returned path to `comfy_mesh(control=...)`, and the generated asset keeps
+    the silhouette and footprint the layout was composed around (G4c). No new exporter is involved --
+    it is the same unit-cube round trip track B already owned -- so the whole op is a path and a
+    height.
+    """
+    from . import comfy
+
+    obj = bpy.data.objects.get(op.get("object") or "")
+    if obj is None:
+        raise ValueError(f"no object named {op.get('object')!r} in the scene")
+    if obj.type != "MESH":
+        raise ValueError(f"object {obj.name!r} is a {obj.type}, not a MESH")
+
+    out = op.get("out_file")
+    if out:
+        out = bpy.path.abspath(out)
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    else:
+        staging = comfy.staging_dir(_resolve_pack(op.get("pack_dir")))
+        os.makedirs(staging, exist_ok=True)
+        out = comfy.unique_file_name(staging, f"{comfy.slugify(obj.name)}_control", ".glb")
+    exported = export_control(obj, out, points=int(op.get("points", CONTROL_POINTS)))
+    # `path` and `height_m` are the two values the next call needs, so they go in `data` where an
+    # agent can read them, not only in the human-facing info line.
+    return {"op": "export_control", "created": [], "data": exported,
+            "info": f"{obj.name}: {exported['path']} ({exported['height_m']:.3f} m)"}

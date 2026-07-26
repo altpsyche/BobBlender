@@ -55,7 +55,10 @@ stdlib only and lives in the extension, because Blender's bundled Python has no 
 they own: `core/comfy.py` is the HTTP client, the title templating, preflight, and the texture-set
 recipe; `core/comfy_jobs.py` is the scheduler (one worker thread, a `bpy.app.timers` tick draining
 a result queue, every `bpy` touch on the main thread, the registry cleared by a `@persistent`
-`load_post` handler); `core/comfy_maps.py` derives the texture maps in numpy. Shipped ComfyUI
+`load_post` handler); `core/comfy_maps.py` derives the texture maps in numpy; `core/comfy_ws.py` is a
+minimal stdlib websocket reader for ComfyUI's `/ws`, which supplies per-node progress and NOTHING else
+— `comfy.wait()` still decides a job is finished from the jobs API, so a socket that never connects
+costs a progress bar and cannot cost a result. Shipped ComfyUI
 graphs live in `extensions/bob_blender_tools/assets/workflows/`, in API format, bound by node
 title, and every one of them is preflighted before it is queued so an uninstalled pack or a
 missing model is a sentence rather than an HTTP 400. Generated output lands in

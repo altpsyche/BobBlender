@@ -96,8 +96,23 @@ def _restore_knobs(mod, snap):
                 pass
 
 
+def _result(created, info):
+    """The build_geonodes op result, carrying any warnings the recipe recorded about its params.
+
+    A recipe binds objects and collections BY NAME, and a name that resolves to nothing used to be
+    silent: the layer built, reported success, and scattered nothing. `recipes.warn` collects those
+    and they surface here, in `info` for a human and in `data` for an agent.
+    """
+    warnings = recipes.drain_warnings()
+    if warnings:
+        info = f"{info} -- {'; '.join(warnings)}"
+    return {"op": "build_geonodes", "created": created, "info": info,
+            "data": {"warnings": warnings} if warnings else {}}
+
+
 def build_geonodes(op: dict) -> dict:
     recipe_name = op.get("recipe", "wave_grid")
+    recipes.drain_warnings()  # discard anything a previous build left behind
     build = recipes.get(recipe_name)
     if build is None:
         raise ValueError(
@@ -149,13 +164,13 @@ def build_geonodes(op: dict) -> dict:
             # De-dup: the object and its node group usually share a name, so return
             # each once rather than the readable-but-noisy "Terrain, Terrain" pair.
             created = list(dict.fromkeys([obj.name, new_ng.name]))
-            return {"op": "build_geonodes", "created": created, "info": info}
+            return _result(created, info)
         _clear_existing(name)
 
     ng, out = new_group(name)
     build(ng, out, params)
     created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False))
-    return {"op": "build_geonodes", "created": created, "info": recipe_name}
+    return _result(created, recipe_name)
 
 
 def build_geonodes_on_object(obj, recipe_name, mod_name, params, reset=False):

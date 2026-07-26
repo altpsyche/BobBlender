@@ -625,21 +625,18 @@ class BBT_OT_shaders_terrain_stack_preset(Operator):
 def _apply_texture_set(context, index, name):
     """Assign texture set `name` ("" clears it) to the editing material: a terrain layer slot
     (`index`) or a surface material (index < 0). Returns (report_label, error), so the Apply and
-    the Generate operators share one assignment path instead of each carrying a copy."""
-    mats = _materials()
+    the Generate operators share one assignment path instead of each carrying a copy.
+
+    Context resolution only. The assignment itself is `shading.set_texture_set`, which the
+    `apply_texture_set` op calls with an object and a material resolved by name instead."""
     mat = _editing_material(context)
-    kind = mats.master_type(mat)
-    if kind == "terrain":
-        obj = _active_object(context)
-        if obj is None:
-            return None, "No active mesh to read the terrain's drainage maps from"
-        i = max(0, min(index, mats.MAX_TERRAIN_LAYERS - 1))
-        shading.set_terrain_texture(obj, mat, i, name)
-        return f"Layer {i}: {name or 'solid tint'}", None
-    if kind == "surface":
-        shading.set_surface_texture(mat, name)
-        return f"Surface: {name or 'solid tint'}", None
-    return None, "Active material is not a surface or terrain BobShader"
+    obj = _active_object(context)
+    if obj is None and _materials().master_type(mat) == "terrain":
+        return None, "No active mesh to read the terrain's drainage maps from"
+    try:
+        return shading.set_texture_set(obj, mat, index, name), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
 class BBT_OT_shaders_texture_set(Operator):

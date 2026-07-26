@@ -224,19 +224,30 @@ def ten_sets(count):
         times.append(time.time() - t0)
         names.append(name)
         print(f"    {i + 1:2d}. {times[-1]:5.2f} s  seam {info['seam']['ratio']:.2f}  {name}")
-    half = max(1, len(times) // 2)
-    first, second = statistics.mean(times[:half]), statistics.mean(times[half:])
-    drift = second - first
-    print(f"    mean {statistics.mean(times):.2f} s, first half {first:.2f} s, "
-          f"second half {second:.2f} s, drift {drift:+.2f} s")
+    # Drift needs two halves to be a number at all, so one set reports the mean and says so rather
+    # than dividing by an empty list (which is what `--sets 1` did: the leak check is the POINT of
+    # this loop, and a single set cannot make it).
+    drift = None
+    if len(times) >= 2:
+        half = len(times) // 2
+        first, second = statistics.mean(times[:half]), statistics.mean(times[half:])
+        drift = second - first
+        print(f"    mean {statistics.mean(times):.2f} s, first half {first:.2f} s, "
+              f"second half {second:.2f} s, drift {drift:+.2f} s")
+    else:
+        print(f"    mean {statistics.mean(times):.2f} s, drift not measured (needs 2+ sets)")
     check(f"{count} sets in one session with no restart", len(names) == count)
     check("every accepted set resolves through the picker",
           all(assets.texture_set_maps(n).get("basecolor") for n in names))
     check("nothing left in staging", comfy.list_variants(PACK) == [],
           f"{len(comfy.list_variants(PACK))} left")
     # A leak shows up as drift: 10% of the mean is well inside run-to-run variance on a shared GPU.
-    check("no drift across the session", abs(drift) < 0.10 * statistics.mean(times),
-          f"{drift:+.2f} s over {count} sets")
+    # With one set there are no halves to compare, so the check is skipped rather than faked.
+    if drift is None:
+        print(f"  [SKIP] drift needs 2+ sets, ran {count}")
+    else:
+        check("no drift across the session", abs(drift) < 0.10 * statistics.mean(times),
+              f"{drift:+.2f} s over {count} sets")
     return {"times": times, "mean": statistics.mean(times), "drift": drift, "names": names}
 
 
@@ -290,12 +301,28 @@ def addon_surface():
 
     # The property that matters: the panel body reads cached state, so drawing it with no server
     # costs nothing. A socket call here would freeze the UI for the timeout.
+    # A stand-in UILayout. It has to answer every layout verb the panel body uses, and the list grew
+    # after G2: the stylise block G4 added calls `column` and `prop`, and `enabled` is assigned on a
+    # returned row. A stub that is missing one of them fails the gate with an AttributeError instead of
+    # a verdict, which is how this was found -- by the G6 one-command suite, not by anyone re-running
+    # G2 (docs/COMFYUI.md, G6). `__getattr__` would hide the next such drift, so the verbs are listed.
     class _Stub:
+        enabled = True
+
         def label(self, **kw):
+            pass
+
+        def prop(self, *a, **kw):
             pass
 
         def row(self, **kw):
             return self
+
+        def column(self, **kw):
+            return self
+
+        def separator(self, **kw):
+            pass
 
         def operator(self, *a, **kw):
             return type("P", (), {"job_id": 0})()

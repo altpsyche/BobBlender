@@ -9,6 +9,9 @@ installed extension and drives a user's own folders, configured by environment:
     $BOB_PROJECTS     the projects root (default: <workdir>/projects)
     $BOB_RENDERS      the renders root (default: <workdir>/renders)
     $BOB_ASSET_PACKS  asset-pack search path (read directly by core/assets)
+    $BOB_GENERATED    the generated pack the comfy_* tools write into and the Blender side reads
+                      (default: <workdir>/packs/generated; also read by core/assets)
+    $BOB_COMFY_URL    the local ComfyUI server (default: http://127.0.0.1:8188)
     $BOB_BLENDER      the Blender executable (else known installs, then PATH)
     $BOB_BRIDGE_HOST  / $BOB_BRIDGE_PORT   the live-bridge socket (default 127.0.0.1:9876)
 
@@ -66,6 +69,28 @@ def projects_dir() -> Path:
 def renders_dir() -> Path:
     env = os.environ.get("BOB_RENDERS")
     return Path(env).expanduser().resolve() if env else workdir() / "renders"
+
+
+def generated_pack() -> Path:
+    """The generated asset pack the comfy_* tools write into, created if it is not there yet.
+
+    `$BOB_GENERATED` when set, else `<workdir>/packs/generated`. The env var is the shared handle:
+    `core/assets.generated_root()` reads the same variable, so the Blender the executor spawns finds
+    the same pack the generation tool wrote into without being told twice. In a LIVE session the
+    running addon's own output-folder preference wins instead, which is why every generation tool
+    returns the pack it used and every op takes an explicit `pack_dir`.
+    """
+    add_core_to_path()
+    import assets  # noqa: E402  (resolved via <ext>/core on sys.path)
+
+    env = os.environ.get("BOB_GENERATED")
+    root = Path(env).expanduser().resolve() if env else (workdir() / "packs" / "generated")
+    root.mkdir(parents=True, exist_ok=True)
+    assets.ensure_generated_pack(str(root))
+    if not env:
+        # So a headless build spawned from here resolves the same pack (subprocesses inherit env).
+        os.environ["BOB_GENERATED"] = str(root)
+    return root
 
 
 def resolve_output(rel_or_abs: str) -> Path:

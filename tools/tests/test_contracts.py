@@ -47,6 +47,12 @@ _OP_SAMPLES = {
     "curve_build": {"op": "curve_build", "curve": "River"},
     "bake_erode": {"op": "bake_erode", "terrain": "Terrain"},
     "revert_erode": {"op": "revert_erode", "terrain": "Terrain"},
+    # Generation, the Blender half (G6). The ComfyUI half is tools, not ops.
+    "apply_texture_set": {"op": "apply_texture_set", "object": "Terrain", "set": "grass",
+                          "index": 1},
+    "import_generated": {"op": "import_generated", "kind": "rocks", "name": "boulder",
+                         "height_m": 1.8},
+    "export_control": {"op": "export_control", "object": "BOB_Rock_A"},
 }
 
 
@@ -78,3 +84,55 @@ def test_render_requires_output():
 def test_shade_terrain_requires_object():
     with pytest.raises(Exception):
         contracts.BuildRequest(output_file="x.blend", ops=[{"op": "shade_terrain"}])
+
+
+# -- The generation ops (G6) ------------------------------------------------------------------
+# Rejection is the half that matters here: an agent gets these wrong before it gets them right, and
+# the difference between a readable rejection and a traceback is the difference between a retry and
+# a stuck agent. Each case below is a DIFFERENT failure mode, not the same one four times.
+def test_export_control_requires_an_object():
+    with pytest.raises(Exception):
+        contracts.BuildRequest(output_file="x.blend", ops=[{"op": "export_control"}])
+
+
+@pytest.mark.parametrize("payload,bad_field", [
+    ({"op": "import_generated", "kind": "rocks", "faces": "lots"}, "faces"),
+    ({"op": "import_generated", "kind": "rocks", "height_m": "tall"}, "height_m"),
+    ({"op": "import_generated", "kind": "rocks", "staged": "a path"}, "staged"),
+    ({"op": "apply_texture_set", "set": "grass", "index": "second"}, "index"),
+    ({"op": "export_control", "object": "P", "points": "many"}, "points"),
+])
+def test_generation_ops_reject_the_wrong_type(payload, bad_field):
+    with pytest.raises(Exception) as exc:
+        contracts.BuildRequest(output_file="x.blend", ops=[payload])
+    assert bad_field in str(exc.value)
+
+
+def test_apply_texture_set_clears_by_default():
+    """An empty `set` is meaningful: it clears the slot back to a solid tint, so it is the default
+    rather than a required field, and a caller that omits it is not making a mistake."""
+    req = contracts.BuildRequest(output_file="x.blend",
+                                 ops=[{"op": "apply_texture_set", "object": "Terrain"}])
+    assert req.ops[0].set == ""
+    assert req.ops[0].index == 0
+
+
+def test_import_generated_takes_either_shape():
+    """`staged` (finish then import) and `name` (import only) are both valid, and the choice between
+    them is the handler's, not the contract's: an agent should not have to declare which mode it is
+    in, and a contract that forbade one shape would make the two-call panel flow unrepresentable."""
+    staged = {"op": "import_generated", "kind": "trees",
+              "staged": {"raw_mesh": "/tmp/x.glb", "dir": "/tmp"}}
+    named = {"op": "import_generated", "kind": "trees", "name": "oak_01"}
+    for payload in (staged, named):
+        assert contracts.BuildRequest(output_file="x.blend", ops=[payload]).ops[0].kind == "trees"
+
+
+def test_op_result_carries_machine_readable_data():
+    """The ops whose output the NEXT call needs return it in `data`, not only in the `info` sentence:
+    export_control's path and height, import_generated's face count and UV overlap. Without this an
+    agent has to parse prose to find out what it just made."""
+    result = contracts.OpResult(op="export_control", info="Rock: /tmp/c.glb (1.800 m)",
+                                data={"path": "/tmp/c.glb", "height_m": 1.8})
+    assert result.data["height_m"] == 1.8
+    assert contracts.OpResult(op="delete").data == {}
