@@ -1203,6 +1203,169 @@ def test_the_block_out_route_swaps_step_two_and_nothing_else(mods, monkeypatch, 
     assert staged["meta"]["model"] == "Hunyuan3D-Omni"
 
 
+def test_w7b_conditions_on_three_numbers_and_uploads_nothing(mods):
+    """W7b's shape. The control is not a socket at all: `Hy3DOmniBBoxGenerate` has no `control_mesh`
+    input, so the graph has no mesh loader, which is what makes it the one Omni route that needs no
+    ComfyUI folder to know (G7's mesh-transport failure). `auto_bbox` ships FALSE because the whole
+    point is that Bob knows the proportions the node would otherwise estimate off the image."""
+    comfy, _ = mods
+    graph, prov = comfy.load_workflow("mesh_geom_bbox")
+    by_title = comfy.titles(graph)
+
+    gen = graph[by_title["BOB_SEED"]]
+    assert gen["class_type"] == "Hy3DOmniBBoxGenerate"
+    assert gen["inputs"]["image"] == [by_title["BOB_IMAGE"], 0]
+    assert gen["inputs"]["pipeline"] == [by_title["BOB_OMNI"], 0]
+    assert gen["inputs"]["auto_bbox"] is False
+    assert "control_mesh" not in gen["inputs"]
+    assert not any(n["class_type"] == "Trellis2LoadMesh" for n in graph.values())
+
+    omni = graph[by_title["BOB_OMNI"]]
+    assert omni["inputs"]["repo_or_path"] == "tencent/Hunyuan3D-Omni"
+    assert not os.path.isabs(omni["inputs"]["repo_or_path"])
+
+    # W7's tail unchanged, so the same one export turn comes back and the same undo applies.
+    assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
+    assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
+    assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_OMNI.repo_or_path"}
+
+
+def test_w7v_reads_the_same_control_and_does_not_turn_it(mods):
+    """W7v's shape. It is W7 with one node swapped, so the loader, the exporter and the return turn
+    are all shared and the difference is what the generator does with the same file.
+
+    `apply_input_rotation` is the setting the whole graph turns on. The node defaults it to TRUE
+    because upstream's `infer_voxel` turns its control and `infer_point` does not, an asymmetry that
+    belongs to two demo datasets rather than to the model. Bob's control is the file W7 already
+    conditions on correctly, so the extra turn is a turn away from the frame that works, and it
+    would have shown up as "the voxel mode is bad" rather than as an error (G9)."""
+    comfy, _ = mods
+    graph, prov = comfy.load_workflow("mesh_geom_voxel")
+    by_title = comfy.titles(graph)
+
+    gen = graph[by_title["BOB_SEED"]]
+    assert gen["class_type"] == "Hy3DOmniVoxelGenerate"
+    assert gen["inputs"]["image"] == [by_title["BOB_IMAGE"], 0]
+    assert gen["inputs"]["pipeline"] == [by_title["BOB_OMNI"], 0]
+    assert gen["inputs"]["control_mesh"] == [by_title["BOB_CONTROL"], 0]
+    assert gen["inputs"]["apply_input_rotation"] is comfy.VOXEL_INPUT_ROTATION
+    assert comfy.VOXEL_INPUT_ROTATION is False
+    assert graph[by_title["BOB_CONTROL"]]["class_type"] == "Trellis2LoadMesh"
+
+    omni = graph[by_title["BOB_OMNI"]]
+    assert omni["inputs"]["repo_or_path"] == "tencent/Hunyuan3D-Omni"
+    assert not os.path.isabs(omni["inputs"]["repo_or_path"])
+
+    # W7's tail unchanged, so the same one export turn comes back and the same undo applies.
+    assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
+    assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
+    assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_CONTROL.mesh_path",
+                                           "BOB_OMNI.repo_or_path"}
+
+
+def test_the_control_mode_is_one_decision_in_one_place(mods):
+    """`control_route` is where "which Omni mode" lives, and every caller passes what it holds
+    rather than deciding. The two-signal case matters: the panel exports both because the bbox costs
+    nothing once the object is in hand, so the default has to break that tie.
+
+    Since G9 two modes share the MESH form, so a control file no longer names a mode on its own and
+    the tie it breaks is the one between point and voxel."""
+    comfy, _ = mods
+    assert comfy.control_route() is None
+    assert comfy.control_route(control="/x.glb") == comfy.DEFAULT_CONTROL_MODE
+    assert comfy.control_route(control_bbox=[1, 1, 0.5]) == "bbox"
+    assert comfy.control_route(control="/x.glb",
+                               control_bbox=[1, 1, 0.5]) == comfy.DEFAULT_CONTROL_MODE
+    assert comfy.control_route("bbox", control="/x.glb") == "bbox"
+    assert comfy.control_route("voxel", control="/x.glb") == "voxel"
+    assert set(comfy.CONTROL_MODES) == set(comfy.CONTROL_WORKFLOWS)
+    assert comfy.DEFAULT_CONTROL_MODE in comfy.CONTROL_MODES
+    assert set(comfy.MESH_CONTROL_MODES) <= set(comfy.CONTROL_MODES)
+    assert "bbox" not in comfy.MESH_CONTROL_MODES
+    # Either form forces the staged chain, because no one-shot route takes a control of any kind.
+    assert comfy.asset_chain(control="/x.glb") is comfy.generate_asset_chain
+    assert comfy.asset_chain(control_bbox=[1, 1, 0.5]) is comfy.generate_asset_chain
+    assert comfy.asset_chain() is comfy.generate_asset_oneshot
+
+
+def test_an_unknown_control_mode_raises_rather_than_generating_uncontrolled(mods):
+    """The dispatch in `generate_asset_source` falls through to the UNCONTROLLED route, so a mode
+    name that reaches it unrecognised produces a plausible mesh that no block-out shaped. That is
+    the failure this integration has now found four times over (G0.5's black albedo, G4c's random
+    projection, G8's `auto_bbox`, G9's input rotation), and it is the one class of bug worth a raise:
+    every instance of it ran to completion and reported success."""
+    comfy, _ = mods
+    with pytest.raises(comfy.ComfyError):
+        comfy.control_route(mode="voxels", control="/x.glb")
+    with pytest.raises(comfy.ComfyError):
+        comfy.control_route(mode="pose")
+
+
+def test_the_bbox_route_swaps_step_two_and_carries_its_own_provenance(mods, monkeypatch, tmp_path):
+    """The bbox control is the same value swap the point control is, one graph further along."""
+    comfy, _ = mods
+    calls = []
+
+    def fake(name):
+        def record(*args, **kwargs):
+            calls.append(name)
+            path = str(tmp_path / f"{name}.glb")
+            open(path, "wb").close()
+            return {"path": path, "seconds": 1.0}
+        return record
+
+    monkeypatch.setattr(comfy, "mesh_geometry", fake("w5t"))
+    monkeypatch.setattr(comfy, "mesh_geom_ctrl", fake("w7"))
+    monkeypatch.setattr(comfy, "mesh_geom_bbox", fake("w7b"))
+    monkeypatch.setattr(comfy, "mesh_simplify_uv", fake("w9c"))
+    monkeypatch.setattr(comfy, "mesh_texture", fake("w9t"))
+    subject = tmp_path / "subject.png"
+    subject.write_bytes(b"")
+
+    staged = comfy.generate_asset_chain("a rock", str(tmp_path / "pack"), subject=str(subject),
+                                        control_bbox=[0.4, 1.0, 0.6])
+    assert calls == ["w7b", "w9c", "w9t"]
+    assert staged["meta"]["workflows"] == ["mesh_subject", "mesh_geom_bbox", "mesh_simplify_uv",
+                                           "mesh_texture"]
+    assert staged["meta"]["control_mode"] == "bbox"
+    assert staged["meta"]["control"] is None
+    assert staged["meta"]["control_bbox"] == [0.4, 1.0, 0.6]
+    assert staged["meta"]["model"] == "Hunyuan3D-Omni"
+
+
+def test_the_voxel_route_swaps_step_two_on_the_same_control_file(mods, monkeypatch, tmp_path):
+    """The third mode costs one table entry, one graph and no exporter: the mesh W7 uploads is the
+    mesh W7v uploads, so the only thing that decides between them is the named mode."""
+    comfy, _ = mods
+    calls = []
+
+    def fake(name):
+        def record(*args, **kwargs):
+            calls.append(name)
+            path = str(tmp_path / f"{name}.glb")
+            open(path, "wb").close()
+            return {"path": path, "seconds": 1.0}
+        return record
+
+    monkeypatch.setattr(comfy, "mesh_geom_ctrl", fake("w7"))
+    monkeypatch.setattr(comfy, "mesh_geom_voxel", fake("w7v"))
+    monkeypatch.setattr(comfy, "mesh_simplify_uv", fake("w9c"))
+    monkeypatch.setattr(comfy, "mesh_texture", fake("w9t"))
+    subject = tmp_path / "subject.png"
+    subject.write_bytes(b"")
+    control = tmp_path / "blockout.glb"
+    control.write_bytes(b"")
+
+    staged = comfy.generate_asset_chain("a rock", str(tmp_path / "pack"), subject=str(subject),
+                                        control=str(control), control_mode="voxel")
+    assert calls == ["w7v", "w9c", "w9t"]
+    assert staged["meta"]["workflows"] == ["mesh_subject", "mesh_geom_voxel", "mesh_simplify_uv",
+                                           "mesh_texture"]
+    assert staged["meta"]["control_mode"] == "voxel"
+    assert staged["meta"]["control"] == str(control)
+    assert staged["meta"]["model"] == "Hunyuan3D-Omni"
+
+
 def test_stage_exports_counts_every_trellis_write_in_the_chain(mods):
     """Each `Trellis2ExportTrimesh` glb write turns the subject -90 degrees about X and the turns
     ACCUMULATE, so the staged route hands over three files in three different frames (measured hop by
@@ -1216,6 +1379,14 @@ def test_stage_exports_counts_every_trellis_write_in_the_chain(mods):
     assert comfy.stage_exports(staged) == {"raw": 0, "simplified": 1, "textured": 2}
     # With one: absolute as well, because now the incoming orientation is the whole point.
     staged["meta"]["control"] = "blockout.glb"
+    assert comfy.stage_exports(staged) == {"raw": 1, "simplified": 2, "textured": 3}
+    # And the bbox control counts the same, though it uploads no file: the turn comes from the
+    # exporter both Omni routes end at, so reading "is there a control file" lays the asset on its
+    # side (G8).
+    staged["meta"] = {"control": None, "control_bbox": [0.4, 1.0, 0.6]}
+    assert comfy.stage_exports(staged) == {"raw": 1, "simplified": 2, "textured": 3}
+    # And so does the voxel mode, which is back in the mesh form: same rule, same exporter.
+    staged["meta"] = {"control": "blockout.glb", "control_bbox": None, "control_mode": "voxel"}
     assert comfy.stage_exports(staged) == {"raw": 1, "simplified": 2, "textured": 3}
     # The one-shot route returns ONE file that is both meshes, and takes no control.
     assert comfy.stage_exports({"meta": {}, "textured_mesh": "one.glb"}) == {"raw": 0,

@@ -1134,6 +1134,215 @@
     "python_module": "comfy_extras.nodes_hunyuan3d",
     "search_aliases": null
   },
+  "Hy3DOmniBBoxGenerate": {
+    "input": {
+      "required": {
+        "pipeline": [
+          "HY3DOMNI_PIPELINE"
+        ],
+        "image": [
+          "IMAGE"
+        ]
+      },
+      "optional": {
+        "num_inference_steps": [
+          "INT",
+          {
+            "default": 50,
+            "min": 1,
+            "max": 200
+          }
+        ],
+        "guidance_scale": [
+          "FLOAT",
+          {
+            "default": 4.5,
+            "min": 0.0,
+            "max": 20.0,
+            "step": 0.1
+          }
+        ],
+        "octree_resolution": [
+          "INT",
+          {
+            "default": 512,
+            "min": 16,
+            "max": 2048,
+            "step": 16
+          }
+        ],
+        "mc_level": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": -1.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "box_v": [
+          "FLOAT",
+          {
+            "default": 1.01,
+            "min": 0.1,
+            "max": 5.0,
+            "step": 0.01
+          }
+        ],
+        "auto_bbox": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "bbox_length": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.1,
+            "max": 3.0,
+            "step": 0.01
+          }
+        ],
+        "bbox_height": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.1,
+            "max": 3.0,
+            "step": 0.01
+          }
+        ],
+        "bbox_depth": [
+          "FLOAT",
+          {
+            "default": 0.6,
+            "min": 0.1,
+            "max": 3.0,
+            "step": 0.01
+          }
+        ],
+        "auto_bbox_padding": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "auto_bbox_min_extent": [
+          "FLOAT",
+          {
+            "default": 0.25,
+            "min": 0.01,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "auto_bbox_depth_ratio": [
+          "FLOAT",
+          {
+            "default": 0.6,
+            "min": 0.1,
+            "max": 2.0,
+            "step": 0.01
+          }
+        ],
+        "num_chunks": [
+          "INT",
+          {
+            "default": 8000,
+            "min": 1,
+            "max": 200000,
+            "step": 100
+          }
+        ],
+        "mc_mode": [
+          [
+            "mc",
+            "dmc"
+          ],
+          {
+            "default": "mc"
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 1234,
+            "min": 0,
+            "max": 4294967295
+          }
+        ],
+        "fast_decode": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "remove_floaters": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "remove_degenerate_faces": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "pipeline",
+        "image"
+      ],
+      "optional": [
+        "num_inference_steps",
+        "guidance_scale",
+        "octree_resolution",
+        "mc_level",
+        "box_v",
+        "auto_bbox",
+        "bbox_length",
+        "bbox_height",
+        "bbox_depth",
+        "auto_bbox_padding",
+        "auto_bbox_min_extent",
+        "auto_bbox_depth_ratio",
+        "num_chunks",
+        "mc_mode",
+        "seed",
+        "fast_decode",
+        "remove_floaters",
+        "remove_degenerate_faces"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "TRIMESH",
+      "TENSOR"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "trimesh",
+      "sampled_points"
+    ],
+    "name": "Hy3DOmniBBoxGenerate",
+    "display_name": "Hy3D Omni: Bounding Box Control",
+    "description": "",
+    "python_module": "custom_nodes.ComfyUI-Hy3D-Omni",
+    "category": "Hy3D.Omni",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
   "Hy3DOmniLoadPipeline": {
     "category": "Hy3D.Omni",
     "description": "",

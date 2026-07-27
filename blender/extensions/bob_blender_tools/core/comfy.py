@@ -1457,6 +1457,162 @@ def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, s
                               "octree_resolution": int(octree), "model": "Hunyuan3D-Omni"})
 
 
+def mesh_geom_bbox(dims, image_path, out_path, *, seed=0, steps=50, guidance=4.5, octree=256,
+                   url=None, workflow="mesh_geom_bbox", timeout=1800, on_progress=None,
+                   on_queued=None, preflight_graph=True):
+    """W7b: the same block-out conditioning as W7 with the control reduced to three numbers.
+
+    `dims` is `[length, height, width]` in the control glb's frame, which is NOT Blender's;
+    `core.gen_assets.control_bbox` is the one place that mapping lives. Pass None for the node's own
+    estimate from the image, which is the null G8 scores Bob's numbers against rather than a mode
+    anyone should choose: it reads a silhouette Bob already knows the answer to.
+
+    Two things W7 has to worry about and this does not. Nothing is uploaded, so the mesh-transport
+    failure that made every other Omni route depend on `$BOB_COMFY_DIR` cannot occur here. And there
+    is no unit-normalise round trip to forget, because a proportion has no scale. What does carry
+    over unchanged is the return turn: same exporter, one glb write, so
+    `gen_assets.CONTROL_RETURN_TURN` still applies.
+    """
+    graph, prov = load_workflow(workflow)
+    control = {"seed": int(seed), "num_inference_steps": int(steps),
+               "guidance_scale": float(guidance), "octree_resolution": int(octree),
+               "auto_bbox": dims is None}
+    if dims is not None:
+        length, height, width = (float(d) for d in dims)
+        control.update(bbox_length=length, bbox_height=height, bbox_depth=width)
+    values = {"BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": control}
+    local = omni_model_dir()
+    if local:
+        values["BOB_OMNI"] = {"repo_or_path": local}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "control_bbox": None if dims is None
+                              else [round(float(d), 5) for d in dims],
+                              "subject": image_path, "steps": int(steps),
+                              "octree_resolution": int(octree), "model": "Hunyuan3D-Omni"})
+
+
+# Whether Bob's control mesh gets the extra -90 degree turn about X that `Hy3DOmniVoxelGenerate`
+# applies by default, and the one place that answer lives. It does not, and the reason is worth
+# keeping because the node's own default is the other way.
+#
+# Upstream's `inference.py` turns its control before sampling in `infer_voxel` and does not in
+# `infer_point`, and the wrapper reproduces both faithfully. That asymmetry belongs to the two demo
+# datasets' frames rather than to the model: `OmniEncoder.forward` reads point and voxel through the
+# same Fourier embedder in the same [-1, 1] cube, and the only difference between the branches is
+# the quantiser and the conditioning token. Bob's control glb is the file W7 already conditions on
+# correctly, measured over all 24 axis-aligned rotations at G4c, so the extra turn is a turn away
+# from the frame that works. Measured at G9 on the asymmetric block-out, both ways.
+VOXEL_INPUT_ROTATION = False
+
+
+def mesh_geom_voxel(control_path, image_path, out_path, *, seed=0, samples=81920, steps=50,
+                    guidance=4.5, octree=256, rotate_input=None, url=None,
+                    workflow="mesh_geom_voxel", timeout=1800, on_progress=None, on_queued=None,
+                    preflight_graph=True):
+    """W7v: W7's block-out control read as a coarse occupancy grid rather than as a point cloud.
+
+    Same control file, same loader, same `core.gen_assets.export_control` round trip and the same
+    `gen_assets.CONTROL_RETURN_TURN` on the way back, so everything Bob-side is shared with W7 and
+    the difference is one node. What that node does with the control is not shared: it area-samples
+    `samples` points and `OmniEncoder.generate_voxel` quantises them onto a 16-cubed grid, keeping
+    each occupied cell's centre once. So `samples` is a FILLING budget rather than a detail budget --
+    at most 4,096 cells survive it, and the control that reaches the model is a ground plan at cell
+    resolution.
+
+    `rotate_input` overrides `VOXEL_INPUT_ROTATION`, which exists for the gate that measured it.
+    """
+    graph, prov = load_workflow(workflow)
+    rotate = VOXEL_INPUT_ROTATION if rotate_input is None else bool(rotate_input)
+    values = {"BOB_CONTROL": {"mesh_path": upload_mesh(control_path, url=url)},
+              "BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
+              "BOB_SEED": {"seed": int(seed), "sample_point_count": int(samples),
+                           "apply_input_rotation": rotate,
+                           "num_inference_steps": int(steps), "guidance_scale": float(guidance),
+                           "octree_resolution": int(octree)}}
+    local = omni_model_dir()
+    if local:
+        values["BOB_OMNI"] = {"repo_or_path": local}
+    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+                              on_progress=on_progress, on_queued=on_queued,
+                              preflight_graph=preflight_graph,
+                              required_titles=("BOB_CONTROL", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
+    return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
+                       extra={"seed": int(seed), "control": control_path, "subject": image_path,
+                              "samples": int(samples), "apply_input_rotation": rotate,
+                              "steps": int(steps), "octree_resolution": int(octree),
+                              "model": "Hunyuan3D-Omni"})
+
+
+# Which Omni control mode a block-out uses, and the one place that decision lives. Every mode ends at
+# the same exporter and the same `gen_assets.CONTROL_RETURN_TURN`, so nothing downstream differs.
+#
+#   "point" W7,  an area-sampled point cloud from the proxy's surface (8,192 points by default).
+#   "bbox"  W7b, the proxy's three proportions, which the encoder turns into eight corners.
+#   "voxel" W7v, the proxy's surface quantised to a 16-cubed occupancy grid.
+#
+CONTROL_MODES = ("point", "bbox", "voxel")
+CONTROL_WORKFLOWS = {"point": "mesh_geom_ctrl", "bbox": "mesh_geom_bbox",
+                     "voxel": "mesh_geom_voxel"}
+
+# The modes whose control signal is a MESH on disk. Both read the same file, which is why a caller
+# holding one cannot be inferred to have meant either in particular.
+MESH_CONTROL_MODES = ("point", "voxel")
+
+# The default is measured rather than assumed, and D12's answer is no: eight corners do not replace
+# 8,192 points. G8 ran both on the same three block-outs G4c used, off the same conditioning image,
+# scored with no rotation search against each block-out's own self-agreement ceiling. Full numbers in
+# docs/COMFYUI.md; the short version:
+#
+#   footprint IoU, which is what "drops into a layout" reduces to: point 0.9200 against bbox 0.5766,
+#     i.e. 98.8% to 101.0% of each ceiling against 50.1% to 70.8%. The bbox route saves 7 s an asset.
+#   the control DOES reach the model, which matters because the last Omni control that scored badly
+#     was being ignored outright (G4c). Bob's proportions beat the node's own `auto_bbox` guess 3 of 3
+#     on aspect error and 1 of 3 on ground plan, which is the whole finding: a box constrains extent
+#     and says nothing about plan.
+#   the gain tracks how distinctive the box is. 3x over the null on a tall thin tree ([0.42, 1.0,
+#     0.44]) and a LOSS on a near-cubic rock ([1.0, 0.67, 0.95]), whose three numbers say "about this
+#     big", which the image already said.
+#
+# "bbox" stays wired for a reason G8 was not looking for. It uploads nothing, so it is the only Omni
+# route that runs in a process with no ComfyUI folder: measured with `comfy_dir()` forced away, W7
+# fails at the node with "Mesh file not found" and W7b completes. That makes it the block-out route's
+# fallback wherever mesh transport is unavailable, which is worth more than the seconds.
+DEFAULT_CONTROL_MODE = "point"
+
+
+def control_route(mode=None, control=None, control_bbox=None):
+    """Which control mode one generation runs, or None when it has no control at all.
+
+    An explicit `mode` wins, then whichever signal the caller actually holds, then
+    `DEFAULT_CONTROL_MODE` when it holds both. Callers pass what they have rather than deciding, the
+    same rule `asset_chain` follows.
+
+    Two modes share the mesh form. W7 and W7v take the SAME control file, so a mesh alone cannot say
+    which of them was meant and the inferred answer is `DEFAULT_CONTROL_MODE`; "voxel" is reachable
+    by naming it, which is what a challenger mode should cost. An unknown name raises rather than
+    falling through to an unconditioned generation, because on this route a control that does not
+    reach the model never errors on its own (G0.5, G4c, G8, and G9's own input rotation).
+    """
+    if mode:
+        mode = str(mode)
+        if mode not in CONTROL_MODES:
+            raise ComfyError(f"unknown control mode {mode!r}; "
+                             f"expected one of {', '.join(CONTROL_MODES)}")
+        return mode
+    if control and control_bbox:
+        return DEFAULT_CONTROL_MODE
+    if control_bbox:
+        return "bbox"
+    if not control:
+        return None
+    return DEFAULT_CONTROL_MODE if DEFAULT_CONTROL_MODE in MESH_CONTROL_MODES else "point"
+
+
 def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mesh_simplify_uv",
                      timeout=900, on_progress=None, on_queued=None, preflight_graph=True):
     """W9c: `Trellis2Simplify` then `Trellis2UVUnwrap`, the ComfyUI side of the steps 3 and 4 A/B.
@@ -1557,17 +1713,22 @@ def _stage_subject(prompt_text, out_dir, *, seed=0, size=1024, checkpoint=None, 
 
 def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size=1024,
                           checkpoint=None, url=None, timeout=1800, on_progress=None,
-                          on_queued=None, subject=None, remesh=True, control=None, points=8192):
+                          on_queued=None, subject=None, remesh=True, control=None, points=8192,
+                          control_bbox=None, control_mode=None):
     """W4 then W5t into a fresh `<pack>/_staging/<variant>/`, returning that variant's info.
 
     The ComfyUI half of Generate Asset, whole. `subject` is a local image path that SKIPS W4, for
     the artist who already has the reference they want; it still has to carry alpha.
 
-    `control` is a unit-normalised block-out proxy, and it swaps step 2 from W5t to W7: same
-    reference image, same output contract, geometry conditioned on a shape the layout was composed
-    around. It is a value here rather than a separate staging function because everything downstream
-    (W9c, W9t, and all of `finish_asset`) is identical -- which is also why the block-out route runs
-    the STAGED chain and not the one-shot one: W9b generates its own geometry and takes no control.
+    A control swaps step 2 from W5t to the Omni route: same reference image, same output contract,
+    geometry conditioned on a shape the layout was composed around. It is a value here rather than a
+    separate staging function because everything downstream (W9c, W9t, and all of `finish_asset`) is
+    identical -- which is also why the block-out route runs the STAGED chain and not the one-shot
+    one: W9b generates its own geometry and takes no control.
+
+    Two forms of it, and `control_route` decides which: `control` is a unit-normalised block-out
+    proxy for W7, `control_bbox` is that proxy's three proportions for W7b. `core.gen_assets`
+    produces either from the same object.
     """
     out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
@@ -1576,26 +1737,35 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
                                   on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
+    mode = control_route(control_mode, control, control_bbox)
     if on_progress:
-        on_progress("geometry from block-out" if control else "geometry")
+        on_progress("geometry from block-out" if mode else "geometry")
     raw = os.path.join(out_dir, name + "_raw.glb")
-    if control:
-        mesh_info = mesh_geom_ctrl(control, subject_info["path"], raw, seed=seed, points=points,
-                                   url=url, timeout=timeout, on_progress=on_progress,
-                                   on_queued=on_queued)
+    common = dict(seed=seed, url=url, timeout=timeout, on_progress=on_progress,
+                  on_queued=on_queued)
+    # One dispatch per control mode and nothing else, so a mode that is a value everywhere else does
+    # not become a branch here. The `else` is the uncontrolled route and only an absent mode reaches
+    # it: `control_route` refuses an unknown name rather than letting it arrive as a silently
+    # unconditioned generation, which is the failure this integration keeps finding.
+    if mode == "bbox":
+        mesh_info = mesh_geom_bbox(control_bbox, subject_info["path"], raw, **common)
+    elif mode == "voxel":
+        mesh_info = mesh_geom_voxel(control, subject_info["path"], raw, **common)
+    elif mode == "point":
+        mesh_info = mesh_geom_ctrl(control, subject_info["path"], raw, points=points, **common)
     else:
-        mesh_info = mesh_geometry(subject_info["path"], raw, seed=seed, tier=tier, url=url,
-                                  timeout=timeout, remesh=remesh, on_progress=on_progress,
-                                  on_queued=on_queued)
+        mesh_info = mesh_geometry(subject_info["path"], raw, tier=tier, remesh=remesh, **common)
     steps["geometry"] = mesh_info["seconds"]
 
     meta = {"artist_prompt": (prompt_text or "").strip(), "prompt": subject_info.get("prompt"),
             "seed": int(seed), "tier": tier, "remesh": bool(remesh),
             "subject": subject_info["path"], "control": control,
+            "control_bbox": control_bbox, "control_mode": mode,
             "raw_mesh": mesh_info["path"],
-            "workflows": ["mesh_subject", "mesh_geom_ctrl" if control else "mesh_geom_trellis"],
-            "model": "Hunyuan3D-Omni" if control else "TRELLIS.2-4B",
-            "license": "Tencent Hunyuan3D community" if control else "MIT", "seconds": steps}
+            "workflows": ["mesh_subject",
+                          CONTROL_WORKFLOWS.get(mode, "mesh_geom_trellis")],
+            "model": "Hunyuan3D-Omni" if mode else "TRELLIS.2-4B",
+            "license": "Tencent Hunyuan3D community" if mode else "MIT", "seconds": steps}
     with open(os.path.join(out_dir, "meta.json"), "w") as fh:
         json.dump(meta, fh, indent=2, sort_keys=True)
     return {"dir": out_dir, "name": name, "meta": meta, "raw_mesh": mesh_info["path"],
@@ -1605,7 +1775,7 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
 def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
                          texture_size=1024, checkpoint=None, url=None, timeout=1800,
                          on_progress=None, on_queued=None, subject=None, remesh=True,
-                         control=None, points=8192):
+                         control=None, points=8192, control_bbox=None, control_mode=None):
     """Every ComfyUI stage of one asset, in order, on ONE thread: W4, W5t, W9c, W9t.
 
     This is the shape the panel uses, and the ordering is why it works. Steps 3 and 4 are done by
@@ -1618,7 +1788,8 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
     staged = generate_asset_source(prompt_text, pack_dir, seed=seed, tier=tier, remesh=remesh,
                                    checkpoint=checkpoint, url=url, timeout=timeout,
                                    on_progress=on_progress, on_queued=on_queued, subject=subject,
-                                   control=control, points=points)
+                                   control=control, points=points, control_bbox=control_bbox,
+                                   control_mode=control_mode)
     out_dir, name = staged["dir"], staged["name"]
 
     if on_progress:
@@ -1768,18 +1939,19 @@ def is_foliage(kind):
     return str(kind or "") in FOLIAGE_KINDS
 
 
-def asset_chain(route=None, kind=None, control=None):
+def asset_chain(route=None, kind=None, control=None, control_bbox=None):
     """The staging function for one asset. The one place the route becomes a decision.
 
     Three inputs, in priority order, and every caller passes what it knows rather than deciding:
 
-    - `control` forces the staged chain, because W9b generates its own geometry from the image and
-      takes no control mesh, and the challenger's Hunyuan graph takes none either. There is no
-      one-shot version of the block-out route to choose.
+    - a control of EITHER form forces the staged chain, because W9b generates its own geometry from
+      the image and takes no control, and the challenger's Hunyuan graph takes none either. There is
+      no one-shot version of the block-out route to choose. Which Omni mode runs is a separate
+      decision and it lives in `control_route`, not here.
     - `route` is an explicit override, from the MCP tool or a benchmark.
     - `kind` picks up the G7 per-class verdict in `KIND_ROUTE`.
     """
-    if control:
+    if control or control_bbox:
         return generate_asset_chain
     name = route or KIND_ROUTE.get(str(kind or "")) or DEFAULT_ASSET_ROUTE
     return {"oneshot": generate_asset_oneshot, "staged": generate_asset_chain,
@@ -1813,11 +1985,16 @@ def stage_exports(staged):
     everything, so the raw mesh's own turn is undone as well and the finished asset lands facing the
     way the block-out did.
 
+    EITHER control form, and that is not a formality. W7b uploads no mesh, so a rule written as "is
+    there a control file" reads the bbox route as uncontrolled and leaves its asset lying on its
+    side: the turn comes from the exporter, which both Omni routes end at, not from the control.
+
     The "alt" chain needs no case of its own, and that is arithmetic rather than luck: Hunyuan's
     `SaveGLB` adds no turn where W5t's `Trellis2ExportTrimesh` adds one, and every later hop on both
     chains is a Trellis export, so the two differ by a constant that a relative correction cancels.
     """
-    base = 1 if (staged.get("meta") or {}).get("control") else 0
+    meta = staged.get("meta") or {}
+    base = 1 if (meta.get("control") or meta.get("control_bbox")) else 0
     if not staged.get("simplified_mesh"):
         # The one-shot route: W9b returns ONE file that is both the raw and the low mesh, and it
         # takes no control, so there is nothing to bring into line and nothing to face.

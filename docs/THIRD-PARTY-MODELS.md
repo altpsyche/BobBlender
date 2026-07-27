@@ -30,7 +30,7 @@ catalogue) that reference the model, so a licence term can be traced to the feat
 | **TRELLIS.2-4B** | `microsoft/TRELLIS.2-4B` (Hugging Face) | MIT (**upstream**) | 15 GB with its cache | W4 rembg, W5t, W9b, W9c, W9t, W6t: every geometry and mesh-texture route |
 | **TRELLIS-image-large** (sparse-structure decoder only) | `microsoft/TRELLIS-image-large` | MIT (**upstream**) | inside the 15 GB above | pulled by `pipeline.json` as one component of the TRELLIS.2 pipeline |
 | **BiRefNet** | `ZhengPeng7/BiRefNet` | MIT (**upstream**) | 424 MB | W4's background cutout (`Trellis2RemoveBackground`) |
-| **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | W7, the block-out control route |
+| **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | W7, **W7b** and **W7v**, the three block-out control routes (point cloud, bounding box, occupancy grid). One checkpoint serves all three: the mode is a conditioning branch inside `OmniEncoder`, not a separate download |
 | **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | W5, the zero-install geometry smoke test; **W8**, the `alt` geometry route measured at G7 |
 | **Hunyuan3D-2mv** | `hunyuan3d-dit-v2-mv_fp16.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 4.6 GB | W6, multi-view geometry |
 | **RealVisXL V5.0** (fp16) | `SG161222/RealVisXL_V5.0` | OpenRAIL++ (**upstream**) | 6.5 GB | every raster route: W1, W2, W3, W4's reference image, W12, W12e, W9, W13 |
@@ -59,8 +59,8 @@ catalogue) that reference the model, so a licence term can be traced to the feat
    > may grant to You in its sole discretion, and You are not authorized to exercise any of the
    > rights under this Agreement unless or until Tencent otherwise expressly grants You such rights.
 
-   Where this lands: **W7 (block-out control), W5 (smoke test), W6 (multi-view) and W8 (the `alt`
-   geometry route)**. Nothing else, and none of the four is a default. That is now a decision with
+   Where this lands: **W7 and W7b (block-out control), W5 (smoke test), W6 (multi-view) and W8 (the
+   `alt` geometry route)**. Nothing else, and none of the five is a default. That is now a decision with
    numbers rather than a happy accident: G7 measured Hunyuan 2.1 as **2.1x faster on solids** and the
    only one of the two that closes every shell, and the default still did not move, because a default
    an artist in the EU, the UK or South Korea may not use is worth more than 46 seconds an asset
@@ -94,7 +94,7 @@ the artist's install raises no distribution question for Bob either. Licences be
 |---|---|---|---|
 | `ComfyUI-TRELLIS2` | `9b87851` | MIT (`LICENSE`) | every geometry and mesh-texture route |
 | `ComfyUI-GeometryPack` | `c67199d` | **GPL-3.0** (`LICENSE`) | required by TRELLIS2's own `node_reqs`; W9t names `GeomPackUVUnwrap` and W8p names `GeomPackNormalizeMeshToBBox` |
-| `ComfyUI-Hy3D-Omni` | `e513cd0` | **NO LICENCE FILE AT ALL** | W7 only |
+| `ComfyUI-Hy3D-Omni` | `e513cd0` | **NO LICENCE FILE AT ALL** | W7, W7b and W7v only |
 | `ComfyUI-seamless-tiling` | `9225ed5` | **GPL-3.0** (`LICENSE`) | W1, W2, W3, and W13's tiled route |
 | `ComfyUI_IPAdapter_plus` | `a0f451a` | **GPL-3.0** (`LICENSE`) | W2, W9 |
 | `ComfyUI_UltimateSDUpscale` | (not a submodule in this install) | **GPL-3.0** (`LICENSE`) | W3 only |
@@ -105,8 +105,13 @@ Three things about that table are worth stating rather than leaving in a cell.
 **`ComfyUI-Hy3D-Omni` ships no licence at all.** No `LICENSE`, no `COPYING`, no licence field in a
 `pyproject.toml`. So its terms are unstated, which under copyright means **no licence is granted**,
 not that it is public domain. It is also the least maintained dependency in the integration and the
-one that shipped with the control signal silently random (docs/COMFYUI.md, G4c). It is used by W7 and
-by nothing else. Treat W7 as an in-house tool until upstream states a licence.
+one that shipped with the control signal silently random (docs/COMFYUI.md, G4c). It is used by W7,
+W7b and W7v and by nothing else. Treat all three as in-house tools until upstream states a licence.
+G8 read the same pack again while adding W7b and **G9 read it a third time while adding W7v**: still
+no `LICENSE`, no `COPYING`, no licence field, same commit `e513cd0`, and no push since 2025-10-03.
+Three of Bob's routes now sit on an unlicensed wrapper, which is worth stating plainly rather than
+letting the count grow quietly: G9 added the third and the entry says so, because "the pack already
+carries two" is not a reason it should carry three.
 
 **`ComfyUI-GeometryPack` is GPL-3.0, and the plan said otherwise.** Revision 13's licensing section
 reads "the primary model (TRELLIS.2, MIT) and the primary custom pack (`ComfyUI-TRELLIS2`, MIT) are
