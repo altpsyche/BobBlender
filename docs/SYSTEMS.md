@@ -36,6 +36,19 @@ so re-firing a build after a recipe edit updates the graph under your cursor. Pa
 on the modifier, since a Nodes modifier has no IDProperties. The rebuild snapshots
 and restores them by socket name.)
 
+**A rebuild keeps Set Material last.** A rebuild restores the fresh recipe
+modifier to the index the old one held, and on an already-shaded object that index
+is BEHIND `BBT_Material` — so the material was assigned to geometry the recipe then
+replaced, and the object came back default grey with no error. Both build paths now
+re-park the Set Material modifier at the end of the stack. This bit `reset: true`
+hardest, because that is the call an agent makes to change a terrain's size or
+height, and the only recovery found was deleting the object and shading it again.
+
+**A `heightmap_terrain` build stamps what it built from.** `bbt_heightmap` and
+`bbt_terrain_size` / `_height` / `_sea` land on the object, the same custom props
+the Terrain panel's bake writes. Everything downstream reads them off the object
+rather than being told them: see [SPLINES.md](SPLINES.md#4-the-drape-and-the-shared-field).
+
 ### reload_image
 
 `{"op": "reload_image", "path": "<abs path>"}` reloads image datablocks from disk
@@ -186,6 +199,9 @@ scale and Z rotation. Trees can stand upright; rocks can tilt to the surface.
 | `seed` | 0 | yes | Reshuffles positions, scale, rotation, and pick. |
 | `min_scale` | 0.8 | yes | Smallest per-instance scale. |
 | `max_scale` | 1.2 | yes | Largest per-instance scale. |
+| `z_offset` | 0.0 | yes | Metres along **world** Z to sink (negative) or raise every instance. |
+| `assets_include` | none | no | Object names this layer may pick from; everything else in the collection is dropped. |
+| `assets_exclude` | none | no | Object names to leave out of this layer's pick. |
 | `min_normal_z` | 0.5 | yes | Lower slope cutoff. 1 = flat only, 0 = any slope. |
 | `max_normal_z` | 1.0 | yes | Upper slope cutoff. Below 1 excludes flats (scree on mid-slopes). |
 | `height_min` / `height_max` | -1000 / 1000 | yes | Altitude band on world Z the layer scatters within. |
@@ -229,6 +245,22 @@ performance. It approximates the frustum (distance + cone, not exact FOV) and
 updates live as the camera moves, since it reads the camera through Object Info.
 The camera is scene-wide (one for all layers) but the distance and cone are
 per-layer, so grass can cull closer than trees.
+
+Sinking instances: `Z Offset` moves every instance along **world** Z after
+placement, so a normal-aligned rock still sinks straight down rather than along
+its own tilted axis. What it is for: an asset whose origin sits at its base
+floats its widest point over sloped ground, and a generated trunk's root flare
+is the loud case. Without it the only lever was camera placement.
+
+Leaving one asset out: `assets_include` / `assets_exclude` filter the pick by
+object name without editing the collection, so one bad member of a shared
+`BOB_Assets_<Kind>` pool can be dropped from ONE layer. Both are resolved to
+instance indices at build time and applied with a Delete Geometry on the instance
+domain, so the random pick stays uniform over whatever is left. A name that is not
+a direct child of the collection is reported as a warning rather than silently
+scattering the full pool, and a filter that would leave nothing is ignored so the
+layer still builds. In the panel this is the per-layer **Skip** field, which
+survives a structural rebuild.
 
 Replacing assets: point `assets` at your own collection, or edit the contents of
 the `BOB_Assets_<Kind>` collection the scatter already uses. Nothing in the graph
@@ -280,6 +312,54 @@ Live-knob mechanism (Blender 5.2): a Nodes modifier's live input value is
 `default_value` (which only seeds a fresh bind and does not re-evaluate when
 edited). The panel binds each knob to that input, and `build_geonodes` snapshots
 and restores the same surface across a rebuild.
+
+## foliage (recipe: `foliage`)
+
+A procedural tree or shrub: a trunk grown as a curve, branch levels grown off it,
+the whole skeleton swept to a mesh in one pass. BobFoliage F1 — see
+[FOLIAGE.md](FOLIAGE.md) for why the geometry is procedural rather than generated
+and how it reaches a scatter layer.
+
+Level 0 is a vertical line resampled to `segments`, bent by a noise field whose
+amplitude rises up the trunk (`gnarl`) plus a steady `lean`, tapering from
+`trunk_radius`. Each level after that trims its parent to the upper `start`
+fraction, resamples that to `branches` points, and instances a unit curve on them —
+rotated to leave the parent at `angle` and spun around it by `phyllotaxy` per
+index. So branch counts multiply: 9 / 5 / 4 over three levels is 9, 45, 180
+branches.
+
+| Param | Default | Live | What it does |
+|-------|---------|------|--------------|
+| `levels` | 3 | no | How many branch levels grow off the trunk (1–4). |
+| `profile_segments` | 6 | no | Sides of the swept tube. Vertex count is linear in it. |
+| `skeleton` | false | no | Emit the curves and skip the sweep. Faster structure tuning. |
+| `seed` | 0 | yes | Reshuffles the bend and every per-branch jitter. |
+| `height` | 18.0 | yes | Trunk length in metres. |
+| `segments` | 14 | yes | Points along the trunk. |
+| `branch_segments` | 6 | yes | Points along every branch. |
+| `trunk_radius` | 0.45 | yes | Radius at the base. |
+| `taper` | 0.85 | yes | Fraction of radius lost from base to tip, on every curve. |
+| `lean` | 0.4 | yes | Steady pull in +X, weighted up the curve. A trunk leans rather than wanders. |
+| `gnarl` | 0.9 | yes | Noise bend amplitude in metres. |
+| `l<n>_branches` | 9 / 5 / 4 / 3 | yes | Branches per parent at level n. |
+| `l<n>_angle` | 62 / 55 / 48 / 42 | yes | Degrees away from the parent, plus ±9° per branch. |
+| `l<n>_length` | 0.42 / 0.46 / 0.50 / 0.55 | yes | Length as a fraction of the parent's, ±22%. |
+| `l<n>_radius` | 0.34 / 0.42 / 0.50 / 0.55 | yes | Radius as a fraction of the parent's. |
+| `l<n>_phyllotaxy` | 137.5 | yes | Degrees of spin per child index. 137.5 is the golden angle. |
+| `l<n>_start` | 0.28 / 0.22 / 0.18 / 0.15 | yes | Fraction up the parent where branches begin. |
+| `shade_smooth` | true | yes | Smooth shading on the swept mesh. |
+
+Attributes written, all on the mesh POINT domain: `bbt_fol_level` (0 for the
+trunk), `bbt_fol_t` (0 at a curve's base, 1 at its tip — bark UVs, wind falloff and
+card placement all need it), `bbt_fol_tip` (1 on the last ring of each curve, which
+is where leaf cards go), `bbt_fol_plen` (the curve's own length) and `bbt_fol_off`
+(how far the bend displaced the point).
+
+`bbt_fol_off` exists to be checked: the bend is weighted by `bbt_fol_t`, so a
+branch base cannot move and stays coincident with the parent point it grew from. A
+tree whose bases drifted renders perfectly as a cloud of floating sticks, so
+`tools/scripts/headless_foliage.py` asserts the offset is exactly zero there and
+non-zero elsewhere.
 
 ## volumetrics (recipe: `volumetrics`)
 

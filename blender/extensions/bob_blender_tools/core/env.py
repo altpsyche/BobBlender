@@ -58,6 +58,45 @@ def unregister_geo_hook(fn):
         _geo_hooks.remove(fn)
 
 
+# World-applier registry. `ui/world.py` owns the SUBSCRIBER registry (each consumer registers the
+# function that re-applies its response to the world state); this is the one hop that lets core reach
+# it, because core must never import ui. The addon subscribes `world.apply_all` here on register.
+#
+# Why it exists at all: writing bbt_env is not the same as APPLYING it. The panel's every control
+# calls the appliers, so a slider moves the scene; the `set_env` op wrote the fields and stopped,
+# which is why season, temperature, wetness and snow-line changes over MCP produced no pixel change
+# until something else (shade_terrain, a stack preset) happened to install the drivers. An agent had
+# no way to dial the world at all.
+_world_hooks = []
+
+
+def register_world_hook(fn):
+    """Subscribe fn(scene) to run when the world state has been written and needs re-applying.
+    Idempotent."""
+    if fn not in _world_hooks:
+        _world_hooks.append(fn)
+
+
+def unregister_world_hook(fn):
+    if fn in _world_hooks:
+        _world_hooks.remove(fn)
+
+
+def apply_world(scene):
+    """Run every subscribed world applier. Returns the number that ran; 0 means nothing is
+    subscribed, which is the headless/standalone case (the drivers a material carries still read
+    bbt_env live, so the world is not inert -- there is just nothing to re-install). A hook that
+    errors never blocks the others."""
+    n = 0
+    for fn in list(_world_hooks):
+        try:
+            fn(scene)
+            n += 1
+        except Exception as exc:
+            print(f"[bbmcp.env] world hook failed: {exc}")
+    return n
+
+
 def _on_geo_change(self, context):
     """Update callback on the geographic fields: run every subscribed hook. A hook that errors
     never blocks the others (a consumer's edit must not break a slider drag)."""

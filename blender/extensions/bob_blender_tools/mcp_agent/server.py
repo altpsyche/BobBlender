@@ -58,18 +58,26 @@ def _unreachable(comfy, detail: str) -> dict:
             "$BOB_COMFY_URL) and try again; nothing else in this toolset needs it."}
 
 
-def _generation(fn):
+def _generation(fn, route=None):
     """Run one generation call, turning every failure into a sentence rather than a traceback.
 
-    Three failures are worth telling apart and this is where they become one shape: no server at all,
-    a graph that will not run (preflight: a missing model, a pack that is not installed, a cloud node)
-    and anything else. The first two are the normal ones and both are the artist's to fix.
+    Four failures are worth telling apart and this is where they become one shape: no server at all,
+    not enough free VRAM (D15: the card is the scarce resource the moment an agent generates and
+    renders in one session), a graph that will not run (preflight: a missing model, a pack that is
+    not installed, a cloud node) and anything else. The first three are the normal ones and all
+    three are the artist's to fix.
+
+    `route` names the VRAM floor to check (core/comfy.VRAM_FLOOR_MIB). The check tries one recovery
+    before it refuses, so the common case -- a card a previous job left full -- costs a `POST /free`
+    rather than a 90-second job that dies inside somebody else's worker process.
     """
     comfy = _comfy()
     ok, detail = comfy.reachable()
     if not ok:
         return _unreachable(comfy, detail)
     try:
+        if route:
+            comfy.preflight_vram(route)
         out = fn(comfy)
     except comfy.ComfyError as exc:
         return {"ok": False, "url": comfy.base_url(), "error": str(exc)}
@@ -98,6 +106,32 @@ def comfy_status() -> dict:
         status["workflows"] = []
     status["generated_pack"] = str(paths.generated_pack())
     return status
+
+
+@mcp.tool()
+def comfy_free() -> dict:
+    """Ask ComfyUI to give the card back, and report honestly how much it actually gave.
+
+    The tool to reach for between a generate and a Cycles render, and after a generate that failed on
+    VRAM. It is not a fix for D15 (docs/COMFYUI.md) and does not pretend to be: `POST /free` only
+    drops what ComfyUI's MAIN process will release, the generation workers are separate processes
+    that cannot reuse that cache, and on the measured case it recovers about 100 MiB of a 7.3 GB
+    hold. When that is not enough this says so and names the thing that does work -- restarting the
+    server, which Bob will not do for a server it did not start.
+
+    Returns {ok, before, after, recovered, advice} in MiB.
+    """
+    comfy = _comfy()
+    ok, detail = comfy.reachable()
+    if not ok:
+        return _unreachable(comfy, detail)
+    # Measured against the mesh floor, the route that actually runs out, so `enough` answers the
+    # only question worth asking after a free: can I generate now.
+    result = comfy.recover_vram(target_mib=comfy.VRAM_FLOOR_MIB["mesh"])
+    result["ok"] = True
+    result["url"] = comfy.base_url()
+    result["floor_mib"] = comfy.VRAM_FLOOR_MIB
+    return result
 
 
 @mcp.tool()
@@ -135,7 +169,7 @@ def comfy_texture_set(
                 "apply_op": {"op": "apply_texture_set", "set": name, "object": "<your mesh>",
                              "index": 0, "pack_dir": pack}}
 
-    return _generation(run)
+    return _generation(run, route="texture")
 
 
 @mcp.tool()
@@ -151,6 +185,7 @@ def comfy_mesh(
     control_bbox: list[float] | None = None,
     control_mode: str | None = None,
     subject: str | None = None,
+    negative: str | None = None,
 ) -> dict:
     """Generate a scatter asset from a prompt: reference image, then geometry plus PBR texture.
 
@@ -160,21 +195,45 @@ def comfy_mesh(
     ready to send. Generated meshes are scatter-grade by design: dense triangles, no edge flow,
     convincing at 3 m.
 
+    WRITING THE PROMPT is the highest-leverage thing here, because every geometry stage conditions
+    on the reference IMAGE and none of them reads your text. Describe the subject you want isolated
+    on a plain background ("a bare-root douglas fir sapling, on a white studio sweep") rather than
+    listing what you do not want: SDXL does not honour negations, and "no pot, no planter, no
+    container" returned a nursery pot twice on the redwood run where the bare-root phrasing fixed it
+    first try. `negative` is the place for exclusions -- it reaches the reference image's negative
+    conditioning, which is the only stage a negation works at.
+
     kind: trees / rocks / plants / grass. plants and grass are treated as FOLIAGE, which keeps the
-          open surfaces a leaf needs (no remesh, no pinhole fill).
+          open surfaces a leaf needs (no remesh, no pinhole fill). `kind="trees"` returns ONE SOLID
+          MESH: no leaf cards, no alpha, no branch hierarchy, and no skeleton to grow one from. Use
+          it for DEAD WOOD -- a stump, a fallen log, a snag, a root ball -- which is the class this
+          route measures best on. A standing tree is not one of them: the crown comes back a faceted
+          fan, and a generated trunk cannot carry branches because there is no curve to attach them
+          to. Live trees come from the foliage generator (docs/FOLIAGE.md, D16).
     height_m: the real-world height. Mandatory in spirit: every image-to-3D model emits a
           unit-cube mesh, so without it the scatter looks like a toy set.
     faces: the face budget the simplify hits. hero: 2K bake and 2048 texture.
+    negative: what must NOT appear in the reference image (pot, hands, text, multiple objects). The
+          framing clause every subject gets is appended for you; this is the artist's half.
     control: a control mesh from the `export_control` op, so the result keeps a block-out's
           silhouette and footprint (forces the staged chain, which is the only one taking a control).
+          This route UPLOADS a mesh, and on this ComfyUI fork the loader runs in a worker whose
+          working directory is not the server root, so it needs `$BOB_COMFY_DIR` (or the addon's
+          ComfyUI-folder preference) pointing at the checkout. Without it the job fails inside the
+          graph with "Mesh file not found"; `control_bbox` has no such dependency.
     control_bbox: the same op's `bbox` field instead, which conditions on the block-out's three
           proportions rather than on its surface. Cheaper and it uploads nothing; measured at G8,
           and which one is the default is `comfy.DEFAULT_CONTROL_MODE`. Pass one or the other.
+          THE CEILING: the Omni node's widgets bound each of the three to [0.1, 3.0], so a raw
+          ratio like [1, 9, 1] is rejected outright. `export_control` already divides by the longest
+          axis, which is why its own output always fits; hand-written numbers must be normalised the
+          same way, and that also caps the expressible slenderness at 1:10 per axis.
     control_mode: which Omni control the mesh in `control` becomes. "point" samples its surface and
           "voxel" quantises it to a 16-cubed occupancy grid; both read the same file, so the mesh
           alone cannot say which was meant and leaving this unset takes the measured default. Only
           "bbox" needs its own signal, which is `control_bbox`.
-    subject: a local image with ALPHA to use instead of generating a reference.
+    subject: a local image with ALPHA to use instead of generating a reference. Skips the reference
+          stage entirely, so `negative` does nothing alongside it.
     route: "oneshot" (default, W4 then W9b), "staged" (W4, W5t, W9c, W9t; the only route that
           leaves a dense mesh on disk) or "alt" (W4, W8, W8p, W9t; Hunyuan 2.1 geometry, which needs
           no custom node pack). Leave it unset and the kind decides, which is the G7 verdict.
@@ -187,7 +246,7 @@ def comfy_mesh(
                                   control_bbox=control_bbox)
         staged = chain(prompt, pack, seed=int(seed), tier="hero" if hero else "default",
                        faces=int(faces), remesh=not comfy.is_foliage(kind),
-                       texture_size=2048 if hero else 1024, subject=subject,
+                       texture_size=2048 if hero else 1024, subject=subject, negative=negative,
                        **({"control": control, "control_bbox": control_bbox,
                            "control_mode": control_mode}
                           if (control or control_bbox) else {}))
@@ -203,11 +262,24 @@ def comfy_mesh(
                                      or any(float(d) <= 0 for d in control_bbox)):
         return {"ok": False, "error": "control_bbox is three positive numbers "
                                       "[length, height, width], from export_control's bbox field"}
+    # The Omni node's own widget bounds, checked here so the answer is a sentence rather than an
+    # HTTP 400 from inside the graph 90 seconds later. Normalising is the fix and it is what
+    # export_control already does, so the message says which number to divide by.
+    lo, hi = _comfy().CONTROL_BBOX_RANGE
+    if control_bbox is not None and any(not lo <= float(d) <= hi for d in control_bbox):
+        return {"ok": False, "error": f"control_bbox is bounded to [{lo}, {hi}] per axis by the "
+                                      f"Omni node, and {[float(d) for d in control_bbox]} leaves "
+                                      f"it. Pass PROPORTIONS: divide all three by the largest, "
+                                      f"which is what export_control's bbox field already is. "
+                                      f"Normalised that way the low bound caps slenderness at "
+                                      f"1:{int(1.0 / lo)} per axis."}
     modes = _comfy().CONTROL_MODES
     if control_mode is not None and control_mode not in modes:
         return {"ok": False, "error": f"unknown control_mode {control_mode!r} "
                                       f"(have: {', '.join(modes)})"}
-    return _generation(run)
+    # The hero tier is 1536_cascade, which needs materially more of the card than the default 1024,
+    # so it gets its own floor rather than sharing one that would let it through and then OOM.
+    return _generation(run, route="mesh_hero" if hero else "mesh")
 
 
 @mcp.tool()
@@ -254,7 +326,7 @@ def comfy_paint_mesh(
 
     if not os.path.isfile(mesh_file):
         return {"ok": False, "error": f"no mesh file at {mesh_file!r}"}
-    return _generation(run)
+    return _generation(run, route="paint")
 
 
 @mcp.tool()
@@ -296,7 +368,7 @@ def comfy_heightmap(
         return {"ok": False, "error": str(exc)}
     if route is not None and route not in ("open", "tiled"):
         return {"ok": False, "error": f"unknown route {route!r} (have: open, tiled)"}
-    return _generation(run)
+    return _generation(run, route="heightmap")
 
 
 @mcp.tool()
@@ -338,7 +410,7 @@ def comfy_stylize(
 
     if not os.path.isfile(image_file):
         return {"ok": False, "error": f"no image at {image_file!r}"}
-    return _generation(run)
+    return _generation(run, route="stylize")
 
 
 @mcp.tool()
@@ -440,16 +512,59 @@ def build(output_file: str, ops: list[dict], base_file: str | None = None) -> di
 
 
 @mcp.tool()
-def build_live(ops: list[dict]) -> dict:
+def build_live(ops: list[dict] | None = None, batch: str | None = None) -> dict:
     """Author ops into the open Blender session over the live socket bridge.
 
     Same op vocabulary as build, but applied to the running Blender instead of a headless
     file, so the result appears in the viewport. Requires the BobBlenderTools extension to
     be enabled with its bridge running (Advanced -> Start).
+
+    Every call runs under an IDEMPOTENCY KEY, returned as `batch`. A slow batch (a 14,000-face
+    import_generated is the measured case) no longer comes back as a timeout that cannot be told from
+    a failure: this waits, collecting the same key, and only returns when the bridge says the batch is
+    done. If it does give up it returns status "running" with the key, which means the work is STILL
+    IN PROGRESS and the ops must NOT be re-sent -- call build_live(batch="<the key>") to collect it.
+    Passing `batch` alone collects; passing `ops` alone starts new work.
+
+    Returns {ok, results:[{op, created, info, data}], error, batch, status}.
     """
-    request = BuildRequest(output_file="(live)", ops=ops)  # validate
+    if batch is not None and not ops:
+        return bridge.run_build_live([], batch=batch).model_dump()
+    request = BuildRequest(output_file="(live)", ops=ops or [])  # validate
     validated = [op.model_dump() for op in request.ops]
-    return bridge.run_build_live(validated).model_dump()
+    return bridge.run_build_live(validated, batch=batch).model_dump()
+
+
+@mcp.tool()
+def describe_scene(objects: list[str] | None = None,
+                   include: list[str] | None = None) -> dict:
+    """Read the open Blender session back: objects, materials, curves, collections, world, packs.
+
+    The read-only half of the vocabulary, and the answer to every "which index / which name / what
+    was this built from" question that otherwise costs a probe render. Nothing is mutated.
+
+    What it reports, chosen as the values a NEXT call needs as arguments:
+    - objects: type, location, dimensions, face count, the MODIFIER STACK IN ORDER (a GN-generated
+      mesh shades through the last modifier, so a Set-Material that is not last renders grey), the
+      materials, and for a terrain the heightmap / size / resolution / height / sea_level it was
+      built with -- the four numbers a drape has to agree with.
+    - materials: master kind, and for a terrain master every layer slot with whether it is enabled,
+      its texture set, WHICH MAPS ACTUALLY RESOLVE ON DISK (a set that resolves none renders as a
+      solid tint), its tint, and the masks keying it. A layer with "Curve Strength" is a curve band,
+      which is how you find the `index` an apply_texture_set must name to surface a road.
+    - curves: role, which channels are on, the live shape params, and the mask + edge attribute
+      names a scatter layer has to target (they move with the ROLE).
+    - world: the bbt_env fields, the Live Environment master, and how many env drivers are actually
+      installed (the difference between a world value that reaches materials and one that does not).
+    - packs: the asset-pack search path in order, the generated pack, texture sets and biomes.
+
+    objects: names to report, else every object. include: sections from
+    objects/materials/collections/world/packs, else all.
+    """
+    result = bridge.run_build_live([{"op": "describe_scene", "objects": objects,
+                                     "include": include}])
+    data = result.results[0].data if result.results else {}
+    return {"ok": result.ok, "error": result.error, **data}
 
 
 @mcp.tool()

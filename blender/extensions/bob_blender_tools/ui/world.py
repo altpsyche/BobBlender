@@ -466,9 +466,15 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_world = bpy.props.PointerProperty(type=BBT_WorldProps)
+    # Let core reach this registry (core never imports ui). It is what makes the `set_env` and
+    # `apply_world` ops move the scene the way a panel control does, rather than writing bbt_env and
+    # leaving every consumer on whatever it was last given.
+    env.register_world_hook(apply_all)
 
 
 def unregister():
+    from ..core import env
+    env.unregister_world_hook(apply_all)
     del bpy.types.Scene.bbt_world
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

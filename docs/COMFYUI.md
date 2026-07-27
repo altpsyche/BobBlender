@@ -1082,64 +1082,51 @@ measures and how to re-run one on cached generations are in
 
 One session, one reference photograph (a foggy redwood road), one instruction: build it over MCP from
 generated assets only. It produced a scene and thirteen findings, and it is the first time the suite
-was driven end to end by an agent with no panel clicks. Kept here because a run like this finds what
-gates do not: gates assert per feature, a scene asserts the seams between them. Ownership noted per
-item; the generation-track ones are D15 and D16 in [Decisions remaining](#decisions-remaining).
+was driven end to end by an agent with no panel clicks. Recorded because a run like this finds what
+gates do not: gates assert per feature, a scene asserts the seams between them.
+
+**All thirteen are fixed.** Nine of them belonged to other subsystems, and the fixed behaviour is
+documented where that subsystem is documented rather than here — a defect report is a poor place to
+learn how something works, and this is the generation track's document:
+
+| Found | Now lives in |
+|---|---|
+| A generated texture set unreachable from Blender: `apply_texture_set` took no `pack_dir`, and map resolution derived file stems from the folder name so a renamed set resolved zero maps and rendered a solid tint with success in every receipt | [MCP.md](MCP.md#a-prompted-scene-over-mcp-generation) |
+| A texture set never reaching a curve band: the band's layer slot was unreadable, so the run guessed the index | [SPLINES.md](SPLINES.md#32-terrain-material-do_material) |
+| `set_env` reaching no material: writing `bbt_env` is not applying it | [MCP.md](MCP.md#reading-the-scene-back) |
+| `build_live` reporting `main-thread timeout` on a batch that then completed, with no safe retry | [MCP.md](MCP.md#retries-batches-and-slow-ops) |
+| No introspection op at all | [MCP.md](MCP.md#reading-the-scene-back) |
+| Curve shape settable only by changing the ROLE, which moves the mask channel | [SPLINES.md](SPLINES.md#8-driving-from-mcp) |
+| A curve carving at its own Z, and draping needing the terrain's four numbers restated | [SPLINES.md](SPLINES.md#4-the-drape-and-the-shared-field) |
+| A terrain rebuilt with `reset: true` coming back unshaded (Set Material behind the recipe modifier) | [SYSTEMS.md](SYSTEMS.md#rebuilding-in-place) |
+| Scatter unable to sink an instance or leave one asset out of a shared pool | [SYSTEMS.md](SYSTEMS.md#scatter-recipe-scatter) |
+
+`tools/scripts/headless_redwood.py` is the gate for all nine, and every check in it would have
+failed before its fix. The pure-Python halves (map resolution, pack-root ordering, the contract
+fields, the VRAM floors, the D16 receipt sentence) are in `tools/tests`.
+
+The four that are this track's own:
 
 1. **ComfyUI never returns its VRAM, and generation plus rendering in one session deadlocks.** The
-   full measurement is D15. Cost this run: two dead generate attempts and a manual process kill.
-2. **Foliage meshes are the wrong tool for crowns.** The section below, and D16.
-3. **A generated texture set is invisible to Blender unless the generated pack is on the ASSET
-   search path.** `comfy_texture_set` writes into `packs/generated/textures/<set>/` and returns a
-   `pack_dir`, and `apply_texture_set` takes no `pack_dir` at the Blender side, so it resolved
-   against the addon's own search path and failed with "no texture set ... (have: grass, rock,
-   soil)". Workaround used: symlink each set folder into the in-repo `library/textures/`. Second
-   trap inside the first: `assets.texture_set_maps` derives file stems from the FOLDER name, so a
-   symlink renamed to something friendlier resolves to zero maps and the set silently reads as a
-   solid tint. Owner: MCP/assets. Fix candidates: honour `pack_dir` on the op, or have the addon
-   register `$BOB_GENERATED` as a pack automatically.
-4. **A texture set assigned to the layer slot a curve band occupies does not reach the band.**
-   `apply_curve_surface` takes the first free slot (3 here) and sets its Base Color, Roughness and
-   hard edge; assigning a set to that same index reports success and changes nothing on screen,
-   tested with three different sets (matte asphalt, pale asphalt, needle duff). So a BobSplines road
-   is base-colour-only over MCP. Owner: BobSplines/shading.
-5. **`set_env` does not reach materials on its own, and nothing in the op vocabulary re-feeds the
-   drivers.** Season, temperature, wetness and snow-line changes produced no pixel change; only
-   `shade_terrain` (which calls `feed_env`) or a stack preset carrying a `weather` dict moved the
-   material. An agent therefore cannot dial the world state alone. Owner: MCP/world. Fix candidate:
-   an `apply_world` op, or make `set_env` call the same applier the World panel does.
-6. **A terrain rebuilt with `reset: true` came back unshaded.** After `build_geonodes(recipe=
-   "heightmap_terrain", reset=True)` on an existing object, the terrain rendered as default grey
-   until it was deleted and rebuilt from scratch, then re-shaded. Suspected cause: the Set-Material
-   modifier's position relative to the recipe modifier after a reset. Owner: geonodes/shading.
-7. **`build_live` reports `main-thread timeout` on a batch that then completes.** A batch with a
-   14,000-face `import_generated` timed out at the client; the assets were on disk and in the scene
-   afterwards. There is no way to tell a timeout from a failure, so the safe retry (re-sending)
-   risks duplicate objects. Owner: bridge. Fix candidate: a per-op ack, or an idempotency key.
-8. **There is no introspection op.** No way to list objects, read a material's layer slots, or ask
-   which slot a curve band took, so the run guessed slot indices and rendered probe frames to read
-   the scene back. Owner: MCP. Fix candidate: a read-only `describe_scene` op.
-9. **Curve shape is role defaults only.** No op sets `bbt_curve.width`/`depth`, so the road's 9 m
-   bench had to be swapped for `dirt_path`'s 4.8 m by changing ROLE, which also changes the mask
-   channel (`bbt_curve_mask_b` to `bbt_curve_mask`) and therefore every scatter layer's
-   `curve_attr`. Owner: BobSplines/MCP.
-10. **A curve carves at its own Z until it is draped, and draping needs the terrain's numbers
-    restated.** `curve_build` reported "carved terrain (curve Z)" and cut a trench through rising
-    ground; `drape_curve` fixed it only when passed the same heightmap, `size`, `height` and
-    `sea_level` the terrain was built with. Nothing checks that they match. Owner: BobSplines.
-11. **Scatter cannot sink an instance or exclude one asset from a collection.** Generated trees
-    carry a wide root flare; with no Z offset and no per-asset filter, the flares float over sloped
-    ground and fill the frame, and the only lever is camera placement. Owner: scatter.
-12. **SDXL ignores negations, and the subject image decides the asset.** "no pot, no planter, no
-    container" returned a nursery pot twice; "bare-root ... on a white studio sweep" removed it in
-    one shot. `comfy_mesh` also has no `negative` argument where `comfy_texture_set` does. Owner:
-    generation track. Fix candidate: a `negative` argument, and prompt guidance in the tool
-    description.
-13. **The bbox control cannot express a column, and the mesh control needs `$BOB_COMFY_DIR`.**
-    `control_bbox` is clamped to 3.0 per axis, so a 1:9 trunk is unrequestable; asking for
-    `[0.35, 0.35, 3]` then failed anyway with "Mesh file not found" because the staged chain uploads
-    a mesh and the variable was unset. Owner: generation track (documented behaviour, undocumented
-    ceiling).
+   full measurement, and what landed, is D15 in [Decisions](#decisions-remaining). Cost this run:
+   two dead generate attempts and a manual process kill.
+2. **Foliage meshes are the wrong tool for crowns.** [The section below](#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
+   and D16. The generator itself is now [FOLIAGE.md](FOLIAGE.md).
+3. **SDXL ignores negations, and the subject image decides the asset.** "no pot, no planter, no
+   container" returned a nursery pot twice; "bare-root ... on a white studio sweep" removed it in
+   one shot. **Fixed:** `comfy_mesh` takes a `negative` argument, threaded to the subject stage
+   through every route (it is the only stage any text reaches — every geometry graph downstream
+   conditions on the picture, so what is not said there cannot be said later), and the tool
+   description now carries the framing guidance rather than leaving each agent to rediscover it.
+4. **The bbox control cannot express a column, and the mesh control needs `$BOB_COMFY_DIR`.** Both
+   were real ceilings with no documentation. **Fixed as documentation plus two better failures:**
+   `comfy.CONTROL_BBOX_RANGE` records the Omni node's own widget bound of [0.1, 3.0] per axis (a
+   bound, not a clamp — ComfyUI validates widget ranges server-side, so `[1, 9, 1]` is an HTTP 400),
+   `comfy_mesh` refuses an out-of-range bbox with a sentence naming the normalisation that fixes it,
+   and a job that dies with "Mesh file not found" while no ComfyUI folder is configured now has the
+   reason and the variable appended to its error. Setting the variable in the repo `.mcp.json`
+   instead was rejected: a packaged install has no `.mcp.json` of ours and would inherit the
+   silence.
 
 ## Foliage: what image-to-3D is for, and what it is not for
 
@@ -1165,16 +1152,17 @@ Where the line falls, from the numbers rather than from taste:
 | Rocks, boulders, logs, stumps, debris | **Yes.** This is what the route is good at. | G3/G7 solids: closed shells, budget met, albedo std 0.1555 |
 | Ground clumps read at 2 to 4 m (fern, sorrel, grass tuft) | **Yes, as scatter filler.** Do not put the camera on one. | G3 fern frond: open, 51,842 boundary edges, but a bushy volume rather than blades |
 | A single leaf or blade as a hero asset | **Only if the gate says `cutout`.** | G3 leaf: 11,610 boundary edges, thin ratio 0.0422, alpha wired at mean 0.9806 |
-| A whole tree, or any crown of foliage | **No.** Generate the TRUNK and build the crown. | G3 broadleaf sprig: 15 boundary edges, i.e. a closed blob; redwood run: crowns are fans |
+| Dead wood: stumps, fallen logs, snags, root balls | **Yes.** Same case as rocks — a solid with no skeleton needed. | G3/G7 solids, as above |
+| A standing tree, or any crown of foliage | **No.** Not the trunk either. Grow it (docs/FOLIAGE.md). | G3 broadleaf sprig: 15 boundary edges, i.e. a closed blob; redwood run: crowns are fans, and a generated trunk carries no curve for branches to attach to |
 | Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. | measured seam ratio 1.02 to 1.11 on the redwood sets |
 
 **The UX guardrail (near-term, in this track).** Three places have to say the same thing, because
 the artist and the agent arrive from different doors:
 
 1. **Scatter / Generate Asset panel.** The `kind` selector currently offers trees / rocks / plants /
-   grass with no statement of what generation is good at. Trees needs a note reading "generates a
-   trunk, not a crown -- crowns come from the foliage generator" and the foliage kinds need "reads
-   at 2 m or further". A one-line info row under the kind selector, not a popup.
+   grass with no statement of what generation is good at. Trees needs a note pointing at dead wood
+   and the foliage kinds need "reads at 2 m or further". A one-line info row under the kind
+   selector, not a popup.
 2. **`comfy_mesh`'s tool description.** The MCP docstring already says "scatter-grade by design:
    dense triangles, no edge flow, convincing at 3 m". It must also say that `kind="trees"` returns a
    single solid mesh with no leaf cards and no alpha, so an agent stops asking for trees.
@@ -1186,8 +1174,12 @@ the artist and the agent arrive from different doors:
 **The SpeedTree-style track (new feature, raised from here).** The right long-term answer is a
 Geometry Nodes foliage generator that consumes ComfyUI textures rather than ComfyUI geometry:
 
-- **Trunk and main limbs**: either a generated mesh (image-to-3D is good at bark) or a GN sweep
-  along generated curves, with the generated bark texture set on it.
+- **Trunk and main limbs**: a GN sweep along a grown skeleton curve, with the generated bark texture
+  set on it. Not a generated mesh: this bullet first offered that as an option on the grounds that
+  image-to-3D is good at bark, and [FOLIAGE.md](FOLIAGE.md#21-trunk-and-main-limbs) retired it.
+  Branches attach to points on a curve with a tangent and a radius; a generated blob has no
+  skeleton, so nothing can grow from it. The "good at bark" claim was also extrapolated from logs
+  and stumps and has never been measured on a standing trunk.
 - **Branch hierarchy**: GN recursion over curves -- length, angle, taper, gnarl, phyllotaxy per
   level, which is exactly what the existing recipe scaffold and the BobSplines curve vocabulary
   already do for paths.
@@ -1198,18 +1190,23 @@ Geometry Nodes foliage generator that consumes ComfyUI textures rather than Comf
   colour come for free from the shared env.
 - **LODs**: card count and branch depth per LOD, with the existing LOD chain in `gen_assets`.
 
-That is a Bob-side feature with a small ComfyUI dependency (one atlas workflow), so it belongs in
-its own plan document (docs/FOLIAGE.md) with this section as its origin, not in the generation
-track. What this track owes it: the atlas workflow, and the guardrail above so nobody waits for it
-by generating trees.
+That is a Bob-side feature whose ComfyUI dependency is textures only — a leaf atlas and a bark set,
+no geometry at all — so it belongs in its own plan document,
+[FOLIAGE.md](FOLIAGE.md), with this section as its origin. What this track owes it: those two
+texture jobs (the atlas is new, bark needs a directionality check on the existing workflow), and the
+guardrail above so nobody waits for it by generating trees.
 
 ## Decisions remaining
 
-Four, and only the first two belong to this track. The twelve answered ones, with what answered them,
-are in [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md#decisions-answered).
+Two, and neither belongs to this track: D13 is the terrain engine's and D14's fix is upstream's.
+D15 and D16 were the track's last two and both were answered on 2026-07-27; they are kept here in
+full rather than filed away, because the measurements behind them are the only record of what a
+mixed generate-and-render session actually does to a card. The twelve earlier answered ones, with
+what answered them, are in
+[COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md#decisions-answered).
 
 - **D15 ComfyUI never gives its VRAM back, and a mixed generate-and-render session deadlocks on it.
-  OPEN, found 2026-07-27 while building the redwood scene over MCP.** Symptom: after a run of
+  ANSWERED 2026-07-27, all three sub-decisions yes. Landed.** Symptom: after a run of
   `comfy_*` calls interleaved with `render_scene` on Cycles/OPTIX, every further `comfy_mesh` fails
   with `torch.OutOfMemoryError` raised INSIDE the TRELLIS2 worker (first in
   `_sample_shape_slat_cascade`, then in BiRefNet matting) while `nvidia-smi` shows ComfyUI's main
@@ -1220,22 +1217,52 @@ are in [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md#decisions-answered).
   rather than merely untidy. Only killing and relaunching `main.py` recovered the card (0.5 GB free to
   12.3 GB). Contributors measured in the same session: the worker parks 3.2 GB of resident weights,
   Blender keeps about 1.1 GB after its own Free VRAM, and each MCP server process that ran
-  `bake_heightfield` holds roughly 0.47 GB of CuPy context. This is R8 arriving in practice. Three
-  things to settle: whether Free VRAM should escalate (`empty_cache`, then
-  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` at launch, then a supervised restart of a server
-  Bob did not start); whether the generation tools should preflight `comfy_status().vram_free_mib`
-  against a per-route floor and fail with that sentence instead of a CUDA traceback; and whether
-  `render_scene` should release Blender's GPU memory afterwards, since an agent that generates and
-  renders in one session is now the normal case.
+  `bake_heightfield` holds roughly 0.47 GB of CuPy context. This is R8 arriving in practice.
+
+  **What landed, per sub-decision.** Free VRAM escalates and, more to the point, REPORTS:
+  `comfy.recover_vram` returns `{before, after, recovered, enough, advice}`, and when the free was
+  not enough the advice names the restart (measured 0.5 GB free to 12.3 GB) and the
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` launch flag, which Bob now sets on any server
+  it starts itself. The panel's button prints the number instead of the word "Freed", because the
+  old button returned success after recovering about 100 MiB and that is what made the leak look
+  fixed. The generation tools preflight: `comfy.VRAM_FLOOR_MIB` carries a per-route floor
+  (mesh 5000, mesh_hero 7000 for `1536_cascade`, texture 3000, paint 4000, heightmap 3000,
+  stylize 3500), `preflight_vram` tries one recovery before refusing, and a server that cannot
+  report its VRAM at all is let through -- an unknown is not a reason to block work. And
+  `render_scene` releases Blender's render buffers after the frame (`Render.release_gpu`, default
+  true), since an agent that generates and renders in one session is now the normal case.
+
+  Not fixed, and not fixable from here: `POST /free` still only drops what the MAIN process will
+  give back, and the generation workers are separate processes. The floors turn that into a sentence
+  before 90 seconds are spent; they do not recover the card. Bob will not restart a server it did
+  not start.
 - **D16 The foliage guardrail is copy in three places, and the foliage generator is a new track.
-  OPEN, raised 2026-07-27 by the redwood-scene run.** The measurements need no repeating (G3, G3b,
-  G7); what is undecided is how loudly Bob says "do not generate a crown". Cheapest version is the
-  three edits in [Foliage](#foliage-what-image-to-3d-is-for-and-what-it-is-not-for): a panel info
-  row, a sentence in `comfy_mesh`'s description, and an `import_generated` warning when a foliage
-  asset has no `cutout` verdict. The louder version refuses `kind="trees"` without an explicit
-  `trunk_only=True`, which is a contract change and probably too strong while the foliage generator
-  does not exist. Decide the volume, then write docs/FOLIAGE.md for the GN generator itself (trunk
-  plus recursive branches plus alpha cards off a generated atlas plus env-driven wind).
+  ANSWERED 2026-07-27: the quiet version, all three edits, no contract change. Landed.** The
+  measurements needed no repeating (G3, G3b, G7); what was undecided was how loudly Bob says "do not
+  generate a crown". The three edits in
+  [Foliage](#foliage-what-image-to-3d-is-for-and-what-it-is-not-for) are in: a one-line info row
+  under the Generate Asset kind selector (`ui/scatter._GEN_KIND_NOTE`, drawn only for the kinds the
+  route is weak at, so the row is a warning and not decoration); the `kind="trees"` sentence in
+  `comfy_mesh`'s description; and `comfy.leaf_opacity_warning`, which `finish_asset` appends to the
+  receipt whenever a tree, plant or grass asset lands with `opacity.verdict != "cutout"`.
+
+  **Why not the loud version.** Refusing `kind="trees"` without an explicit `trunk_only=True` was
+  rejected for three reasons, in order of weight. It is wrong on the merits for stumps, fallen logs,
+  snags and root balls, which are the things the route is genuinely good at and which are all
+  `trees`; a flag whose only effect is to unlock the call teaches nothing and is typed once and then
+  forgotten. (`trunk_only` would also have been the wrong NAME by the time FOLIAGE.md was written: a
+  standing trunk is not something this route should produce either.)
+  It is a contract change, so every existing agent call and both panel paths break for a guardrail
+  whose evidence is one run. And a refusal is unfalsifiable in the receipt: the quiet version
+  reports the actual measured verdict per asset, so an artist who generates a crown anyway sees the
+  reason it failed rather than a policy. If the warning turns out not to be read -- the tripwire is
+  another run spending attempts on crowns -- the escalation is a louder receipt, not a refusal.
+
+  Note that `LEAFY_KINDS` (what the warning fires on: trees, plants, grass) deliberately differs
+  from `FOLIAGE_KINDS` (what keeps its holes open through remesh and pinhole fill: plants, grass).
+  Dead wood is solid and still gets the warning, because a crown is usually why `trees` was picked.
+
+  The generator itself is now [docs/FOLIAGE.md](FOLIAGE.md), which this section is the origin of.
 - **D13 The terrain engine's slope-area gradient has the wrong sign, and G5 found it by accident.**
   A no-mask `alpine` bake's log-log slope-area gradient is **+0.322**, i.e. slope RISES with upstream
   drainage area, with a strong fit (binned medians, r 0.86 to 0.89 over 30 to 3,000 upstream cells,

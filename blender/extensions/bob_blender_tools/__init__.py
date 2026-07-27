@@ -1251,18 +1251,28 @@ class BBT_OT_comfy_free(Operator):
     bl_idname = "bob_blender_tools.comfy_free"
     bl_label = "Free VRAM"
     bl_description = ("Ask ComfyUI to unload its models and release its allocator, so a Cycles "
-                      "frame gets the card back. The server stays up; only its models go")
+                      "frame gets the card back, and report how much it actually gave. The server "
+                      "stays up; only its models go")
 
     def execute(self, context):
         from .core import comfy
 
         try:
-            comfy.free()
+            # Measure against the mesh floor: that is the route that actually runs out, and it is
+            # what makes the report say "still not enough for a generate" instead of just "freed".
+            result = comfy.recover_vram(target_mib=comfy.VRAM_FLOOR_MIB["mesh"])
         except comfy.ComfyError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         state = _refresh_comfy_service()
-        self.report({"INFO"}, f"Freed. {state['detail']}")
+        got = result.get("recovered")
+        # Say the number. The old report was "Freed." on a call that recovers about 100 MiB of a
+        # 7.3 GB hold, which reads as a fix for a problem it does not fix (D15).
+        note = f"Freed {got} MiB." if got is not None else "Freed."
+        if result.get("advice"):
+            self.report({"WARNING"}, f"{note} {state['detail']}. {result['advice']}")
+        else:
+            self.report({"INFO"}, f"{note} {state['detail']}")
         return {"FINISHED"}
 
 
@@ -1296,8 +1306,16 @@ class BBT_OT_comfy_start(Operator):
         # `comfy.ensure_untiled`). The flag stays documented as the fallback for the one case Bob
         # cannot cover: another client generating on the same server inside the padded window.
         cmd = [python, "main.py", "--reserve-vram", f"{_prefs().comfy_reserve_vram:g}"]
+        # expandable_segments (D15): torch's default caching allocator fragments across a session of
+        # differently-shaped jobs, and `POST /free` then recovers about 100 MiB of a 7.3 GB hold
+        # because the pages are stranded in the allocator rather than held by a live tensor. This is
+        # the launch-time half of the answer -- it does not free anything already stranded, it stops
+        # the stranding building up. Only reaches a server BOB starts; one the artist started keeps
+        # whatever environment it was launched with.
+        env = dict(os.environ)
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         try:
-            _comfy_proc = subprocess.Popen(cmd, cwd=repo, stdout=subprocess.DEVNULL,
+            _comfy_proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=subprocess.DEVNULL,
                                            stderr=subprocess.DEVNULL)
         except OSError as exc:
             self.report({"ERROR"}, f"Could not start ComfyUI: {exc}")

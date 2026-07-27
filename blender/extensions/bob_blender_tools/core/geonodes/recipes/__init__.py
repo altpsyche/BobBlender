@@ -69,6 +69,7 @@ def resolve_named(kind, name, *, what="", required=False):
 from . import (  # noqa: E402,F401
     curve_overlay,
     curve_water,
+    foliage,
     heightmap_terrain,
     particulates,
     scatter,

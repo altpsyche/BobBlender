@@ -397,8 +397,10 @@ def control_bbox(obj):
 
     Eight corners in place of 8,192 sampled points, and no mesh leaves Blender at all, which is what
     D12 asked and G8 measured. Normalised by the longest axis for the same reason the point route is
-    unit-normalised: the encoder works in a unit cube, the node clamps each dimension to [0.1, 3.0],
-    and a proportion is what a layout was composed around anyway.
+    unit-normalised: the encoder works in a unit cube, the node bounds each dimension to
+    `comfy.CONTROL_BBOX_RANGE` and REJECTS anything outside it, and a proportion is what a layout was
+    composed around anyway. Normalising here is why an `export_control` bbox always passes that
+    check, and why a hand-written one often does not.
     """
     dims = dimensions(obj)
     mapped = [float(dims[i]) for i in CONTROL_BBOX_AXES]
@@ -1125,6 +1127,10 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
     # the mesh: `apply_baked_material` replaces the material outright.
     alpha, report["opacity"] = source_opacity(low, size=bake_size, force=force_opacity)
     report["opacity"]["wired"] = alpha is not None
+    # D16: say out loud that a leaf-shaped asset landed with no cutout channel. The measurement was
+    # already in the report; nothing read it (docs/FOLIAGE.md).
+    from . import comfy as _comfy  # bpy-free, and imported lazily for the same reason as below
+    report["warnings"] += _comfy.leaf_opacity_warning(kind, report["opacity"])
     maps = bake_high_to_low(high, low, tex_dir, stem, size=bake_size, device=bake_device,
                             alpha=alpha)
     report["maps"] = maps
@@ -1270,6 +1276,9 @@ def _resolve_pack(pack_dir):
         raise ValueError(
             "no generated pack: pass pack_dir, or set $BOB_GENERATED (the MCP tools return the "
             "pack they wrote into), or set the addon's output folder in a live session")
+    # Register it on the search path too, so the biome and texture-set resolvers can see whatever
+    # this op writes there without a second configuration step (core/assets.add_pack_root).
+    assets.add_pack_root(pack)
     return assets.ensure_generated_pack(pack)
 
 

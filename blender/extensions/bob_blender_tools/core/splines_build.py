@@ -268,8 +268,10 @@ def _build_curve_overlay(terrain, curve, carve=True):
     off_terrain = False
     if _has_bake(terrain):
         # role["drape"] adds the monotonic downhill solve for a river/stream (empty for a path).
-        res = _apply([{"op": "drape_curve", "name": curve.name,
-                       **_drape_params(terrain), **role.get("drape", {})}])
+        # `terrain` rather than the four restated numbers: drape_curve reads them off the object, so
+        # there is one authority for what the terrain was built from (docs/SPLINES.md).
+        res = _apply([{"op": "drape_curve", "name": curve.name, "terrain": terrain.name,
+                       **role.get("drape", {})}])
         # A drape that failed (missing heightmap, curve entirely off the terrain) returns an info-only
         # dict with no "created"; do not then claim the curve was draped.
         draped = bool(res and res[0].get("created"))
@@ -507,6 +509,48 @@ def sync_curve_params(terrain, curve):
         water.update_tag()
 
 
+# The shape keys an op may set, plus the verge band (live, deliberately NOT role-seeded, so it is
+# not in _SHAPE_KEYS but is still a legitimate thing to ask for).
+SHAPE_PARAMS = _SHAPE_KEYS + ("verge_gap", "verge_width", "verge_side")
+
+
+def set_shape(curve, terrain, shape):
+    """Write explicit shape params onto bbt_curve and sync them to the overlay + water ribbon.
+
+    The op-side counterpart to the panel's per-property sliders, and the reason it exists: without
+    it the only way to change a curve's WIDTH over MCP was to change its ROLE, which also swaps the
+    mask channel (bbt_curve_mask <-> bbt_curve_mask_b) and therefore silently invalidates every
+    scatter layer's curve_attr. Shape and identity are separate things and this keeps them separate.
+
+    Returns (applied, unknown): the names written, and the names that are not shape params. Values
+    are clamped by the property definitions themselves, so an out-of-range number lands at the
+    bound rather than raising. Sets the module _syncing flag so the panel's per-property callback
+    does not fire one sync per key; one sync runs at the end.
+    """
+    global _syncing
+    cfg = curve.bbt_curve
+    applied, unknown = [], []
+    _syncing = True
+    try:
+        for key, val in (shape or {}).items():
+            if val is None:
+                continue  # the contract model dumps every key; None means "not asked for"
+            if key not in SHAPE_PARAMS:
+                unknown.append(key)
+                continue
+            try:
+                setattr(cfg, key, val)
+            except (AttributeError, TypeError, ValueError):
+                unknown.append(key)
+                continue
+            applied.append(key)
+    finally:
+        _syncing = False
+    if applied:
+        sync_curve_params(terrain, curve)
+    return applied, unknown
+
+
 def seed_role_params(curve, terrain):
     """Seed bbt_curve's shape params from the role preset (on Add / role change), then sync once.
     Sets the module _syncing flag around the writes so the panel's per-prop update callback does not
@@ -568,7 +612,7 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
     role = _role_of(curve)
     impose = role.get("family") == "impose"
     result = {"built": False, "watered": False, "surfaced": False, "scattered": False,
-              "note": "", "did": [], "warnings": [], "error": None}
+              "slot": None, "note": "", "did": [], "warnings": [], "error": None}
     cfg.banks_from_erosion = False  # a fresh build re-imposes the graded channel (until Erode)
 
     # Any channel needs the overlay's masks; build it once (carve only when the Terrain channel
@@ -586,11 +630,28 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
         result["built"] = True
         result["note"] = note
         result["did"].append(f"carved terrain ({note})" if do_terrain else "curve mask")
+        if do_terrain and not note.startswith("draped"):
+            # "curve Z" is not a neutral fallback: the overlay grades the bench to whatever Z the
+            # control points happen to hold, so on rising ground it cuts a trench and on falling
+            # ground it leaves the path in the air. Say so instead of reporting it as a success mode.
+            result["warnings"].append(
+                "carved at the curve's own Z, not the terrain surface: the terrain carries no "
+                "bbt_heightmap, so there is nothing to drape onto. Build it from a bake "
+                "(bake_heightfield then a heightmap_terrain build_geonodes) and re-build the curve, "
+                "or the bench will cut through rising ground")
 
     if do_material:
-        if _apply_curve_material(terrain, role) is not None:
+        slot = _apply_curve_material(terrain, role)
+        if slot is not None:
             result["surfaced"] = True
-            result["did"].append("damp bed" if impose else "surface band")
+            # The SLOT is part of the result, not an internal detail: it is the `index` an
+            # apply_texture_set has to name to put a real surface on the band, and there is no other
+            # way to read it back (the redwood run guessed it and rendered probe frames). None for the
+            # impose family, whose damp bed is a whole-material knob rather than a layer.
+            result["slot"] = None if impose else slot
+            result["did"].append("damp bed" if impose
+                                 else f"surface band (layer {slot}, channel "
+                                      f"{role.get('surface_channel', 'a')})")
         else:
             result["warnings"].append("Material band needs a Terrain BobShader (shade it in Shaders)")
 
@@ -865,7 +926,9 @@ def make_curve(op: dict) -> dict:
 
     params: name (str), role (dirt_path/road/river/stream/trail/... a ROLES key), points (optional
     list of xyz control points, else a starter line sized to the terrain), terrain (optional mesh
-    name, used to size the starter line and sync the seeded params)."""
+    name, used to size the starter line and sync the seeded params), shape (optional dict of
+    SHAPE_PARAMS overriding the role's defaults: width/depth/falloff/taper/shoulder/bank_*/water_*/
+    wave_*/flow/foam_*/width_var/verge_*)."""
     role = op.get("role", "dirt_path")
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r} (have: {sorted(ROLES)})")
@@ -881,9 +944,29 @@ def make_curve(op: dict) -> dict:
         raise ValueError("curve not created")
     obj.bbt_curve.role = role
     seed_role_params(obj, terrain)  # seed the shape defaults for this role (live from now on)
+    # Shape overrides AFTER the role seed, so a caller can take a road's channel and narrow it
+    # without changing the role (which would move it to the other mask channel).
+    applied, unknown = set_shape(obj, terrain, op.get("shape"))
     _register_curve_entry(bpy.context.scene, obj)
-    return {"op": "make_curve", "created": [obj.name],
-            "info": f"{obj.name}: {ROLES[role]['label']} ({len(points)} points)"}
+    cfg = obj.bbt_curve
+    info = (f"{obj.name}: {ROLES[role]['label']} ({len(points)} points, "
+            f"{cfg.width:.2f} m wide, {cfg.depth:.2f} m deep)")
+    if applied:
+        info += f" | shape: {', '.join(sorted(applied))}"
+    if unknown:
+        info += f" | not shape params: {', '.join(sorted(unknown))}"
+    return {"op": "make_curve", "created": [obj.name], "info": info,
+            "data": {"role": role, "shape": _shape_of(obj),
+                     "mask_attr": ROLES[role].get("surface_attr") or "bbt_curve_mask",
+                     "edge_attr": _edge_attr_name(obj)}}
+
+
+def _shape_of(curve):
+    """The curve's live shape params as a plain dict, for an op result. What an agent reads back
+    instead of inferring the numbers from the role table."""
+    cfg = curve.bbt_curve
+    return {k: round(float(getattr(cfg, k)), 4) for k in SHAPE_PARAMS
+            if isinstance(getattr(cfg, k, None), float)}
 
 
 def curve_build(op: dict) -> dict:
@@ -891,10 +974,14 @@ def curve_build(op: dict) -> dict:
     by name and calls build_curve. The channel bools default to the curve's own bbt_curve settings so
     an agent can just name the curve; pass do_terrain/do_material/do_water/do_scatter to override.
 
+    `shape` (a dict of SHAPE_PARAMS) is applied BEFORE the build, so the channel is carved at the
+    width and depth asked for rather than at the role's defaults.
+
     Scatter clear is skipped over MCP (its rebuild is a ui operator; scatter_cb is None)."""
     curve = _curve_object(op.get("curve"))
     terrain = _terrain_object(op.get("terrain"))
     cfg = curve.bbt_curve
+    shaped, unknown = set_shape(curve, terrain, op.get("shape"))
     do_terrain = bool(op.get("do_terrain", cfg.do_terrain))
     do_material = bool(op.get("do_material", cfg.do_material))
     do_water = bool(op.get("do_water", cfg.do_water))
@@ -906,6 +993,10 @@ def curve_build(op: dict) -> dict:
     bpy.context.view_layer.update()
     did = ", ".join(res["did"]) or "no channels applied"
     info = f"{curve.name}: {did}"
+    if shaped:
+        info += f" | shape: {', '.join(sorted(shaped))}"
+    if unknown:
+        info += f" | not shape params: {', '.join(sorted(unknown))}"
     if res["warnings"]:
         info += " | " + "; ".join(res["warnings"])
     created = []
@@ -913,7 +1004,17 @@ def curve_build(op: dict) -> dict:
         created.append(f"{terrain.name}:{_overlay_name(curve)}" if terrain is not None else curve.name)
     if res["watered"]:
         created.append(_water_name(curve))
-    return {"op": "curve_build", "created": created, "info": info}
+    role = _role_of(curve)
+    # `slot` and `draped` are the two things an agent cannot read back any other way: the layer index
+    # an apply_texture_set must name to surface the band, and whether the carve used the draped Z or
+    # the curve's own (which is the difference between a graded bench and a trench through a hill).
+    return {"op": "curve_build", "created": created, "info": info,
+            "data": {"slot": res["slot"], "note": res["note"],
+                     "draped": res["note"].startswith("draped"),
+                     "shape": _shape_of(curve),
+                     "mask_attr": role.get("surface_attr") or "bbt_curve_mask",
+                     "edge_attr": _edge_attr_name(curve),
+                     "warnings": res["warnings"]}}
 
 
 def _host_bake_cb():

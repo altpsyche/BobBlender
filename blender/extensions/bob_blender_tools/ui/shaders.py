@@ -224,15 +224,11 @@ def _live_env_on(scene):
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 
-def _apply_world(scene):
-    """Shaders' world applier (subscribed with world): install or remove the shared
-    S_EnvState drivers per the master Live Environment toggle, so raising the world snow
-    whitens every surface with no rebuild. A driver edit on a shared datablock, safe from the
-    rebuild re-entrancy the repo avoids for structural changes."""
-    if _live_env_on(scene) and _has_env(scene):
-        _install_env_drivers(scene)
-    else:
-        _remove_env_drivers()
+# Shaders' world applier (subscribed with world): install or remove the shared S_EnvState drivers
+# per the master Live Environment toggle, so raising the world snow whitens every surface with no
+# rebuild. A driver edit on a shared datablock, safe from the rebuild re-entrancy the repo avoids for
+# structural changes. The three lines live in core/shading so the ops reach the same applier.
+_apply_world = shading.apply_world_feed
 
 
 def _feed_env(scene):

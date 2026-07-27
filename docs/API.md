@@ -42,18 +42,20 @@ the path is what `comfy_mesh(control=...)` takes. `import_generated` returns the
 | `build_geonodes` | `geonodes.build_geonodes` | `recipe`: str = `'wave_grid'`<br>`name`: str \| None = `None`<br>`params`: dict = `{}`<br>`target`: 'new_object' \| 'library' = `'new_object'`<br>`mark_asset`: bool = `False`<br>`reset`: bool = `False` |
 | `make_proxies` | `proxies.make_proxies` | `kinds`: list = `['trees', 'rocks', 'plants']` |
 | `make_path` | `path_curve.make_path` | `name`: str = `'Path'`<br>`points`: list = `[]`<br>`resolution`: int = `12`<br>`heightmap`: str \| None = `None`<br>`size`: float = `60.0`<br>`height`: float = `14.0`<br>`sea_level`: float = `0.3` |
-| `drape_curve` | `path_curve.drape_curve` | `name`: str = `'Path'`<br>`heightmap`: str \| None = `None`<br>`size`: float = `60.0`<br>`height`: float = `14.0`<br>`sea_level`: float = `0.3`<br>`monotonic`: bool = `False`<br>`min_slope`: float = `0.0`<br>`to_sea`: bool = `False`<br>`densify`: int = `0` |
+| `drape_curve` | `path_curve.drape_curve` | `name`: str = `'Path'`<br>`terrain`: str \| None = `None`<br>`heightmap`: str \| None = `None`<br>`size`: float \| None = `None`<br>`height`: float \| None = `None`<br>`sea_level`: float \| None = `None`<br>`monotonic`: bool = `False`<br>`min_slope`: float = `0.0`<br>`to_sea`: bool = `False`<br>`densify`: int = `0` |
 | `reload_image` | `images.reload_image` | `path`: str \| None = `None` |
 | `build_sky` | `world.build_sky` | `params`: dict = `{}` |
 | `add_camera` | `camera.add_camera` | `name`: str = `'BOB_Camera'`<br>`location`: tuple = `(12.0, -12.0, 8.0)`<br>`look_at`: tuple \| None = `None`<br>`rotation`: tuple = `(0.0, 0.0, 0.0)`<br>`lens`: float = `50.0`<br>`clip_end`: float \| None = `None`<br>`set_active`: bool = `True` |
-| `render` | `render.render` | `output`: str = **required**<br>`engine`: 'BLENDER_EEVEE' \| 'CYCLES' = `'BLENDER_EEVEE'`<br>`samples`: int = `64`<br>`resolution`: tuple = `(1920, 1080)`<br>`resolution_percentage`: int = `100`<br>`camera`: str \| None = `None`<br>`device`: 'GPU' \| 'CPU' = `'GPU'`<br>`file_format`: str = `'PNG'` |
+| `render` | `render.render` | `output`: str = **required**<br>`engine`: 'BLENDER_EEVEE' \| 'CYCLES' = `'BLENDER_EEVEE'`<br>`samples`: int = `64`<br>`resolution`: tuple = `(1920, 1080)`<br>`resolution_percentage`: int = `100`<br>`camera`: str \| None = `None`<br>`device`: 'GPU' \| 'CPU' = `'GPU'`<br>`file_format`: str = `'PNG'`<br>`release_gpu`: bool = `True` |
 | `delete` | `scene.delete` | `names`: list = `[]`<br>`name`: str \| None = `None` |
 | `clear_scene` | `scene.clear_scene` | `keep`: list = `[]`<br>`purge`: bool = `True` |
-| `set_env` | `scene.set_env` | `params`: dict = `{}` |
+| `set_env` | `scene.set_env` | `params`: dict = `{}`<br>`apply`: bool = `True` |
+| `apply_world` | `scene.apply_world` | (none) |
+| `describe_scene` | `describe.describe_scene` | `objects`: list \| None = `None`<br>`include`: list \| None = `None` |
 | `shade_terrain` | `shading.shade_terrain` | `object`: str = **required**<br>`stack`: str \| None = `None`<br>`layers`: list \| None = `None`<br>`material`: str \| None = `None`<br>`assign`: bool = `True` |
 | `apply_shader` | `shading.apply_shader` | `object`: str = **required**<br>`master`: 'surface' \| 'terrain' \| 'water' = `'surface'`<br>`preset`: str \| None = `None` |
 | `snow_shell` | `shading.snow_shell` | `object`: str = **required** |
-| `apply_texture_set` | `shading.apply_texture_set` | `set`: str = `''`<br>`object`: str \| None = `None`<br>`material`: str \| None = `None`<br>`index`: int = `0` |
+| `apply_texture_set` | `shading.apply_texture_set` | `set`: str = `''`<br>`object`: str \| None = `None`<br>`material`: str \| None = `None`<br>`index`: int = `0`<br>`pack_dir`: str \| None = `None` |
 | `import_generated` | `gen_assets.import_generated_op` | `kind`: str = `'rocks'`<br>`staged`: dict \| None = `None`<br>`name`: str \| None = `None`<br>`height_m`: float = `2.0`<br>`faces`: int = `4000`<br>`lods`: list \| None = `None`<br>`hero`: bool = `False`<br>`pack_dir`: str \| None = `None`<br>`cleanup`: bool = `True` |
 | `export_control` | `gen_assets.export_control_op` | `object`: str = **required**<br>`out_file`: str \| None = `None`<br>`points`: int = `8192`<br>`pack_dir`: str \| None = `None` |
 | `apply_biome` | `biome.apply_biome` | `object`: str = **required**<br>`biome`: str = **required**<br>`assign`: bool = `True`<br>`weather_assets`: bool = `True`<br>`world`: bool = `True`<br>`curve_mode`: 'scatter' \| 'clear' \| 'keep' \| None = `None` |
@@ -65,14 +67,26 @@ the path is what `comfy_mesh(control=...)` takes. `import_generated` returns the
 | `build_snow_cover` | `atmosphere.build_snow_cover` | `object`: str = **required** |
 | `apply_season` | `atmosphere.apply_season` | `season`: str \| None = `None`<br>`build_snow`: bool \| None = `None`<br>`season_sets_date`: bool \| None = `None` |
 | `scene_preset` | `atmosphere.scene_preset` | `look`: str = **required** |
-| `make_curve` | `splines_build.make_curve` | `name`: str = `'Path'`<br>`role`: 'dirt_path' \| 'trail' \| 'road' \| 'river' \| 'stream' = `'dirt_path'`<br>`points`: list = `[]`<br>`terrain`: str \| None = `None` |
-| `curve_build` | `splines_build.curve_build` | `curve`: str = **required**<br>`terrain`: str \| None = `None`<br>`do_terrain`: bool \| None = `None`<br>`do_material`: bool \| None = `None`<br>`do_water`: bool \| None = `None`<br>`do_scatter`: bool = `False` |
+| `make_curve` | `splines_build.make_curve` | `name`: str = `'Path'`<br>`role`: 'dirt_path' \| 'trail' \| 'road' \| 'river' \| 'stream' = `'dirt_path'`<br>`points`: list = `[]`<br>`terrain`: str \| None = `None`<br>`shape`: CurveShape \| None = `None` |
+| `curve_build` | `splines_build.curve_build` | `curve`: str = **required**<br>`terrain`: str \| None = `None`<br>`do_terrain`: bool \| None = `None`<br>`do_material`: bool \| None = `None`<br>`do_water`: bool \| None = `None`<br>`do_scatter`: bool = `False`<br>`shape`: CurveShape \| None = `None` |
 | `bake_erode` | `splines_build.bake_erode` | `terrain`: str = **required**<br>`curves`: list \| None = `None`<br>`strength`: float = `0.5`<br>`scope`: 'band' \| 'global' = `'band'`<br>`deposit`: bool = `True`<br>`seed`: int = `0` |
 | `revert_erode` | `splines_build.revert_erode` | `terrain`: str = **required**<br>`curves`: list \| None = `None` |
 
 _Registry-only (dispatch handlers with no contract model, not exposed to the MCP op union): `inspect_river`._
 
 <!-- END GENERATED -->
+
+**`CurveShape`** (the `shape` field on `make_curve` and `curve_build`) is a flat dict of optional
+floats: `width`, `depth`, `falloff`, `taper`, `shoulder`, `bank_slope`, `bank_bias`, `bank_height`,
+`width_var`, `water_level`, `flow`, `foam_bank`, `foam_rapids`, `wave_amp`, `wave_len`, `wave_steep`,
+`wave_speed`, `wave_chop`, `verge_gap`, `verge_width`, `verge_side`. Every key is dumped whatever the
+caller set, and **`None` means "not asked for"** — the Blender side skips it rather than writing a
+zero. Values out of range are clamped by the property definitions. See
+[SPLINES.md](SPLINES.md#8-driving-from-mcp) for what each one shapes.
+
+**The one read-only op is `describe_scene`.** Everything else mutates. Its result is entirely in
+`data`, and it is the way to read a scene back rather than guessing and rendering a probe frame:
+see [MCP.md](MCP.md#reading-the-scene-back).
 
 ### Adding an op
 

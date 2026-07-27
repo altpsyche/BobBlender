@@ -109,9 +109,10 @@ The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonod
 (`apply_biome`, `world_biome`), typed paths + water (`make_curve`, `curve_build`,
 `bake_erode`, `revert_erode`), atmosphere (`build_sky`, `build_clouds`, `build_fog`,
 `build_rain`, `build_motes`, `build_snow_cover`, `apply_season`, `scene_preset`), the
-shared env (`set_env`), scene control (`add_camera`, `render`, `delete`,
-`clear_scene`), and generation's Blender half (`apply_texture_set`, `import_generated`,
-`export_control`). All are documented with their fields in [API.md](API.md).
+shared env (`set_env`, `apply_world`), introspection (`describe_scene`), scene control
+(`add_camera`, `render`, `delete`, `clear_scene`), and generation's Blender half
+(`apply_texture_set`, `import_generated`, `export_control`). All are documented with their
+fields in [API.md](API.md).
 
 **Why generation is tools and not ops.** Talking to ComfyUI needs no Blender, so the `comfy_*` tools
 run in the MCP process and block there deliberately; only the steps that need `bpy` are ops. That
@@ -120,11 +121,71 @@ split is also why every generation tool hands back the op that consumes its resu
 returns the `bake_params` fragment. ComfyUI is optional throughout — with no server every `comfy_*`
 tool returns `{"ok": false, "error": "...not reachable..."}` and nothing else changes.
 
+## Reading the scene back
+
+`describe_scene` is the one op that mutates nothing, and it exists because an agent with no
+introspection has to guess and then render probe frames to check the guess. It reports, per object,
+the transform, the **modifier stack in order**, the materials, and — for a terrain — the heightmap,
+size, height and sea level it was built with. Per material it reports the master kind, each terrain
+layer slot with its texture set, **which of that set's maps actually resolve on disk**, and the masks
+keying the slot. Per curve it reports the role, the shape params, and the mask and edge attribute
+names. It also reports collections, the world state including whether the shared env drivers are
+installed, and the pack search path. `objects` narrows it to named objects and `include` narrows it
+to any of `objects` / `materials` / `collections` / `world` / `packs`.
+
+Three things it is the answer to specifically:
+
+- **Which layer slot a curve band took.** `curve_build` now also returns it directly in
+  `data.slot`, which is the index an `apply_texture_set` must name to put a real surface on a road
+  or a river bank. Before either, the only way to find out was to try an index and look.
+- **Whether a texture set is actually feeding a layer.** A set whose maps do not resolve renders as
+  a solid tint and used to report success, so `maps` per layer is the check. `apply_texture_set`
+  now also refuses outright a set that resolves no base colour, rather than reporting success.
+- **What a terrain was built from.** `build_geonodes` stamps `bbt_heightmap` and
+  `bbt_terrain_size` / `_height` / `_sea` on the object. Everything downstream reads them off the
+  object instead of being told: `drape_curve` takes `terrain` and needs no restated numbers (an
+  explicit value that disagrees with the stamp still wins, and comes back in `data.warnings`), and
+  a curve carved without a drape now returns a warning rather than reporting "carved terrain" as a
+  success mode. See [SPLINES.md](SPLINES.md).
+
+**The world needs applying, not just writing.** `set_env` writes `Scene.bbt_env` AND re-applies
+every world consumer (drivers, sun, atmosphere wind, quality), which is what makes a season or
+wetness change reach a material at all; pass `apply: false` to write and defer. `apply_world` is the
+same re-apply with no value change, for the case where the world is right and the scene is new — a
+material built after the last world change carries no drivers until something re-installs them.
+`set_env`'s result names any field that is **structural** rather than driven (`season` is: send
+`apply_season` for it to show).
+
+## Retries: batches and slow ops
+
+`build_live` requests carry an idempotency key. A slow batch used to come back as `main-thread
+timeout` while its work completed — the objects were in the scene and the client was told it had
+failed, so the safe-looking retry created them twice.
+
+- Every request generates a `batch` id unless you pass one. **Re-sending a known id COLLECTS that
+  batch; it never re-runs it.** The bridge keeps the last 32.
+- A reply carries `status`: `done` (and `ok` says whether it succeeded) or `running`. **`running` is
+  not a failure and the ops must not be re-sent** — poll with the same id.
+- A failure names how far it got: `failed on op 5/8: 'import_generated'`, with the results of the
+  first four in `results`. A batch is not a transaction; what ran, ran.
+
+## Known gap: ops that need the addon
+
 **One limit of headless `build`.** It imports the extension's `core` into a `--factory-startup`
 Blender without enabling the addon, so any op that reads a PropertyGroup the addon registers raises
 there. That is the shared env (`set_env`, `apply_season`, `scene_preset`), and **also `apply_biome`**,
 whose scatter half reads `Object.bbt_scatter_coll` (registered in `ui/scatter.py`) and fails with
 `AttributeError: 'Object' object has no attribute 'bbt_scatter_coll'` even with `world: false`.
+
+**Every curve op is in the same position, and that is the wider version of the gap.** `make_curve`,
+`curve_build` and the rest read `Object.bbt_curve`, a PropertyGroup registered by `ui/splines.py`,
+so headless `build` raises `AttributeError: 'Object' object has no attribute 'bbt_curve'` and
+BobSplines is live-bridge-only today. The same is true of anything reading `bbt_scatter_layer` or
+`bbt_world`. Two ways out, neither taken yet: the headless runner registers the addon, or the
+per-curve and per-layer state moves out of `ui/` into `core/`. The second matches the "core is the
+acyclic root" rule the codebase already follows and is the honest answer; it is also the bigger
+change. Note that `tools/scripts/headless_redwood.py` calls `bob_blender_tools.register()` for
+exactly this reason, which is what a gate covering curve ops has to do until the gap closes.
 
 Use `build_live` for those, or pass explicit params (`build_sky` with a `time_of_day` works
 headlessly; a bare `build_sky` reads the env it cannot see). For a headless `.blend` the pieces work
@@ -246,9 +307,14 @@ trust it: `lod_faces` against the budget, `uv_overlap`, `height_m`, `origin_abov
 
 Two more notes:
 
-- **Set `BOB_GENERATED`.** Generation writes into the generated pack; the Blender side has to resolve
-  the same folder. With the variable set both halves agree. In a live session the addon's own output
-  folder wins instead, so pass the `pack_dir` each tool returns.
+- **Pass the `pack_dir` each tool returns, and set `BOB_GENERATED`.** Generation writes into the
+  generated pack; the Blender side has to resolve the same folder, and the two disagree whenever
+  generation and Blender are different processes (the tool uses `$BOB_GENERATED` or
+  `<workdir>/packs/generated`, a live addon uses its own output-folder preference). `apply_texture_set`
+  takes `pack_dir` for this and registers it on the pack search path for the rest of the session, so
+  the set stays resolvable across the material rebuilds a later Shaders edit triggers. Op roots rank
+  above the addon preferences and below `$BOB_ASSET_PACKS`. Without it a freshly generated set is
+  invisible and the op fails with "no texture set" on a folder that exists.
 - **A block-out can drive the shape.** `export_control` writes an existing proxy out as a control mesh
   and returns its path and height in `data`; pass that path to `comfy_mesh(control=...)` and the
   generated asset keeps the silhouette and footprint of the object you placed.

@@ -110,6 +110,14 @@ def edge_attr_name(curve):
     return f"bbt_curve_edge_{curve.name}"
 
 
+def parse_exclude(text):
+    """A comma-separated asset-name list as a clean list of names ([] for blank).
+
+    The layer stores it as one string because it is a short list of names typed in a panel field,
+    and a CollectionProperty of one-name items would need its own UIList for no gain."""
+    return [n.strip() for n in (text or "").split(",") if n.strip()]
+
+
 def _count_instances(context, objs):
     """Total GN instances parented to any of objs, via the dependency graph."""
     names = {o.name for o in objs}
@@ -169,6 +177,9 @@ def _build_params(obj, scn):
     params = {"emitter": scn.emitter.name if scn.emitter else "", "align": lay.align}
     if lay.assets is not None:
         params["assets"] = lay.assets.name
+    excluded = parse_exclude(getattr(lay, "assets_exclude", ""))
+    if excluded:
+        params["assets_exclude"] = excluded
     if lay.vgroup:
         params["vgroup"] = lay.vgroup
     # clear/keep/verge read a terrain curve mask the overlay baked (BobSplines C4/R5); no proximity.
@@ -198,7 +209,7 @@ def _biome_layer_params(kind, cfg):
     sc = cfg.get("scale")
     if isinstance(sc, (list, tuple)) and len(sc) == 2:
         knobs["min_scale"], knobs["max_scale"] = sc[0], sc[1]
-    for k in ("min_normal_z", "max_normal_z", "distance_min"):
+    for k in ("min_normal_z", "max_normal_z", "distance_min", "z_offset"):
         if k in cfg:
             knobs[k] = cfg[k]
     return knobs, cfg.get("align", spec["align"])
@@ -206,7 +217,8 @@ def _biome_layer_params(kind, cfg):
 
 # -- Builders (shared by the panel operators + the biome handler) ----------------------------
 def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
-              coll=None, name=None, reuse=False, convert=True, curve_mode=None):
+              coll=None, name=None, reuse=False, convert=True, curve_mode=None,
+              assets_exclude=None):
     """Build one scatter layer object on `emitter` and file it in the emitter's scatter collection.
 
     Ensures the kind's block-out proxy assets (make_proxies is idempotent: it only fills an empty
@@ -248,6 +260,8 @@ def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
     params = {"emitter": emitter.name, "align": align, **knobs}
     if assets is not None:
         params["assets"] = assets.name
+    if assets_exclude:
+        params["assets_exclude"] = list(assets_exclude)
     if camera is not None:
         params["camera"] = camera.name
     if curve_mode in ("clear", "keep"):
@@ -262,6 +276,8 @@ def add_layer(emitter, kind, *, scene, knobs=None, align=None, camera=None,
     lay.kind = kind
     lay.assets = assets
     lay.align = align
+    if assets_exclude is not None and hasattr(lay, "assets_exclude"):
+        lay.assets_exclude = ", ".join(assets_exclude)  # so a later structural rebuild keeps it
     if curve_mode is not None and hasattr(lay, "curve_mode"):
         try:
             lay.curve_mode = curve_mode
@@ -292,6 +308,7 @@ def biome_scatter(emitter, recipe, *, scene, camera=None, convert=False, curve_m
         knobs, align = _biome_layer_params(kind, cfg)
         obj, _assets = add_layer(emitter, kind, scene=scene, knobs=knobs, align=align,
                                  camera=camera, coll=coll, reuse=True, convert=convert,
-                                 curve_mode=curve_mode)
+                                 curve_mode=curve_mode,
+                                 assets_exclude=cfg.get("exclude"))
         created.append(obj.name)
     return created

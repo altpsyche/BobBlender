@@ -41,6 +41,44 @@ def _enable_cycles_gpu():
     return None
 
 
+def release_gpu():
+    """Drop what Blender holds on the GPU after a frame, and report what was dropped (D15).
+
+    An agent that generates and renders in one session is now the normal case, and the two halves
+    fight over one card: ComfyUI keeps about 7.3 GB it will not give back and Blender keeps about
+    1.1 GB after its own Free VRAM, on a 15.5 GB card that TRELLIS needs 5 GB of. Blender's side is
+    the smaller half but it is the half Bob controls, so a render releases it rather than leaving it
+    for the next generate to trip over.
+
+    What this can actually reach: the render-result image buffers (the biggest single hold, and a
+    real API rather than a guess) and the orphan datablocks a render leaves behind. The CUDA context
+    itself stays for the life of the process, which is the same honest limit ComfyUI's `/free` has.
+    Returns a short note.
+    """
+    freed = []
+    result = bpy.data.images.get("Render Result")
+    if result is not None:
+        try:
+            result.buffers_free()
+            freed.append("render result")
+        except (AttributeError, RuntimeError):
+            pass
+    # Viewer Node holds a second full-resolution buffer when compositing ran.
+    viewer = bpy.data.images.get("Viewer Node")
+    if viewer is not None:
+        try:
+            viewer.buffers_free()
+            freed.append("viewer")
+        except (AttributeError, RuntimeError):
+            pass
+    try:
+        bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+        freed.append("orphans")
+    except (RuntimeError, AttributeError):
+        pass
+    return ", ".join(freed) or "nothing to release"
+
+
 def render(op: dict) -> dict:
     params = op.get("params", op)
     scene = bpy.context.scene
@@ -87,4 +125,9 @@ def render(op: dict) -> dict:
     bpy.ops.render.render(write_still=True)
 
     info = f"{device_info} {scene.render.resolution_x}x{scene.render.resolution_y} spp={samples}"
-    return {"op": "render", "created": [output], "info": info}
+    # Give the card back unless the caller is about to render again and would rather keep the
+    # buffers warm. On by default: the measured failure is a generate that OOMs after a render,
+    # and the frame is already written to disk by the time this runs.
+    released = release_gpu() if _get(params, "release_gpu", True) else "kept"
+    return {"op": "render", "created": [output], "info": f"{info} (GPU: {released})",
+            "data": {"released": released}}

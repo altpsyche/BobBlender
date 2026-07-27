@@ -48,6 +48,15 @@ SCRIPTS = REPO / "tools" / "scripts"
 GATES = [
     {"key": "g0", "script": "headless_texset.py", "phase": "G0 texture-set sampler",
      "fast": [], "slow": 1, "server": False},
+    # Not a phase gate: the seams the redwood-scene run found between subsystems (docs/COMFYUI.md).
+    # Listed here because this is the runner anyone actually invokes, and a gate nobody runs guards
+    # nothing. Needs no server and no card, so it is in every --fast sweep.
+    {"key": "redwood", "script": "headless_redwood.py", "phase": "redwood-run fixes (items 3-11)",
+     "fast": [], "slow": 1, "server": False},
+    # BobFoliage, whose whole point is that it needs no server: the geometry is procedural and only
+    # its two texture sets come from ComfyUI (docs/FOLIAGE.md).
+    {"key": "foliage", "script": "headless_foliage.py", "phase": "F1 procedural tree skeleton",
+     "fast": [], "slow": 1, "server": False},
     {"key": "texset", "script": "headless_comfy_texset.py", "phase": "G1 prompt to a shaded layer",
      "fast": [], "slow": 1, "server": True},
     {"key": "g2", "script": "headless_comfy_g2.py", "phase": "G2 variants, preflight, maps",

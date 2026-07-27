@@ -23,9 +23,11 @@ def assets(monkeypatch):
     mod = importlib.import_module("assets")
     mod.set_pref_roots([])
     mod.set_generated_root(None)
+    mod._OP_ROOTS = []
     yield mod
     mod.set_pref_roots([])
     mod.set_generated_root(None)
+    mod._OP_ROOTS = []
     sys.path.remove(str(CORE))
 
 
@@ -141,6 +143,79 @@ def test_generated_root_is_a_search_root(assets, tmp_path):
     _make_set(pref, "ai_moss")
     assets.set_pref_roots([str(pref)])
     assert assets.texture_set_dir("ai_moss") == str(pref / "textures" / "ai_moss")
+
+
+# -- Op pack roots and stem-tolerant map resolution (the redwood run, items 3 and 4) -------------
+# Both halves of "a generated texture set is invisible to Blender". The pack the generator wrote
+# into was not on the search path, and the workaround for THAT (a renamed symlink) tripped a second
+# bug in map resolution which reported success and rendered a solid tint.
+def test_add_pack_root_outranks_the_preferences_and_is_ordered(assets, tmp_path):
+    """A `pack_dir` an op carried in is more specific than a folder list configured once, so it wins
+    the name; `$BOB_ASSET_PACKS` still beats both, because that is the user's explicit override."""
+    pref, op1, op2 = tmp_path / "pref", tmp_path / "op1", tmp_path / "op2"
+    for root in (pref, op1, op2):
+        _make_set(root, "duff")
+    assets.set_pref_roots([str(pref)])
+    assert assets.texture_set_dir("duff") == str(pref / "textures" / "duff")
+
+    assert assets.add_pack_root(str(op1)) == str(op1)
+    assert assets.texture_set_dir("duff") == str(op1 / "textures" / "duff")
+    # Most recent first, so the pack the LAST op wrote into is the one a bare name resolves to.
+    assets.add_pack_root(str(op2))
+    assert assets.op_roots() == [str(op2), str(op1)]
+    assert assets.texture_set_dir("duff") == str(op2 / "textures" / "duff")
+    # Idempotent: re-adding moves a root to the front rather than duplicating it.
+    assets.add_pack_root(str(op1))
+    assert assets.op_roots() == [str(op1), str(op2)]
+    assert assets.add_pack_root("") is None and assets.add_pack_root(None) is None
+
+
+def test_env_packs_still_beat_an_op_root(assets, monkeypatch, tmp_path):
+    env, op = tmp_path / "env", tmp_path / "op"
+    _make_set(env, "duff")
+    _make_set(op, "duff")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(env))
+    assets.add_pack_root(str(op))
+    assert assets.texture_set_dir("duff") == str(env / "textures" / "duff")
+
+
+def test_texture_set_maps_tolerates_a_renamed_folder(assets, monkeypatch, tmp_path):
+    """The silent one. Maps used to resolve as `<folder>_<role>.<ext>`, so a set whose folder was
+    renamed or symlinked under a friendlier name resolved to ZERO maps -- and every check upstream
+    passed, because the folder existed. The layer then rendered as a solid tint with success in
+    every receipt."""
+    pack = tmp_path / "gen"
+    _make_set(pack, "sdxl_output_0007")
+    (pack / "textures" / "sdxl_output_0007").rename(pack / "textures" / "roadside_duff")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    maps = assets.texture_set_maps("roadside_duff")
+    assert set(maps) == {"basecolor", "roughness", "ao", "height"}
+    assert maps["basecolor"].endswith("sdxl_output_0007_basecolor.jpg")
+    # And the set is now offerable, which is the other half: the picker needs a base colour.
+    assert "roadside_duff" in assets.list_texture_sets()
+
+
+def test_texture_set_maps_prefers_the_exact_stem_over_a_stray_file(assets, monkeypatch, tmp_path):
+    """The fallback must not be able to hijack a correctly named set. A pack that happens to carry
+    another set's map beside the right one still resolves the one whose stem matches the folder."""
+    pack = tmp_path / "mixed"
+    _make_set(pack, "gravel", roles=("basecolor",))
+    (pack / "textures" / "gravel" / "leftover_basecolor.jpg").write_bytes(b"")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert assets.texture_set_maps("gravel")["basecolor"].endswith("gravel_basecolor.jpg")
+
+
+def test_texture_set_maps_reads_a_bare_role_filename(assets, monkeypatch, tmp_path):
+    """The third naming a generator emits: no stem at all, just `basecolor.png`."""
+    pack = tmp_path / "bare"
+    d = pack / "textures" / "moss"
+    d.mkdir(parents=True)
+    for role in ("basecolor", "roughness"):
+        (d / f"{role}.png").write_bytes(b"")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    maps = assets.texture_set_maps("moss")
+    assert set(maps) == {"basecolor", "roughness"}
+    assert maps["basecolor"].endswith("moss/basecolor.png")
 
 
 def test_validate_biome_flags_missing_texture(assets, monkeypatch, tmp_path):

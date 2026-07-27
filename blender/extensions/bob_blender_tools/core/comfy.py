@@ -389,6 +389,88 @@ def free(url=None, unload_models=True, free_memory=True):
     return True
 
 
+# -- VRAM floors and recovery (D15) -----------------------------------------------------------
+# Free VRAM (MiB) a route needs before it is worth queueing. Measured on the redwood run's 15.5 GB
+# card: TRELLIS2 runs in a SEPARATE pixi worker process, so it cannot reuse ComfyUI main's torch
+# cache and OOMs inside `_sample_shape_slat_cascade` (and then inside BiRefNet matting) while main
+# still holds 7.3 GB. The point of a floor is that the failure becomes a sentence about VRAM before
+# 90 seconds are spent, instead of a CUDA traceback from inside somebody else's worker.
+#
+# The numbers are the worker's resident weights (3.2 GB measured) plus its cascade working set, and
+# the hero tier's 1536_cascade needs materially more than the default 1024.
+VRAM_FLOOR_MIB = {
+    "mesh": 5000,        # any image-to-3D route at the default tier
+    "mesh_hero": 7000,   # 1536_cascade
+    "texture": 3000,     # SDXL at 1024 with circular padding
+    "paint": 4000,
+    "heightmap": 3000,
+    "stylize": 3500,
+}
+
+
+def vram_free_mib(url=None, timeout=3):
+    """Free VRAM on the server's first device in MiB, or None when it cannot be read."""
+    return service_status(url, timeout=timeout).get("vram_free_mib")
+
+
+def recover_vram(url=None, target_mib=None, timeout=3):
+    """Escalate through what the HTTP API can actually do, and report what it recovered.
+
+    Layer one is `POST /free {"unload_models": true, "free_memory": true}`, which is all this can
+    reach: the pages stay in the main process's torch caching allocator, so on the measured case it
+    returns success and about 100 MiB. Saying that out loud is the point -- the panel's Free VRAM
+    button looked like it worked, and the next generate still OOMed.
+
+    Returns {before, after, recovered, enough, advice}. `advice` names the one thing that DOES
+    recover the card when the free was not enough, which is a restart of a server Bob did not start
+    (measured: 0.5 GB free to 12.3 GB), plus the launch flag that stops the fragmentation building
+    up in the first place.
+    """
+    before = vram_free_mib(url, timeout=timeout)
+    try:
+        free(url)
+    except ComfyError as exc:
+        return {"before": before, "after": before, "recovered": 0, "enough": False,
+                "advice": f"could not reach the free endpoint: {exc}"}
+    after = vram_free_mib(url, timeout=timeout)
+    recovered = (after - before) if (after is not None and before is not None) else None
+    enough = target_mib is None or (after is not None and after >= target_mib)
+    advice = ""
+    if not enough:
+        advice = (
+            "`POST /free` only drops what the main process will give back; the generation workers "
+            "run in separate processes and cannot reuse that cache, so the card stays full. "
+            "Restart ComfyUI to recover it (measured: 0.5 GB free to 12.3 GB), and launch it with "
+            "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True so the fragmentation does not build "
+            "up again. Bob will not restart a server it did not start.")
+    return {"before": before, "after": after, "recovered": recovered, "enough": enough,
+            "advice": advice}
+
+
+def preflight_vram(route="mesh", url=None, free_first=True):
+    """Raise ComfyError with a VRAM sentence when the card cannot hold this route's working set.
+
+    Called by every generation entry point before it queues. `free_first` tries the recovery once,
+    because the common case is a card that a previous job left full and that one `POST /free` fixes;
+    only when that is not enough does this refuse. A server that cannot report its VRAM at all is
+    allowed through -- an unknown is not a reason to block work.
+    """
+    need = VRAM_FLOOR_MIB.get(route)
+    if need is None:
+        return None
+    have = vram_free_mib(url)
+    if have is None or have >= need:
+        return have
+    result = recover_vram(url, target_mib=need) if free_first else {
+        "after": have, "enough": False, "advice": ""}
+    if result["enough"]:
+        return result["after"]
+    raise ComfyError(
+        f"not enough free VRAM for the {route} route: {result['after']} MiB free, {need} MiB "
+        f"needed. This is D15 (docs/COMFYUI.md): generation and rendering in one session deadlock "
+        f"on a card neither gives back. {result['advice']}".strip())
+
+
 def upload_image(path, url=None, subfolder="", overwrite=True, timeout=120):
     """Upload a file to the server's input folder via `POST /upload/image`, returning the name
     `LoadImage` will accept (`<subfolder>/<name>` when a subfolder is used).
@@ -462,6 +544,24 @@ def job(prompt_id, url=None, jobs_api=True):
             "outputs": entry.get("outputs") or {}, "error": None}
 
 
+def _mesh_transport_hint(detail):
+    """The sentence to append when a job died because the mesh never arrived, else "".
+
+    "Mesh file not found: input/3d/x.glb" is what every mesh-uploading graph (W9t, W9c, W7, W8p)
+    says when `$BOB_COMFY_DIR` is unset, and on its own it names neither the variable nor the reason.
+    The redwood run hit it on the block-out route and read it as a bad control mesh. Naming it here
+    rather than setting the variable in the repo's own `.mcp.json`, because a packaged install has no
+    `.mcp.json` of ours and would inherit the silence.
+    """
+    if "mesh file not found" not in str(detail).lower() or comfy_dir() is not None:
+        return ""
+    return (". The mesh was uploaded over HTTP because no local ComfyUI folder is configured, and "
+            "on this fork the loader runs in a worker whose working directory is not the server "
+            "root, so a relative path never resolves. Set $BOB_COMFY_DIR (or the addon's ComfyUI "
+            "Folder preference) to the checkout and Bob copies the mesh into <comfy>/input/3d "
+            "instead. `control_bbox` uploads nothing and needs none of this.")
+
+
 def cancel(prompt_id, url=None):
     """Cancel one job by id. Idempotent server-side, so a finished id is a no-op, not an error."""
     return bool(_request(url, f"/api/jobs/{urllib.parse.quote(prompt_id)}/cancel",
@@ -503,7 +603,8 @@ def wait(prompt_id, url=None, timeout=600, poll=0.5, on_progress=None, progress_
                 err = state.get("error") or {}
                 detail = (err.get("exception_message") or err.get("exception_type")
                           or state["status"])
-                raise ComfyError(f"ComfyUI job {state['status']}: {detail}")
+                raise ComfyError(f"ComfyUI job {state['status']}: {detail}"
+                                 + _mesh_transport_hint(detail))
             if time.time() > deadline:
                 cancel(prompt_id, url=url)
                 raise ComfyError(f"ComfyUI job timed out after {timeout:.0f}s (cancelled)")
@@ -1457,6 +1558,14 @@ def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, s
                               "octree_resolution": int(octree), "model": "Hunyuan3D-Omni"})
 
 
+# What `Hy3DOmniVoxelGenerate` will accept per bbox axis, from its own widget declaration
+# (`bbox_length` / `bbox_height` / `bbox_depth`, min 0.1 max 3.0). ComfyUI validates widget bounds
+# server-side, so a value outside this is an HTTP 400 rather than a clamp -- the undocumented
+# ceiling item 13 of the redwood run found. Here because it is a fact about the node, and callers
+# that want to refuse early (the MCP tool does) need one place to read it from.
+CONTROL_BBOX_RANGE = (0.1, 3.0)
+
+
 def mesh_geom_bbox(dims, image_path, out_path, *, seed=0, steps=50, guidance=4.5, octree=256,
                    url=None, workflow="mesh_geom_bbox", timeout=1800, on_progress=None,
                    on_queued=None, preflight_graph=True):
@@ -1695,11 +1804,16 @@ def _stage_dir(prompt_text, pack_dir, seed):
 
 
 def _stage_subject(prompt_text, out_dir, *, seed=0, size=1024, checkpoint=None, url=None,
-                   subject=None, on_progress=None, on_queued=None):
+                   subject=None, negative=None, on_progress=None, on_queued=None):
     """Pipeline step 1 for whichever chain is running: W4, or the image the artist already has.
 
     `subject` skips W4 entirely and is reported as costing nothing, which is true and is what makes
     a benchmark able to hand every route the SAME reference image.
+
+    `negative` reaches W4's BOB_NEG and nothing else, because the subject image is the ONLY stage a
+    text prompt touches: every geometry graph downstream conditions on the picture, so anything not
+    said here cannot be said later. It is threaded through every chain rather than being W4's
+    private argument for that reason.
     """
     if subject:
         return {"path": subject, "artist_prompt": (prompt_text or "").strip(),
@@ -1707,14 +1821,14 @@ def _stage_subject(prompt_text, out_dir, *, seed=0, size=1024, checkpoint=None, 
     if on_progress:
         on_progress("reference image")
     return subject_image(prompt_text, os.path.join(out_dir, "subject.png"), seed=seed, size=size,
-                         checkpoint=checkpoint, url=url, timeout=600, on_progress=on_progress,
-                         on_queued=on_queued)
+                         checkpoint=checkpoint, url=url, timeout=600, negative=negative,
+                         on_progress=on_progress, on_queued=on_queued)
 
 
 def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size=1024,
                           checkpoint=None, url=None, timeout=1800, on_progress=None,
-                          on_queued=None, subject=None, remesh=True, control=None, points=8192,
-                          control_bbox=None, control_mode=None):
+                          on_queued=None, subject=None, negative=None, remesh=True, control=None,
+                          points=8192, control_bbox=None, control_mode=None):
     """W4 then W5t into a fresh `<pack>/_staging/<variant>/`, returning that variant's info.
 
     The ComfyUI half of Generate Asset, whole. `subject` is a local image path that SKIPS W4, for
@@ -1733,8 +1847,8 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
     out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
     subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
-                                  url=url, subject=subject, on_progress=on_progress,
-                                  on_queued=on_queued)
+                                  url=url, subject=subject, negative=negative,
+                                  on_progress=on_progress, on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
     mode = control_route(control_mode, control, control_bbox)
@@ -1774,8 +1888,9 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
 
 def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
                          texture_size=1024, checkpoint=None, url=None, timeout=1800,
-                         on_progress=None, on_queued=None, subject=None, remesh=True,
-                         control=None, points=8192, control_bbox=None, control_mode=None):
+                         on_progress=None, on_queued=None, subject=None, negative=None,
+                         remesh=True, control=None, points=8192, control_bbox=None,
+                         control_mode=None):
     """Every ComfyUI stage of one asset, in order, on ONE thread: W4, W5t, W9c, W9t.
 
     This is the shape the panel uses, and the ordering is why it works. Steps 3 and 4 are done by
@@ -1788,8 +1903,8 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
     staged = generate_asset_source(prompt_text, pack_dir, seed=seed, tier=tier, remesh=remesh,
                                    checkpoint=checkpoint, url=url, timeout=timeout,
                                    on_progress=on_progress, on_queued=on_queued, subject=subject,
-                                   control=control, points=points, control_bbox=control_bbox,
-                                   control_mode=control_mode)
+                                   negative=negative, control=control, points=points,
+                                   control_bbox=control_bbox, control_mode=control_mode)
     out_dir, name = staged["dir"], staged["name"]
 
     if on_progress:
@@ -1820,7 +1935,8 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
 
 def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
                        texture_size=1024, checkpoint=None, url=None, timeout=1800,
-                       on_progress=None, on_queued=None, subject=None, remesh=True, size=1024):
+                       on_progress=None, on_queued=None, subject=None, negative=None, remesh=True,
+                       size=1024):
     """Every ComfyUI stage of one asset through the CHALLENGER geometry model: W4, W8, W8p, W9t.
 
     `generate_asset_chain`'s shape with Hunyuan 2.1 in place of W5t and the shared
@@ -1835,8 +1951,8 @@ def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4
     out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
     subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
-                                  url=url, subject=subject, on_progress=on_progress,
-                                  on_queued=on_queued)
+                                  url=url, subject=subject, negative=negative,
+                                  on_progress=on_progress, on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
     if on_progress:
@@ -1937,6 +2053,36 @@ FOLIAGE_KINDS = ("plants", "grass")
 def is_foliage(kind):
     """Whether a scatter kind wants open surfaces kept. See `FOLIAGE_KINDS`."""
     return str(kind or "") in FOLIAGE_KINDS
+
+
+# Which kinds READ as leaves, which is a wider set than FOLIAGE_KINDS and a different question. That
+# one is about geometry processing (keep the holes open) and excludes trees, which are solids;
+# this one is about the finished LOOK, and a tree is in it because its crown is the whole reason an
+# artist generated it. The two deliberately disagree and the names have to say so.
+LEAFY_KINDS = ("trees", "plants", "grass")
+
+
+def leaf_opacity_warning(kind, opacity):
+    """The D16 receipt warning, as a list of zero or one sentence (docs/FOLIAGE.md).
+
+    A leaf is a cutout or it is not a leaf. `gen_assets.source_opacity` already measures which of the
+    three cases a generated texture is in and refuses to wire an implausible channel; what was
+    missing is that the refusal never reached the caller, so a tree landed with a clean receipt and
+    the artist found out by looking at a render. On the redwood run every one of six foliage assets
+    came back `opaque` or `implausible`, and three tree attempts were spent before anyone said so.
+
+    Here rather than in `gen_assets` because it is a pure function of the report and this module is
+    bpy-free, so it is testable in the venv beside the rest of the generation vocabulary.
+    """
+    if str(kind or "") not in LEAFY_KINDS:
+        return []
+    verdict = (opacity or {}).get("verdict")
+    if verdict == "cutout":
+        return []
+    return [f"no usable opacity channel (verdict: {verdict or 'none'}): this asset reads as solid "
+            f"geometry, not leaf cards. Image-to-3D makes dead wood (stumps, logs, snags) and "
+            f"ground clumps; standing trees and crowns come from the foliage generator "
+            f"(docs/FOLIAGE.md)"]
 
 
 def asset_chain(route=None, kind=None, control=None, control_bbox=None):
@@ -2288,7 +2434,8 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
 
 def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", faces=4000,
                            texture_size=1024, checkpoint=None, url=None, timeout=1800,
-                           on_progress=None, on_queued=None, subject=None, remesh=True, size=1024):
+                           on_progress=None, on_queued=None, subject=None, negative=None,
+                           remesh=True, size=1024):
     """Every ComfyUI stage of one asset through the ONE-SHOT route: W4 then W9b.
 
     `generate_asset_chain`'s twin, staging the same keys so `core.gen_assets.finish_asset` takes
@@ -2300,8 +2447,8 @@ def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", fac
     out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
     steps = {}
     subject_info = _stage_subject(prompt_text, out_dir, seed=seed, size=size, checkpoint=checkpoint,
-                                  url=url, subject=subject, on_progress=on_progress,
-                                  on_queued=on_queued)
+                                  url=url, subject=subject, negative=negative,
+                                  on_progress=on_progress, on_queued=on_queued)
     steps["subject"] = subject_info["seconds"]
 
     if on_progress:

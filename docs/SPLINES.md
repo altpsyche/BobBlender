@@ -122,6 +122,14 @@ If the terrain has no Terrain BobShader the material application returns None an
 warning. In Build All the follow family keys one layer per distinct channel (deduped), so a road and
 a trail get separate layers.
 
+**The slot is reported.** `curve_build` returns the layer index its band took in `data.slot`
+(`None` for the impose family, whose damp bed is a whole-material knob rather than a layer). That
+index is what an `apply_texture_set` must name to put a real surface — asphalt, needle duff — on the
+band. There is no other way to read it back: the band takes the first free slot, so it depends on
+what else the terrain is already shaded with, and guessing it renders a texture onto some other
+layer while reporting success. `describe_scene` reports the same thing from the other direction: the
+band layer is the one whose `masks` carry `Curve B Strength` (road) or `Curve A Strength`.
+
 ### 3.3 Scatter (`do_scatter`)
 
 Scatter reads the baked `bbt_curve_mask`, not a per-curve proximity solve, so every curve with an
@@ -173,8 +181,15 @@ Amplitude, Wave Length, Wave Steepness, Wave Speed, Wave Chop.
 ## 4. The drape and the shared field
 
 At Build the curve is draped onto the terrain when the terrain carries a baked heightmap
-(`terrain["bbt_heightmap"]`); without one the overlay carves using the curve's authored Z. Draping
-runs through the `drape_curve` op (`path_curve.py`):
+(`terrain["bbt_heightmap"]`); without one the overlay carves using the curve's authored Z, **and
+says so in `data.warnings`**. Carving at the curve's own Z is not a neutral fallback: the overlay
+grades the bench to whatever Z the control points happen to hold, so on rising ground it cuts a
+trench and on falling ground it leaves the path in the air. It used to be reported as "carved
+terrain (curve Z)", which reads like a success. If you see the warning, the terrain carries no
+`bbt_heightmap`: build it from a bake (`bake_heightfield`, then a `heightmap_terrain`
+`build_geonodes`) and re-build the curve.
+
+Draping runs through the `drape_curve` op (`path_curve.py`):
 
 - FOLLOW roles: each control point's Z is set to the heightmap surface height at its XY (bilinear
   sample, matching `heightmap_terrain`'s displace), so the smooth curve follows the ground.
@@ -265,22 +280,40 @@ Reeds on the banks: add a Scatter layer with Curve = Verge, bound to the path.
 
 ## 8. Driving from MCP
 
-Curve authoring and drape ops (dispatched in `blender/extensions/bob_blender_tools/core/dispatch.py`, implemented in
-`path_curve.py`):
+Curve authoring and drape ops (dispatched in
+`blender/extensions/bob_blender_tools/core/dispatch.py`; the untyped ones in `path_curve.py`, the
+typed-curve ones in `splines_build.py`):
 
 - `make_path`: build a NURBS curve. Params: `name`, `points` (>= 2), `resolution`, and optionally
   `heightmap`/`size`/`height`/`sea_level` to drape control points at author time. Idempotent by
   name. This is the same op the panel's Add Curve uses.
-- `drape_curve`: re-drape an existing curve onto a terrain heightmap in place. Params: `name`,
-  `heightmap`, `size`, `height`, `sea_level`, plus the river options `monotonic`, `min_slope`,
-  `to_sea`, `densify`. Returns `created` on success, `dropped` when off-terrain points were clipped,
-  or an info-only dict when the curve lies entirely off the terrain.
+- `drape_curve`: re-drape an existing curve onto a terrain heightmap in place. **Params: `name` and
+  `terrain`** — the terrain object records the four values it was built with
+  (`bbt_heightmap`, `bbt_terrain_size`/`_height`/`_sea`, stamped by `build_geonodes`) and they are
+  read off it, so there is one authority for what the terrain is and nothing to restate. The
+  explicit `heightmap` / `size` / `height` / `sea_level` still win when given, for a heightfield no
+  terrain has been built from yet; a value that DISAGREES with the terrain's own record is used and
+  reported in `data.warnings`. Plus the river options `monotonic`, `min_slope`, `to_sea`, `densify`.
+  Returns `created` on success, `dropped` when off-terrain points were clipped, or an info-only dict
+  when the curve lies entirely off the terrain.
+- `make_curve` / `curve_build`: both take a typed `shape` dict (width, depth, falloff, taper,
+  shoulder, `bank_*`, `water_level`, `flow`, `foam_*`, `wave_*`, `width_var`, `verge_*`), applied
+  AFTER the role seed on `make_curve` and BEFORE the build on `curve_build`. **Shape and identity
+  are separate**: narrowing a 9 m road used to mean switching the ROLE to `dirt_path`, which also
+  moves the mask channel (`bbt_curve_mask_b` to `bbt_curve_mask`) and therefore silently invalidates
+  every scatter layer's `curve_attr`. Keys left unset are left alone; both ops return the curve's
+  full live shape in `data.shape` along with `mask_attr` and `edge_attr`.
 - `inspect_river`: read-only diagnostic that measures a built water ribbon against the terrain and
   reports how many water verts float above the banks vs sit in the carved channel.
 
 The GN recipes are built through `build_geonodes` / `build_geonodes_on_object` (the panel uses these
 in-process): `curve_overlay` (on the terrain object), `curve_water` (its own object), and
 `scatter_along` (on the scatter emitter). Recipe params are as documented in each recipe module.
+
+**Every curve op is `build_live` only.** `bbt_curve` is a PropertyGroup registered by
+`ui/splines.py`, and headless `build` imports `core` without enabling the addon, so `make_curve`
+raises `AttributeError: 'Object' object has no attribute 'bbt_curve'` there. See the known gap in
+[MCP.md](MCP.md#known-gap-ops-that-need-the-addon).
 
 ## 9. Attributes and object naming (reference)
 
@@ -292,4 +325,6 @@ in-process): `curve_overlay` (on the terrain object), `curve_water` (its own obj
 - Water ribbon attributes (written by `curve_water`): `bbt_shore`, `bbt_flow`, `bbt_foam`,
   `bbt_depth`, `bbt_water_uv`.
 - Terrain object custom props read: `bbt_heightmap`, `bbt_heightmap_clean`, `bbt_terrain_size`,
-  `bbt_terrain_height`, `bbt_terrain_sea`, `bbt_terrain_res`.
+  `bbt_terrain_height`, `bbt_terrain_sea`, `bbt_terrain_res`. Written by the Terrain panel's bake
+  AND by a `heightmap_terrain` `build_geonodes`, so a terrain built over MCP is drapeable too — it
+  was not, before, and `_has_bake` read False on a terrain that plainly had a heightmap.

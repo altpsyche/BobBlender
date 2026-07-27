@@ -4,6 +4,7 @@ from . import (
     atmosphere,
     biome,
     camera,
+    describe,
     gen_assets,
     geonodes,
     images,
@@ -33,6 +34,9 @@ _HANDLERS = {
     "delete": scene.delete,
     "clear_scene": scene.clear_scene,
     "set_env": scene.set_env,
+    "apply_world": scene.apply_world,
+    # Read-only introspection (core/describe.py): the one op that mutates nothing.
+    "describe_scene": describe.describe_scene,
     # Shading (core/shading.py)
     "shade_terrain": shading.shade_terrain,
     "apply_shader": shading.apply_shader,

@@ -195,6 +195,47 @@ def _monotonic_descend(pts, min_slope, to_sea, sea_z=_SEA_Z):
     return [(xy[i][0], xy[i][1], out[i]) for i in range(n)]
 
 
+# The heightmap-geometry keys a drape must agree with the terrain on: (op key, object prop, the
+# default that applies when neither is available). The defaults are the historical ones, kept so a
+# caller that passes nothing at all behaves as it always did.
+_DRAPE_KEYS = (("heightmap", "bbt_heightmap", ""),
+               ("size", "bbt_terrain_size", 60.0),
+               ("height", "bbt_terrain_height", 14.0),
+               ("sea_level", "bbt_terrain_sea", 0.3))
+
+
+def _terrain_drape_params(op):
+    """({heightmap, size, height, sea_level}, warnings) for a drape.
+
+    Reads the numbers off the TERRAIN object when the op names one, because the terrain is the thing
+    that knows what it was built from. Nothing used to check the four values a caller restated by
+    hand, so a stale `size` shifted every sample sideways and a stale `height` scaled the whole
+    profile -- both of which look like a bad curve rather than a bad argument. An explicit key still
+    wins (a caller may be draping onto a heightfield that has not been built yet), but disagreeing
+    with the terrain's own record is now something the result says out loud.
+    """
+    terrain = bpy.data.objects.get(op.get("terrain") or "") if op.get("terrain") else None
+    if op.get("terrain") and terrain is None:
+        return ({k: op.get(k, d) for k, _p, d in _DRAPE_KEYS},
+                [f"no object named {op['terrain']!r}; used the values passed in"])
+    out, warnings = {}, []
+    for key, prop, default in _DRAPE_KEYS:
+        stamped = terrain.get(prop) if terrain is not None else None
+        given = op.get(key)
+        if given is not None and stamped is not None:
+            same = (str(given) == str(stamped) if key == "heightmap"
+                    else abs(float(given) - float(stamped)) <= 1e-4)
+            if not same:
+                warnings.append(f"{key}={given!r} does not match {terrain.name}'s {stamped!r}; "
+                                f"used {given!r}")
+        value = given if given is not None else (stamped if stamped is not None else default)
+        out[key] = str(value) if key == "heightmap" else float(value)
+    if terrain is not None and not out["heightmap"]:
+        warnings.append(f"{terrain.name} carries no bbt_heightmap: it was not built from a "
+                        "heightfield, so there is nothing to drape onto")
+    return out, warnings
+
+
 def drape_curve(op: dict) -> dict:
     """Drape an existing curve object's control points onto a terrain heightmap, in place.
 
@@ -217,23 +258,32 @@ def drape_curve(op: dict) -> dict:
 
     Points are read/written in the curve's local space, so the curve object is assumed to sit
     at the origin (make_path and the Paths panel create it there).
+
+    `terrain` (a mesh name) is the way to call this without restating anything: the terrain object
+    records the heightmap, size, height and sea level it was built with, and a drape against numbers
+    that do not match those samples the wrong place in the image and lands the curve at the wrong Z.
+    Explicit keys still win, and a mismatch between an explicit key and the terrain's own value is
+    reported in `warnings` rather than silently preferred.
     """
     name = op.get("name", "")
     obj = bpy.data.objects.get(name)
     if obj is None or obj.type != "CURVE":
         return {"op": "drape_curve", "info": f"no curve object {name!r}"}
-    heightmap = op.get("heightmap")
+
+    params, warnings = _terrain_drape_params(op)
+    heightmap = params["heightmap"]
     if not heightmap:
-        return {"op": "drape_curve", "info": "no heightmap"}
+        return {"op": "drape_curve", "info": "no heightmap", "data": {"warnings": warnings}}
     if not os.path.exists(bpy.path.abspath(heightmap)):
-        return {"op": "drape_curve", "info": f"heightmap not found: {heightmap!r}"}
+        return {"op": "drape_curve", "info": f"heightmap not found: {heightmap!r}",
+                "data": {"warnings": warnings}}
 
     image = bpy.data.images.load(heightmap, check_existing=True)
     width_px, height_px = image.size
     pixels = image.pixels[:]
-    size = float(op.get("size", 60.0))
-    height = float(op.get("height", 14.0))
-    sea_level = float(op.get("sea_level", 0.3))
+    size = params["size"]
+    height = params["height"]
+    sea_level = params["sea_level"]
     monotonic = bool(op.get("monotonic", False))
     min_slope = float(op.get("min_slope", 0.0))
     to_sea = bool(op.get("to_sea", False))
@@ -251,6 +301,7 @@ def drape_curve(op: dict) -> dict:
             # The whole curve sits off the terrain; draping it would carve a runaway trench. Leave
             # the curve as-is and report so the caller can warn the artist to pull it back on.
             return {"op": "drape_curve", "created": [obj.name], "dropped": dropped,
+                    "data": {"warnings": warnings},
                     "info": f"curve {name!r} lies outside the terrain; not draped"}
         xy = _resample_xy(clipped, densify)
         draped = _monotonic_descend([(x, y, sz(x, y)) for x, y in xy], min_slope, to_sea)
@@ -259,7 +310,10 @@ def drape_curve(op: dict) -> dict:
         note = f"draped {len(draped)} points (river, densified)"
         if dropped:
             note += f"; clipped {dropped} off-terrain point(s)"
-        return {"op": "drape_curve", "created": [obj.name], "dropped": dropped, "info": note}
+        if warnings:
+            note += " | " + "; ".join(warnings)
+        return {"op": "drape_curve", "created": [obj.name], "dropped": dropped, "info": note,
+                "data": {"warnings": warnings, "params": params}}
 
     n = 0
     for spline in obj.data.splines:
@@ -285,7 +339,11 @@ def drape_curve(op: dict) -> dict:
     # geometry. Tag it so dependents re-evaluate against the new draped points.
     obj.data.update_tag()
     kind = "river" if monotonic else "path"
-    return {"op": "drape_curve", "created": [obj.name], "info": f"draped {n} points ({kind})"}
+    note = f"draped {n} points ({kind})"
+    if warnings:
+        note += " | " + "; ".join(warnings)
+    return {"op": "drape_curve", "created": [obj.name], "info": note,
+            "data": {"warnings": warnings, "params": params}}
 
 
 def inspect_river(op: dict) -> dict:

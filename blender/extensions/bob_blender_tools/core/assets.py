@@ -92,6 +92,15 @@ _PREF_ROOTS = []
 # biome and texture-set pickers with no configuration step.
 _GENERATED_ROOT = None
 
+# Pack roots an OP carried in, registered for the rest of the session. There are two generated
+# packs in play whenever generation and Blender are different processes: the one the MCP tool wrote
+# into (`paths.generated_pack()`, `$BOB_GENERATED` or `<workdir>/packs/generated`) and the one a
+# LIVE addon registered from its own output-folder preference. When they disagree, a set that was
+# just generated is invisible to the resolver and `apply_texture_set` fails with "no texture set"
+# on a folder that exists. Every generation tool already returns the `pack_dir` it used; this is
+# where an op hands that back so the resolver can see it.
+_OP_ROOTS = []
+
 
 def set_pref_roots(paths):
     """Register the addon-preference "Asset Pack Folders" list. Called by the addon on register,
@@ -105,6 +114,27 @@ def set_generated_root(path):
     which owns the output-folder preference. None or "" unregisters it."""
     global _GENERATED_ROOT
     _GENERATED_ROOT = str(path) if path else None
+
+
+def add_pack_root(path):
+    """Register an extra pack root for the rest of the session and return it (None for a falsy
+    path). Idempotent, and ordered so the most recently added root is searched first.
+
+    What an op's `pack_dir` argument does. It is deliberately not a per-call override threaded
+    through every resolver: a texture set assigned from a generated pack has to stay resolvable
+    afterwards too, or the material rebuilds a Shaders edit triggers drop back to a solid tint.
+    """
+    global _OP_ROOTS
+    if not path:
+        return None
+    root = os.path.abspath(str(path))
+    _OP_ROOTS = [root] + [r for r in _OP_ROOTS if r != root]
+    return root
+
+
+def op_roots():
+    """The extra roots registered by `add_pack_root`, most recent first."""
+    return list(_OP_ROOTS)
 
 
 def generated_root():
@@ -140,13 +170,19 @@ def ensure_generated_pack(root):
 
 def asset_roots():
     """The ordered, existing, de-duplicated pack roots. First hit wins downstream, most specific
-    to least: 1. $BOB_ASSET_PACKS (os.pathsep-separated), 2. the addon-preference folders,
-    3. the generated-output pack, 4. the dev repo library/ (in-repo only), 5. the bundled
-    block-out pack (always present)."""
+    to least: 1. $BOB_ASSET_PACKS (os.pathsep-separated), 2. the roots an op carried in via
+    `add_pack_root`, 3. the addon-preference folders, 4. the generated-output pack, 5. the dev repo
+    library/ (in-repo only), 6. the bundled block-out pack (always present).
+
+    Op roots sit above the preferences on purpose: a `pack_dir` an agent just wrote into is more
+    specific than a folder list configured once, and it is exactly the disagreement that made a
+    freshly generated texture set unreachable. $BOB_ASSET_PACKS still wins, because that is the
+    user's own explicit override of the whole search path."""
     raw = []
     env = os.environ.get("BOB_ASSET_PACKS")
     if env:
         raw += env.split(os.pathsep)
+    raw += _OP_ROOTS
     raw += _PREF_ROOTS
     # generated_root(), not _GENERATED_ROOT: the env fallback has to reach the RESOLVER, or a set
     # generated in a process the addon never registered in is written into a pack that
@@ -229,18 +265,38 @@ _TEXTURE_MAP_EXTS = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff")
 def texture_set_maps(name):
     """{role: absolute path} for the maps texture set `name` actually carries on disk. Only
     roles with a file appear, so a set with no AO simply omits it and the sampler falls back to
-    that map's identity. Empty dict when the set does not resolve in any pack."""
+    that map's identity. Empty dict when the set does not resolve in any pack.
+
+    Resolution is by ROLE SUFFIX, not by the folder name. The convention is still
+    `<set>_<role>.<ext>` and that is tried first, but a set whose folder was RENAMED (or symlinked
+    under a friendlier name, which is what the redwood run did to reach the generated pack) used to
+    resolve to zero maps and read on screen as a solid tint with no error anywhere -- the folder
+    existed, so every check upstream passed. Falling back to any `*_<role>.<ext>` and then a bare
+    `<role>.<ext>` makes a rename cosmetic instead of silently destructive.
+    """
     base = texture_set_dir(name)
     if base is None:
         return {}
     stem = os.path.basename(base.rstrip("/\\"))
+    try:
+        entries = sorted(os.listdir(base))
+    except OSError:
+        return {}
+    files = {e for e in entries if os.path.isfile(os.path.join(base, e))}
     out = {}
     for role in TEXTURE_MAP_ROLES:
-        for ext in _TEXTURE_MAP_EXTS:
-            cand = os.path.join(base, f"{stem}_{role}{ext}")
-            if os.path.isfile(cand):
-                out[role] = cand
-                break
+        hit = next((f"{stem}_{role}{ext}" for ext in _TEXTURE_MAP_EXTS
+                    if f"{stem}_{role}{ext}" in files), None)
+        if hit is None:
+            # Any stem, then the bare role. Extension preference is the outer loop so a set that
+            # ships both a .png and a .jpg of one role resolves the same way it always did.
+            hit = next((e for ext in _TEXTURE_MAP_EXTS for e in entries
+                        if e in files and e.lower().endswith(f"_{role}{ext}")), None)
+        if hit is None:
+            hit = next((f"{role}{ext}" for ext in _TEXTURE_MAP_EXTS
+                        if f"{role}{ext}" in files), None)
+        if hit is not None:
+            out[role] = os.path.join(base, hit)
     return out
 
 

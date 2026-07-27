@@ -55,13 +55,17 @@ class MakePath(BaseModel):
 class DrapeCurve(BaseModel):
     op: Literal["drape_curve"] = "drape_curve"
     name: str = "Path"  # an existing curve object
-    # Re-sample this heightmap at each control point and set its Z to the terrain
-    # surface, in place, so a hand-drawn or moved curve follows the current ground
-    # (the counterpart to make_path's drape). Must match the heightmap_terrain build.
+    # Re-sample the terrain's heightmap at each control point and set its Z to the surface, in place,
+    # so a hand-drawn or moved curve follows the current ground (the counterpart to make_path's
+    # drape). `terrain` is the way to call this: the object records the four values it was built with
+    # and they are read off it, so there is nothing to restate and nothing to get wrong. The explicit
+    # keys still win when given (for a heightfield no terrain has been built from yet) and a value
+    # that disagrees with the terrain's own record comes back in the result's warnings.
+    terrain: str | None = None
     heightmap: str | None = None
-    size: float = 60.0
-    height: float = 14.0
-    sea_level: float = 0.3
+    size: float | None = None
+    height: float | None = None
+    sea_level: float | None = None
     # River drape (docs/SPLINES.md 9 #1, the IMPOSE family): clamp the sampled Z into a monotonic
     # downhill profile from source to mouth so the water never runs uphill. min_slope forces a
     # gentle continuous fall through flats; to_sea pulls the mouth to sea level (absolute Z 0).
@@ -114,6 +118,10 @@ class Render(BaseModel):
     camera: str | None = None  # camera object name, else the current scene camera
     device: Literal["GPU", "CPU"] = "GPU"  # Cycles only; EEVEE ignores it
     file_format: str = "PNG"
+    # Drop Blender's render buffers and orphan datablocks after the frame is written (D15). On by
+    # default because an agent that generates and renders in one session is the normal case and the
+    # two halves fight over one card; False keeps them warm for a second render.
+    release_gpu: bool = True
 
 
 class Delete(BaseModel):
@@ -133,6 +141,29 @@ class SetEnv(BaseModel):
     # Fields to write onto Scene.bbt_env (season/weather/time_of_day/wind_*/snow_line/...);
     # see core/env.py BBT_EnvProps. Unknown fields are reported, not fatal.
     params: dict = Field(default_factory=dict)
+    # Re-apply every world consumer after the write (drivers, sun, atmosphere wind, quality) -- the
+    # same appliers a World-panel control runs. On by default because writing the fields alone
+    # reaches no material until something else installs the drivers, which is what made the world
+    # undialable over MCP. False writes the state and defers.
+    apply: bool = True
+
+
+class ApplyWorld(BaseModel):
+    op: Literal["apply_world"] = "apply_world"
+    # No arguments: re-apply every world consumer to the CURRENT bbt_env, changing no values. For the
+    # case where the world is right and the scene is new (a material built after the last world
+    # change carries no drivers until something re-installs them).
+
+
+class DescribeScene(BaseModel):
+    op: Literal["describe_scene"] = "describe_scene"
+    # The one READ-ONLY op: report objects (transform, modifier stack in order, materials, the
+    # heightmap/size/height/sea_level a terrain was built with), materials (master kind, terrain layer
+    # slots with their texture sets, which maps actually resolve on disk, and the masks keying each
+    # slot), curves (role, shape params, mask + edge attribute names), collections, the world state
+    # (including whether the shared env drivers are installed) and the pack search path.
+    objects: list[str] | None = None  # else every object in the scene
+    include: list[str] | None = None  # objects/materials/collections/world/packs; else all
 
 
 class ShadeTerrain(BaseModel):
@@ -171,6 +202,12 @@ class ApplyTextureSet(BaseModel):
     object: str | None = None  # the mesh the material is on; required for a terrain master
     material: str | None = None  # a material by name, else the object's active material
     index: int = 0  # terrain layer slot; ignored by a surface master, which has one set
+    # The pack the set came from, which is what comfy_texture_set returns in its `apply_op`. Declared
+    # here because an undeclared field is DROPPED by model_dump: the tool returned pack_dir, the op
+    # never saw it, and a freshly generated set was unreachable from Blender. The Blender side
+    # registers it on the pack search path (core/assets.add_pack_root), so it also stays resolvable
+    # across the material rebuilds a later Shaders edit triggers.
+    pack_dir: str | None = None
 
 
 class ImportGenerated(BaseModel):
@@ -271,12 +308,43 @@ class ScenePreset(BaseModel):
 
 
 # Typed paths + water + erosion (BobSplines).
+# The shape params a curve op may set (core/splines_build.SHAPE_PARAMS). Exposed because the role's
+# defaults used to be the ONLY way to shape a curve: narrowing a 9 m road meant switching to
+# dirt_path, which also swaps the material mask channel (bbt_curve_mask_b -> bbt_curve_mask) and
+# therefore silently invalidates every scatter layer's curve_attr. Shape and identity are separate.
+class CurveShape(BaseModel):
+    width: float | None = None  # FULL channel width in metres (1:1, not a radius)
+    depth: float | None = None  # channel depth below the rim
+    falloff: float | None = None  # width the bank blends back to the surrounding terrain over
+    taper: float | None = None  # metres the channel and water fade over at each end
+    shoulder: float | None = None  # flat shoulder extending the bed beyond the width
+    bank_slope: float | None = None  # rise/run of the banks; lower is wider and gentler
+    bank_bias: float | None = None  # -1..1, skew the embankment to one side
+    bank_height: float | None = None
+    width_var: float | None = None  # 0..1 meander in the channel width
+    water_level: float | None = None  # 0..1 fill fraction of the channel (river/stream)
+    flow: float | None = None
+    foam_bank: float | None = None
+    foam_rapids: float | None = None
+    wave_amp: float | None = None
+    wave_len: float | None = None
+    wave_steep: float | None = None
+    wave_speed: float | None = None
+    wave_chop: float | None = None
+    verge_gap: float | None = None  # clear metres out from the edge before the verge band
+    verge_width: float | None = None  # width of the band a Verge scatter layer scatters in
+    verge_side: float | None = None  # -1 left only, 0 both, +1 right only
+
+
 class MakeCurve(BaseModel):
     op: Literal["make_curve"] = "make_curve"
     name: str = "Path"
     role: Literal["dirt_path", "trail", "road", "river", "stream"] = "dirt_path"
     points: list[Vector3] = Field(default_factory=list)  # else a starter line sized to terrain
     terrain: str | None = None
+    # Applied AFTER the role seeds its defaults, so a caller keeps the role (and therefore its mask
+    # channel and its whole effect bundle) while changing the numbers.
+    shape: CurveShape | None = None
 
 
 class CurveBuild(BaseModel):
@@ -288,6 +356,7 @@ class CurveBuild(BaseModel):
     do_material: bool | None = None
     do_water: bool | None = None
     do_scatter: bool = False  # no scatter callback over MCP
+    shape: CurveShape | None = None  # applied before the build, so the channel is carved to it
 
 
 class BakeErode(BaseModel):
@@ -321,6 +390,8 @@ Operation = Annotated[
         Delete,
         ClearScene,
         SetEnv,
+        ApplyWorld,
+        DescribeScene,
         ShadeTerrain,
         ApplyShader,
         SnowShell,
@@ -370,3 +441,9 @@ class BuildResult(BaseModel):
     output_file: str
     results: list[OpResult] = Field(default_factory=list)
     error: str | None = None
+    # Live-bridge only. `batch` is the idempotency key the ops ran under: re-sending it COLLECTS that
+    # batch rather than re-running it, which is what makes a retry safe after a slow batch. `status`
+    # is "done" for a finished batch (ok says whether it succeeded) or "running" when the batch is
+    # still on Blender's main thread -- which is NOT a failure, and the ops must not be re-sent.
+    batch: str | None = None
+    status: str | None = None

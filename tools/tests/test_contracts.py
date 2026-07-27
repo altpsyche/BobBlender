@@ -31,6 +31,8 @@ _OP_SAMPLES = {
     "delete": {"op": "delete", "names": ["Rock"]},
     "clear_scene": {"op": "clear_scene", "keep": ["Terrain"]},
     "set_env": {"op": "set_env", "params": {"season": "winter"}},
+    "apply_world": {"op": "apply_world"},
+    "describe_scene": {"op": "describe_scene"},
     "shade_terrain": {"op": "shade_terrain", "object": "Terrain", "stack": "alpine"},
     "apply_shader": {"op": "apply_shader", "object": "Rock", "preset": "rock"},
     "snow_shell": {"op": "snow_shell", "object": "Terrain"},
@@ -126,6 +128,75 @@ def test_import_generated_takes_either_shape():
     named = {"op": "import_generated", "kind": "trees", "name": "oak_01"}
     for payload in (staged, named):
         assert contracts.BuildRequest(output_file="x.blend", ops=[payload]).ops[0].kind == "trees"
+
+
+# -- Every field an op actually reads has to be DECLARED (the redwood run, item 3) ---------------
+# The bug this class of test exists for: `comfy_texture_set` returned `pack_dir` in its `apply_op`,
+# `ApplyTextureSet` did not declare the field, and `model_dump` dropped it silently. The tool was
+# right, the op was right, and the value never crossed between them -- so a freshly generated
+# texture set was unreachable from Blender with no error anywhere. Round-tripping is the check,
+# because validating the payload alone would have passed: pydantic IGNORES an undeclared key rather
+# than rejecting it, and that is exactly what made the failure quiet.
+def _round_trip(payload):
+    """The payload as the Blender side receives it: validated, then dumped back to a plain dict the
+    way `bridge`/`headless_build` hand it to `apply_op`."""
+    req = contracts.BuildRequest(output_file="x.blend", ops=[payload])
+    return req.ops[0].model_dump()
+
+
+@pytest.mark.parametrize("payload,field,value", [
+    # The one that broke. Without the declaration this dump has no `pack_dir` key at all.
+    ({"op": "apply_texture_set", "object": "Terrain", "set": "duff", "index": 3,
+      "pack_dir": "/packs/generated"}, "pack_dir", "/packs/generated"),
+    # drape_curve reads the four terrain numbers off the object, so `terrain` has to arrive.
+    ({"op": "drape_curve", "name": "Road", "terrain": "Terrain"}, "terrain", "Terrain"),
+    # render's D15 buffer release, whose default is the behaviour change.
+    ({"op": "render", "output": "/tmp/x.png"}, "release_gpu", True),
+    # set_env's applier switch: writing the fields without applying them was the whole defect.
+    ({"op": "set_env", "params": {"season": "winter"}}, "apply", True),
+    ({"op": "describe_scene", "include": ["objects"]}, "include", ["objects"]),
+])
+def test_a_declared_field_survives_the_dump(payload, field, value):
+    assert _round_trip(payload)[field] == value
+
+
+def test_drape_curve_no_longer_defaults_the_terrain_numbers():
+    """They are None now, not 60/14/0.3. A default that LOOKED like a terrain meant a caller who
+    omitted them draped against numbers no terrain in the scene was built with, and the op could not
+    tell "not asked for" from "asked for the default"."""
+    dumped = _round_trip({"op": "drape_curve", "name": "Road"})
+    assert dumped["size"] is dumped["height"] is dumped["sea_level"] is None
+
+
+def test_curve_shape_dumps_every_key_so_none_means_not_asked_for():
+    """`set_shape` skips None for this reason: the model carries every shape param, so the dict the
+    Blender side receives names all of them whatever the caller set. Reading it without the None
+    skip would reset an untouched width to zero on every call."""
+    dumped = _round_trip({"op": "make_curve", "name": "Road", "role": "road",
+                          "shape": {"width": 5.0, "depth": 0.35}})
+    shape = dumped["shape"]
+    assert shape["width"] == 5.0 and shape["depth"] == 0.35
+    assert len(shape) > 2 and all(v is None for k, v in shape.items()
+                                  if k not in ("width", "depth"))
+    # And an op with no shape at all says so with None, not with an all-None dict.
+    assert _round_trip({"op": "curve_build", "curve": "Road"})["shape"] is None
+
+
+def test_curve_shape_rejects_a_non_numeric_param():
+    with pytest.raises(Exception) as exc:
+        contracts.BuildRequest(output_file="x.blend",
+                               ops=[{"op": "make_curve", "shape": {"width": "wide"}}])
+    assert "width" in str(exc.value)
+
+
+def test_build_result_can_report_a_batch_still_running():
+    """The bridge's idempotency contract, at the contract layer: "running" is not a failure and the
+    ops must not be re-sent. Before this there was no way to tell a timeout from a failure, so the
+    safe retry risked duplicate objects."""
+    res = contracts.BuildResult(ok=False, output_file="x.blend", batch="b-7", status="running")
+    assert res.batch == "b-7" and res.status == "running" and res.error is None
+    # And a plain result still validates with neither field, since headless has no batches.
+    assert contracts.BuildResult(ok=True, output_file="x.blend").batch is None
 
 
 def test_op_result_carries_machine_readable_data():

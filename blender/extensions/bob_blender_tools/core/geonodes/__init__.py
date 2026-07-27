@@ -96,6 +96,53 @@ def _restore_knobs(mod, snap):
                 pass
 
 
+# A heightmap_terrain build's params, recorded on the object as `bbt_*` custom props so everything
+# downstream can READ the numbers the terrain was actually built with instead of being handed them
+# again. (op param -> object prop, default). Two things went wrong without this: `drape_curve` had to
+# be passed the same heightmap/size/height/sea_level by hand with nothing checking they matched, and
+# `_has_bake` read False, so `curve_build` carved at the curve's own Z and cut a trench through
+# rising ground. The panel bake has always stamped these; the op is now the same.
+_TERRAIN_STAMP = (("heightmap", "bbt_heightmap", ""),
+                  ("size", "bbt_terrain_size", 90.0),
+                  ("resolution", "bbt_terrain_res", 256),
+                  ("height", "bbt_terrain_height", 22.0),
+                  ("sea_level", "bbt_terrain_sea", 0.22))
+
+
+def _stamp_terrain_params(obj, recipe_name, params):
+    """Record a heightmap_terrain build's params on the object. A no-op for every other recipe."""
+    if obj is None or recipe_name != "heightmap_terrain":
+        return
+    for key, prop, default in _TERRAIN_STAMP:
+        val = params.get(key, default)
+        obj[prop] = str(val) if prop == "bbt_heightmap" else (
+            int(val) if isinstance(default, int) else float(val))
+
+
+def _keep_set_material_last(obj):
+    """Move the Set-Material modifier back to the end of the stack.
+
+    A GN-generated mesh ignores its material slot, so a terrain shades through a BOB_SetMat
+    modifier that must run AFTER the recipe that generates the geometry. A rebuild appends a fresh
+    recipe modifier and then moves it back to the recipe's old index -- which, on a terrain shaded
+    before the rebuild, is BEHIND the Set-Material modifier, leaving the material applied to
+    geometry that is then replaced. That is the "rebuilt with reset:true came back unshaded" defect:
+    nothing was lost, the stack order was wrong. Idempotent and a no-op when there is no such
+    modifier.
+    """
+    if obj is None:
+        return
+    from ..materials import SET_MATERIAL_MOD
+
+    mod = next((m for m in obj.modifiers if m.name == SET_MATERIAL_MOD), None)
+    if mod is None:
+        return
+    i = list(obj.modifiers).index(mod)
+    last = len(obj.modifiers) - 1
+    if i != last:
+        obj.modifiers.move(i, last)
+
+
 def _result(created, info):
     """The build_geonodes op result, carrying any warnings the recipe recorded about its params.
 
@@ -159,6 +206,10 @@ def build_geonodes(op: dict) -> dict:
             if old.users == 0:
                 bpy.data.node_groups.remove(old)
             new_ng.name = old_name  # reclaim the clean name
+            # The recipe modifier came back at the OLD index, which on an already-shaded terrain sits
+            # behind the Set-Material modifier. Put that back at the end or the rebuild renders grey.
+            _keep_set_material_last(obj)
+            _stamp_terrain_params(obj, recipe_name, params)
             obj.update_tag()
             info = recipe_name + (" (in place, reset)" if reset else " (in place)")
             # De-dup: the object and its node group usually share a name, so return
@@ -170,6 +221,7 @@ def build_geonodes(op: dict) -> dict:
     ng, out = new_group(name)
     build(ng, out, params)
     created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False))
+    _stamp_terrain_params(bpy.data.objects.get(name), recipe_name, params)
     return _result(created, recipe_name)
 
 
@@ -220,6 +272,7 @@ def build_geonodes_on_object(obj, recipe_name, mod_name, params, reset=False):
         obj.modifiers.move(len(obj.modifiers) - 1, old_index)
     if snap:
         _restore_knobs(mod, snap)
+    _keep_set_material_last(obj)  # a GN-generated mesh shades through the last modifier
     obj.update_tag()
     return {"op": "build_geonodes_on_object", "created": [new_ng.name],
             "object": obj.name, "modifier": mod_name, "info": recipe_name}

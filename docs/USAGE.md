@@ -689,6 +689,7 @@ More MCP-specific cases are in [MCP.md](MCP.md).
 | The op vocabulary, field by field | [API.md](API.md) |
 | Generation: setup, workflows, limits | [COMFYUI.md](COMFYUI.md) |
 | Generation: the measurement record | [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md) |
+| Why generated trees are trunks, and the plan for crowns | [FOLIAGE.md](FOLIAGE.md) |
 | Model and node pack licensing | [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md) |
 | How the code is organised | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Naming, file locations, panel conventions | [CONVENTIONS.md](CONVENTIONS.md) |

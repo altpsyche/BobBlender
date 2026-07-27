@@ -36,7 +36,7 @@ from . import helpers
 
 # The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
 # socket exists (path/paint/camera sockets appear only when that feature is set).
-_CORE_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale",
+_CORE_KNOBS = ["Density", "Distance Min", "Seed", "Min Scale", "Max Scale", "Z Offset",
                "Min Normal Z", "Max Normal Z"]
 # Live knobs for an along-curve layer (the scatter_along recipe), drawn instead of _CORE_KNOBS.
 _ALONG_KNOBS = ["Spacing", "Offset", "Z Offset", "Yaw", "Jitter", "Seed", "Min Scale", "Max Scale"]
@@ -157,6 +157,11 @@ class BBT_ScatterLayer(PropertyGroup):
     assets: PointerProperty(
         name="Assets", type=bpy.types.Collection,
         description="Collection whose objects are instanced")
+    assets_exclude: StringProperty(
+        name="Skip", default="",
+        description="Comma-separated asset names to leave out of THIS layer's pick, without "
+                    "editing the shared collection (a generated trunk whose root flare does not "
+                    "sit on slopes). Applied on Build")
     align: EnumProperty(
         name="Align",
         items=[("up", "Up", "Keep instances upright (trees)"),
@@ -651,6 +656,21 @@ class BBT_PT_scatter(Panel):
         _draw_generate(layout, scn, active=context.active_object)
 
 
+# The honesty note under the Generate Asset kind selector (D16, docs/FOLIAGE.md). Only the kinds
+# image-to-3D is weak at carry one: rocks is what the route is for and says nothing, which keeps the
+# row a warning rather than decoration. Trees is first because it is the one an artist reaches for
+# and the one TRELLIS.2 cannot do -- it returns a single solid mesh, so a crown comes back a fan.
+#
+# The trees note names DEAD WOOD rather than "a trunk, not a crown", which was the first wording and
+# invited the use it was meant to prevent: a standing trunk has to carry a skeleton for branches to
+# grow from, and a generated mesh has none. Live trees come from the foliage generator.
+_GEN_KIND_NOTE = {
+    "trees": "for stumps and logs, not standing trees",
+    "plants": "reads at 2 m or further",
+    "grass": "reads at 2 m or further",
+}
+
+
 def _draw_generate(layout, scn, active=None):
     """Generate Asset, beside the proxy and biome routes rather than in a panel of its own: it is
     a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
@@ -667,6 +687,11 @@ def _draw_generate(layout, scn, active=None):
     row = box.row(align=True)
     row.prop(scn, "gen_kind", text="")
     row.prop(scn, "gen_height")
+    note = _GEN_KIND_NOTE.get(scn.gen_kind)
+    if note:
+        row = box.row()
+        row.enabled = False
+        row.label(text=note, icon="INFO")
     row = box.row(align=True)
     row.prop(scn, "gen_faces")
     row.prop(scn, "gen_hero", toggle=True)
@@ -730,6 +755,8 @@ class BBT_PT_scatter_layer(Panel):
             if lay.curve is None:
                 box.label(text="Pick a path for its verge", icon="ERROR")
         box.prop(lay, "assets")  # the per-layer collection browser
+        if lay.assets is not None and not along:
+            box.prop(lay, "assets_exclude")
         if not along:
             box.prop(lay, "align", expand=True)
             box.prop_search(lay, "vgroup", scn.emitter, "vertex_groups", text="Mask Group")

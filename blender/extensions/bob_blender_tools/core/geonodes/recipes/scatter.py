@@ -21,6 +21,15 @@ Modifier inputs (editable knobs):
   just reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.
 - Camera cull (when a camera is set): Camera Distance / Camera Cone / Cull Falloff.
+- Sink: Z Offset (metres, negative sinks). A generated trunk carries a wide root flare and an
+  asset whose origin is at its base then floats its skirt over sloped ground; sinking the instance
+  is the fix, and without this knob the only lever was camera placement.
+
+`assets_exclude` / `assets_include` (lists of object names) drop assets from the pick without
+touching the collection, so one bad member of a shared BOB_Assets_<Kind> pool can be left out of
+ONE layer. Resolved at build time against the collection's own child order, which is the order
+Collection Info's Separate Children emits, and reported as a warning when a name is not in the
+collection (rather than silently scattering the full pool).
 
 All masks multiply into the Poisson Density Factor (a 0..1 field), so they compose;
 the slope band drives the Selection instead. The emitter, the asset collection, and
@@ -42,7 +51,7 @@ from ..blocks import (
     smooth_falloff,
 )
 from ..scaffold import add_input
-from . import recipe, resolve_named
+from . import recipe, resolve_named, warn
 
 TAU = 6.283185307179586
 RAD_TO_DEG = 57.29577951308232
@@ -87,6 +96,77 @@ def _noise_mask(ng, gi, pos, loc):
     high = math_node(ng, "ADD", 0.5, half, (loc[0] + 360, loc[1] - 280))
     patch = smooth_falloff(ng, fac, low, high, (loc[0] + 540, loc[1] - 120))
     return mix_float(ng, gi.outputs["Noise Strength"], 1.0, patch, (loc[0] + 720, loc[1]))
+
+
+def _child_order(collection):
+    """The direct children Collection Info's Separate Children emits, in its order: the child
+    collections first, then the objects, which is the order Blender builds that instance list in.
+    Returns a list of names; the index of a name here is its Instance Index in the pick."""
+    return [c.name for c in collection.children] + [o.name for o in collection.objects]
+
+
+def _allowed_indices(collection, include, exclude):
+    """(indices, warnings) for the assets a layer may pick from.
+
+    An INCLUDE list is the whole allowance; an EXCLUDE list removes from the full pool. Both are
+    resolved to Instance Index values here, at build time, because that is where the collection is in
+    hand. A name that is not a direct child of the collection is a warning, not a silent no-op: the
+    reason to reach for this is one specific bad asset, so failing to match it must not read as
+    success. Returns (None, warnings) when every child is allowed (the graph then adds no filter and
+    is byte-identical to before).
+    """
+    order = _child_order(collection)
+    warnings = []
+    for name in list(include or []) + list(exclude or []):
+        if name not in order:
+            warnings.append(f"asset {name!r} is not a direct child of collection "
+                            f"{collection.name!r} (has: {', '.join(order) or 'nothing'})")
+    if include:
+        keep = [i for i, n in enumerate(order) if n in set(include)]
+    else:
+        keep = list(range(len(order)))
+    if exclude:
+        drop = set(exclude)
+        keep = [i for i in keep if order[i] not in drop]
+    if not keep:
+        warnings.append(f"the asset filter leaves collection {collection.name!r} with nothing to "
+                        f"scatter; ignored so the layer still builds")
+        return None, warnings
+    if len(keep) == len(order):
+        return None, warnings
+    return keep, warnings
+
+
+def _pick_from(ng, instances, indices, loc):
+    """Restrict a Separate-Children instance set to `indices` and return its geometry.
+
+    Deletes the other instances on the INSTANCE domain rather than remapping the random pick, so
+    Domain Size downstream reports the FILTERED count and the random index needs no arithmetic: the
+    pick stays uniform over what is left, whatever is left.
+    """
+    nodes, links = ng.nodes, ng.links
+    index = nodes.new("GeometryNodeInputIndex")
+    index.location = (loc[0], loc[1] - 180)
+    keep = None
+    for n, i in enumerate(indices):
+        # COMPARE is |a - b| < Epsilon. Set the epsilon rather than trusting its default: these are
+        # integer indices, so half a step separates every pair exactly.
+        eq = nodes.new("ShaderNodeMath")
+        eq.operation = "COMPARE"
+        eq.location = (loc[0] + 180, loc[1] - 180 - n * 120)
+        links.new(index.outputs["Index"], eq.inputs[0])
+        eq.inputs[1].default_value = float(i)
+        eq.inputs[2].default_value = 0.5
+        keep = eq.outputs["Value"] if keep is None else math_node(
+            ng, "MAXIMUM", keep, eq.outputs["Value"], (loc[0] + 360, loc[1] - 180 - n * 120))
+    drop = math_node(ng, "SUBTRACT", 1.0, keep, (loc[0] + 540, loc[1] - 180))
+    delete = nodes.new("GeometryNodeDeleteGeometry")
+    delete.domain = "INSTANCE"
+    delete.mode = "ALL"
+    delete.location = (loc[0] + 720, loc[1])
+    links.new(instances, delete.inputs["Geometry"])
+    links.new(drop, delete.inputs["Selection"])
+    return delete.outputs["Geometry"]
 
 
 def _camera_cull(ng, camera, gi, pos, loc):
@@ -181,6 +261,9 @@ def build(ng, out, params: dict):
     add_input(ng, "Noise Contrast", "NodeSocketFloat", float(params.get("noise_contrast", 0.5)), 0.0, 1.0)
     add_input(ng, "Noise Seed", "NodeSocketInt", int(params.get("noise_seed", 0)))
     add_input(ng, "Noise Strength", "NodeSocketFloat", float(params.get("noise_strength", 0.0)), 0.0, 1.0)
+    # Sink: metres along world Z, applied to the instances after placement. Negative buries the
+    # base, which is what a generated trunk's wide root flare needs on sloped ground.
+    add_input(ng, "Z Offset", "NodeSocketFloat", float(params.get("z_offset", 0.0)))
     if vgroup:
         add_input(ng, "Paint Strength", "NodeSocketFloat", float(params.get("paint_strength", 1.0)), 0.0, 1.0)
     if camera is not None:
@@ -260,11 +343,22 @@ def build(ng, out, params: dict):
     coll.inputs["Separate Children"].default_value = True
     coll.inputs["Reset Children"].default_value = True
 
-    # Random pick index in [0, instance_count - 1].
+    # Per-asset filter: drop the excluded children before the pick, so one bad member of a shared
+    # BOB_Assets_<Kind> pool can be left out of THIS layer without editing the collection.
+    pool = coll.outputs["Instances"]
+    if assets is not None:
+        keep, filter_warnings = _allowed_indices(assets, params.get("assets_include"),
+                                                 params.get("assets_exclude"))
+        for message in filter_warnings:
+            warn(message)
+        if keep is not None:
+            pool = _pick_from(ng, pool, keep, (1140, -560))
+
+    # Random pick index in [0, instance_count - 1], counted over the FILTERED pool.
     domain = nodes.new("GeometryNodeAttributeDomainSize")
     domain.component = "INSTANCES"
     domain.location = (1320, -360)
-    links.new(coll.outputs["Instances"], domain.inputs["Geometry"])
+    links.new(pool, domain.inputs["Geometry"])
     max_index = math_node(ng, "SUBTRACT", domain.outputs["Instance Count"], 1, (1500, -360))
     index = random_value(ng, "INT", 0, max_index, seed, (1680, -360))
 
@@ -273,7 +367,7 @@ def build(ng, out, params: dict):
     instance = nodes.new("GeometryNodeInstanceOnPoints")
     instance.location = (1580, 100)
     links.new(dist.outputs["Points"], instance.inputs["Points"])
-    links.new(coll.outputs["Instances"], instance.inputs["Instance"])
+    links.new(pool, instance.inputs["Instance"])
     instance.inputs["Pick Instance"].default_value = True
     links.new(index, instance.inputs["Instance Index"])
     # align "normal" tilts instances to the surface (rocks, grass); "up" leaves
@@ -293,4 +387,16 @@ def build(ng, out, params: dict):
     links.new(spin_vec.outputs["Vector"], rotate.inputs["Rotation"])
     rotate.inputs["Local Space"].default_value = True
 
-    links.new(rotate.outputs["Instances"], out.inputs["Geometry"])
+    # Sink along world Z. Global space (Local Space off), so the offset is metres of elevation
+    # regardless of how the instance was tilted to the surface normal: a rock aligned to a 40-degree
+    # slope should still sink DOWN, not into its own tilted -Z.
+    sink_vec = nodes.new("ShaderNodeCombineXYZ")
+    sink_vec.location = (2120, 380)
+    links.new(gi.outputs["Z Offset"], sink_vec.inputs["Z"])
+    translate = nodes.new("GeometryNodeTranslateInstances")
+    translate.location = (2120, 100)
+    links.new(rotate.outputs["Instances"], translate.inputs["Instances"])
+    links.new(sink_vec.outputs["Vector"], translate.inputs["Translation"])
+    translate.inputs["Local Space"].default_value = False
+
+    links.new(translate.outputs["Instances"], out.inputs["Geometry"])

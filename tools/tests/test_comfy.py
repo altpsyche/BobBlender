@@ -1748,3 +1748,177 @@ def test_a_failed_reset_does_not_stop_the_generation(mods, monkeypatch, tmp_path
     comfy.subject_image("a boulder", str(tmp_path / "s.png"), seed=1)
     assert calls == ["subject"]
     assert comfy._TILING_DIRTY[comfy.base_url(None)] is True, "still dirty, so it retries"
+
+
+# -- D15: the VRAM floors and the recovery report ------------------------------------------------
+# The redwood run's first finding, as tests. The old behaviour was a CUDA traceback from inside
+# somebody else's worker process 90 seconds into a job; the contract now is a sentence before the
+# job is queued, and a Free VRAM that reports the number it recovered instead of the word "Freed".
+@pytest.fixture
+def card(mods, monkeypatch):
+    """A stubbed server whose free VRAM the test drives, counting the /free calls."""
+    comfy, _ = mods
+    state = {"free_mib": 12000, "frees": 0, "gives_back": 0}
+
+    def status(url=None, timeout=3):
+        return {"ok": True, "url": "stub", "device": "stub", "vram_free_mib": state["free_mib"],
+                "running": 0, "pending": 0, "detail": ""}
+
+    def free(url=None, unload_models=True, free_memory=True):
+        state["frees"] += 1
+        state["free_mib"] += state["gives_back"]
+        return True
+
+    monkeypatch.setattr(comfy, "service_status", status)
+    monkeypatch.setattr(comfy, "free", free)
+    return state
+
+
+def test_every_generation_route_has_a_floor_and_hero_is_higher(mods):
+    comfy, _ = mods
+    assert set(comfy.VRAM_FLOOR_MIB) == {"mesh", "mesh_hero", "texture", "paint", "heightmap",
+                                         "stylize"}
+    # The hero tier is 1536_cascade and needs materially more than the default 1024, so sharing the
+    # mesh floor would let it through and then OOM, which is the failure the floors exist to stop.
+    assert comfy.VRAM_FLOOR_MIB["mesh_hero"] > comfy.VRAM_FLOOR_MIB["mesh"]
+
+
+def test_preflight_passes_a_card_with_room_and_never_frees_it(mods, card):
+    comfy, _ = mods
+    assert comfy.preflight_vram("mesh") == 12000
+    assert card["frees"] == 0, "a card with room must not be disturbed"
+
+
+def test_preflight_tries_one_recovery_before_it_refuses(mods, card):
+    """The common case is a card a previous job left full that one POST /free fixes, so refusing
+    without trying would block work that would have run."""
+    comfy, _ = mods
+    card["free_mib"], card["gives_back"] = 1200, 6000
+    assert comfy.preflight_vram("mesh") == 7200
+    assert card["frees"] == 1
+
+
+def test_preflight_refuses_with_a_vram_sentence_when_the_free_does_not_help(mods, card):
+    """The measured case: /free returns success and about 100 MiB, because the pages stay in the
+    main process's allocator and the generation workers are separate processes."""
+    comfy, _ = mods
+    card["free_mib"], card["gives_back"] = 900, 100
+    with pytest.raises(comfy.ComfyError) as exc:
+        comfy.preflight_vram("mesh")
+    msg = str(exc.value)
+    assert "not enough free VRAM for the mesh route" in msg
+    assert "1000 MiB free, 5000 MiB needed" in msg
+    assert "Restart ComfyUI" in msg and "expandable_segments:True" in msg
+    assert card["frees"] == 1
+
+
+def test_a_card_that_cannot_report_its_vram_is_let_through(mods, monkeypatch):
+    """An unknown is not a reason to block work: a fork or a CPU-only server that reports no device
+    memory would otherwise be unable to generate at all."""
+    comfy, _ = mods
+    monkeypatch.setattr(comfy, "service_status",
+                        lambda url=None, timeout=3: {"ok": True, "vram_free_mib": None})
+    assert comfy.preflight_vram("mesh") is None
+    assert comfy.preflight_vram("no_such_route") is None, "an unknown route has no floor"
+
+
+def test_recover_vram_reports_what_it_actually_got_back(mods, card):
+    comfy, _ = mods
+    card["free_mib"], card["gives_back"] = 500, 100
+    got = comfy.recover_vram(target_mib=5000)
+    assert (got["before"], got["after"], got["recovered"]) == (500, 600, 100)
+    assert got["enough"] is False and "Restart ComfyUI" in got["advice"]
+    # Enough, so no advice: the button says the number and stops talking.
+    card["free_mib"], card["gives_back"] = 4000, 3000
+    got = comfy.recover_vram(target_mib=5000)
+    assert got["enough"] is True and got["advice"] == ""
+
+
+def test_recover_vram_survives_a_server_that_will_not_free(mods, card, monkeypatch):
+    """A dead endpoint is a report, not a traceback: this runs inside preflight, and a card that
+    cannot be freed must still produce the sentence that names the restart."""
+    comfy, _ = mods
+
+    def boom(url=None, unload_models=True, free_memory=True):
+        raise comfy.ComfyError("not reachable")
+
+    monkeypatch.setattr(comfy, "free", boom)
+    card["free_mib"] = 400
+    got = comfy.recover_vram(target_mib=5000)
+    assert got["enough"] is False and "could not reach the free endpoint" in got["advice"]
+    assert got["before"] == got["after"] == 400
+
+
+# -- D16: the leaf-opacity receipt warning -------------------------------------------------------
+def test_leaf_opacity_warning_fires_on_the_kinds_whose_look_is_leaves(mods):
+    """LEAFY_KINDS deliberately differs from FOLIAGE_KINDS: that one is about keeping holes open
+    through remesh and pinhole fill (plants, grass); this one is about the finished LOOK, and a tree
+    is in it because the crown is the reason it was generated."""
+    comfy, _ = mods
+    assert set(comfy.LEAFY_KINDS) == {"trees", "plants", "grass"}
+    assert set(comfy.FOLIAGE_KINDS) < set(comfy.LEAFY_KINDS)
+    # The measured redwood verdicts, both of them.
+    for verdict in ("opaque", "implausible", None):
+        warns = comfy.leaf_opacity_warning("trees", {"verdict": verdict})
+        assert len(warns) == 1 and "reads as solid geometry" in warns[0]
+        assert str(verdict or "none") in warns[0], "the receipt names WHICH case this was"
+    assert comfy.leaf_opacity_warning("trees", {"verdict": "cutout"}) == []
+    # A rock has no crown to be wrong about, whatever its alpha says.
+    assert comfy.leaf_opacity_warning("rocks", {"verdict": "opaque"}) == []
+    assert comfy.leaf_opacity_warning("grass", {}) and comfy.leaf_opacity_warning("plants", None)
+
+
+# -- The two undocumented ceilings (the redwood run, item 13) ------------------------------------
+def test_control_bbox_range_is_the_nodes_own_widget_bound(mods):
+    """Not a Bob policy: `Hy3DOmniVoxelGenerate` declares min 0.1 max 3.0 on each of the three, and
+    ComfyUI validates widget bounds server-side, so an out-of-range value is an HTTP 400 rather than
+    a clamp. `gen_assets.control_bbox` divides by the longest axis, which is why its own output
+    always fits and a hand-written [1, 9, 1] does not."""
+    comfy, _ = mods
+    lo, hi = comfy.CONTROL_BBOX_RANGE
+    assert (lo, hi) == (0.1, 3.0)
+    assert all(lo <= d <= hi for d in (0.35, 1.0, 0.35))
+    assert not all(lo <= d <= hi for d in (1.0, 9.0, 1.0))
+
+
+def test_a_mesh_not_found_failure_names_the_variable_that_causes_it(mods, monkeypatch):
+    """"Mesh file not found: input/3d/x.glb" names neither $BOB_COMFY_DIR nor the reason, and the
+    redwood run read it as a bad control mesh. The hint is attached only when the variable really is
+    unset, so a genuinely missing file on a configured machine is not misdiagnosed."""
+    comfy, _ = mods
+    monkeypatch.setattr(comfy, "comfy_dir", lambda: None)
+    hint = comfy._mesh_transport_hint("Mesh file not found: input/3d/proxy.glb")
+    assert "$BOB_COMFY_DIR" in hint and "input/3d" in hint and "control_bbox" in hint
+    assert comfy._mesh_transport_hint("CUDA out of memory") == ""
+    monkeypatch.setattr(comfy, "comfy_dir", lambda: "/srv/ComfyUI")
+    assert comfy._mesh_transport_hint("Mesh file not found: input/3d/proxy.glb") == ""
+
+
+# -- Prompt ergonomics: the negative reaches the one stage a negation works at -------------------
+def test_the_negative_reaches_w4_and_only_w4(mods, monkeypatch, tmp_path):
+    """SDXL does not honour negations in the positive prompt ("no pot, no planter" returned a
+    nursery pot twice), and the subject image is the only stage any text touches: every geometry
+    graph downstream conditions on the picture. So the argument has to arrive at W4 or it does
+    nothing at all."""
+    comfy, _ = mods
+    seen = {}
+
+    def fake_subject(prompt_text, out_path, **kw):
+        seen.update(kw, prompt=prompt_text)
+        return {"path": out_path, "seconds": 1.0, "prompt": prompt_text}
+
+    monkeypatch.setattr(comfy, "subject_image", fake_subject)
+    comfy._stage_subject("a fir sapling", str(tmp_path), negative="pot, planter, hands")
+    assert seen["negative"] == "pot, planter, hands"
+
+    # And every chain accepts it, so no route silently drops the argument.
+    import inspect
+    for fn in (comfy.generate_asset_oneshot, comfy.generate_asset_chain, comfy.generate_asset_alt,
+               comfy.generate_asset_source):
+        assert "negative" in inspect.signature(fn).parameters, fn.__name__
+
+
+def test_a_supplied_subject_skips_w4_so_the_negative_is_moot(mods, tmp_path):
+    comfy, _ = mods
+    got = comfy._stage_subject("a fir", str(tmp_path), subject="/tmp/mine.png", negative="pot")
+    assert got["path"] == "/tmp/mine.png" and got["seconds"] == 0.0
