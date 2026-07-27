@@ -725,8 +725,14 @@ class BBT_OT_scatter_grow_foliage(Operator):
         warn = assets.validate_foliage_species(species)
         if warn:
             print("[bob_blender_tools] foliage species warnings:", warn)
+        # A texture set the species names but no pack ships is the ORDINARY pre-generation state, not
+        # a mistake: no placeholder bark set ships on purpose (docs/FOLIAGE.md 4.4), so a fresh conifer
+        # is a solid-tint trunk until someone generates its bark. Say which set is missing, because
+        # otherwise the tree just looks flat and there is nothing on screen explaining why.
+        missing = ", ".join(v for _k, _label, v in assets.foliage_missing_sets(species))
+        note = f"; solid tint until {missing} is generated" if missing else ""
         self.report({"INFO"}, f"Grew {name} ({preset['meta'].get('name', species)}); "
-                              f"its knobs are on the object's foliage modifier")
+                              f"its knobs are on the object's foliage modifier{note}")
         return {"FINISHED"}
 
 

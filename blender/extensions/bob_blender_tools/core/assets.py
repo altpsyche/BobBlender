@@ -303,6 +303,48 @@ def texture_set_maps(name):
     return out
 
 
+def texture_set_meta(name):
+    """The texture set's `meta.json` sidecar, or {} when it has none or it is unreadable.
+
+    Every generated set already writes one (`comfy.write_texture_set`, R10: provenance travels with
+    the artifact), and a hand-authored set may. It is read for DATA a consumer needs and cannot
+    otherwise know -- see `atlas_grid` -- never for anything a set must have, so a set without one
+    keeps working exactly as before.
+    """
+    base = texture_set_dir(name)
+    if base is None:
+        return {}
+    try:
+        with open(os.path.join(base, "meta.json")) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def atlas_grid(name):
+    """(cols, rows) for a leaf-atlas texture set, from its sidecar, or None when it declares none.
+
+    **The [F3] open question in docs/FOLIAGE.md 6, answered: the SET carries its layout.** F2 shipped
+    the interim answer -- `Atlas Columns` and `Atlas Rows` as live recipe params defaulting to the
+    placeholder's 2x2 -- which works and does not scale: an artist assigning a generated 4x4 atlas has
+    to know to change two numbers, and nothing checks that they did. A card reading the wrong grid
+    samples a quarter of the right cell and slices of three neighbours, which renders as foliage and
+    is wrong, so it is exactly the class of failure this track gates rather than trusts.
+
+    The params STAY as the override (the recipe falls back to this only when a param was not given),
+    because a hand-made atlas may ship no sidecar and because an artist may want a 4x4 read as 2x2.
+    """
+    atlas = texture_set_meta(name).get("atlas")
+    if not isinstance(atlas, dict):
+        return None
+    try:
+        cols, rows = int(atlas["cols"]), int(atlas["rows"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (cols, rows) if cols >= 1 and rows >= 1 else None
+
+
 def list_texture_sets():
     """Texture-set folder names carrying at least a basecolor map, unioned across all packs
     (first pack wins on a name collision), sorted. What the Shaders texture-set picker lists;
@@ -524,11 +566,44 @@ def foliage_species_for_kind(kind):
     return None
 
 
+# Which species params name a texture SET, and what to call it in a report.
+_FOLIAGE_SET_PARAMS = (("atlas", "leaf atlas set"), ("bark_set", "bark set"))
+
+
+def foliage_missing_sets(name):
+    """[(param, label, set_name)] for the texture sets a species NAMES that no pack provides.
+
+    Split out of `validate_foliage_species` because it is a different KIND of finding, and F3 is what
+    made the difference matter. The other warnings are authoring mistakes -- a typo, an inert level
+    block, an unknown kind -- and are always wrong. This one is the ordinary state of a preset whose
+    bark has not been generated yet: no placeholder bark set ships, deliberately, because a hand-made
+    one would hide the grain-direction problem generation actually has (docs/FOLIAGE.md 4.4), so the
+    conifer and broadleaf presets name the bark they want and resolve it the moment it exists.
+
+    A caller that wants "is this preset well authored" filters these out; a caller that wants "what
+    does this tree still need" reads exactly these. `validate_foliage_species` reports both, with
+    wording that says how to get the missing one rather than only that it is absent.
+    """
+    spec = foliage_species(name)
+    if not spec:
+        return []
+    params = spec.get("params", {})
+    out = []
+    for key, label in _FOLIAGE_SET_PARAMS:
+        value = params.get(key)
+        if value and texture_set_dir(str(value)) is None:
+            out.append((key, label, str(value)))
+    return out
+
+
 def validate_foliage_species(name):
     """Static checks on a species preset, as human-readable warnings (empty = clean). Catches the
     authoring mistakes that are otherwise silent: an unreadable file, an unknown param key (dropped
     by the reader, so the tree just builds at defaults), an out-of-range level count, and a kind
-    that no BOB_Assets_ collection matches."""
+    that no BOB_Assets_ collection matches.
+
+    A texture set the preset names but no pack ships is reported too, and is the one finding here
+    that is not necessarily a mistake -- see `foliage_missing_sets`."""
     path = None
     for root in asset_roots():
         cand = os.path.join(foliage_dir(root), f"{name}.json")
@@ -566,12 +641,13 @@ def validate_foliage_species(name):
     kind = meta.get("kind", "trees")
     if kind not in FOLIAGE_KINDS:
         warnings.append(f"{name}: meta.kind '{kind}' unknown {list(FOLIAGE_KINDS)}")
-    atlas = params.get("atlas")
-    if atlas and texture_set_dir(atlas) is None:
-        warnings.append(f"{name}: leaf atlas set missing: textures/{atlas} (in any pack)")
-    bark = params.get("bark_set")
-    if bark and texture_set_dir(bark) is None:
-        warnings.append(f"{name}: bark set missing: textures/{bark} (in any pack)")
+    for key, label, value in foliage_missing_sets(name):
+        # Named, absent, and generatable -- so say which tool makes it rather than only that it is
+        # gone. A bark-less tree renders as a solid-tint BobShader, which is the block-out convention
+        # everywhere else in the suite, so this is a note about what is missing and not a failure.
+        tool = "comfy_leaf_atlas" if key == "atlas" else "comfy_bark_set"
+        warnings.append(f"{name}: {label} missing: textures/{value} (in any pack); "
+                        f"generate it with {tool}, or the tree renders as a solid tint")
     return warnings
 
 

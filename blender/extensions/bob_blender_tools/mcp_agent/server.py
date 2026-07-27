@@ -173,6 +173,93 @@ def comfy_texture_set(
 
 
 @mcp.tool()
+def comfy_bark_set(
+    prompt: str = "rough conifer bark",
+    name: str = "",
+    seed: int = 0,
+    size: int = 1024,
+) -> dict:
+    """Generate a BARK texture set, measured for grain direction as well as for tiling.
+
+    `comfy_texture_set` with the one clause bark needs and the one measurement it needs. Bark grain
+    runs along a trunk and a tileable SDXL pass has no reason to keep an axis: measured, "rough
+    conifer bark" on its own came back as polygonal mud cracks 84 degrees off vertical, and the
+    shipped clause holds it inside 18 degrees across species and seeds (docs/FOLIAGE.md 3).
+
+    prompt: the species and its surface ("grey beech bark", "shaggy redwood bark"). The vertical-grain
+            clause and the tiling and lighting clauses are added for you.
+    name:   the set's folder name. Pass the name a species preset asks for -- the shipped `conifer`
+            wants `bark_conifer` and `broadleaf` wants `bark_broadleaf` -- and every tree of that
+            species picks it up with no assignment step. Blank names it after the prompt.
+
+    The tree recipe reads it by NAME, so nothing needs applying afterwards: build or rebuild a
+    foliage object and the bark is on it.
+
+    Returns {ok, set, dir, maps, grain, seam, seconds, pack_dir} or {ok: false, error}.
+    `grain.off_vertical_deg` is the verdict: under about 25 is usable, and it is gated by
+    tools/scripts/headless_foliage.py rather than left to taste.
+    """
+    def run(comfy):
+        pack = str(paths.generated_pack())
+        set_name, info = comfy.bark_set(prompt, pack, name=(name or None), seed=int(seed),
+                                        size=int(size))
+        return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
+                "grain": info.get("grain"), "seam": info.get("seam"),
+                "seconds": info.get("seconds"), "pack_dir": pack}
+
+    return _generation(run, route="texture")
+
+
+@mcp.tool()
+def comfy_leaf_atlas(
+    prompt: str = "pine needle spray",
+    cols: int = 2,
+    rows: int = 2,
+    name: str = "",
+    seed: int = 0,
+    size: int = 1024,
+    route: str = "",
+) -> dict:
+    """Generate a LEAF ATLAS: a grid of foliage sprites on transparent, for BobFoliage's cards.
+
+    A texture set with an `opacity` role, which is what a leaf card's cutout reads. Cell 0 is the
+    bottom-left and the grid runs row-major upward, matching the recipe's cell-to-UV map.
+
+    Bob generates one sprite per cell and composes the grid itself, because a diffusion model asked
+    for a grid does not make one: measured, a "2 by 2 grid, one spray per quadrant" prompt returned
+    five sprays in a ring straddling every boundary, none touching a cell's bottom edge, and per-cell
+    coverage still passed. Composing instead means every cell is filled, the cells differ, and each
+    sprite is oriented with its stem at the bottom -- where a card's v is 0, so a leaf hangs from its
+    twig rather than by its tips.
+
+    prompt: the foliage ("spruce needle spray", "birch leaf cluster", "fern frond"). The single-sprig
+            and lighting clauses are added for you.
+    cols/rows: the grid. 2x2 is four sprites; 4x4 is sixteen and about four times the wall clock.
+    name:   the set's folder name; blank names it after the prompt.
+    route:  "cells" (default, composed) or "grid" (one frame, the measured-insufficient way).
+
+    The set RECORDS its own grid, so a species preset only has to name the set: the recipe reads the
+    layout from it and its `Atlas Columns` / `Atlas Rows` knobs stay as an override. Point a tree at
+    it with the `atlas` param on `build_geonodes`.
+
+    Returns {ok, set, dir, maps, cols, rows, cells, cell_distinctness, seconds, pack_dir} or
+    {ok: false, error}. `cells` is per cell: `opaque` 0 is a card that renders as nothing.
+    """
+    def run(comfy):
+        pack = str(paths.generated_pack())
+        set_name, info = comfy.leaf_atlas(prompt, pack, cols=int(cols), rows=int(rows),
+                                          name=(name or None), seed=int(seed), size=int(size),
+                                          route=(route or None))
+        return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
+                "cols": info.get("cols"), "rows": info.get("rows"), "cells": info.get("cells"),
+                "cell_distinctness": info.get("cell_distinctness"),
+                "clear_fraction": info.get("clear_fraction"),
+                "seconds": info.get("seconds"), "pack_dir": pack}
+
+    return _generation(run, route="texture")
+
+
+@mcp.tool()
 def comfy_mesh(
     prompt: str,
     kind: str = "rocks",

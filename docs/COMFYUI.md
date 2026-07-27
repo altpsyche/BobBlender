@@ -963,9 +963,12 @@ mesh bottom centre so scatter sits on the ground instead of half-buried. A sidec
 the MCP tools live venv-side in `mcp_agent/server.py` and talk HTTP directly; only the steps that
 need Blender are ops.
 
-Tools: `comfy_status()`, `comfy_texture_set()`, `comfy_mesh()`, `comfy_paint_mesh()`,
-`comfy_heightmap()`, `comfy_stylize()`, every one preflighting before it queues and degrading to a
-clear "not reachable" sentence rather than a stack trace (measured: all six, against a dead port).
+Tools: `comfy_status()`, `comfy_texture_set()`, `comfy_bark_set()`, `comfy_leaf_atlas()`,
+`comfy_mesh()`, `comfy_paint_mesh()`, `comfy_heightmap()`, `comfy_stylize()`, every one preflighting
+before it queues and degrading to a clear "not reachable" sentence rather than a stack trace
+(measured: all of them, against a dead port). The two foliage tools are BobFoliage F3's
+([FOLIAGE.md](FOLIAGE.md#3-what-the-generation-track-owes-it)) and share the existing graphs: bark is
+W1 with a measured grain clause, and a leaf atlas is W4 per cell with the grid composed in numpy.
 Each also returns the OP that consumes its result, ready to send: `comfy_mesh` an `import_op`,
 `comfy_texture_set` an `apply_op`, `comfy_heightmap` the `bake_params` fragment. An agent that has to
 assemble those itself will get one wrong and stop using the feature.
@@ -1154,7 +1157,8 @@ Where the line falls, from the numbers rather than from taste:
 | A single leaf or blade as a hero asset | **Only if the gate says `cutout`.** | G3 leaf: 11,610 boundary edges, thin ratio 0.0422, alpha wired at mean 0.9806 |
 | Dead wood: stumps, fallen logs, snags, root balls | **Yes.** Same case as rocks — a solid with no skeleton needed. | G3/G7 solids, as above |
 | A standing tree, or any crown of foliage | **No.** Not the trunk either. Grow it (docs/FOLIAGE.md). | G3 broadleaf sprig: 15 boundary edges, i.e. a closed blob; redwood run: crowns are fans, and a generated trunk carries no curve for branches to attach to |
-| Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. | measured seam ratio 1.02 to 1.11 on the redwood sets |
+| Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. Bark goes through `comfy_bark_set`, which adds the one thing tiling does not cover. | measured seam ratio 1.02 to 1.11 on the redwood sets; F3 bark 5.7 deg off vertical at seam ratio 0.987 |
+| A leaf or needle ATLAS on transparent | **Yes** — `comfy_leaf_atlas`, one sprite per cell composed Bob-side. Not one prompt asking for a grid. | F3: a 2x2-grid prompt returned five sprays in a ring straddling every cell; per-sprite W4 alpha is a real 0.000-1.000 cutout |
 
 **The UX guardrail (near-term, in this track).** Three places have to say the same thing, because
 the artist and the agent arrive from different doors:

@@ -159,6 +159,225 @@ def test_tile3x3_shape(mods, noise_rgb):
     assert maps.tile3x3(noise_rgb[:, :, 0]).shape == (72, 96)
 
 
+# -- comfy_maps: grain direction (BobFoliage F3, bark) ---------------------------------------
+def _grating(size=96, period=6.0, vertical=True):
+    """A sine grating. Vertical STRIPES vary along x, so their gradient axis is horizontal."""
+    ramp = (np.sin(np.arange(size, dtype=np.float32) / period) * 60 + 128).astype(np.uint8)
+    tile = np.tile(ramp, (size, 1))
+    return tile if vertical else tile.T.copy()
+
+
+def test_grain_report_reads_the_axis_features_run_along(mods):
+    _, maps = mods
+    vertical = maps.grain_report(_grating(vertical=True))
+    assert vertical["off_vertical_deg"] < 2.0
+    assert vertical["coherence"] > 0.9
+    horizontal = maps.grain_report(_grating(vertical=False))
+    assert horizontal["off_vertical_deg"] > 88.0
+
+
+def test_grain_report_separates_wrong_direction_from_no_direction(mods):
+    """The two bark failures are different and one measure cannot catch both.
+
+    Measured at F3: a bark set came back 84 degrees off vertical with coherence 0.49 (polygonal mud
+    cracks, plenty of coherent edges pointing the wrong way), and another came back 18 degrees off
+    with coherence 0.018 (no grain at all, so the angle was luck). The angle catches the first and
+    the coherence catches the second.
+    """
+    _, maps = mods
+    wrong = maps.grain_report(_grating(vertical=False))
+    assert wrong["coherence"] > 0.5 and wrong["off_vertical_deg"] > 45.0
+    noise = maps.grain_report(np.random.default_rng(0).integers(
+        0, 256, (96, 96), dtype=np.uint8))
+    assert noise["coherence"] < 0.05
+    assert noise["block_spread_deg"] > 20.0
+
+
+def test_axis_spread_treats_angles_as_axes_not_directions(mods):
+    _, maps = mods
+    # 0 and 180 are the SAME axis, so their spread is zero rather than maximal.
+    assert maps.axis_spread([0.0, 180.0]) < 1e-6
+    assert maps.axis_spread([90.0, 90.0, 90.0]) < 1e-6
+    assert maps.axis_spread([0.0, 45.0, 90.0, 135.0]) > 20.0
+
+
+# -- comfy_maps: leaf atlases (BobFoliage F3) -------------------------------------------------
+def _sprig(angle_deg, size=96, woody=False, flare=0.2):
+    """A wedge: narrow at one end, wide at the other, lying at `angle_deg`.
+
+    With `woody`, the narrow third is brown and the rest green, which is the cue a real sprig gives.
+    `flare` changes the SHAPE, which is what makes two sprigs genuinely different -- a wedge rotated
+    to the same upright pose from two different angles is the same sprite, and `cell_distinctness`
+    correctly says so.
+    """
+    sprite = np.zeros((size, size, 4), np.uint8)
+    rad = np.radians(angle_deg)
+    ux, uy = np.cos(rad), np.sin(rad)
+    reach = size // 3
+    for s in range(-reach, reach):
+        half = int(2 + (s + reach) * flare)
+        cy, cx = size / 2 + uy * s, size / 2 + ux * s
+        for j in range(-half, half + 1):
+            yy, xx = int(cy - ux * j), int(cx + uy * j)
+            if 0 <= yy < size and 0 <= xx < size:
+                brown = woody and s < -reach // 3
+                sprite[yy, xx, :3] = (110, 70, 40) if brown else (40, 120, 40)
+                sprite[yy, xx, 3] = 255
+    return sprite
+
+
+def test_orient_sprite_stands_a_sprig_on_its_narrow_end_from_any_angle(mods):
+    """The property a card depends on: v is 0 at the attachment, so the stem must be at the bottom.
+
+    Checked at four angles because W4 returns sprays lying every way -- measured, a "stem at the
+    bottom of the frame" prompt produced diagonal sprays with the twig at the left.
+    """
+    _, maps = mods
+    for angle in (0.0, 37.0, 90.0, 143.0, 250.0):
+        out = maps.orient_sprite(_sprig(angle))
+        solid = out[:, :, 3] > 127
+        ys, xs = np.nonzero(solid)
+        rows = solid[ys.min():ys.max() + 1]
+        band = max(1, len(rows) // 6)
+        assert rows[-band:].sum() < rows[:band].sum(), f"{angle} deg came out upside down"
+        # ... and it is genuinely upright rather than merely narrow at the bottom.
+        assert (ys.max() - ys.min()) > (xs.max() - xs.min())
+
+
+def test_orient_sprite_prefers_the_woody_end_when_there_is_one(mods):
+    """A sprig whose stem sticks out SIDEWAYS has its long axis along the fan, so no end of that
+    axis is the stem and no rotation of it can be right. The woody/green split answers the question
+    directly. Measured on a generated atlas: it disagreed with the geometric answer on exactly the
+    two cells that came out attached by their needle tips."""
+    _, maps = mods
+    size = 96
+    sprite = np.zeros((size, size, 4), np.uint8)
+    sprite[30:70, 20:76, :3] = (40, 120, 40)      # a wide green fan
+    sprite[30:70, 20:76, 3] = 255
+    sprite[46:52, 76:92, :3] = (110, 70, 40)      # a brown stem out to the RIGHT
+    sprite[46:52, 76:92, 3] = 255
+    out = maps.orient_sprite(sprite)
+    solid = out[:, :, 3] > 127
+    ys, xs = np.nonzero(solid)
+    excess = (out[:, :, 1].astype(np.float32)
+              - (out[:, :, 0].astype(np.float32) + out[:, :, 2].astype(np.float32)) / 2.0)
+    wy, _wx = np.nonzero(solid & (excess <= 2.0))
+    gy, _gx = np.nonzero(solid & (excess > 2.0))
+    assert wy.mean() > gy.mean(), "the woody mass should end up BELOW the green"
+    assert ys.size and xs.size
+
+
+def test_orient_sprite_ignores_the_colour_cue_on_a_uniform_sprite(mods):
+    """The cue assumes a colour, so it has to be guarded: an all-green (or all-brown) sprite falls
+    back to geometry, which is what keeps an autumn atlas from being oriented by hue."""
+    _, maps = mods
+    green = maps.orient_sprite(_sprig(40.0, woody=False))
+    solid = green[:, :, 3] > 127
+    ys, _xs = np.nonzero(solid)
+    rows = solid[ys.min():ys.max() + 1]
+    band = max(1, len(rows) // 6)
+    assert rows[-band:].sum() < rows[:band].sum()
+
+
+def test_atlas_compose_fills_every_cell_bottom_anchored(mods):
+    _, maps = mods
+    sprites = [_sprig(a, woody=True) for a in (0.0, 50.0, 140.0, 250.0)]
+    base, opacity = maps.atlas_compose(sprites, 2, 2, 256)
+    assert base.shape == (256, 256, 3) and opacity.shape == (256, 256)
+    cells = maps.atlas_cells(opacity, 2, 2)
+    assert [c["cell"] for c in cells] == [0, 1, 2, 3]
+    assert all(c["opaque"] > 0.02 for c in cells)
+    assert all(c["reaches_base"] for c in cells)
+    assert all(c["base_taper"] < 0.6 for c in cells)
+
+
+def test_atlas_cells_reports_an_empty_cell_rather_than_hiding_it(mods):
+    """An empty cell is a card that renders as nothing, which is invisible in a crown."""
+    _, maps = mods
+    sprites = [_sprig(0.0, woody=True), None, _sprig(90.0, woody=True), None]
+    _base, opacity = maps.atlas_compose(sprites, 2, 2, 256)
+    cells = maps.atlas_cells(opacity, 2, 2)
+    assert [c["cell"] for c in cells if c["opaque"] < 0.01] == [1, 3]
+    assert not cells[1]["reaches_base"]
+
+
+def test_atlas_cells_catches_a_sprite_standing_on_its_fan(mods):
+    """`reaches_base` passes on an upside-down sprite; `base_taper` is what does not."""
+    _, maps = mods
+    upright = maps.place_sprite(_sprig(90.0, woody=True), 128)
+    flipped = upright[::-1].copy()
+    _b, up_op = maps.atlas_compose([upright], 1, 1, 128)
+    assert maps.atlas_cells(up_op, 1, 1)[0]["base_taper"] < 0.6
+    # Composing an already-placed sprite re-orients it, so measure the flip directly.
+    cell = maps.atlas_cells(flipped[:, :, 3], 1, 1)[0]
+    assert cell["reaches_base"] and cell["base_taper"] > 1.0
+
+
+def test_cell_distinctness_catches_one_sprite_repeated(mods):
+    """Four copies of one spray passes every per-cell check and still renders one leaf ten thousand
+    times, which is the atlas analogue of the gate's "two seeds give different trees"."""
+    _, maps = mods
+    one = _sprig(30.0, woody=True)
+    _b, same = maps.atlas_compose([one, one, one, one], 2, 2, 256)
+    assert maps.cell_distinctness(same, 2, 2) < 1e-6
+    # Different SHAPES, not merely different angles: orientation is the whole point of the composer,
+    # so the same wedge lying at four angles is deliberately the same sprite once it is stood up.
+    varied = [_sprig(30.0, woody=True, flare=f) for f in (0.12, 0.20, 0.32, 0.45)]
+    _b2, spread = maps.atlas_compose(varied, 2, 2, 256)
+    assert maps.cell_distinctness(spread, 2, 2) > 5.0
+
+
+def test_alpha_bleed_floods_leaf_colour_and_not_the_background(mods):
+    """The atlas basecolor is written as RGB, so a transparent texel's COLOUR is load-bearing:
+    bilinear filtering blends it into every silhouette. Reading from the near-transparent fringe
+    instead of from opaque texels is what put a hard white halo on every sprite -- measured."""
+    _, maps = mods
+    size = 64
+    rgb = np.full((size, size, 3), 250, np.uint8)          # studio white background
+    alpha = np.zeros((size, size), np.float32)
+    rgb[24:40, 24:40] = (40, 120, 40)
+    alpha[24:40, 24:40] = 1.0
+    filled = maps.alpha_bleed(rgb, alpha)
+    clear = filled[alpha < 0.02].astype(np.float32).mean(axis=0)
+    assert abs(clear[0] - 40) < 6 and abs(clear[1] - 120) < 6 and abs(clear[2] - 40) < 6
+    # The opaque region itself is untouched.
+    assert (filled[alpha > 0.5] == rgb[alpha > 0.5]).all()
+
+
+def test_bark_and_atlas_suffixes_are_the_measured_ones(mods):
+    """The bark clause is a measurement, not a preference: F3 tried four wordings over two species
+    and two seeds and only this one held the grain inside 18 degrees of vertical. Pinned so a
+    well-meant rewrite is a test failure rather than a silently plastic trunk."""
+    comfy, _ = mods
+    assert comfy.BARK_SUFFIX == "vertical bark, deep furrows running top to bottom"
+    assert comfy.DEFAULT_ATLAS_ROUTE == "cells"
+    assert comfy.atlas_routes() == ("cells", "grid")
+    # W4's own negative forbids "multiple objects", which is right for one sprite and wrong for a
+    # grid, so the atlas route carries its own.
+    assert "bunch" in comfy.ATLAS_NEGATIVE and "grid" in comfy.ATLAS_NEGATIVE
+
+
+def test_unknown_atlas_route_is_a_sentence_not_a_traceback(mods):
+    comfy, _ = mods
+    with pytest.raises(comfy.ComfyError) as exc:
+        comfy._atlas_route("quadrants")
+    assert "quadrants" in str(exc.value)
+
+
+def test_update_meta_merges_rather_than_replacing(mods, tmp_path):
+    comfy, _ = mods
+    (tmp_path / "meta.json").write_text(json.dumps({"seed": 4, "seam": {"ratio": 1.0}}))
+    merged = comfy.update_meta(str(tmp_path), grain={"off_vertical_deg": 3.0})
+    assert merged["seed"] == 4 and merged["seam"]["ratio"] == 1.0
+    assert merged["grain"]["off_vertical_deg"] == 3.0
+    assert json.loads((tmp_path / "meta.json").read_text())["grain"]["off_vertical_deg"] == 3.0
+
+
+def test_update_meta_writes_a_fresh_file_when_there_is_none(mods, tmp_path):
+    comfy, _ = mods
+    assert comfy.update_meta(str(tmp_path), atlas={"cols": 4, "rows": 4})["atlas"]["cols"] == 4
+
+
 def test_roughness_uses_the_whole_band_on_a_bright_albedo(mods):
     """G1's defect, as a test. A bright albedo used to park every pixel at the top of the band
     (measured 117-242 of 255, mean 206) because the map was a global remap of luminance."""

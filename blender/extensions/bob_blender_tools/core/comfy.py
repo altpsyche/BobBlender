@@ -1255,6 +1255,235 @@ def texture_set_from_prompt(prompt_text, pack_dir, *, seed=0, size=1024, negativ
     return name, info
 
 
+# -- BobFoliage's two texture jobs (F3, docs/FOLIAGE.md 3) -----------------------------------
+# Neither needs a new workflow or a new model. The leaf atlas is W4 (`mesh_subject`) with its alpha
+# kept and the grid composed Bob-side; bark is W1 through the ordinary `texture_variant`, with one
+# prompt clause and one new measurement. What each needs instead is a clause the artist should not
+# have to remember, for the same reason `PROMPT_SUFFIX` and `SUBJECT_SUFFIX` exist.
+
+# Bark's clause, and it is MEASURED rather than chosen. Bark grain is directional and a tileable SDXL
+# pass has no reason to keep an axis, so F3 tried four wordings across two species and two seeds and
+# took the only one that held (worst case, degrees off vertical):
+#
+#   "vertical bark, deep furrows running top to bottom"            17.6   <- this one
+#   "vertical grain running straight up and down"                  71.3
+#   "deep vertical furrows and ridges, grain parallel to the
+#    trunk axis, top to bottom"                                    84.8
+#   no clause at all                                               83.8
+#
+# The failures are not subtle: "rough conifer bark" on its own came back as polygonal mud cracks with
+# no axis whatsoever. Naming the FEATURE (furrows) and its direction is what works; naming the
+# direction alone is not enough, and adding more words made it worse. `comfy_maps.grain_report` is
+# the measurement, and `headless_foliage.py` holds the threshold, so a checkpoint change that breaks
+# this is a gate failure rather than a silently plastic trunk.
+BARK_SUFFIX = "vertical bark, deep furrows running top to bottom"
+
+# The leaf-atlas sprite clause. Appended in front of `SUBJECT_SUFFIX`, which already asks for one
+# centred uncropped subject on a plain background -- exactly what one atlas cell is.
+ATLAS_SPRITE_SUFFIX = ("a single sprig, the cut end of its stem at the bottom of the frame, "
+                       "foliage fanning upward, flat lay")
+
+# W4's own negative is written for a solid: it forbids "multiple objects, group, collection", which
+# is right for a boulder and right for one sprite, and it also forbids a ground plane and a cast
+# shadow, which a matte-and-composite route particularly wants gone.
+ATLAS_NEGATIVE = ("multiple sprigs, bunch, bouquet, arrangement, grid, collage, whole tree, trunk, "
+                  "branch, ground, soil, pot, vase, hand, scene, depth of field, blur, "
+                  "cast shadow, reflection, text, watermark, signature, border, frame")
+
+# How the cells of an atlas are produced. "cells" is the default and the route the gate measures.
+#
+# **A diffusion model cannot be asked for a grid.** Measured at F3: W4 with "a 2 by 2 grid of four
+# separate pine needle sprays, one spray per quadrant, each growing upward from the bottom of its
+# quadrant" returned FIVE sprays arranged in a ring, straddling every cell boundary, each pointing a
+# different way, none touching a cell's bottom edge. Per-cell coverage passed anyway (8 to 11% opaque
+# in all four quadrants), which is why coverage alone is not the check and why this is a route rather
+# than an argument: the atlas was tree-shaped and unusable.
+#
+# So "cells" generates ONE sprite per cell and composes the grid in numpy
+# (`comfy_maps.atlas_compose`). That makes the layout a guarantee instead of a hope, makes the cells
+# differ by construction (a seed apart), lets Bob orient and bottom-anchor each sprite, and costs
+# LESS: four sprites at 512 measured 9.4 s against 7.3 s for one 1024 frame that could not be used.
+# "grid" is kept because it is one call and an artist may want to hand-author the layout prompt, and
+# because a future model that CAN lay out a grid should not need new code to be tried.
+ATLAS_ROUTES = ("cells", "grid")
+DEFAULT_ATLAS_ROUTE = "cells"
+
+# A grid-route prompt says the layout out loud; it is the wording F3 measured as insufficient, kept
+# so the route is honest about what it asks for.
+ATLAS_GRID_SUFFIX = ("evenly spaced in a regular grid, one sprig per cell, each growing upward from "
+                     "the bottom of its cell, flat lay, plain background")
+
+
+def atlas_routes():
+    return ATLAS_ROUTES
+
+
+def _atlas_route(route=None):
+    route = (route or DEFAULT_ATLAS_ROUTE).strip().lower()
+    if route not in ATLAS_ROUTES:
+        raise ComfyError(f"unknown atlas route {route!r}, expected one of {list(ATLAS_ROUTES)}")
+    return route
+
+
+def update_meta(set_dir, **fields):
+    """Merge `fields` into a set's `meta.json` and return the whole dict.
+
+    A second writer rather than a parameter on `texture_variant`, so the measurements F3 adds travel
+    with the artifact (R10) without changing what every other caller of the texture-set recipe
+    writes."""
+    path = os.path.join(set_dir, "meta.json")
+    meta = {}
+    try:
+        with open(path) as fh:
+            meta = json.load(fh) or {}
+    except (OSError, ValueError):
+        pass
+    meta.update(fields)
+    with open(path, "w") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+    return meta
+
+
+def bark_set(prompt_text, pack_dir, *, name=None, seed=0, size=1024, url=None, negative=None,
+             checkpoint=None, timeout=600, on_progress=None, reference=None):
+    """Generate a bark texture set into `<pack>/textures/`, measured for grain DIRECTION.
+
+    `texture_variant` does the work: bark needs no new workflow, and the seam ratio it already
+    reports is the tileability half. What this adds is the half the seam ratio cannot see -- bark
+    grain runs along the trunk, and a set whose grain wanders is unusable on a swept limb however
+    well it tiles. `BARK_SUFFIX` is the clause that makes it hold and `grain` in the returned info
+    (and in the set's `meta.json`) is the number that says whether it did.
+
+    `name` fixes the set's folder name, which is what lets a species preset NAME the bark it wants
+    (`bark_conifer`) and pick it up the moment it is generated. Still never an overwrite: a second
+    `bark_conifer` becomes `bark_conifer_02` (R16), and the preset keeps the one it already resolves.
+
+    Returns (set_name, info). `info["grain"]["off_vertical_deg"]` is the verdict.
+    """
+    textures = os.path.join(pack_dir, "textures")
+    os.makedirs(textures, exist_ok=True)
+    set_name = unique_set_name(textures, slugify(name or prompt_text))
+    out_dir = os.path.join(textures, set_name)
+    full = ", ".join(p for p in ((prompt_text or "").strip(), BARK_SUFFIX) if p)
+    info = texture_variant(full, out_dir, seed=seed, size=size, negative=negative,
+                           checkpoint=checkpoint, url=url, reference=reference, timeout=timeout,
+                           on_progress=on_progress)
+    with open(info["maps"]["basecolor"], "rb") as fh:
+        albedo = comfy_maps.read_png(fh.read())
+    grain = comfy_maps.grain_report(albedo)
+    info["grain"] = grain
+    info["name"] = set_name
+    update_meta(out_dir, grain=grain, bark_clause=BARK_SUFFIX, artist_prompt=(prompt_text or "").strip())
+    return set_name, info
+
+
+def atlas_sprite(prompt_text, out_path, *, seed=0, size=512, negative=None, url=None,
+                 timeout=600, on_progress=None, preflight_graph=True):
+    """One atlas cell's sprite: W4 with the sprig clause and a real cutout. Returns info."""
+    full = ", ".join(p for p in ((prompt_text or "").strip(), ATLAS_SPRITE_SUFFIX) if p)
+    return subject_image(full, out_path, seed=seed, size=size,
+                         negative=negative or ATLAS_NEGATIVE, url=url, timeout=timeout,
+                         on_progress=on_progress, preflight_graph=preflight_graph)
+
+
+def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, route=None, name=None,
+               negative=None, url=None, timeout=600, on_progress=None, on_cell=None):
+    """Generate a leaf/needle ATLAS into `<pack>/textures/` as a set with an `opacity` role.
+
+    The consuming side was built at F2 and is waiting: `opacity` is in `assets.TEXTURE_MAP_ROLES`
+    and `materials.surface._wire_cutout` already prefers a dedicated opacity map over the basecolor's
+    own alpha, so nothing downstream needs a change for this to reach a card's Principled Alpha.
+
+    Written as an RGB basecolor plus a separate grey `opacity`, not as one RGBA file: `write_png` is
+    an 8-bit grey/RGB codec and the role split is what the resolver and the cutout already speak.
+    That makes the transparent region's COLOUR load-bearing, because bilinear filtering blends it
+    into every silhouette -- so it is flooded with leaf colour (`comfy_maps.alpha_bleed`) rather than
+    left as the studio background, which is a white rim on every needle.
+
+    The grid is recorded in the set's `meta.json` as `atlas: {cols, rows}`, which answers the [F3]
+    open question in docs/FOLIAGE.md 6: the set CARRIES its layout, `assets.atlas_grid()` reads it,
+    and the recipe's `Atlas Columns` / `Atlas Rows` params stay as the override.
+
+    Returns (set_name, info). `info["cells"]` is the per-cell report -- an empty cell is a card that
+    renders as nothing, so it is measured here and gated in `headless_foliage.py`.
+    """
+    route = _atlas_route(route)
+    cols, rows, size = max(1, int(cols)), max(1, int(rows)), int(size)
+    textures = os.path.join(pack_dir, "textures")
+    os.makedirs(textures, exist_ok=True)
+    set_name = unique_set_name(textures, slugify(name or f"{prompt_text} atlas"))
+    out_dir = os.path.join(textures, set_name)
+    cells_dir = os.path.join(out_dir, "cells")
+    os.makedirs(cells_dir, exist_ok=True)
+
+    t0 = time.time()
+    sources = []
+    if route == "cells":
+        cell = max(64, size // max(cols, rows))
+        sprites = []
+        for i in range(cols * rows):
+            path = os.path.join(cells_dir, f"cell_{i:02d}.png")
+            # A seed a STRIDE apart, not one apart: adjacent SDXL seeds are not adjacent images, but
+            # a stride makes "cell 3 of this atlas" reproducible from (seed, index) alone.
+            info = atlas_sprite(prompt_text, path, seed=int(seed) + i * 17, size=cell,
+                                negative=negative, url=url, timeout=timeout,
+                                on_progress=on_progress, preflight_graph=(i == 0))
+            with open(path, "rb") as fh:
+                sprites.append(comfy_maps.read_png(fh.read()))
+            sources.append(info)
+            if on_cell:
+                on_cell(i + 1, cols * rows, info)
+        basecolor, opacity = comfy_maps.atlas_compose(sprites, cols, rows, size)
+    else:
+        full = ", ".join(p for p in ((prompt_text or "").strip(),
+                                     f"a {cols} by {rows} grid of sprigs", ATLAS_GRID_SUFFIX) if p)
+        path = os.path.join(cells_dir, "grid.png")
+        info = subject_image(full, path, seed=int(seed), size=size,
+                             negative=negative or ATLAS_NEGATIVE, url=url, timeout=timeout,
+                             on_progress=on_progress)
+        sources.append(info)
+        with open(path, "rb") as fh:
+            frame = comfy_maps.read_png(fh.read())
+        if frame.ndim != 3 or frame.shape[2] != 4:
+            raise ComfyError("the atlas frame came back with no alpha channel (is BOB_RGBA wired?)")
+        opacity = frame[:, :, 3].copy()
+        basecolor = comfy_maps.alpha_bleed(frame[:, :, :3], opacity.astype("float32") / 255.0)
+    generate_s = time.time() - t0
+
+    t1 = time.time()
+    maps = comfy_maps.derive(basecolor)
+    maps["opacity"] = opacity
+    cells = comfy_maps.atlas_cells(opacity, cols, rows)
+    distinct = comfy_maps.cell_distinctness(opacity, cols, rows)
+    derive_s = time.time() - t1
+
+    t2 = time.time()
+    alpha = opacity.astype("float32") / 255.0
+    meta = {"artist_prompt": (prompt_text or "").strip(), "atlas": {"cols": cols, "rows": rows},
+            "route": route, "seed": int(seed), "size": int(size), "cells": cells,
+            "cell_distinctness": distinct, "workflow": "mesh_subject",
+            "clear_fraction": float((alpha < 0.05).mean()),
+            "opaque_fraction": float((alpha > 0.95).mean()),
+            "prompt_ids": [s.get("prompt_id") for s in sources]}
+    source_text = (
+        f"basecolor + opacity: generated by ComfyUI, workflow mesh_subject (W4), "
+        f"{len(sources)} frame(s), seed {int(seed)}, composed by BobBlenderTools into a "
+        f"{cols}x{rows} atlas ({route} route).\n"
+        f"prompt: {prompt_text}\n"
+        f"sprite clause: {ATLAS_SPRITE_SUFFIX}\n"
+        "roughness, height, normal, ao: derived from the composed albedo by BobBlenderTools "
+        "(core/comfy_maps.py). opacity is the generation's own matte.\n"
+        "Output licensing follows the model that produced it.\n")
+    written = write_texture_set(out_dir, set_name, maps, source_text, meta=meta)
+    write_s = time.time() - t2
+
+    info = dict(meta)
+    info.update(dir=out_dir, name=set_name, maps=written, cols=cols, rows=rows,
+                seconds={"generate": generate_s, "derive": derive_s, "write": write_s,
+                         "total": generate_s + derive_s + write_s})
+    return set_name, info
+
+
 # -- Generated meshes (track C, ComfyUI half) --------------------------------------------------
 # Everything below runs on the worker thread and touches no bpy. It gets a raw generated GLB into
 # `<pack>/_staging/<variant>/`; turning that into a scattered BobShader asset is `core.gen_assets`,

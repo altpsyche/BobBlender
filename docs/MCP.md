@@ -99,6 +99,8 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `render_scene` | Render the live session (or a headless `.blend`) to an image; returns the path. | the bridge, or a Blender binary for `base_file` |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, shipped workflows. | — (reports "not reachable" rather than failing) |
 | `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. | a local ComfyUI + an SDXL checkpoint |
+| `comfy_bark_set` | A bark set, measured for grain DIRECTION as well as tiling. Name it what a species preset asks for and every tree of that species wears it. | a local ComfyUI + an SDXL checkpoint |
+| `comfy_leaf_atlas` | A grid of foliage sprites on transparent, as a set with an `opacity` role, for BobFoliage's leaf cards. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_mesh` | Prompt to a staged scatter asset (geometry + PBR). Returns the `import_generated` op. | a local ComfyUI + TRELLIS.2 (or `route="alt"`, which needs no custom pack for the geometry) |
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. | a local ComfyUI + TRELLIS.2 |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |

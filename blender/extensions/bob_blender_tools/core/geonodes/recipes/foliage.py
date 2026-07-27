@@ -45,8 +45,15 @@ UVs and materials (docs/FOLIAGE.md 2.7). `Curve to Mesh` creates neither, so bot
 The swept mesh's V is `bbt_fol_t` scaled to METRES along the limb and its U is the profile circle's
 own spline parameter scaled by the local circumference, so a twig and a trunk carry bark at the same
 grain instead of the twig getting the whole texture. The cards' UV is their quad's own 0..1 UV pushed
-into one cell of the atlas grid. Both write `UVMap` on the corner domain, which is what makes them a
-real UV layer rather than a float2 nobody reads.
+into one cell of the atlas grid, whose size the atlas SET declares (`_atlas_grid`). Both write
+`UVMap` on the corner domain, which is what makes them a real UV layer rather than a float2 nobody
+reads.
+
+F3 fixed two things about that which were invisible while nothing was textured. The cyclic profile's
+U jumped from 1-1/n back to 0 on one quad of every ring, so a single column per limb carried the
+whole texture reversed (`_unwrap_u`); and the bark material was assigned with BOX projection, so the
+metres-based UV above reached nothing at all and the grain followed the world axes instead of the
+limb (`_tree_materials`). Both rendered convincingly, which is the recurring lesson of this track.
 
 Params: seed, levels (1-4), segments, profile_segments, the shape values below, and two texture-set
 names (`bark_set`, `atlas`). Structural (a rebuild): levels, profile_segments, and the two set names.
@@ -58,6 +65,7 @@ import math
 
 import bpy
 
+from ... import assets
 from ..blocks import math_node, noise_field, position
 from ..scaffold import add_input
 from . import recipe
@@ -566,6 +574,41 @@ def _cards(ng, skeleton, gi, seed_f, location):
     return _store(ng, cards, "bbt_fol_leaf", True, "BOOLEAN", "FACE", (lx + 4240, ly))
 
 
+# How far below its own face's mean a corner's U has to sit before it is read as the wrap corner.
+# The arithmetic, for an n-sided profile: the wrap face's corners are {(n-1)/n, 0}, so its mean is
+# (n-1)/2n and its low corners sit -(n-1)/2n below it, which tends to -0.5. Every ORDINARY face's
+# corners sit within 1/2n of their own mean, so at worst -1/6 for the coarsest profile the recipe
+# allows (n=3). -0.3 separates the two for every n from 3 to 24.
+_SEAM_CUT = -0.3
+
+
+def _unwrap_u(ng, location):
+    """The profile's U with its cyclic wrap undone, on the CORNER domain.
+
+    `bbt_fol_u` is the profile circle's spline parameter, so it runs 0 .. 1-1/n around the tube and
+    then jumps back to 0. One vertex cannot hold both 1 and 0, which is what makes a cylindrical
+    unwrap need a seam -- but a UV lives on the CORNER domain, and a corner can. So the wrap corners
+    are found and pushed up by a whole turn, and U becomes monotonic 0 .. 1 with no duplicated
+    geometry: the alternative fix is an open profile with n+1 points, which would add a vertex ring
+    per curve point and change every vertex count F1 and F2 measured.
+
+    A corner is a wrap corner when its U sits far below its own FACE's mean U. `Evaluate on Domain`
+    at the FACE domain averages a point attribute over the face's corners -- verified on Blender 5.2
+    (a quad whose corners carried -1, 0, 0, -1 read back -0.5), which is exactly the mean this needs.
+    """
+    lx, ly = location
+    u = _named(ng, "bbt_fol_u", "FLOAT", (lx, ly))
+    face_mean = ng.nodes.new("GeometryNodeFieldOnDomain")
+    face_mean.data_type = "FLOAT"
+    face_mean.domain = "FACE"
+    face_mean.location = (lx + 180, ly - 160)
+    ng.links.new(u, face_mean.inputs["Value"])
+    below = math_node(ng, "LESS_THAN",
+                      math_node(ng, "SUBTRACT", u, face_mean.outputs["Value"], (lx + 360, ly - 80)),
+                      _SEAM_CUT, (lx + 540, ly - 80))
+    return math_node(ng, "ADD", u, below, (lx + 720, ly))
+
+
 def _sweep_uv(ng, mesh, gi, location):
     """Write the swept mesh's `UVMap` in METRES, so bark reads at one grain over the whole tree.
 
@@ -578,16 +621,21 @@ def _sweep_uv(ng, mesh, gi, location):
     tile of bark, so the twig's grain is ten times too coarse -- the single thing that makes a
     procedural trunk read as plastic.
 
-    Known seam: the profile is cyclic, so its parameter runs 0 .. 1-1/n and the last quad of each
-    ring wraps from nearly 1 back to 0, giving one column of reversed UV per limb. That is the
-    ordinary cylindrical-unwrap seam; F3 owns bark and can decide whether to hide it.
+    The wrap seam, which F3 measured and fixed. The profile is cyclic, so its spline parameter runs
+    0 .. 1-1/n and the last quad of every ring runs from nearly 1 back to 0 -- one column per limb
+    carrying the WHOLE texture, reversed and squeezed into a single quad. Measured on a 6-sided
+    profile: the median face spanned 0.035 of a tile in U and the worst spanned 3.927, a factor of
+    112, i.e. a smeared mirrored band down every trunk. Nobody could see it at F2 because nothing was
+    textured, which is why it was raised as an open question rather than found later.
+
+    The fix is `_unwrap_u`, and it costs no vertices and no interface change.
     """
     lx, ly = location
     circumference = math_node(ng, "MULTIPLY", _named(ng, "bbt_fol_rad", "FLOAT", (lx, ly + 200)),
                               2.0 * math.pi, (lx + 200, ly + 200))
     scale = math_node(ng, "MAXIMUM", gi.outputs["Bark Scale"], 0.01, (lx, ly - 400))
     u = math_node(ng, "DIVIDE",
-                  math_node(ng, "MULTIPLY", _named(ng, "bbt_fol_u", "FLOAT", (lx, ly + 60)),
+                  math_node(ng, "MULTIPLY", _unwrap_u(ng, (lx, ly + 60)),
                             circumference, (lx + 400, ly + 60)),
                   scale, (lx + 600, ly + 60))
     v = math_node(ng, "DIVIDE",
@@ -638,13 +686,21 @@ def _tree_materials(ng, params):
 
     The bark tint is set only on a genuinely fresh material: re-pressing Build must not revert a
     colour someone tuned, which is the same rule `_build_wrapper` follows for its own inputs.
+
+    **Bark is UV-projected, not box-projected, and F2 had it the other way round.** F2 built the
+    metres-based bark UV of docs/FOLIAGE.md 2.7 and then assigned the bark set with `box=True`, which
+    samples by WORLD POSITION -- so the UVs it had just measured reached nothing, the grain followed
+    the world axes instead of the limb, and a leaning trunk was a slab of bark projected through it.
+    The third defect in the family F1 shipped two of: it renders, and only a number tells. Box
+    projection is the right default for `surface_material` in general (it exists for un-UV'd props);
+    a swept limb is precisely the case that carries real UVs and needs them.
     """
     from ...materials import _wrapper_name, foliage_card_material, surface_material
 
     base = ng.name.split(".")[0]
     bark_name = f"{base} Bark"
     fresh = _wrapper_name(bark_name) not in bpy.data.materials
-    bark = surface_material(bark_name, texset_name=str(params.get("bark_set", "")), box=True)
+    bark = surface_material(bark_name, texset_name=str(params.get("bark_set", "")), box=False)
     if fresh:
         node = bark.node_tree.nodes.get("Master")
         if node is not None:
@@ -653,6 +709,30 @@ def _tree_materials(ng, params):
             node.inputs["Canopy Snow"].default_value = 1.0  # a trunk is vertical; snow needs the hint
     card = foliage_card_material(f"{base} Leaf", atlas=str(params.get("atlas", DEFAULT_ATLAS)))
     return bark, card
+
+
+DEFAULT_ATLAS_GRID = (2, 2)   # the placeholder atlas's own layout, and the floor when nothing says
+
+
+def _atlas_grid(params):
+    """(cols, rows) for the atlas this build reads: the explicit params, else the SET's own sidecar.
+
+    The [F3] open question in docs/FOLIAGE.md 6, answered here and in `assets.atlas_grid`. F2's
+    interim answer was these two params alone, which works and does not scale: an artist assigning a
+    generated 4x4 atlas has to know to change two numbers, and a card reading 2x2 off a 4x4 atlas
+    samples a quarter of the cell it wanted plus slices of three neighbours -- which renders as
+    foliage, so nothing catches it. A generated set records its grid, so the ordinary case needs no
+    numbers at all.
+
+    The params stay as the OVERRIDE, per the brief: a hand-made atlas may ship no sidecar, and an
+    artist may deliberately read a 4x4 as 2x2 to use only its bottom row.
+    """
+    cols, rows = DEFAULT_ATLAS_GRID
+    declared = assets.atlas_grid(str(params.get("atlas", DEFAULT_ATLAS)))
+    if declared is not None:
+        cols, rows = declared
+    return (max(1, min(16, int(params.get("atlas_cols", cols)))),
+            max(1, min(16, int(params.get("atlas_rows", rows)))))
 
 
 def _trim_upper(ng, curve, start, location):
@@ -707,8 +787,11 @@ def build(ng, out, params: dict):
     add_input(ng, "Card Width", "NodeSocketFloat", float(params.get("card_width", 0.60)), 0.01, 4.0)
     add_input(ng, "Droop", "NodeSocketFloat", float(params.get("droop", 0.35)), 0.0, 1.0)
     add_input(ng, "Spread", "NodeSocketFloat", float(params.get("card_spread", 34.0)), 0.0, 90.0)
-    add_input(ng, "Atlas Columns", "NodeSocketInt", int(params.get("atlas_cols", 2)), 1, 16)
-    add_input(ng, "Atlas Rows", "NodeSocketInt", int(params.get("atlas_rows", 2)), 1, 16)
+    # The atlas grid. The SET carries its own layout in a sidecar and that is the default; an
+    # explicit param still wins. See `_atlas_grid` -- this is the [F3] open question answered.
+    grid_cols, grid_rows = _atlas_grid(params)
+    add_input(ng, "Atlas Columns", "NodeSocketInt", grid_cols, 1, 16)
+    add_input(ng, "Atlas Rows", "NodeSocketInt", grid_rows, 1, 16)
     add_input(ng, "Bark Scale", "NodeSocketFloat", float(params.get("bark_scale", 0.6)), 0.01)
     add_input(ng, "Shade Smooth", "NodeSocketBool", bool(params.get("shade_smooth", True)))
 

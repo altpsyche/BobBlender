@@ -369,6 +369,90 @@ def test_bad_species_files_are_warnings_not_crashes(assets, monkeypatch, tmp_pat
         "nothing_here: no foliage/nothing_here.json in any pack"]
 
 
+def test_missing_generatable_sets_are_reported_apart_from_authoring_mistakes(
+        assets, monkeypatch, tmp_path):
+    """A named-but-absent bark set is a STATE, not a mistake, and F3 is what made that matter.
+
+    No placeholder bark set ships, deliberately -- a hand-made one would hide the grain-direction
+    problem generation actually has -- so the shipped tree presets name the bark they want and pick it
+    up the moment it is generated. A caller asking "is this preset well authored" has to be able to
+    filter that out, which is what splitting the report is for.
+    """
+    pack = tmp_path / "p"
+    _make_species(pack, "pine", params={"levels": 2, "bark_set": "bark_pine",
+                                        "atlas": "atlas_pine", "trunkRadius": 0.5})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    missing = assets.foliage_missing_sets("pine")
+    assert {(k, v) for k, _label, v in missing} == {("bark_set", "bark_pine"),
+                                                   ("atlas", "atlas_pine")}
+    warnings = assets.validate_foliage_species("pine")
+    # Both kinds of finding are reported, and the generatable ones name the tool that makes them.
+    assert any("comfy_bark_set" in w for w in warnings)
+    assert any("comfy_leaf_atlas" in w for w in warnings)
+    assert any("unknown param 'trunkRadius'" in w for w in warnings)
+    real = [w for w in warnings if "missing: textures/" not in w]
+    assert len(real) == 1 and "trunkRadius" in real[0]
+
+
+def test_missing_sets_report_nothing_once_the_set_exists(assets, monkeypatch, tmp_path):
+    pack = tmp_path / "p"
+    _make_species(pack, "pine", params={"levels": 2, "bark_set": "bark_pine"})
+    bark = pack / "textures" / "bark_pine"
+    bark.mkdir(parents=True)
+    (bark / "bark_pine_basecolor.png").write_bytes(b"")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert assets.foliage_missing_sets("pine") == []
+    assert assets.validate_foliage_species("pine") == []
+
+
+def test_shipped_tree_presets_name_the_bark_they_want(assets):
+    """The F3 wiring, as data: a species names its bark set, so generating it once dresses every
+    tree of that species with no assignment step anywhere."""
+    assert assets.foliage_species("conifer")["params"]["bark_set"] == "bark_conifer"
+    assert assets.foliage_species("broadleaf")["params"]["bark_set"] == "bark_broadleaf"
+
+
+def test_atlas_grid_comes_from_the_sets_own_sidecar(assets, monkeypatch, tmp_path):
+    """The [F3] open question, answered: the SET carries its layout.
+
+    A card reading a 2x2 grid off a 4x4 atlas samples a quarter of the cell it wanted plus slices of
+    three neighbours, which renders as foliage -- so nothing downstream catches it and the default
+    has to come from the artifact rather than from a knob nobody knew to change.
+    """
+    pack = tmp_path / "p"
+    for name, meta in (("four", {"atlas": {"cols": 4, "rows": 4}}),
+                       ("wide", {"atlas": {"cols": 8, "rows": 1}}),
+                       ("nometa", None),
+                       ("junk", {"atlas": {"cols": "lots"}}),
+                       ("zero", {"atlas": {"cols": 0, "rows": 2}})):
+        d = pack / "textures" / name
+        d.mkdir(parents=True)
+        (d / f"{name}_basecolor.png").write_bytes(b"")
+        if meta is not None:
+            (d / "meta.json").write_text(json.dumps(meta))
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert assets.atlas_grid("four") == (4, 4)
+    assert assets.atlas_grid("wide") == (8, 1)
+    # A set that declares nothing says so, rather than being guessed at.
+    assert assets.atlas_grid("nometa") is None
+    assert assets.atlas_grid("junk") is None
+    assert assets.atlas_grid("zero") is None
+    assert assets.atlas_grid("no_such_set_anywhere") is None
+
+
+def test_texture_set_meta_is_optional_and_never_raises(assets, monkeypatch, tmp_path):
+    pack = tmp_path / "p"
+    d = pack / "textures" / "broken_meta"
+    d.mkdir(parents=True)
+    (d / "broken_meta_basecolor.png").write_bytes(b"")
+    (d / "meta.json").write_text("{not json")
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert assets.texture_set_meta("broken_meta") == {}
+    assert assets.texture_set_meta("absent") == {}
+    # The shipped placeholder atlas has no sidecar, so the recipe's own default has to stand.
+    assert assets.atlas_grid("leaf_atlas_blockout") is None
+
+
 def test_species_for_kind_is_none_when_nothing_grows_it(assets, monkeypatch, tmp_path):
     """The Scatter panel only draws Grow in BobFoliage when this resolves, so a pack that
     overrides the search path with no grass species must report that rather than guess."""

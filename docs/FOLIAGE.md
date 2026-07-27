@@ -1,9 +1,9 @@
 # BobFoliage: trees from curves and cards, not from image-to-3D
 
-Plan document, part built. **F1 and F2 are landed** (`core/geonodes/recipes/foliage.py`, gated by
-`tools/scripts/headless_foliage.py`, 79 checks); F3 to F5 are still plan. Where this describes F1 or
-F2 the code is the source of truth, the way it is in [SPLINES.md](SPLINES.md) and
-[SYSTEMS.md](SYSTEMS.md); everything else is intent.
+Plan document, part built. **F1, F2 and F3 are landed** (`core/geonodes/recipes/foliage.py` and
+`core/comfy.py` / `core/comfy_maps.py`, gated by `tools/scripts/headless_foliage.py`, 126 checks);
+F4 and F5 are still plan. Where this describes F1 to F3 the code is the source of truth, the way it is
+in [SPLINES.md](SPLINES.md) and [SYSTEMS.md](SYSTEMS.md); everything else is intent.
 
 **Origin.** Raised out of
 [COMFYUI.md's Foliage section](COMFYUI.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
@@ -238,7 +238,26 @@ Both rendered perfectly, and both were found by writing a check rather than by l
   length (`GNARL_SPAN`, tuned so the knob keeps the numbers F1 was measured at).
 
 Neither is a coincidence. They are the same failure the whole track exists to name: *tree-shaped is
-not the same as right*, and only a number tells them apart.
+not the same as right*, and only a number tells them apart. F3 found a third one of the same family
+(bark shaded through a box projection, so no bark UV reached the shader at all) and one of its own
+making (an alpha bleed that read from the silhouette's own background pixels, so it pushed white
+outwards and made a *harder* halo than doing nothing). Tally, by the phase that FOUND them rather than
+the one that shipped them: F2 found two of F1's, F3 found one of F2's and one of its own.
+
+#### What F3 measured
+
+| Measure | Value |
+|---|---|
+| Bark U per face, before the seam fix | **1,183 of 7,098** faces spanned 5/6 of the profile, not 1/6 |
+| Bark U per face, after | exactly 1/6 on all 7,098; 0 faces over 1.6× their share |
+| Bark grain, shipped clause | **5.7°** off vertical, coherence 0.490, block spread 1.2° over 16 blocks |
+| Bark grain, no clause | 83.8° off vertical (mud cracks) / 18.3° at coherence **0.018** (no grain) |
+| Bark seam ratio | 0.987 |
+| Generated 2×2 leaf atlas | 82.7% clear, 8.4% opaque; per-cell coverage 10.3 to 14.8% |
+| Cells reaching their bottom edge | 4 of 4; base/middle width 0.03 to 0.14 |
+| Most-similar pair of cells | 23.5 / 255 mean alpha apart |
+| The grid prompt, one 1024 frame | **5** sprays in a ring; 0 of 4 cells bottom-anchored |
+| Wall clock, warm 5080 | 2×2 atlas 9.9 s, bark set 4.9 s, compose + derive 0.18 s |
 
 ### 2.5.2 Plants and shrubs are the same recipe
 
@@ -304,9 +323,39 @@ anything else. Solved as follows, and gated.
   an atlas cell and must be; bark is deliberately not, because 0..1 and metres-based are mutually
   exclusive and this section had already chosen metres. The gate checks each on its own terms.
 
-  Known seam: the profile is cyclic, so its parameter runs 0 … 1−1/n and the last quad of each ring
-  wraps from nearly 1 back to 0, giving one column of reversed UV per limb. That is the ordinary
-  cylindrical-unwrap seam. F3 owns bark and can decide whether to hide it.
+  Known seam, **fixed at F3** — and it mattered more than "ordinary cylindrical-unwrap seam"
+  suggested. The profile is cyclic, so its parameter runs 0 … 1−1/n and the last quad of each ring
+  wraps from nearly 1 back to 0: one column per limb carrying the WHOLE texture, reversed and squeezed
+  into a single quad. Measured on a 6-sided profile, **1,183 of 7,098 faces** spanned 5/6 of the
+  profile where they were entitled to 1/6.
+
+  The fix costs no vertices and no interface change (`_unwrap_u`). A UV lives on the CORNER domain and
+  a corner can hold both 1 and 0 where a vertex cannot, so the wrap corners are found and pushed up by
+  a whole turn: a corner is a wrap corner when its u sits far below its own FACE's mean u, which
+  `Evaluate on Domain` at the face domain supplies (verified on 5.2 — a quad whose corners carried
+  −1, 0, 0, −1 read back −0.5). The alternative, an open profile with n+1 points, would add a vertex
+  ring per curve point and change every count F1 and F2 measured. After the fix all 7,098 faces span
+  exactly 1/6.
+
+  Measuring it needed care, and getting that wrong first is the useful part. The obvious check — each
+  face's span in the written UV against its share of the local circumference — reported a 5× miss on a
+  correctly fixed graph, because the U of a TAPERING limb genuinely spans a large range on any face
+  near the wrap: the circumference it is scaled by differs between the quad's two rings. That is shear,
+  it is inherent to a metres-based cylindrical UV, and it is not a seam. The gate divides the metres
+  term back out and measures the RAW profile parameter, where every face is entitled to exactly 1/n.
+
+#### The third defect the F1/F2 family shipped
+
+**Bark was assigned with BOX projection, so none of the UVs above reached it.** F2 built the
+metres-based bark UV in this section, measured it, and then created the bark material with
+`surface_material(..., box=True)` — which samples by WORLD POSITION. So `Bark Scale` was inert on the
+shader, the grain followed the world axes instead of the limb, and a leaning trunk was a slab of bark
+projected through it. Box projection is the right default for `surface_material` in general (it exists
+for un-UV'd props); a swept limb is precisely the case that carries real UVs and needs them.
+
+Nobody could see it at F2 because no bark set existed to put on a tree, which is the same shape as the
+inert radius and the metres-based gnarl: it renders, and only a number tells. That makes three defects
+in this family across two phases, all found by writing a check rather than by looking.
 - **The card UV** is the quad's own 0..1 (the `Mesh Grid` node's `UV Map` output, stashed as
   `bbt_fol_cuv` so it survives instancing) pushed into one cell of the atlas grid: `(cuv + (col,
   row)) / (cols, rows)`, row-major from the bottom-left, which is how the placeholder atlas is
@@ -355,19 +404,101 @@ rejects. It should say what it is for.
 
 ## 3. What the generation track owes it
 
-Two texture jobs and one warning:
+**Delivered at F3.** Two texture jobs and one warning. Neither job needed a new model or a new
+workflow, which is what the section predicted; both needed something Bob-side that it did not.
 
-1. **The leaf atlas.** A tileable-adjacent job: W4 with a grid layout prompt and the alpha kept,
-   emitting a 2x2 or 4x4 atlas of needle sprays or leaf clusters on transparent. Closer to
-   `tex_tileable` than to anything in the geometry family, and it needs no new model — the G3
-   measurement above says the alpha is already there.
-2. **Bark sets.** `comfy_texture_set` already produces these and needs no new workflow, but bark is
-   not a neutral test of it: bark grain is strongly DIRECTIONAL (vertical on most species, spiralled
-   on a few), and a tileable SDXL pass has no reason to keep an axis consistent across the wrap. The
-   existing seam ratio measures continuity, not direction, so F3 needs a check for it. If the
-   directionality does not hold, the fallback is a prompt clause plus a fixed orientation on the
-   sweep's UVs, not a new model.
+1. **The leaf atlas.** `comfy_leaf_atlas`, W4 with the alpha kept, as a set with an `opacity` role.
+   The consuming side was already built and waiting: `opacity` is in `assets.TEXTURE_MAP_ROLES` and
+   `materials.surface._wire_cutout` already prefers a dedicated opacity map over the basecolor's own
+   alpha, so nothing downstream changed to make a generated atlas reach a card.
+
+   **What was wrong in the sketch: "a grid layout prompt".** A diffusion model cannot be asked for a
+   grid. Measured — W4 with *"a 2 by 2 grid of four separate pine needle sprays, one spray per
+   quadrant, each growing upward from the bottom of its quadrant"* returned **five** sprays arranged
+   in a ring, straddling every cell boundary, each pointing a different way, none touching a cell's
+   bottom edge. Per-cell coverage passed anyway (8 to 11% opaque in all four quadrants), which is
+   exactly why coverage alone is not the check. So Bob generates ONE sprite per cell and composes the
+   grid in numpy (`comfy_maps.atlas_compose`). That makes the layout a guarantee instead of a hope,
+   makes the cells differ by construction, and costs less: four sprites at 512 measured 9.4 s against
+   7.3 s for one 1024 frame that could not be used.
+2. **Bark sets.** `comfy_bark_set` — `texture_variant` unchanged, plus one prompt clause and one new
+   measurement. The section's prediction held exactly: **directionality does not survive on its own,
+   and the fallback it named is the fix.** The clause is measured rather than chosen, over two species
+   and two seeds (worst case, degrees off vertical):
+
+   | Clause | Worst | Mean |
+   |---|---|---|
+   | `vertical bark, deep furrows running top to bottom` | **17.6** | 9.7 |
+   | `vertical grain running straight up and down` | 71.3 | 30.1 |
+   | `deep vertical furrows and ridges, grain parallel to the trunk axis, top to bottom` | 84.8 | 31.1 |
+   | no clause at all | 83.8 | 33.4 |
+
+   Naming the FEATURE and its direction is what works; naming the direction alone is not enough, and
+   adding more words made it worse. `comfy.BARK_SUFFIX` carries the winner and a unit test pins it,
+   because a well-meant rewrite of that string is a silently plastic trunk.
+
+   The other half of the section — "a fixed orientation on the sweep's UVs" — turned out to be needed
+   too, but for a Bob-side reason rather than a model one. See [2.7](#27-materials-and-uvs-which-f2-added).
 3. **The D16 guardrail**, so nobody waits for this by generating trees. Landed.
+
+### 3.1 The grain measure, and why the seam ratio could not do it
+
+The existing `seam_report` measures CONTINUITY across the wrap. `comfy_maps.grain_report` measures
+DIRECTION: the dominant gradient axis by doubled-angle (structure-tensor) averaging, turned 90 degrees
+into the axis the features themselves run along, plus a coherence and a per-block spread.
+
+Doubled-angle because grain is an axis and not a direction — a furrow edge points left on one side and
+right on the other, so averaging raw angles cancels them to nothing. Validated on images whose answer
+is known: a vertical sine grating reads 0.0 degrees off vertical at coherence 1.000, a horizontal one
+reads 90.0, white noise reads coherence 0.003.
+
+**Two failures, and neither measure catches both.** This is the finding that shaped the check:
+
+| Bark | Off vertical | Coherence | What it actually was |
+|---|---|---|---|
+| `rough conifer bark`, no clause | 83.8 deg | 0.487 | polygonal mud cracks — strongly coherent, wrong axis |
+| `grey beech bark`, no clause | 18.3 deg | **0.018** | no grain at all; the angle was luck |
+| with the shipped clause | 1.6 to 17.6 deg | 0.41 to 0.48 | bark |
+
+So a coherence threshold alone passes the mud cracks and an angle threshold alone passes the
+isotropic tile. The gate holds three numbers: angle under 25 degrees, coherence over 0.15, per-block
+spread under 20 degrees. The shipped clause measured 5.7 / 0.490 / 1.2 on the gate's own run.
+
+### 3.2 Orienting a sprite, which the brief did not ask for and the pixels did
+
+A card's v is 0 at its attachment, so a sprite has to grow from the BOTTOM EDGE of its cell — the
+property the placeholder atlas was hand-authored to have ([4.4](#44-textures-bring-your-own-or-generate)).
+W4 does not give it. Asked for *"the cut end of the twig at the bottom of the frame, needles fanning
+upward"*, it returned sprays lying diagonally with the twig at the LEFT, on which a card attaches by
+its side and reads as a leaf growing sideways out of a branch.
+
+Bob rotates each sprite instead (`comfy_maps.orient_sprite`), and the useful part is how the
+attaching end is identified, because two heuristics were tried and the first was not good enough:
+
+- **The principal axis's narrow end.** A spray is a bare twig at one end and a fan at the other, so
+  the narrow end attaches. Measured over a whole half of the axis the needles dilute it to a coin
+  toss (a symmetric spray separated 46.5 against 53.7); measured over the outer fifth the same spray
+  separates 4.3 against 32.4, so `AXIS_END_BAND` is a fifth. This is species-neutral and it is the
+  fallback.
+- **The woody/green split.** The direction from the green centroid to the woody centroid points at
+  the end that attaches, which is the question rather than a proxy for it. On the four sprites of one
+  generated atlas it disagreed with the geometric answer on exactly the two cells that came out
+  attached by their needle tips, and agreed on the two that came out right — so it is primary. It is
+  strictly better on a spray whose twig sticks out SIDEWAYS from its fan, because that sprite's long
+  axis is the fan and no end of it is the stem, so no rotation of the geometric axis can be correct.
+
+The colour cue assumes a colour, so it is guarded (a woody fraction between 1% and 40%, centroids at
+least 2.5% of the diagonal apart) and falls back to geometry outside those — which is what keeps an
+autumn or dead-foliage atlas from being oriented by hue. `base_taper` in `atlas_cells` measures the
+result either way, so a sprite this gets backwards is reported rather than hidden.
+
+One more thing the pixels forced. The atlas basecolor is written as RGB with the matte as a separate
+`opacity` map, so a fully transparent texel's COLOUR is load-bearing: bilinear filtering blends it
+into every silhouette, and a generation's transparent region is the studio background. Unflooded, every
+needle came back with a white rim. `alpha_bleed` floods leaf colour outward, and its own bug is worth
+recording because it was visible before it was measured: reading from any texel above alpha 0.02
+includes the anti-aliased silhouette's own near-transparent BACKGROUND pixels, so the flood pushed
+white outwards and produced a *harder* halo than doing nothing. The floor is 0.9 (`ATLAS_OPAQUE`).
 
 ## 4. Where it plugs in, and how it is driven
 
@@ -443,7 +574,20 @@ cell, because a card's v is 0 at the attachment and a centred spray would float 
 
 No placeholder BARK set ships. A bark-less tree is a solid-tint BobShader, which is the block-out
 convention everywhere else in the suite, and bark is F3's to generate — including the directionality
-problem, which a hand-made placeholder would only hide.
+problem, which a hand-made placeholder would only hide. That decision held: the directionality problem
+was real, and a placeholder would have hidden it ([3](#3-what-the-generation-track-owes-it)).
+
+**So the tree presets NAME the bark they want and resolve it when it exists.** `conifer` asks for
+`bark_conifer`, `broadleaf` for `bark_broadleaf`, and `comfy_bark_set(name=...)` writes under exactly
+that name into the generated pack — after which every tree of that species is wearing it with no
+assignment step anywhere, because the recipe resolves a set by name through the ordinary pack search
+path. Before it is generated the tree is a solid tint, which is the intended block-out state.
+
+That makes "the named set is absent" a STATE rather than an authoring mistake, and the validator has to
+say so differently: `assets.foliage_missing_sets()` reports those separately, and
+`validate_foliage_species()` includes them with wording that names the tool that makes them. A caller
+asking "is this preset well authored" filters them out; a caller asking "what does this tree still
+need" reads exactly them.
 
 ### 4.5 Routing: how an artist knows which tool makes what
 
@@ -513,11 +657,20 @@ the other tracks use.
   until now because a tool with no leaves cannot honestly be recommended for plants. The gate is 79
   checks, and no new op, MCP tool or panel state: the cards are modifier knobs and the presets are
   `build_geonodes` params.
-- **F3 The two texture jobs.** The atlas (W4-with-alpha into a grid, into the generated pack as a
-  set with an `opacity` role) and bark. Check: the existing seam and alpha measurements, plus
-  per-cell coverage on the atlas, plus a directionality measure on bark — a dominant-gradient-angle
-  histogram, since a bark set whose grain wanders is unusable on a swept trunk however well it
-  tiles.
+- **F3 The two texture jobs. DONE.** `comfy_leaf_atlas` (W4 per cell, composed Bob-side, into the
+  generated pack as a set with an `opacity` role) and `comfy_bark_set` (W1 plus a measured grain
+  clause), both in [3](#3-what-the-generation-track-owes-it). Neither needed a new model or a new
+  workflow; both needed something Bob-side that the plan had not predicted — a grid cannot be
+  prompted for, and a generated sprite has to be oriented ([3.2](#32-orienting-a-sprite-which-the-brief-did-not-ask-for-and-the-pixels-did)).
+
+  It also paid for two things F2 had left: the bark UV wrap seam, and the box projection that meant
+  no bark UV reached the shader at all ([2.7](#27-materials-and-uvs-which-f2-added)). And it answered
+  both of its open questions — the atlas grid lives in the set's sidecar, and the seam mattered.
+
+  The gate is `tools/scripts/headless_foliage.py` at **126 checks**, of which the 25 in the generation half
+  prints SKIP and exits 0 with no server. Measured end to end on a warm 5080: a 2×2 atlas in 9.9 s,
+  a bark set in 4.9 s, both resolving through the ordinary pack resolver onto a preset-built conifer
+  that renders at luminance range 0.48.
 - **F4 Wind, season, and the panel.** `S_EnvState` into the sway and the colour, per-instance phase,
   plus card translucency (deferred here from F2, where it was the one term a fourth master would
   have bought). Check: vertex displacement responds to `set_env` wind, autumn colour responds to
@@ -558,15 +711,17 @@ Each is tagged with the phase that forces it. None blocks starting F3.
   [2.7](#27-materials-and-uvs-which-f2-added) for what that bought and what it deferred.
 - **[F2, answered] Species presets: data or code?** Data, in the pack. See
   [4.3](#43-many-trees-many-species).
-- **[F3] Where does the atlas's cell layout live?** Still open, and F2 took the interim answer: the
-  recipe has `Atlas Columns` and `Atlas Rows` as live params, defaulting to the placeholder's 2×2.
-  That works and does not scale — an artist assigning a 4×4 generated atlas has to know to change
-  two numbers, and nothing checks that they did. The set should carry the grid in a sidecar, and the
-  pack spec already has a place for sidecar metadata. Whatever F3 picks, the params stay as the
-  override.
-- **[F3] Does the bark seam matter?** The cylindrical unwrap leaves one column of reversed UV per
-  limb ([2.7](#27-materials-and-uvs-which-f2-added)). Nothing is textured yet, so nobody can see it.
-  Raised now so F3 measures it rather than discovering it.
+- **[F3, answered] Where does the atlas's cell layout live?** In the SET, as a `meta.json` sidecar
+  (`atlas: {cols, rows}`), read by `assets.atlas_grid()` and used as the recipe's default. The
+  `Atlas Columns` / `Atlas Rows` params stay as the override, per the brief: a hand-made atlas may
+  ship no sidecar, and an artist may deliberately read a 4×4 as 2×2 to use only its bottom row. Every
+  generated atlas records its own grid, so the ordinary case now needs no numbers at all. The failure
+  this removes is silent by construction — a card reading 2×2 off a 4×4 atlas samples a quarter of the
+  cell it wanted plus slices of three neighbours, which renders as foliage.
+- **[F3, answered] Does the bark seam matter?** Yes, and more than the phrase "ordinary
+  cylindrical-unwrap seam" suggested: 1,183 of 7,098 faces carried five times their share of the
+  texture. Fixed for no vertices and no interface change; the measurement, the fix, and the wrong
+  first version of the check are in [2.7](#27-materials-and-uvs-which-f2-added).
 - **[F4, answered] Who builds the BobFoliage panel?** F4, which now says so in its phase entry. It
   was briefly unowned between F2 and this line, which is the state in which a described feature
   quietly never gets built. What is still genuinely open is one detail of it: whether **Make
