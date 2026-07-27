@@ -123,6 +123,46 @@ _LEVEL_DEFAULTS = (
 # never line up, so a whorl does not read as a wheel of spokes. It is a default, not a constant --
 # a whorled conifer wants 90 and an opposite-leaved species wants 180.
 
+# Which live socket each param key becomes (F5). The recipe owns both vocabularies -- the params
+# `build` reads and the sockets `add_input` creates -- so this is the one place they are tied
+# together, and `core/foliage_variants.py` reads a TUNED tree's live knobs back into params through
+# it. Without that a variant would be baked from the species preset alone and every slider the
+# artist moved would be silently discarded, which is a defect that renders: eight variants of a tree
+# nobody authored.
+#
+# The STRUCTURAL params (`levels`, `profile_segments`, `bark_set`, `atlas`, `skeleton`) are absent
+# on purpose: they are Python arguments to this function and have no socket at all. `Wind` and
+# `Wind Direction` are the mirror case -- sockets with no param key, because they belong to the
+# world and the applier overwrites them (docs/FOLIAGE.md 4.6). The gate holds both halves.
+PARAM_SOCKETS = {
+    "seed": "Seed", "height": "Height", "segments": "Segments",
+    "trunk_radius": "Trunk Radius", "taper": "Taper", "lean": "Lean", "gnarl": "Gnarl",
+    "branch_segments": "Branch Segments", "shade_smooth": "Shade Smooth",
+    "cards": "Cards", "card_size": "Card Size", "card_width": "Card Width",
+    "droop": "Droop", "card_spread": "Spread",
+    "atlas_cols": "Atlas Columns", "atlas_rows": "Atlas Rows", "bark_scale": "Bark Scale",
+    "sway": "Sway", "leaf_flutter": "Leaf Flutter",
+}
+_LEVEL_SOCKETS = {"branches": "Branches", "angle": "Angle", "length": "Length",
+                  "radius": "Radius", "phyllotaxy": "Phyllotaxy", "start": "Start"}
+# The two sockets the world owns, listed so a caller can say so rather than infer it from an absence.
+WORLD_SOCKETS = ("Wind", "Wind Direction")
+
+
+def param_socket(key):
+    """The interface socket name a param key becomes, or None when it is structural.
+
+    `l3_angle` -> `L3 Angle`, by the same arithmetic `build` uses to create it, so a level block
+    added to `assets.FOLIAGE_PARAM_KEYS` needs no second table here.
+    """
+    if key in PARAM_SOCKETS:
+        return PARAM_SOCKETS[key]
+    if key.startswith("l") and "_" in key:
+        head, _, tail = key.partition("_")
+        if head[1:].isdigit() and tail in _LEVEL_SOCKETS:
+            return f"L{int(head[1:])} {_LEVEL_SOCKETS[tail]}"
+    return None
+
 
 def _f(ng, int_socket, location=(0, 0)):
     """An INT socket as a float. Blender converts on link, but noise `W` and Math both want a real

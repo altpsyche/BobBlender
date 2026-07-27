@@ -1,10 +1,11 @@
 # BobFoliage: trees from curves and cards, not from image-to-3D
 
-Plan document, part built. **F1, F2, F3 and F4 are landed** (`core/geonodes/recipes/foliage.py`,
-`core/foliage_build.py`, `ui/foliage.py` and `core/comfy.py` / `core/comfy_maps.py`, gated by
-`tools/scripts/headless_foliage.py`, 184 checks); F5 is still plan. Where this describes F1 to F4 the
-code is the source of truth, the way it is in [SPLINES.md](SPLINES.md) and [SYSTEMS.md](SYSTEMS.md);
-everything else is intent.
+Plan document, **built**. F1 to F5 are all landed (`core/geonodes/recipes/foliage.py`,
+`core/foliage_build.py`, `core/foliage_variants.py`, `ui/foliage.py` and `core/comfy.py` /
+`core/comfy_maps.py`, gated by `tools/scripts/headless_foliage.py`, 240 checks). The code is the
+source of truth throughout, the way it is in [SPLINES.md](SPLINES.md) and
+[SYSTEMS.md](SYSTEMS.md); what remains as intent is the short list at the end of
+[section 6](#6-open-questions), and none of it is on this track's path.
 
 **Origin.** Raised out of
 [COMFYUI.md's Foliage section](COMFYUI.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
@@ -218,10 +219,11 @@ changes, and the suite's whole shape is that one env state drives everything.
 
 ### 2.5 One tree in a panel, N variants in the world
 
-The authoring shape, and the part that needed a decision rather than a design:
+**Landed at F5** (`core/foliage_variants.py`, and Make Variants on the panel). The authoring shape,
+and the part that needed a decision rather than a design:
 
     N-panel: build ONE live tree, tune it with sliders
-      -> Make Variants: bake N seeds into BOB_Assets_Trees as real objects
+      -> Make Variants: bake N seeds into BOB_Assets_<Kind> as real objects
       -> Scatter: a normal layer, picking randomly among those N
 
 **Scatter cannot re-seed a tree per instance, and that is a property of Blender, not a shortcut.** An
@@ -236,6 +238,49 @@ already has the whole machinery: `BOB_Assets_Trees`, the random pick over a coll
 per-layer `assets_exclude` filter for dropping a variant that reads badly on a slope. Eight variants
 is the working default — enough that a repeat is not findable in a frame, few enough to bake in a
 minute.
+
+#### A variant is a LIVE GN object, which was F5's one real hazard
+
+"Bake" reads as "apply the modifier", and doing that would have silently deleted the whole of
+[2.4](#24-wind-and-season-for-free): the sway is a `Set Position` driven by Scene Time, so an
+applied mesh is a tree stopped at whatever frame it was frozen on, and a still forest under a moving
+sky reads as a render setting rather than as a missing feature. F4's measurement did not settle
+this — it established that two instances AGREE at one frame (9.54e-07 m apart), which is a statement
+about phase and says nothing about motion. Six numbers settled it:
+
+| Measure | Value |
+|---|---|
+| An INSTANCED live-GN variant, frame 1 to 31 | **1.322786 m**, the same distance its source object moves |
+| An APPLIED copy, over the same 30 frames | **exactly 0.0 m** |
+| One live variant at 100 instances / at 400 | 5.87 / **5.79** ms/frame |
+| Eight live variants at 100 / at 400 | 7.68 / **7.65** ms/frame |
+| One live tree with no instancer at all | 5.67 ms/frame |
+| Eight APPLIED meshes at 400 instances | 0.00 ms/frame |
+
+So `Collection Info` → `Instance on Points` re-evaluates the source every frame and a baked stand
+keeps its wind; and **the cost is per VARIANT and flat in instance count** — 400 instances cost what
+100 do, and eight variants cost barely more than one, because Blender evaluates independent GN
+objects in parallel. That is the shape that makes the choice easy: a forest is no dearer than a
+copse, and the price of a stand that moves is a fixed handful of milliseconds that does not grow
+with the forest. The applied stand's 0.00 ms is real rather than a measurement artifact — a mesh
+with no time dependency is never re-evaluated at all — which is why the frozen route survives in
+exactly one place, the pack writer ([4.7](#47-what-writes-a-variant-into-the-pack)).
+
+**Variants are spread 40 m apart inside the pool, and that is not cosmetic.** A tree's phase is its
+own world location, a pool is authored at the origin, and eight variants stacked at (0,0,0) share
+one phase and pulse in unison — the failure that baking N variants exists to prevent, arriving by
+the back door. Measured over a full gust cycle: stacked, two same-seed variants differ by **0.0 m**;
+40 m apart, by **1.2227 m**. The spread costs nothing, because `Collection Info`'s Reset Children
+means an instance still lands on its point (measured: a variant authored at x=40 and instanced on a
+point at x=0 arrives centred on x=−0.29).
+
+That last measurement needed care, and getting it wrong first is the useful part. Two sinusoids of
+the same frequency and different phase are equal twice per cycle, so a single-frame reading is a
+coin toss: at frame 1 the 40 m spread differs by 0.0087 m — the two phases happen to land on the
+same point of the gust, 0.657 against 0.652 — and at frame 9 by 1.1618 m. The first version of the
+check read frame 1 and failed on a recipe that was working perfectly, which is F3's bark-seam
+mistake in the other direction. Out of step means "not always together", so the gate samples a
+period.
 
 Variety on top of N is continuous and free, from what scatter already does: random scale, random
 yaw, the altitude and noise masks. **Wind phase is NOT on that list, and F4 measured why.** An
@@ -308,9 +353,33 @@ making (an alpha bleed that read from the silhouette's own background pixels, so
 outwards and made a *harder* halo than doing nothing). F4 found one of its own the same way: a wind
 falloff weighted per VERTEX sheared every swept ring and drifted a tip 7.7e-05 m away from the card
 standing on it, in a tree that rendered perfectly — fixed by weighting from the skeleton point
-(`bbt_fol_anchor`) instead, at no vertex cost. Tally, by the phase that FOUND them rather than the
-one that shipped them: F2 found two of F1's, F3 found one of F2's and one of its own, F4 one of its
-own. **Every one of the six was found by writing a check, and none by looking.**
+(`bbt_fol_anchor`) instead, at no vertex cost.
+
+**F5 found two of its own, and neither is in the recipe.** Both are about the pool rather than the
+tree, which is the one part of this track that had never been walked:
+
+- **A baked variant is not evaluated where it lives.** `BOB_Assets_<Kind>` is deliberately not
+  linked to the scene — the pool shows up only as scattered instances — and an object outside the
+  view layer is not evaluated at all, so `obj.evaluated_get(depsgraph).to_mesh()` on a pooled variant
+  returns an EMPTY mesh rather than raising. The first end-to-end run reported four freshly baked
+  variants at 0 verts each and exported four GLBs with no primitives, having said nothing. Nothing
+  else caught it because INSTANCING is unaffected: `Collection Info` depends on the object, so the
+  depsgraph pulls it in and the stand renders correctly at 25,284 verts. Only a direct read needs
+  `foliage_variants.evaluable`, and every direct read now goes through it.
+- **The world's wind reached the hero tree and not the stand.** `apply_wind` walked `scene.objects`,
+  which by the same property walks straight past every pooled variant — so the tree in the viewport
+  blew and the four hundred instances behind it stood still, in a scene where the wind visibly
+  worked. `wind_targets` now walks the pools too.
+
+There was a third in the family, caught in a check rather than in the code: the gate's phase check
+read one frame, and two sinusoids of the same frequency and different phase are equal twice a cycle,
+so it reported 0.0087 m and failed on a bake that was correct. See
+[2.5](#25-one-tree-in-a-panel-n-variants-in-the-world) — a check can be wrong in exactly the way the
+code can.
+
+Tally, by the phase that FOUND them rather than the one that shipped them: F2 found two of F1's, F3
+found one of F2's and one of its own, F4 one of its own, F5 two of its own. **Every one of the eight
+was found by writing a check, and none by looking.**
 
 #### What F3 measured
 
@@ -362,15 +431,66 @@ the last branch level and enlarges the cards to compensate; LOD2 is a handful of
 Each LOD is therefore another build of the same recipe at different params, which is nearly free
 because the recipe is procedural. It needs its own function, NOT `build_lods`.
 
-Working budget targets, to be confirmed at F5 rather than assumed: LOD0 about 8 k verts, LOD1 about
-2 k, LOD2 under 300. If LOD0 cannot be held near 8 k with cards included, the profile drops from 6
-sides to 4 before anything else gives.
+#### What F5 derived, having declined to defend the old targets
 
-**F2's numbers say that clause will fire.** The shipped conifer is at 12.6 k with the profile already
-down to 5, and the cards are 39% of it — so the honest reading is that the 8 k target was set before
-cards existed and F5 should re-derive it rather than defend it. The cheapest levers, measured: the
-profile is exactly linear in vertex count (3 → 4,254, 12 → 17,016), and cards are 4 verts each times
-tips times `Cards`, so halving either halves that share outright.
+The pre-cards targets were LOD0 about 8 k verts, LOD1 about 2 k, LOD2 under 300, with a clause about
+dropping the profile from 6 sides to 4. **The clause fired and the targets did not survive**, which
+is what re-deriving means. The shipped conifer is 12,642 verts with its profile already at 5 and its
+1,228 cards making up 39% of that, and dropping the profile is the weakest of the available levers:
+it is exactly linear, so 5 sides to 4 is 1,546 verts of 12,642, where dropping a branch level is
+9,322.
+
+So the ladder drops levels, and the shipped rungs are:
+
+    LOD0  as authored
+    LOD1  levels − 1 (min 1), profile − 1 (min 3)
+    LOD2  levels 1, profile 3, segments ≤ 8, branch segments ≤ 3
+
+with `Cards` and `L1 Branches` left ALONE at LOD2, which was not the first rule tried — see below.
+Measured on the four shipped species, at each rung, against LOD0:
+
+| Species | LOD0 | LOD1 | LOD2 |
+|---|---|---|---|
+| `conifer` | 12,642 v | 3,320 v (26.3%) | 490 v (3.9%) |
+| `broadleaf` | 7,916 v | 1,740 v (22.0%) | 218 v (2.8%) |
+| `shrub` | 1,850 v | 364 v (19.7%) | 270 v (14.6%) |
+| `grass_tuft` | 300 v | *(already at the floor)* | 258 v (86.0%) |
+
+A rung that comes back identical to LOD0 is dropped rather than shipped: `grass_tuft` is one level
+on a 3-sided profile before anything is taken away, so it gets two rungs and not three, and a second
+copy of LOD0 under a name promising it is cheaper never reaches the pool.
+
+**The card enlargement is measured, not chosen, and it has two constraints.** Dropping a branch level
+removes most of the tips, and a card grows on a tip, so a plain `levels-1` rebuild thins the canopy
+to a fraction of its coverage — which at distance IS the tree. Total card area goes as the square of
+`Card Size`, so scaling by `sqrt(area_LOD0 / area_rung)` restores it exactly, for any species, with
+no constant to tune or to drift.
+
+That rule alone is right at LOD1 and unusable at LOD2. Holding the conifer's 447 m² of canopy on 18
+cards needs each card 7.4 m across, and the tree comes back **253% as wide** — a distant conifer
+that is suddenly a sphere, which is a worse pop than the thinning. So the enlargement is also capped
+where the crown reaches 1.15× LOD0's width, which needs no third build: crown width is very nearly
+linear in card size, so the two builds already taken solve it. Every rung, every species, comes in
+at or under **115%** of LOD0's width.
+
+**What that costs at LOD2, stated rather than hidden.** The conifer holds **29.8%** of its canopy
+area on 76 cards; broadleaf and shrub hold 100% and 91.5%. A narrow crown of 1,228 small cards has
+no 76-card equivalent that is not a sphere, and with no impostor bake behind the rung the width has
+to win. It is four times better than the rule this replaced — capping `Cards` at 2 and `L1 Branches`
+at 8 gave a 168-vert conifer holding **7.5%**, a stick with leaves on it — for three times the
+vertices, and it is also the simpler rule.
+
+Frame cost per rung, on the 519-tree stand the gate builds, eight live variants each:
+
+| Rung | Verts each | ms/frame |
+|---|---|---|
+| LOD0 | 12,642 | 14.43 |
+| LOD1 | 3,320 | 10.05 |
+| LOD2 | 490 | 7.90 |
+
+which is the per-VARIANT cost of [2.5](#25-one-tree-in-a-panel-n-variants-in-the-world) again: the
+rung changes what a frame draws far more than what it evaluates, because the instance count is not
+what the number is made of.
 
 ### 2.7 Materials and UVs, which F2 added
 
@@ -741,8 +861,10 @@ BobFoliage must actually resolve a species (a note pointing somewhere nothing gr
 end than the refusal it replaced), and the D16 half — every noted kind is a real kind, rocks carries
 no note — stays owned by `headless_redwood.py`.
 
-The loop closes in the other direction too: Make Variants reports which collection it filled, so the
-artist ends up back at the Scatter panel holding the assets they just grew. That half is F5's.
+The loop closes in the other direction too, **at F5**: Make Variants reports which collection it
+filled, so the artist ends up back at the Scatter panel holding the assets they just grew. It is
+`BOB_Assets_<Kind>` for the SPECIES's kind, not for anything chosen at bake time, so a pine and a
+shrub authored beside each other fill different pools with nothing to set.
 
 **The loop closed at F4.** Grow in BobFoliage now builds through `foliage_build.grow`, so the tree it
 makes is the same object the BobFoliage panel adds — stamped, filed in `BOB_Foliage`, already listed
@@ -770,6 +892,53 @@ what keeps every F1–F3 measurement valid.
 Season goes the other way, through the shader: one driven Value node in a shared group, installed by
 the same `install_env_drivers` that feeds S_EnvState. The two mechanisms are different because the
 two effects are: one moves vertices and one changes a colour.
+
+**F5 had to widen who "every tree" means.** The applier walked `scene.objects`, and a baked variant
+lives in `BOB_Assets_<Kind>`, which is deliberately not linked to the scene — so the hero tree in
+the viewport blew and the whole stand behind it stood still, in a scene where the wind demonstrably
+worked. `foliage_build.wind_targets` walks the authored trees and the pools, and the gate checks the
+pooled half specifically ([2.5.1](#251-what-f1-and-f2-measured)).
+
+### 4.7 What writes a variant into the pack
+
+**Landed at F5** (`foliage_variants.write_variant_pack`), and it is the narrow writer the open
+question predicted. `gen_assets.finish_asset` is the wrong tool and reaching for it would undo F1
+through F3 at once: it bakes dense-to-low (a procedural tree has no dense version), decimates (the
+one thing [2.6](#26-lods) forbids — it spikes the twigs and destroys the card quads), Smart-UV-
+projects (the bark UV is metres-based and measured and the card UV indexes an atlas cell) and
+converts to a BobShader (the tree has two already). Confirmed before building rather than after, as
+asked. What is reused is `origin_to_base`, `generated_dir` / `unique_asset_name`, and
+`write_manifest_entry` / `write_sidecar`, and nothing else.
+
+`origin_to_base` is worth a line of its own, because it is a no-op on the thing you would call it
+on: it reads `obj.data.vertices`, and a live GN object's own mesh datablock is EMPTY, so it does
+nothing at all and reports nothing. It means something only once the mesh is frozen, which is where
+the writer calls it. The variants do not need it — the recipe grows a trunk from (0,0,0), and the
+lowest vertex of a baked conifer sits at −0.00044 m — but that is a measurement in the gate and not
+an assumption.
+
+**A packed variant is FROZEN, and the entry says so.** glTF carries meshes and PBR materials; it
+cannot carry a node group. So the export is the evaluated mesh at one frame, and the round trip
+loses the two things F4 built: the wind (an applied mesh moves 0.0 m over 30 frames) and the leaf
+shader's season and translucency, which come back a plain Principled. It also splits vertices at the
+UV seams — 12,642 out, 14,188 back — which is glTF's normal/UV split and not a change to the mesh.
+
+So every entry carries a `foliage` block naming the species, the seed and the rung's params, which
+makes the frozen mesh the FALLBACK rather than the record: a Bob file that can resolve the species
+regrows the exact variant, alive, from two numbers. Gated, and it is an equality rather than a
+resemblance — **0.00e+00 m over 12,642 verts**. That is strictly better than the GLB and costs one
+dict.
+
+One thing the writer had to do that is not about foliage at all. **The glTF exporter segfaults on
+the card material.** Isolated: exporting a frozen tree with both BobShaders exits 139 at teardown,
+with the bark material alone exits 0, with the card material alone exits 139, and stripping the
+card's image nodes does not help — so it is the Mix Shader chain (`_wire_translucency` mattes a
+Translucent against a Transparent and mixes that into the Principled) that the exporter's tree walk
+cannot survive. The writer therefore swaps in plain Principleds built from the same texture sets
+(`gen_assets.baked_material`, split out of `apply_baked_material` for this caller), which is both
+the fix and the honest thing: it is what the export would have flattened to anyway, said out loud.
+A gate that crashes AFTER printing its verdict reads as a clean run to an exit code, which is how
+the G2 gate hid a crash for two phases ([COMFYUI.md](COMFYUI.md)), so this is not a workaround.
 
 ## 5. Phases
 
@@ -808,7 +977,7 @@ the other tracks use.
   season layer and the card translucency in the shading, the world feed that drives both, and the
   BobFoliage panel ([2.4](#24-wind-and-season-for-free), [2.7](#27-materials-and-uvs-which-f2-added),
   [4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl),
-  [4.6](#46-how-the-world-reaches-a-tree)). The gate is **184 checks**.
+  [4.6](#46-how-the-world-reaches-a-tree)). It took the gate to **184 checks**.
 
   It answered its one real hazard in the safe direction: **no shared master was widened.**
   Translucency is a second BSDF lobe that the master's three-scalar contract cannot express, and the
@@ -829,21 +998,32 @@ the other tracks use.
   this track has stayed off by construction); adding a tree leaves another tree's tuned knobs alone;
   a structural rebuild keeps them; loading a species keeps the tree's transform AND its object
   identity; and the World applier alone is enough to move every tree's wind.
-- **F5 Variants, LODs and scatter.** Make Variants (N seeds into `BOB_Assets_<Kind>`), the foliage
-  LOD ladder, then a real stand scattered on a terrain at a real density. Check: no two variants
-  share a vertex set, the per-LOD budgets in [2.6](#26-lods), instance counts and frame time per LOD,
-  origin at the base on every variant (`gen_assets.origin_to_base`, or a scattered tree sits buried),
-  and a render beside the redwood reference that started this.
+- **F5 Variants, LODs and a real stand. DONE.** Make Variants (N seeds into `BOB_Assets_<Kind>`,
+  `core/foliage_variants.py`), the foliage LOD ladder, the narrow pack writer, and a stand scattered
+  on a terrain at a real density ([2.5](#25-one-tree-in-a-panel-n-variants-in-the-world),
+  [2.6](#26-lods), [4.7](#47-what-writes-a-variant-into-the-pack)). The gate is **240 checks**.
 
-  **Open before F5 starts:** what writes a variant into the pack. `gen_assets.finish_asset` is built
-  for a GENERATED mesh — it bakes dense-to-low, decimates, unwraps and converts to a BobShader, and a
-  procedural tree needs none of that: its UVs are known, its LODs are rebuilds, and it already has its
-  materials. Calling it would undo F1's work. Expect a narrow writer that reuses only the pack write,
-  the manifest entry and `origin_to_base`, and confirm that before building rather than after.
+  It answered its one real hazard the OTHER way from F4's: a variant is a live GN object, so a baked
+  stand keeps its wind, and the measurements say the cost of that is per variant and flat in
+  instance count. It also re-derived the budgets rather than defending them — the 8 k LOD0 target
+  predated cards and the shipped conifer is 12,642 — and found two defects of its own, both in the
+  pool rather than in the tree: a pooled variant is not evaluated where it lives, and the world's
+  wind was reaching the hero tree and not the stand
+  ([2.5.1](#251-what-f1-and-f2-measured)).
+
+  Its open question is answered in [4.7](#47-what-writes-a-variant-into-the-pack): a narrow writer
+  reusing `origin_to_base`, the pack write and the manifest entry, confirmed before building rather
+  than after. `finish_asset` would have undone F1 through F3, and `origin_to_base` turns out to be a
+  no-op on the live object anybody would reach for it with.
+
+  The stand, measured: 8 variants at 12,642 verts, **945 trees over 260 m** drawing on all 8, and
+  `_generated/foliage_stand.png` beside `_generated/redwood_03.png`, which is the frame that started
+  this. Reproduce it with `tools/scripts/render_foliage_stand.py`.
 
 ## 6. Open questions
 
-Each is tagged with the phase that forces it. None blocks starting F5.
+Each is tagged with the phase that answered it. The two still open are tagged for when, and
+neither is on this track's path.
 
 - **[F2, answered] What master does a leaf card use?** The `surface` master with a cutout wired
   straight to the Principled, not a fourth master. See
@@ -861,21 +1041,28 @@ Each is tagged with the phase that forces it. None blocks starting F5.
   cylindrical-unwrap seam" suggested: 1,183 of 7,098 faces carried five times their share of the
   texture. Fixed for no vertices and no interface change; the measurement, the fix, and the wrong
   first version of the check are in [2.7](#27-materials-and-uvs-which-f2-added).
-- **[F4, answered] Who builds the BobFoliage panel?** F4 did. **Make Variants is not on it**, which
-  confirms the preference this line recorded rather than inheriting it: a button that does nothing
-  teaches an artist to distrust every other button beside it, and the affordance is worth less than
-  the trust. The panel is complete without it, which is the part worth stating — a hero tree is a
-  finished deliverable on its own ([2.5](#25-one-tree-in-a-panel-n-variants-in-the-world)), so
-  nothing on the panel is waiting for F5 to make sense. Duplicate Tree covers placing a small stand
-  by hand in the meantime, which is what an artist would otherwise want the missing button for.
+- **[F4, answered] Who builds the BobFoliage panel?** F4 did, and it kept **Make Variants off it**
+  rather than shipping it greyed: a button that does nothing teaches an artist to distrust every
+  other button beside it, and the affordance is worth less than the trust. That held — the panel was
+  complete without it, because a hero tree is a finished deliverable on its own
+  ([2.5](#25-one-tree-in-a-panel-n-variants-in-the-world)) — and **F5 added it with the thing it
+  does**, in a Variants sub-panel with the count, the LOD toggle and the pack write, reporting which
+  `BOB_Assets_<Kind>` it filled so the artist ends up back at Scatter holding what they just grew.
 - **[F4, answered] Does translucency belong on the surface master?** No, and for a reason stronger
   than the version-bump cost: the master outputs three scalars into one Principled and translucency
   is a second BSDF lobe, so there is no socket on it that could carry one. It is wired in the card
   wrapper next to the alpha, matted by the same cutout. See
   [2.7](#27-materials-and-uvs-which-f2-added).
-- **[F5] What writes a variant into the pack?** See the F5 phase note; `finish_asset` is the wrong
-  tool and reaching for it would undo F1 and F2 both — the tree's UVs, LODs and materials are all
-  already correct, and `finish_asset` bakes, decimates and unwraps.
+- **[F5, answered] What writes a variant into the pack?** A narrow writer reusing `origin_to_base`,
+  the pack write and the manifest entry, and nothing else — confirmed before building rather than
+  after. `finish_asset` would have undone F1 through F3 at once. The answer grew one part the
+  question did not anticipate: because glTF carries no node group, the entry records the species and
+  the seed as well as the mesh, so the frozen GLB is the fallback and two numbers are the record.
+  See [4.7](#47-what-writes-a-variant-into-the-pack).
+- **[F5, answered] Is a baked variant alive or applied?** Alive. An instanced live-GN tree is still
+  re-evaluated per frame (1.322786 m of sway between frame 1 and 31, against 0.0 m for an applied
+  copy), and the cost of that is per VARIANT and flat in instance count. See
+  [2.5](#25-one-tree-in-a-panel-n-variants-in-the-world).
 - **[anytime] How much of MTree's parameter model to borrow?** It and the other GN tree generators
   have converged on roughly the same knobs, and that convergence is worth treating as prior art
   rather than re-deriving. MTree is **GPL**, so this is a question about the parameter vocabulary and
@@ -888,7 +1075,10 @@ Each is tagged with the phase that forces it. None blocks starting F5.
   drawn by hand and the branch solver runs on it unchanged. Cheap to add (the level stack already
   takes any curve as its level-0 parent) and worth doing only once someone wants it.
 
-**Settled and not to be reopened without new evidence:** the trunk is a sweep, always — there is no
+**Settled and not to be reopened without new evidence:** a variant is a live GN object and not an
+applied mesh, and variants are spread out in the pool so each carries its own phase; the LOD ladder
+is a rebuild and never a decimate, and its card enlargement is fitted to the canopy's area and
+capped by the crown's width. The trunk is a sweep, always — there is no
 generated-mesh trunk option, so a tree needs no ComfyUI server for its geometry, only for the two
 texture sets, and both have a block-out fallback. Scatter picks among baked variants; it does not
 re-seed per instance. Plants are the same recipe at a lower depth, not a second one.

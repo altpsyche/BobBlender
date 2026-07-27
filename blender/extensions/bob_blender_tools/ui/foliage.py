@@ -27,10 +27,11 @@ it imports no ui module and reads no PropertyGroup. That is why BobFoliage adds 
 on the live-bridge-only list every curve op is on (docs/MCP.md, known gap) -- the headless gate
 builds trees through the same functions this panel does, with the addon not registered at all.
 
-**Make Variants is not here.** It arrives with F5, which owns it. A button that reports "coming
-soon" teaches an artist to distrust every other button on the panel, and the affordance is worth
-less than the trust. Confirmed rather than inherited: the panel is complete without it -- a hero
-tree is a finished deliverable on its own (docs/FOLIAGE.md 2.5), so nothing here is waiting.
+**Make Variants arrived with F5**, which is the phase that owns it, and not before: a button that
+reports "coming soon" teaches an artist to distrust every other button beside it. It is the last
+hop of the track -- one authored tree becomes the pool a scatter layer instances -- so it closes the
+loop the Scatter panel's Grow button opened, and it reports which `BOB_Assets_<Kind>` it filled so
+an artist ends up back at Scatter holding the assets they just grew (docs/FOLIAGE.md 4.5).
 """
 
 import random
@@ -39,7 +40,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
-from ..core import assets, foliage_build
+from ..core import assets, foliage_build, foliage_variants
 from . import helpers
 
 # Live knobs, grouped by the sub-panel that draws them. A name absent from this build's interface is
@@ -165,6 +166,21 @@ class BBT_FoliageProps(PropertyGroup):
     gen_seed: IntProperty(
         name="Seed", default=0, min=0,
         description="Same prompt and seed give the same texture set")
+    variant_count: IntProperty(
+        name="Variants", default=foliage_variants.DEFAULT_VARIANTS, min=1, max=32,
+        description="How many seeds to bake into the asset pool. Eight is enough that a repeat is "
+                    "not findable in a frame and few enough to bake in a minute")
+    variant_lods: BoolProperty(
+        name="LOD Ladder", default=True,
+        description="Also build each variant at two cheaper rungs, into BOB_Foliage_LODs. A "
+                    "rebuild of the recipe at a lower branch depth, never a decimate, which would "
+                    "spike the twigs and destroy the card quads")
+    variant_pack: BoolProperty(
+        name="Write to Pack", default=False,
+        description="Also export the bake as portable assets in the generated pack. A packed "
+                    "variant is FROZEN -- glTF carries no node group, so the wind and the leaf "
+                    "season stay behind -- but its entry records the species and the seed, so a "
+                    "Bob file can regrow the exact variant alive")
 
 
 # -- Operators. Each resolves context and calls core/foliage_build; none builds a tree itself. ----
@@ -230,8 +246,8 @@ class BBT_OT_foliage_remove(Operator):
 class BBT_OT_foliage_duplicate(Operator):
     bl_idname = "bob_blender_tools.foliage_duplicate"
     bl_label = "Duplicate Tree"
-    bl_description = ("Grow another tree of the active tree's species with a fresh seed. The way "
-                      "to place a stand by hand before F5's Make Variants exists")
+    bl_description = ("Grow another tree of the active tree's species with a fresh seed. For a hero "
+                      "tree placed by hand; a stand comes from Make Variants and a scatter layer")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -310,12 +326,49 @@ class BBT_OT_foliage_random_seed(Operator):
 
     def execute(self, context):
         obj = _active_tree(context)
-        inp = foliage_build._live_input(obj, self.socket) if obj is not None else None
+        inp = foliage_build.live_input(obj, self.socket) if obj is not None else None
         if inp is None:
             self.report({"ERROR"}, f"No '{self.socket}' knob on this tree")
             return {"CANCELLED"}
         inp.value = random.randint(0, 99999)
         obj.update_tag()
+        return {"FINISHED"}
+
+
+class BBT_OT_foliage_make_variants(Operator):
+    bl_idname = "bob_blender_tools.foliage_make_variants"
+    bl_label = "Make Variants"
+    bl_description = ("Bake the active tree into N seeds in BOB_Assets_<Kind>, ready for a scatter "
+                      "layer. The variants stay LIVE, so the stand keeps the world's wind: an "
+                      "instanced tree is still re-evaluated per frame, and the cost is per variant "
+                      "rather than per instance")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        tree = _active_tree(context)
+        if tree is None:
+            self.report({"ERROR"}, "Add or pick a tree first")
+            return {"CANCELLED"}
+        scn = context.scene.bbt_foliage
+        pack = None
+        if scn.variant_pack:
+            from .shaders import _generated_pack
+
+            pack = _generated_pack()
+            if not pack:
+                self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
+                                       "add-on preferences), or turn Write to Pack off")
+                return {"CANCELLED"}
+        levels = foliage_variants.LOD_LEVELS if scn.variant_lods else (0,)
+        report = foliage_variants.make_variants(
+            tree, count=int(scn.variant_count), levels=levels, scene=context.scene,
+            overrides=_structural(scn), pack_dir=pack)
+        # Which collection it filled, because that is where the artist goes next: the Scatter panel
+        # reads exactly this pool (docs/FOLIAGE.md 4.5, the loop closing in the other direction).
+        rungs = ", ".join(f"LOD{level} {verts:,}v"
+                          for level, verts in sorted(report["lod_verts"].items()))
+        self.report({"INFO"}, f"{report['count']} variants in {report['collection']} ({rungs})"
+                              + (f"; {len(report['pack'])} written to the pack" if pack else ""))
         return {"FINISHED"}
 
 
@@ -559,6 +612,42 @@ class BBT_PT_foliage_wind(Panel):
                        icon="INFO")
 
 
+class BBT_PT_foliage_variants(Panel):
+    bl_label = "Variants"
+    bl_idname = "BBT_PT_foliage_variants"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_foliage"
+
+    def draw(self, context):
+        layout = self.layout
+        scn = context.scene.bbt_foliage
+        tree = _active_tree(context)
+        if tree is None:
+            layout.label(text="Add or pick a tree to bake it.", icon="INFO")
+            return
+        kind = foliage_variants.variant_kind(tree)
+        row = layout.row(align=True)
+        row.prop(scn, "variant_count")
+        row.prop(scn, "variant_lods", toggle=True)
+        layout.prop(scn, "variant_pack")
+        # A structural action, drawn the way Build is: this replaces a pool a scatter layer may
+        # already be instancing, so it is a press and never a callback.
+        helpers.structural_action(layout, "bob_blender_tools.foliage_make_variants",
+                                  note=f"fills BOB_Assets_{kind.capitalize()} for a scatter layer")
+        pooled = foliage_variants.variant_summary(kind)
+        cap = layout.column()
+        cap.enabled = False
+        if pooled:
+            cap.label(text=f"{len(pooled)} in BOB_Assets_{kind.capitalize()}: "
+                           f"{pooled[0][1]:,} verts each at LOD0", icon="OUTLINER_COLLECTION")
+            cap.label(text="they stay live, so the stand feels the world's wind")
+        else:
+            cap.label(text=f"nothing baked yet; the pool is BOB_Assets_{kind.capitalize()}",
+                      icon="INFO")
+
+
 class BBT_PT_foliage_textures(Panel):
     bl_label = "Textures"
     bl_idname = "BBT_PT_foliage_textures"
@@ -623,6 +712,7 @@ CLASSES = (
     BBT_OT_foliage_load_species,
     BBT_OT_foliage_build,
     BBT_OT_foliage_random_seed,
+    BBT_OT_foliage_make_variants,
     BBT_OT_foliage_generate_bark,
     BBT_OT_foliage_generate_atlas,
     BBT_UL_foliage,
@@ -630,6 +720,7 @@ CLASSES = (
     BBT_PT_foliage_shape,
     BBT_PT_foliage_leaves,
     BBT_PT_foliage_wind,
+    BBT_PT_foliage_variants,
     BBT_PT_foliage_textures,
 )
 

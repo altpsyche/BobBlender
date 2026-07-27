@@ -386,11 +386,81 @@ blocked out. The proxy's own height replaces the Height field, because a proxy y
 has already said how big the asset is. The button only appears when there is a mesh to condition
 on, and names it.
 
-**Next.** Shaders, to make the props and the ground look like something.
+**Next.** Foliage, if what you want to fill the kind with is growing. Otherwise Shaders, to make
+the props and the ground look like something.
 
 ---
 
-## 5. Shaders
+## 5. Foliage
+
+**What it is for.** BobFoliage: procedural trees, shrubs and grass tufts, grown from a skeleton and
+dressed with alpha leaf cards. Every part of the geometry is a recipe, so it needs no ComfyUI server
+at all; generation's only job here is the two texture sets a tree wears, and both have a block-out
+fallback. It is the answer to the thing image-to-3D cannot do: a generated tree comes back as one
+opaque fan with no branch hierarchy and no cutout.
+
+**Shortest path.** Open BobFoliage, press **+** and pick a species. You have a tree. Everything
+below is tuning it and then turning it into a forest.
+
+**The list is the trees.** `BOB_Foliage` holds them and the panel draws that collection directly, so
+a tree deleted in the outliner simply leaves the list. **+** grows one from a species preset at the
+3D cursor, the copy button grows another of the same species at a fresh seed, and **Load Species**
+replaces the active tree's shape while keeping the object, its place and anything pointing at it.
+
+**Shape.** Two kinds of control and the panel keeps them apart. **Structural** — Levels, Profile,
+Skeleton Only, and the two texture sets — changes what is built and applies on a **Build** press;
+tuned knobs survive it. Everything else is a live modifier input: drag it and the tree changes.
+There are about thirty, grouped as the trunk (height, radius, taper, lean, gnarl, segments) and one
+box per branch level (count, angle, length, radius, phyllotaxy, where on the parent it starts).
+
+*Skeleton Only* is worth knowing about: it emits the curves and skips the sweep, so tuning structure
+is much faster, and a detached branch is obvious in that view and invisible in the swept one.
+
+**Leaves.** Cards per tip, card size and width, droop and spread. Cards 0 leaves a bare skeleton.
+Droop is a direction blend rather than a rotation, so at 1 every spray hangs vertically whatever its
+branch was doing.
+
+**Wind.** Sway and Leaf Flutter belong to the species — a spruce is stiff, a birch is all motion —
+and Wind and Wind Direction do not: they are the world's, written onto every tree by the World
+applier, so they are greyed here whenever there is a world. Raise Wind Strength in World and the
+whole scene moves, with no keyframes and no per-tree press. The autumn turn follows the world's
+season the same way, through the shader.
+
+**Variants.** This is how a tree becomes a forest. **Make Variants** bakes N seeds of the ACTIVE
+tree — its tuned knobs, not its species preset — into `BOB_Assets_<Kind>`, which is exactly the pool
+a scatter layer reads. Eight is the default: enough that a repeat is not findable in a frame. Then
+add a Trees layer in Scatter and it picks among them.
+
+Two things worth knowing about what a variant is. It stays **live**, so a scattered stand still
+feels the world's wind — a frozen mesh would be a forest stopped on one frame — and the cost of that
+is per variant rather than per instance, so four hundred trees cost what four hundred instances of
+one tree do. And the **LOD ladder** is on by default: each variant is also built at two cheaper
+rungs into `BOB_Foliage_LODs`, which is out of the scatter pool (or a layer would instance all three)
+and out of the scene until you point a layer at it. The rungs are rebuilds of the recipe at a lower
+branch depth, never a decimate, because decimating a tree spikes the twigs and destroys the card
+quads.
+
+**Write to Pack** additionally exports the bake as ordinary generated assets. Those are frozen —
+glTF carries no node group, so the wind and the leaf shader stay behind — but each entry records the
+species and the seed, so a Bob file that has the preset regrows the exact variant alive.
+
+**Textures.** Two slots, a bark set and a leaf atlas, both ordinary texture-set names resolved
+through the pack search path, so artist-made content needs no import step. Beside each is a
+**Generate** button (ComfyUI, in the background). A species preset already names the bark it wants,
+so generating it under that name is enough — no assignment step. Until then the trunk is a solid
+tint, which is the intended block-out state; a placeholder leaf atlas ships, so cards always work.
+
+**What to watch for.** A tree with no bark set is a flat tint, not a bug. If a stand looks like one
+tree repeated, you scattered before you baked variants, or the layer is pointed at the proxy pool.
+If the trees are half-buried, that is the layer's Z Offset rather than the tree — a baked variant's
+origin sits at its base.
+
+**Next.** Scatter, to lay the variants over a terrain. Or Shaders, to make the ground look like
+something.
+
+---
+
+## 6. Shaders
 
 **What it is for.** BobShaders: three material masters that carry weather, season and wetness
 response, triplanar projection, anti-tiling, and per-layer texture sockets. Any plain material can
@@ -463,7 +533,7 @@ For the shader catalog and the node group architecture, see [SHADERS.md](SHADERS
 
 ---
 
-## 6. Atmosphere
+## 7. Atmosphere
 
 **What it is for.** Sky and sun, volumetric clouds and fog, rain, motes, and snow coverage. All of
 it reads the World state, so it stays coherent with the season and weather you set at stage 0.
@@ -497,7 +567,7 @@ For every subsystem's parameters, see [FIRMAMENT.md](FIRMAMENT.md).
 
 ---
 
-## 7. Advanced
+## 8. Advanced
 
 **What it is for.** Things an artist does not need every day: the agent bridge, the ComfyUI
 service, and asset pack management. Collapsed by default on purpose.
