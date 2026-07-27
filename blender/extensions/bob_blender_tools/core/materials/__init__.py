@@ -117,6 +117,7 @@ from .terrain import (  # noqa: F401
 )
 from .surface import (  # noqa: F401
     bobshade_material,
+    foliage_card_material,
     new_bobshader,
     surface_master_group,
     surface_material,
@@ -200,6 +201,7 @@ __all__ = [
     "bobshade_material",
     "cloud_volume_material",
     "enable_eevee_refraction",
+    "foliage_card_material",
     "env_state_group",
     "fog_volume_material",
     "ground_fog_volume_material",
