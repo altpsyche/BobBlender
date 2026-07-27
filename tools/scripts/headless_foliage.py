@@ -1,10 +1,14 @@
-"""Headless gate for BobFoliage F1 + F2: the tree skeleton, its sweep, and its leaf cards
-(docs/FOLIAGE.md).
+"""Headless gate for BobFoliage F1 to F3: the tree skeleton, its sweep, its leaf cards, and the two
+texture jobs that dress them (docs/FOLIAGE.md).
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_foliage.py
+        --python tools/scripts/headless_foliage.py -- [--no-gen] [--cols 2 --rows 2] [--size 1024]
 
 Exit code 0 = every check passed.
+
+F3 is the first foliage phase that can use a ComfyUI server, and everything before `check_generation`
+still runs without one: the geometry is procedural and the placeholder atlas ships, so no server means
+that one function prints SKIP and the gate still exits 0. `--no-gen` skips it with a server present.
 
 It MEASURES the structure rather than asserting the graph was built, because every way this recipe
 goes wrong still renders something tree-shaped:
@@ -27,12 +31,15 @@ The recipe writes the attributes this reads (`bbt_fol_level`, `bbt_fol_t`, `bbt_
 gate is a second consumer, not the reason they exist.
 """
 
+import argparse
 import math
 import os
+import shutil
 import sys
 from collections import Counter
 
 import bpy
+import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
@@ -170,6 +177,22 @@ def card_base_gaps(mesh, faces, tips):
         base = [mesh.vertices[v].co for _v, v in pairs[:2]]
         midpoints.append([(base[0][a] + base[1][a]) / 2.0 for a in range(3)])
     return [float(d) for d in nearest(midpoints, tips)[0]]
+
+
+def live_grid(obj):
+    """(Atlas Columns, Atlas Rows) as the object's LIVE modifier knobs.
+
+    Read off `mod.properties.inputs.<identifier>.value`, which is where a Blender 5.2 Nodes modifier
+    keeps its input values. Not `mod[identifier]` (a Nodes modifier has no IDProperties and raises)
+    and not the interface `default_value` (that only seeds a fresh bind, so reading it would pass
+    whether or not the value reached the modifier at all).
+    """
+    mod = next(m for m in obj.modifiers if m.type == "NODES")
+    ident = {s.name: s.identifier for s in mod.node_group.interface.items_tree
+             if getattr(s, "in_out", "") == "INPUT"}
+    inputs = mod.properties.inputs
+    return tuple(getattr(inputs, ident[name]).value
+                 for name in ("Atlas Columns", "Atlas Rows"))
 
 
 def uv_bounds(mesh, faces):
@@ -471,6 +494,186 @@ def check_atlas_ships():
     bpy.data.images.remove(img)
 
 
+def check_bark_uv():
+    """The bark U must be uniform around every ring, and the bark material must READ the UVs.
+
+    Two F3 fixes, both of which were invisible at F2 because nothing was textured yet.
+
+    The seam: the profile circle is cyclic, so its spline parameter ran 0 .. 1-1/n and jumped back to
+    0 on the last quad of every ring, giving one column per limb that carried the whole texture
+    reversed and squeezed. Measured before the fix on a 6-sided profile, the worst face spanned 3.927
+    of a tile in U against a 0.035 median -- a factor of 112.
+
+    Measured on the RAW profile parameter, recovered from the written UV by dividing out the metres
+    term (U is `u * 2*pi*radius / Bark Scale`, all of which the gate can read back). Measuring the UV
+    directly instead does not work, and finding that out mattered: the U of a TAPERING limb spans a
+    genuinely large range on any face near the wrap, because the circumference it is scaled by differs
+    between the quad's two rings. That is shear, it is inherent to a metres-based cylindrical UV, and
+    it is not the seam -- a check that cannot tell them apart reported a 5x miss on a fixed graph.
+    In the raw parameter every face is entitled to exactly 1/n and the seam is unmistakable.
+    """
+    ev, mesh, params = build("BarkUV", cards=0, bark_scale=1.0)
+    profile = params["profile_segments"]
+    rad = attr(mesh, "bbt_fol_rad")
+    uv = mesh.uv_layers[0].data
+    share = 1.0 / profile
+    worst, over, measured = 0.0, 0, 0
+    for f in mesh.polygons:
+        raw = []
+        for c in f.loop_indices:
+            r = rad[mesh.loops[c].vertex_index]
+            if r > 1e-6:
+                raw.append(uv[c].uv[0] / (2.0 * math.pi * r))   # Bark Scale is 1.0 in this build
+        if len(raw) != len(f.loop_indices):
+            continue
+        measured += 1
+        span = max(raw) - min(raw)
+        worst = max(worst, span)
+        if span > 1.6 * share:
+            over += 1
+    ev.to_mesh_clear()
+    check("no face carries more of the profile than its 1/n share of the ring",
+          measured and worst < 1.6 * share,
+          f"worst face spans {worst:.4f} of the profile against a {share:.4f} share, "
+          f"{over}/{measured} face(s) over 1.6x")
+    # ... and the share is real rather than zero, or the check above passes on a dead UV.
+    check("and the U does go round the tube", worst > 0.5 * share,
+          f"worst span {worst:.4f}, share {share:.4f}")
+
+    # The bark material has to sample the UV it was given. F2 assigned the bark set with box
+    # projection, so the metres-based UV reached nothing and the grain followed the world axes.
+    bark = bpy.data.materials["M_BarkUV Bark"]
+    _sets, box = materials.stored_sets(bark, 1)
+    check("bark is UV-projected, not projected through world space", not box, f"box={box}")
+
+
+def check_grain():
+    """The bark grain-direction measure, on images whose answer is known. No server needed.
+
+    The measure earns its own check because it is the one F3 added and because the thing it replaces
+    (the seam ratio) cannot see direction at all. Both failure modes are covered: a stripe pattern in
+    the wrong direction, and no direction whatsoever.
+    """
+    import numpy as np
+
+    from bob_blender_tools.core import comfy_maps
+
+    x = np.arange(256, dtype=np.float32)
+    vertical = np.tile((np.sin(x / 6.0) * 60 + 128).astype(np.uint8), (256, 1))
+    horizontal = vertical.T.copy()
+    noise = (np.random.default_rng(0).random((256, 256)) * 255).astype(np.uint8)
+
+    v = comfy_maps.grain_report(vertical)
+    check("vertical grain measures as vertical", v["off_vertical_deg"] < 2.0
+          and v["coherence"] > 0.9,
+          f"{v['off_vertical_deg']:.1f} deg off vertical, coherence {v['coherence']:.3f}")
+    h = comfy_maps.grain_report(horizontal)
+    check("horizontal grain measures as horizontal", h["off_vertical_deg"] > 88.0,
+          f"{h['off_vertical_deg']:.1f} deg off vertical")
+    n = comfy_maps.grain_report(noise)
+    # Coherence is the half that catches "no grain at all"; the angle of noise is meaningless.
+    check("an isotropic image has no coherent grain", n["coherence"] < 0.05,
+          f"coherence {n['coherence']:.4f}")
+    check("and its per-block axes disagree", n["block_spread_deg"] > 20.0,
+          f"block spread {n['block_spread_deg']:.1f} deg")
+
+    # The atlas composer, on synthetic sprites: a wedge narrow at one end, at four orientations. What
+    # must hold is that all four come out upright with the NARROW end at the bottom, because that is
+    # the end a card attaches by. A bounding box cannot see this -- `base_taper` is what does.
+    sprites = []
+    for angle in (0.0, 45.0, 130.0, 260.0):
+        sprite = np.zeros((128, 128, 4), np.uint8)
+        ux, uy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        for s in range(-45, 45):
+            half = int(2 + (s + 45) * 0.22)
+            cy, cx = 64 + uy * s, 64 + ux * s
+            for j in range(-half, half + 1):
+                yy, xx = int(cy - ux * j), int(cx + uy * j)
+                if 0 <= yy < 128 and 0 <= xx < 128:
+                    sprite[yy, xx, :3] = (40, 120, 40)
+                    sprite[yy, xx, 3] = 255
+        sprites.append(sprite)
+    base, opacity = comfy_maps.atlas_compose(sprites, 2, 2, 512)
+    cells = comfy_maps.atlas_cells(opacity, 2, 2)
+    check("every composed cell carries a sprite", all(c["opaque"] > 0.02 for c in cells),
+          ", ".join(f"{c['opaque'] * 100:.1f}%" for c in cells))
+    check("every composed sprite reaches its cell's bottom edge",
+          all(c["reaches_base"] for c in cells),
+          str([c["cell"] for c in cells if not c["reaches_base"]]))
+    check("and stands on its NARROW end, whatever angle it was generated at",
+          all(c["base_taper"] < 0.6 for c in cells),
+          ", ".join(f"{c['base_taper']:.2f}" for c in cells))
+    # The transparent region's colour is not "don't care": bilinear filtering blends it into every
+    # silhouette, so a studio-white background is a white rim on every needle.
+    alpha = opacity.astype(np.float32) / 255.0
+    leaf = base[alpha > 0.9].astype(np.float32).mean(axis=0)
+    clear = base[alpha < 0.02].astype(np.float32).mean(axis=0)
+    check("the transparent region carries leaf colour, so a silhouette has no fringe",
+          float(np.abs(leaf - clear).max()) < 12.0,
+          f"leaf {leaf.round(1)} against clear {clear.round(1)}")
+
+
+def check_atlas_sidecar():
+    """A generated atlas SET declares its own grid, and the recipe reads it. The [F3] answer.
+
+    F2's interim answer was the two live params alone, which does not scale: an artist assigning a
+    4x4 atlas has to know to change two numbers, and a card reading 2x2 off a 4x4 samples a quarter
+    of the cell it wanted plus slices of three neighbours -- which renders as foliage, so nothing
+    catches it. The params stay as the override, which is the other half of this check.
+    """
+    import json as _json
+
+    from bob_blender_tools.core import comfy_maps
+
+    pack = os.path.join(OUT, "sidecar_pack")
+    if os.path.isdir(pack):
+        shutil.rmtree(pack)
+    set_dir = os.path.join(pack, "textures", "atlas_4x4_probe")
+    os.makedirs(set_dir)
+    # A real set, because the point is that the resolver and the recipe read the same folder the
+    # generator writes. Sixteen visibly different sprites, so a wrong grid is measurable downstream.
+    sprites = []
+    for i in range(16):
+        s = np.zeros((64, 64, 4), "uint8")
+        s[48 - i:60, 28:36, :3] = (30, 100 + i * 8, 40)
+        s[48 - i:60, 28:36, 3] = 255
+        sprites.append(s)
+    base, opacity = comfy_maps.atlas_compose(sprites, 4, 4, 512)
+    comfy_maps.write_png(os.path.join(set_dir, "atlas_4x4_probe_basecolor.png"), base)
+    comfy_maps.write_png(os.path.join(set_dir, "atlas_4x4_probe_opacity.png"), opacity)
+    with open(os.path.join(set_dir, "meta.json"), "w") as fh:
+        _json.dump({"atlas": {"cols": 4, "rows": 4}}, fh)
+    assets.add_pack_root(pack)
+
+    check("the probe atlas resolves off the search path",
+          bool(assets.texture_set_maps("atlas_4x4_probe").get("opacity")),
+          str(sorted(assets.texture_set_maps("atlas_4x4_probe"))))
+    check("the set declares its own grid", assets.atlas_grid("atlas_4x4_probe") == (4, 4),
+          str(assets.atlas_grid("atlas_4x4_probe")))
+    check("a set with no sidecar declares nothing rather than guessing",
+          assets.atlas_grid("leaf_atlas_blockout") is None,
+          str(assets.atlas_grid("leaf_atlas_blockout")))
+
+    # The recipe defaults to the declared grid with no atlas_cols/atlas_rows given at all.
+    ev, mesh, _ = build("Sidecar", cards=2, atlas="atlas_4x4_probe")
+    got = live_grid(bpy.data.objects["Sidecar"])
+    check("the recipe defaults its grid to what the set declared", got == (4, 4), f"{got}")
+    cells = mesh.attributes.get("bbt_fol_cell")
+    faces = set(card_faces(mesh))
+    verts = {v for f in mesh.polygons if f.index in faces for v in f.vertices}
+    drawn = sorted({cells.data[v].value for v in verts}) if cells else []
+    check("and draws cells across the whole 4x4 grid", len(drawn) > 8 and max(drawn) <= 15,
+          f"{len(drawn)} distinct cells, max {max(drawn) if drawn else 'none'}")
+    ev.to_mesh_clear()
+
+    # ... and an explicit param still overrides it, which is what the brief asked to keep.
+    ev2, mesh2, _ = build("SidecarOverride", cards=2, atlas="atlas_4x4_probe",
+                          atlas_cols=2, atlas_rows=1)
+    got2 = live_grid(bpy.data.objects["SidecarOverride"])
+    check("an explicit grid param still overrides the sidecar", got2 == (2, 1), f"{got2}")
+    ev2.to_mesh_clear()
+
+
 def check_species():
     """Every shipped species preset loads, validates clean, and builds at a believable size."""
     names = assets.list_foliage_species()
@@ -480,6 +683,18 @@ def check_species():
     # makes an unreadable or mistyped one a live failure mode the reader has to handle.
     check("an unknown species reads as nothing rather than raising",
           assets.foliage_species("no_such_species") == {})
+
+    # F3: the tree species NAME the bark they want, and no placeholder bark set ships (a hand-made
+    # one would hide the grain-direction problem generation actually has). So a bark set that does
+    # not resolve is the ordinary pre-generation state and not an authoring mistake, which is why
+    # `foliage_missing_sets` is separate from the rest of the validator.
+    for name in ("conifer", "broadleaf"):
+        declared = assets.foliage_species(name)["params"].get("bark_set")
+        check(f"species '{name}' names the bark set it wants", bool(declared), str(declared))
+        reported = any(k == "bark_set" for k, _l, _v in assets.foliage_missing_sets(name))
+        resolves = assets.texture_set_dir(str(declared)) is not None
+        check(f"'{name}' reports its bark missing exactly when it is",
+              reported != resolves, f"resolves={resolves}, reported missing={reported}")
     for kind in ("trees", "plants", "grass"):
         check(f"a species is routable from the '{kind}' scatter kind",
               assets.foliage_species_for_kind(kind) is not None,
@@ -491,7 +706,9 @@ def check_species():
                 "shrub": (0.5, 2.0, 1.40), "grass_tuft": (0.15, 0.8, 1.60)}
     for name in sorted(names):
         spec = assets.foliage_species(name)
-        warn = assets.validate_foliage_species(name)
+        # Missing generatable sets are filtered out and checked above on their own terms: they are a
+        # state, not a mistake. Everything else the validator says is an authoring bug.
+        warn = [w for w in assets.validate_foliage_species(name) if "missing: textures/" not in w]
         check(f"species '{name}' validates clean", not warn, "; ".join(warn))
         apply_op({"op": "build_geonodes", "recipe": "foliage", "name": f"sp_{name}",
                   "params": dict(spec["params"], seed=11), "reset": True})
@@ -584,7 +801,182 @@ def check_routing():
           str({k: ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")}))
 
 
-def main():
+def check_generation(args):
+    """F3's two ComfyUI jobs, end to end: generate, resolve, wear, render. SKIPS with no server.
+
+    This is the first foliage phase with a ComfyUI dependency at all, and the property every other
+    generation gate has is kept: no server means SKIP and exit 0, because the geometry is procedural
+    and both texture sets have a block-out fallback (the placeholder atlas ships; a bark-less trunk is
+    a solid tint, which is the block-out convention everywhere else in the suite).
+
+    What it measures, in the order the failures matter:
+
+    - the atlas has real cutout alpha, and EVERY CELL carries a sprite. An empty cell is a card that
+      renders as nothing, and a stuck cell index is one leaf repeated ten thousand times.
+    - each sprite stands on its cell's bottom edge and on its NARROW end, because that is where the
+      card's v is 0. A generation left unoriented attaches by its needle tips.
+    - bark tiles AND runs the right way. The seam ratio is the old measure and cannot see direction;
+      `grain_report` is the new one, and F3 measured both failures it has to separate -- bark 84 deg
+      off vertical (mud cracks, strongly coherent) and bark with no axis at all (coherence 0.018).
+    - the round trip: both sets resolve through the same `assets.texture_set_maps` the picker uses,
+      reach a tree built from a species preset, put the atlas on a card's Principled Alpha, and
+      render not flat.
+    """
+    from bob_blender_tools.core import comfy, comfy_maps
+
+    ok, detail = comfy.reachable()
+    print(f"    ComfyUI: {detail}")
+    if not ok:
+        print("[SKIP] no ComfyUI server, so F3's two texture jobs cannot run")
+        print("    the tree is unaffected: its geometry is procedural and the placeholder atlas "
+              "ships, which is the 'ComfyUI is never required' path")
+        return
+    if args.no_gen:
+        print("[SKIP] --no-gen, so F3's two texture jobs were not run")
+        return
+
+    pack = os.path.join(OUT, "gen_pack")
+    if os.path.isdir(pack):
+        shutil.rmtree(pack)
+    assets.ensure_generated_pack(pack)
+    assets.add_pack_root(pack)
+
+    # 1. The leaf atlas.
+    cols, rows = args.cols, args.rows
+    atlas_name, info = comfy.leaf_atlas("spruce needle spray", pack, cols=cols, rows=rows,
+                                        name="leaf_atlas_gen", seed=1201, size=args.size)
+    check("the atlas generated as a texture set", bool(atlas_name), atlas_name)
+    maps = assets.texture_set_maps(atlas_name)
+    check("the atlas resolves through the ordinary pack resolver",
+          bool(maps.get("basecolor")) and bool(maps.get("opacity")), str(sorted(maps)))
+    check("the atlas is listed by the picker", atlas_name in assets.list_texture_sets())
+    check("the atlas records its own grid", assets.atlas_grid(atlas_name) == (cols, rows),
+          str(assets.atlas_grid(atlas_name)))
+
+    with open(maps["opacity"], "rb") as fh:
+        opacity = comfy_maps.read_png(fh.read())
+    alpha = opacity.astype(np.float32) / 255.0
+    clear = float((alpha < 0.05).mean())
+    # The redwood run's whole finding was that generated meshes come back opaque (mean alpha 0.998).
+    # W4's matte is the thing that is not, and this is where that claim gets re-measured per run.
+    check("the generated atlas is a real cutout, not a filled square", clear > 0.35,
+          f"{clear * 100:.1f}% clear, {float((alpha > 0.95).mean()) * 100:.1f}% opaque")
+    cells = comfy_maps.atlas_cells(opacity, cols, rows)
+    empty = [c["cell"] for c in cells if c["opaque"] < 0.01]
+    check("every atlas cell carries a sprite", not empty,
+          "coverage " + ", ".join(f"{c['opaque'] * 100:.1f}%" for c in cells)
+          + (f"; EMPTY {empty}" if empty else ""))
+    floating = [c["cell"] for c in cells if not c["reaches_base"]]
+    check("every sprite reaches its cell's bottom edge", not floating,
+          f"floating cells {floating}" if floating else f"{len(cells)} cells")
+    upside = [c["cell"] for c in cells if not c["base_taper"] < 0.6]
+    check("every sprite stands on its narrow end, not on its fan", not upside,
+          "base/middle width " + ", ".join(f"{c['base_taper']:.2f}" for c in cells))
+    distinct = comfy_maps.cell_distinctness(opacity, cols, rows)
+    check("the cells are different sprites, not one repeated", distinct > 5.0,
+          f"most-similar pair differs by {distinct:.2f}/255 mean alpha")
+
+    # 2. Bark, and the direction the seam ratio cannot see.
+    bark_name, bark_info = comfy.bark_set("rough conifer bark", pack, name="bark_conifer",
+                                          seed=1301, size=args.size)
+    check("the bark set generated", bool(bark_name), bark_name)
+    bark_maps = assets.texture_set_maps(bark_name)
+    for role in ("basecolor", "roughness", "height", "ao", "normal"):
+        check(f"the bark set carries {role}", role in bark_maps,
+              os.path.basename(bark_maps.get(role, "")))
+    seam = bark_info["seam"]
+    check("bark tiles: the seam is no worse than the interior detail", seam["ratio"] < 1.35,
+          f"seam {seam['seam']:.3f} vs interior {seam['interior']:.3f}, ratio {seam['ratio']:.3f}")
+    grain = bark_info["grain"]
+    # Measured across two species and two seeds, the shipped clause held inside 17.6 deg and every
+    # rejected wording exceeded 71. 25 is that result with headroom, not a hopeful number.
+    check("bark grain runs along the trunk, not across it",
+          grain["off_vertical_deg"] < 25.0,
+          f"{grain['off_vertical_deg']:.1f} deg off vertical "
+          f"(grain axis {grain['grain_deg']:.1f} deg)")
+    check("bark has a grain at all, rather than being isotropic", grain["coherence"] > 0.15,
+          f"coherence {grain['coherence']:.3f}")
+    check("and the axis holds across the tile rather than wandering",
+          grain["block_spread_deg"] < 20.0,
+          f"block spread {grain['block_spread_deg']:.1f} deg over {len(grain['block_axes'])} blocks")
+
+    # 3. The round trip. A species preset already NAMES bark_conifer, so this is the wiring the
+    #    presets were pointed at: generate it, rebuild, and the tree is wearing it with no assignment
+    #    step anywhere. That is the check that the preset edit was more than a string.
+    check("the conifer preset's bark set now resolves",
+          not [k for k, _l, _v in assets.foliage_missing_sets("conifer") if k == "bark_set"],
+          str(assets.foliage_missing_sets("conifer")))
+    params = dict(assets.foliage_species("conifer")["params"], atlas=atlas_name, seed=9)
+    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Gen", "params": params,
+              "reset": True})
+    ev = bpy.data.objects["Gen"].evaluated_get(bpy.context.evaluated_depsgraph_get())
+    gmesh = ev.to_mesh()
+    check("the generated tree still builds", len(gmesh.polygons) > 0,
+          f"{len(gmesh.vertices)} verts, {len(card_faces(gmesh))} cards")
+    ev.to_mesh_clear()
+
+    bark_mat = bpy.data.materials["M_Gen Bark"]
+    imgs = [n for n in bark_mat.node_tree.nodes if n.bl_idname == "ShaderNodeTexImage"]
+    check("the generated bark reached the bark material", len(imgs) >= 3, f"{len(imgs)} images")
+    check("and it samples the tree's own UVs, not world space",
+          all(n.projection == "FLAT" for n in imgs),
+          str(sorted({n.projection for n in imgs})))
+    card_mat = bpy.data.materials["M_Gen Leaf"]
+    bsdf = next(n for n in card_mat.node_tree.nodes
+                if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    src = bsdf.inputs["Alpha"].links[0] if bsdf.inputs["Alpha"].is_linked else None
+    check("the generated atlas reaches a card's Principled Alpha",
+          src is not None and src.from_node.bl_idname == "ShaderNodeTexImage",
+          f"{src.from_node.bl_idname}" if src else "not linked")
+    check("and it is the generated OPACITY map, not the basecolor's alpha channel",
+          src is not None and src.from_node.image is not None
+          and os.path.basename(src.from_node.image.filepath).endswith("_opacity.png"),
+          os.path.basename(src.from_node.image.filepath)
+          if src and src.from_node.image else "none")
+
+    # 4. A frame. Every check above passes on a wired-and-dead shader graph.
+    os.makedirs(OUT, exist_ok=True)
+    for obj in list(bpy.data.objects):
+        if obj.name != "Gen":
+            bpy.data.objects.remove(obj, do_unlink=True)
+    tree = bpy.data.objects["Gen"]
+    height = max(v.co.z for v in tree.evaluated_get(
+        bpy.context.evaluated_depsgraph_get()).to_mesh().vertices)
+    bpy.ops.object.light_add(type="SUN", location=(0, 0, height * 2))
+    bpy.context.active_object.data.energy = 5.0
+    bpy.ops.object.camera_add(location=(0, -height * 1.4, height * 0.45),
+                              rotation=(math.pi / 2, 0, 0))
+    bpy.context.scene.camera = bpy.context.active_object
+    var = None
+    for engine in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
+        var = render_variance(engine, os.path.join(OUT, "generated"))
+        if var is not None:
+            break
+    if var is None:
+        print("[SKIP] EEVEE could not render the generated tree in this environment")
+    else:
+        check("a tree wearing both generated sets renders and is not flat", var > 0.05,
+              f"luminance range {var:.4f}")
+
+    secs = info["seconds"]
+    print()
+    print("    wall clock, warm server")
+    print(f"      leaf atlas, {cols}x{rows} cells        {secs['generate']:6.2f} s")
+    print(f"      compose + derive its maps          {secs['derive']:6.2f} s")
+    print(f"      bark set                           "
+          f"{bark_info['seconds']['generate']:6.2f} s")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--no-gen", action="store_true",
+                    help="skip F3's ComfyUI jobs even when a server is reachable")
+    ap.add_argument("--cols", type=int, default=2, help="atlas columns to generate")
+    ap.add_argument("--rows", type=int, default=2, help="atlas rows to generate")
+    ap.add_argument("--size", type=int, default=1024, help="atlas / bark resolution")
+    args = ap.parse_args(argv if argv is not None
+                         else (sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []))
+
     evaluated, mesh, params = build("Tree")
 
     # 1. It builds something, and the trunk stands on the ground at the height asked for.
@@ -687,7 +1079,13 @@ def main():
     check_atlas_ships()
     check_species()
     check_routing()
-    check_render()  # last: it deletes everything but its own tree to get a clean frame
+
+    # -- F3: the bark UV seam, the grain measure, the atlas sidecar, and the two jobs --------------
+    check_bark_uv()
+    check_grain()
+    check_atlas_sidecar()
+    check_render()      # deletes everything but its own tree to get a clean frame
+    check_generation(args)  # last: needs a server, and renders its own frame the same way
 
     print()
     if FAILURES:

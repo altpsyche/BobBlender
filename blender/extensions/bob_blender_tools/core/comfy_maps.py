@@ -25,6 +25,13 @@ G5 added one derivation that is not part of a texture set: `macro_field` / `macr
 macro mask (track E). It reuses the luminance and the box blur the five maps already share and takes
 the LOW side of the same cutoff, which is why track E needed no module of its own.
 
+F3 (BobFoliage) added two more that are not derivations at all. `grain_report` MEASURES the dominant
+gradient axis, because bark needs a direction and `seam_report` only measures continuity. And the
+`orient_sprite` / `place_sprite` / `atlas_compose` / `atlas_cells` group composes a leaf atlas out of
+one generated sprite per cell, because a diffusion model asked for a 2x2 grid returns five sprays in
+a ring -- measured. Both are here rather than in `comfy.py` for this module's usual reason: they are
+numpy over pixels with no HTTP in them, so a unit test drives them with no server.
+
 The PNG codec here is minimal on purpose: 8-bit, non-interlaced, which is what ComfyUI's SaveImage
 writes and what a texture set wants. Blender's bundled Python ships no PIL and the derivation must
 run in-process, so the 40 lines are cheaper than the alternative of routing pixels through `bpy`
@@ -465,3 +472,394 @@ def seam_report(array):
     return {"seam_x": seam_x, "seam_y": seam_y, "seam": seam,
             "interior_x": interior_x, "interior_y": interior_y, "interior": interior,
             "ratio": (seam / interior) if interior else float("inf")}
+
+
+# -- Grain direction (BobFoliage F3: bark) ---------------------------------------------------
+# `seam_report` measures CONTINUITY across the wrap and says nothing about DIRECTION, which is the
+# property bark actually needs: grain runs along the trunk, and a tileable SDXL pass has no reason
+# to keep an axis. Measured at F3, the two failures are different and only one of them is caught by
+# an intensity measure:
+#
+#   "rough conifer bark" (no clause)      grain 83.8 deg off vertical, coherence 0.487
+#   "grey beech bark" (no clause)         grain 18.3 deg off vertical, coherence 0.018
+#   + "vertical bark, deep furrows
+#      running top to bottom"             grain 1.6 to 17.6 deg off vertical, coherence 0.41 to 0.48
+#
+# So a set can be strongly directional in the WRONG direction (the first line came back as
+# polygonal mud cracks, which have plenty of coherent edges), and a set can have no direction at all
+# (the second was isotropic). The angle catches the first, the coherence catches the second, and
+# neither catches both -- which is why this returns both and `comfy.BARK_SUFFIX` exists.
+GRAIN_BINS = 18  # 10 degrees per bin over the 180 an AXIS spans
+
+
+def grain_report(array, bins=GRAIN_BINS, blocks=4):
+    """The dominant gradient AXIS of an image, its concentration, and how much it wanders.
+
+    Doubled-angle (structure-tensor) averaging, because grain is an axis and not a direction: a
+    furrow edge points left on one side and right on the other, and averaging the raw angles cancels
+    them to nothing. Doubling maps both to the same place, so the mean survives.
+
+    Reported in two frames, because the useful question is asked in the second:
+
+      `dominant_deg`   the gradient axis, 0 = the gradient runs across the image (vertical stripes)
+      `grain_deg`      that axis turned 90 degrees, i.e. the direction the FEATURES run
+      `off_vertical`   how far the grain is from straight up, 0..90. This is the bark number: the
+                       sweep's V runs along the limb, so vertical grain in the image is grain along
+                       the branch.
+
+    `coherence` is 0 for an isotropic image and 1 for perfect stripes -- measured, 0.003 on white
+    noise and 1.000 on a sine grating. `block_spread_deg` is the circular spread of the per-block
+    axes, which is the "consistent across the wrap" half: one number for the whole image can be
+    dominated by a strong band and say nothing about whether the rest of the tile agrees with it.
+    """
+    a = np.asarray(array, dtype=np.float32)
+    if a.ndim == 3:
+        a = a[:, :, :3].mean(axis=2)
+    gy, gx = np.gradient(a)
+    mag = np.hypot(gx, gy)
+    theta = np.arctan2(gy, gx)
+    two = 2.0 * theta
+    total = float(mag.sum()) or 1.0
+    cx, cy = float((mag * np.cos(two)).sum()), float((mag * np.sin(two)).sum())
+    dominant = float(np.degrees(np.arctan2(cy, cx) / 2.0) % 180.0)
+    hist = np.zeros(int(bins), dtype=np.float64)
+    idx = ((np.degrees(theta) % 180.0) / (180.0 / bins)).astype(np.int32) % int(bins)
+    np.add.at(hist, idx.ravel(), mag.ravel())
+    hist /= hist.sum() or 1.0
+
+    axes = []
+    if blocks > 1:
+        h, w = a.shape
+        bh, bw = h // blocks, w // blocks
+        for by in range(blocks):
+            for bx in range(blocks):
+                tile = a[by * bh:(by + 1) * bh, bx * bw:(bx + 1) * bw]
+                if tile.size:
+                    axes.append(grain_report(tile, bins=bins, blocks=0)["dominant_deg"])
+    grain = (dominant + 90.0) % 180.0
+    return {"dominant_deg": dominant, "grain_deg": grain,
+            "off_vertical_deg": min(abs(grain - 90.0), 180.0 - abs(grain - 90.0)),
+            "coherence": float(np.hypot(cx, cy) / total),
+            "hist": [float(v) for v in hist], "block_axes": axes,
+            "block_spread_deg": axis_spread(axes) if axes else 0.0}
+
+
+def axis_spread(angles):
+    """The circular spread of a set of AXES (each mod 180), in degrees. 0 = all the same axis.
+
+    The circular standard deviation of the doubled angles, halved back. Doubled for `grain_report`'s
+    reason, and halved so the number is readable in the frame it was given in.
+    """
+    if len(angles) == 0:
+        return 0.0
+    two = np.radians(np.asarray(angles, dtype=np.float64) * 2.0)
+    r = float(np.hypot(np.cos(two).mean(), np.sin(two).mean()))
+    return float(np.degrees(np.sqrt(max(0.0, -2.0 * np.log(max(r, 1e-9))))) / 2.0)
+
+
+# -- Leaf atlases (BobFoliage F3) ------------------------------------------------------------
+# A card reads ONE CELL of an atlas, so an atlas has two properties a texture set does not: every
+# cell must carry a sprite (an empty cell is a card that renders as nothing), and each sprite must
+# grow from its cell's BOTTOM EDGE, because the card's v is 0 at the twig it hangs from
+# (docs/FOLIAGE.md 2.3, 4.4).
+#
+# **SDXL cannot be asked for a grid.** Measured at F3 with a 2x2 grid-layout prompt through W4: the
+# result was FIVE sprays arranged in a ring, straddling the cell boundaries, each pointing a
+# different way and none touching a cell's bottom edge. Per-cell coverage passed (8 to 11% opaque in
+# every quadrant) and the atlas was still unusable, which is exactly the "tree-shaped is not right"
+# failure this whole track is about. So Bob generates ONE sprite per cell and composes the grid
+# itself: the layout becomes something Bob guarantees rather than something it hopes for, a different
+# seed per cell makes the cells differ by construction, and 4 sprites at 512 cost less than 1 at 1024.
+ATLAS_MARGIN = 0.02       # of a cell, kept clear so a sprite's silhouette is not clipped by its edge
+ATLAS_BLEED_PASSES = 8    # how far the leaf colour is pushed into the transparent region
+# Alpha at or above which a pixel is LEAF rather than fringe. The bleed reads only from these, and
+# that floor is load-bearing: at 0.02 the anti-aliased silhouette's own near-transparent BACKGROUND
+# pixels count as known, so the bleed pushed white outwards and every sprite came back with a hard
+# white halo -- measured, and visible in the frame before it was measured.
+ATLAS_OPAQUE = 0.9
+
+
+# How much of the axis, at each end, the base test looks at. The twig is thin only near its cut
+# end: measured over a whole HALF the needles dilute it to a coin toss (a symmetric spray came back
+# 46.5 against 53.7, a 1.15x separation), and over the outer fifth the same spray separates 4.3
+# against 32.4. Narrow enough to see the bare stub, wide enough not to ride on a dozen pixels.
+AXIS_END_BAND = 0.20
+
+
+def _mask_axis(mask, band=AXIS_END_BAND):
+    """(centroid, unit axis, end widths) of a boolean mask's principal axis, or None if empty.
+
+    The axis is the eigenvector of the mass's covariance with the larger eigenvalue, i.e. the
+    direction a spray is longest along. Oriented so it points toward the FAN, because that is how the
+    base is told from the tip: a needle spray is a bare twig at one end and a fan at the other, so
+    the end that is NARROW across the axis is the end that attaches to a branch.
+
+    Geometric on purpose. The obvious alternative -- the twig is brown and the needles are green --
+    separates the clear cases better (green excess -14 against +25 on the same spray) and assumes a
+    colour, so it would pick the wrong end of an autumn or dead-foliage atlas. `atlas_cells`
+    reports `base_taper` either way, so a sprite this gets backwards is measured, not hidden.
+    """
+    ys, xs = np.nonzero(mask)
+    if len(ys) < 8:
+        return None
+    y0, x0 = float(ys.mean()), float(xs.mean())
+    dy, dx = ys - y0, xs - x0
+    cov = np.array([[float((dy * dy).mean()), float((dy * dx).mean())],
+                    [float((dy * dx).mean()), float((dx * dx).mean())]])
+    vals, vecs = np.linalg.eigh(cov)
+    axis = vecs[:, int(np.argmax(vals))]        # (dy, dx), unit
+    t = dy * axis[0] + dx * axis[1]             # along the axis
+    s = -dy * axis[1] + dx * axis[0]            # across it
+    span = float(t.max() - t.min()) or 1.0
+    near = np.abs(s[t <= t.min() + band * span])
+    far = np.abs(s[t >= t.max() - band * span])
+    lo = float(np.sqrt((near ** 2).mean())) if near.size else 0.0
+    hi = float(np.sqrt((far ** 2).mean())) if far.size else 0.0
+    if lo > hi:
+        axis = -axis
+        lo, hi = hi, lo
+    return (y0, x0), axis, (lo, hi)
+
+
+# The woody-mass cue, and its guards. A sprig is a green fan on a brown stem, so the direction from
+# the green centroid to the WOODY centroid points at the end that attaches -- which is the question
+# being asked, rather than the proxy "which end is narrow" that the principal axis answers.
+#
+# Measured on the four sprites of one generated atlas: the woody direction disagreed with the
+# geometric answer on exactly the two cells that came out attached by their needle tips, and agreed on
+# the two that came out right. It is better because it is not a proxy: a spray whose twig sticks out
+# SIDEWAYS from its fan has its long axis along the fan, so no end of that axis is the stem and no
+# rotation of it can be correct.
+#
+# Guarded rather than trusted, because it assumes a colour. Below `WOODY_MIN` there is no stem to find
+# (or the matte cut it off); above `WOODY_MAX` the sprite is not a green fan at all, which is what an
+# autumn or dead-foliage atlas looks like; and the two centroids have to be genuinely apart before
+# their difference means a direction. Outside those, the geometric axis is used, which is what this
+# function did before the colour cue and is still right for most sprites.
+WOODY_EXCESS = 2.0        # green excess (G - (R+B)/2) at or below which a texel counts as woody
+WOODY_MIN, WOODY_MAX = 0.01, 0.40
+WOODY_SEPARATION = 0.025  # of the sprite's diagonal
+
+
+def _woody_axis(rgba, mask):
+    """The base-to-tip unit axis from the woody/green split, or None when the cue does not apply."""
+    rgb = np.asarray(rgba)[:, :, :3].astype(np.float32)
+    excess = rgb[:, :, 1] - (rgb[:, :, 0] + rgb[:, :, 2]) / 2.0
+    woody = mask & (excess <= WOODY_EXCESS)
+    green = mask & (excess > WOODY_EXCESS)
+    total = float(mask.sum())
+    if not total or not woody.any() or not green.any():
+        return None
+    fraction = float(woody.sum()) / total
+    if not (WOODY_MIN <= fraction <= WOODY_MAX):
+        return None
+    wy, wx = np.nonzero(woody)
+    gy, gx = np.nonzero(green)
+    ys, xs = np.nonzero(mask)
+    diagonal = float(np.hypot(ys.max() - ys.min(), xs.max() - xs.min())) or 1.0
+    delta = np.array([wy.mean() - gy.mean(), wx.mean() - gx.mean()], dtype=np.float64)
+    length = float(np.linalg.norm(delta))
+    if length / diagonal < WOODY_SEPARATION:
+        return None
+    return -delta / length          # green -> woody is base-ward, so the tip is the other way
+
+
+def orient_sprite(rgba, floor=0.5):
+    """Rotate an RGBA sprite so it stands upright with the end that ATTACHES at the bottom.
+
+    Returned on a square canvas big enough that nothing rotates out of frame; the caller crops to
+    the alpha box. A sprite whose mask is too small to have an axis comes back untouched.
+
+    The attaching end is found by `_woody_axis` when the sprite is a green fan on a brown stem, and
+    by the principal axis's narrow end (`_mask_axis`) otherwise.
+
+    Why Bob rotates rather than the prompt asking for it: W4 was asked for "the cut end of the twig
+    at the bottom of the frame, needles fanning upward" and returned sprays lying diagonally with
+    the twig at the LEFT, on which a card attaches by its side and reads as a leaf growing sideways
+    out of a branch. The prompt clause is kept anyway (it costs nothing and it helps), but the
+    guarantee has to be Bob's, and this is the same argument as the composed grid above.
+
+    Bilinear, on PREMULTIPLIED colour. Rotating straight RGBA interpolates the colour of transparent
+    pixels into the silhouette, which is the white-fringe failure `ATLAS_OPAQUE` describes from the
+    other direction.
+    """
+    src = np.asarray(rgba)
+    if src.ndim != 3 or src.shape[2] != 4:
+        raise ValueError(f"orient_sprite wants (h, w, 4), got {src.shape}")
+    h, w = src.shape[:2]
+    mask = src[:, :, 3].astype(np.float32) / 255.0 > floor
+    found = _mask_axis(mask)
+    size = int(np.ceil(np.hypot(h, w)))
+    if found is None:
+        out = np.zeros((size, size, 4), np.uint8)
+        out[(size - h) // 2:(size - h) // 2 + h, (size - w) // 2:(size - w) // 2 + w] = src
+        return out
+    (cy, cx), axis, _widths = found
+    woody = _woody_axis(src, mask)
+    if woody is not None:
+        axis = woody
+    # The base-to-tip axis must end up pointing at image "up", which is -y. The map below is the
+    # INVERSE rotation (destination offset to source offset), so its first column is where
+    # destination "down" comes from: the axis, negated. Hence ca = -axis_y and sa = axis_x, and the
+    # signs are worth stating rather than trusting -- getting `sa` backwards rotates the sprite to
+    # vertical UPSIDE DOWN, which is a spray hanging by its needles with the twig in the air, and
+    # every bounding-box check still passes on it. `base_taper` in `atlas_cells` is what catches it.
+    ca, sa = -float(axis[0]), float(axis[1])
+
+    oy, ox = np.meshgrid(np.arange(size, dtype=np.float32) - (size - 1) / 2.0,
+                         np.arange(size, dtype=np.float32) - (size - 1) / 2.0, indexing="ij")
+    # Inverse map: where in the source does this destination pixel come from?
+    sy = ca * oy + sa * ox + cy
+    sx = -sa * oy + ca * ox + cx
+    alpha = src[:, :, 3].astype(np.float32) / 255.0
+    pre = np.concatenate([src[:, :, :3].astype(np.float32) * alpha[:, :, None],
+                          alpha[:, :, None]], axis=2)
+    y0 = np.floor(sy).astype(np.int32)
+    x0 = np.floor(sx).astype(np.int32)
+    fy, fx = (sy - y0)[:, :, None], (sx - x0)[:, :, None]
+    inside = (y0 >= 0) & (y0 < h - 1) & (x0 >= 0) & (x0 < w - 1)
+    y0c, x0c = np.clip(y0, 0, h - 2), np.clip(x0, 0, w - 2)
+    samp = ((pre[y0c, x0c] * (1 - fy) + pre[y0c + 1, x0c] * fy) * (1 - fx)
+            + (pre[y0c, x0c + 1] * (1 - fy) + pre[y0c + 1, x0c + 1] * fy) * fx)
+    samp *= inside[:, :, None]
+    a = samp[:, :, 3:4]
+    rgb = np.where(a > 1e-4, samp[:, :, :3] / np.maximum(a, 1e-4), 0.0)
+    return np.concatenate([np.clip(rgb, 0, 255), np.clip(a * 255.0, 0, 255)],
+                          axis=2).astype(np.uint8)
+
+
+def place_sprite(rgba, size, margin=ATLAS_MARGIN, floor=0.5):
+    """One oriented sprite cropped to its alpha box and dropped BOTTOM-ANCHORED into a square cell.
+
+    Nearest-neighbour on the way down, deliberately: a matte wants no colours that were not already
+    in it, and a needle one pixel wide survives a nearest resample and is blurred away by a smooth
+    one. Horizontally centred on the sprite's own base, not on its bounding box, so a spray that
+    leans still hangs from the middle of the cell's bottom edge.
+    """
+    src = orient_sprite(rgba, floor=floor)
+    alpha = src[:, :, 3].astype(np.float32) / 255.0
+    ys, xs = np.nonzero(alpha > floor)
+    out = np.zeros((int(size), int(size), 4), np.uint8)
+    if not len(ys):
+        return out
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
+    crop = src[y0:y1, x0:x1]
+    ch, cw = crop.shape[:2]
+    avail = max(1, int(size * (1.0 - 2.0 * margin)))
+    scale = min(avail / ch, avail / cw)
+    nh, nw = max(1, int(round(ch * scale))), max(1, int(round(cw * scale)))
+    small = crop[(np.arange(nh) * ch // nh).clip(0, ch - 1)][:,
+                                                             (np.arange(nw) * cw // nw).clip(0, cw - 1)]
+    pad = int(size * margin)
+    top = max(0, int(size) - pad - nh)
+    # The base's own x, so a leaning spray still attaches in the middle of the cell.
+    base_rows = small[:, :, 3].astype(np.float32) / 255.0
+    bottom_band = base_rows[max(0, nh - max(1, nh // 8)):]
+    bx = np.nonzero(bottom_band.sum(axis=0) > 0)[0]
+    anchor = int(bx.mean()) if len(bx) else nw // 2
+    left = int(np.clip(int(size) // 2 - anchor, 0, max(0, int(size) - nw)))
+    out[top:top + nh, left:left + nw] = small
+    return out
+
+
+def alpha_bleed(rgb, alpha, passes=ATLAS_BLEED_PASSES, floor=ATLAS_OPAQUE):
+    """Push the opaque colour outward into the transparent region and return the filled RGB.
+
+    An atlas basecolor is written as RGB and its matte as a separate `opacity` map, so the colour of
+    a fully transparent texel is not "don't care": bilinear filtering at a silhouette blends it into
+    the leaf, and a generation's transparent region is the studio background, so every needle comes
+    back with a white rim. Filling outward with leaf colour is the standard fix and it is visible in
+    a frame, not only in a number.
+    """
+    a = np.asarray(alpha, dtype=np.float32)
+    out = np.asarray(rgb, dtype=np.float32).copy()
+    known = (a >= floor).astype(np.float32)
+    if known.sum() == 0:
+        return np.clip(out, 0, 255).astype(np.uint8)
+    mean = (out * known[:, :, None]).reshape(-1, 3).sum(axis=0) / known.sum()
+    for _ in range(int(passes)):
+        acc = np.zeros_like(out)
+        wacc = np.zeros_like(known)
+        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            acc += np.roll(np.roll(out * known[:, :, None], dy, axis=0), dx, axis=1)
+            wacc += np.roll(np.roll(known, dy, axis=0), dx, axis=1)
+        fill = (wacc > 0) & (known < 0.5)
+        out[fill] = acc[fill] / wacc[fill][:, None]
+        known = np.where(fill, 1.0, known)
+    out[known < 0.5] = mean  # everything the flood never reached
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def atlas_compose(sprites, cols, rows, size, margin=ATLAS_MARGIN):
+    """Compose oriented, bottom-anchored sprites into (basecolor RGB, opacity grey) of `size`.
+
+    Cell 0 is the BOTTOM-LEFT and the order is row-major upward, matching the recipe's cell-to-UV
+    map and the placeholder atlas (`tools/scripts/make_leaf_atlas.py`). `sprites` shorter than
+    cols*rows leaves the remaining cells empty, which `atlas_cells` then reports rather than hides.
+    """
+    cols, rows, size = int(cols), int(rows), int(size)
+    cell = size // max(cols, rows)
+    canvas = np.zeros((cell * rows, cell * cols, 4), np.uint8)
+    for i, sprite in enumerate(sprites[:cols * rows]):
+        if sprite is None:
+            continue
+        r, c = divmod(i, cols)
+        y0 = cell * rows - (r + 1) * cell  # row 0 at the BOTTOM, the way UV space runs
+        canvas[y0:y0 + cell, c * cell:(c + 1) * cell] = place_sprite(sprite, cell, margin=margin)
+    alpha = canvas[:, :, 3].astype(np.float32) / 255.0
+    return alpha_bleed(canvas[:, :, :3], alpha), canvas[:, :, 3].copy()
+
+
+def atlas_cells(opacity, cols, rows, floor=0.5):
+    """Per-cell measurements of an atlas matte, cell 0 bottom-left, row-major upward.
+
+    Each entry carries what a card actually depends on:
+
+      `opaque`        the cell's cutout coverage. 0 is a card that renders as nothing.
+      `reaches_base`  whether the sprite touches the cell's bottom edge, where the card's v is 0.
+                      A sprite floating in its cell is a leaf detached from its twig.
+      `base_taper`    the base band's width over the middle band's. Under 1 means the sprite is
+                      narrow where it attaches and wide above, i.e. the TWIG end is at the bottom
+                      and not the fan -- which is the half of "bottom-anchored" that a bounding box
+                      cannot see, and the one an unoriented generation gets wrong.
+    """
+    a = np.asarray(opacity, dtype=np.float32)
+    if a.ndim == 3:
+        a = a[:, :, 3] if a.shape[2] == 4 else a[:, :, 0]
+    if a.max() > 1.0:
+        a = a / 255.0
+    cols, rows = int(cols), int(rows)
+    h, w = a.shape
+    ch, cw = h // rows, w // cols
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            y0 = h - (r + 1) * ch
+            solid = a[y0:y0 + ch, c * cw:(c + 1) * cw] > floor
+            band = max(1, ch // 8)
+            base = float(solid[ch - band:].sum())
+            middle = float(solid[ch // 2 - band // 2:ch // 2 + band // 2 + 1].sum())
+            out.append({"cell": r * cols + c, "opaque": float(solid.mean()),
+                        "reaches_base": bool(solid[ch - max(1, ch // 24):].any()),
+                        "base_taper": (base / middle) if middle else float("inf")})
+    return out
+
+
+def cell_distinctness(opacity, cols, rows):
+    """The mean absolute matte difference of the most SIMILAR pair of cells, in 0..255.
+
+    The atlas analogue of the gate's "two seeds give different trees": four copies of one spray
+    passes every per-cell check above and still renders one leaf ten thousand times.
+    """
+    a = np.asarray(opacity)
+    if a.ndim == 3:
+        a = a[:, :, 3] if a.shape[2] == 4 else a[:, :, 0]
+    cols, rows = int(cols), int(rows)
+    h, w = a.shape
+    ch, cw = h // rows, w // cols
+    tiles = [a[h - (r + 1) * ch:h - r * ch, c * cw:(c + 1) * cw].astype(np.float32)
+             for r in range(rows) for c in range(cols)]
+    if len(tiles) < 2:
+        return float("inf")
+    return min(float(np.abs(x - y).mean())
+               for i, x in enumerate(tiles) for y in tiles[i + 1:])

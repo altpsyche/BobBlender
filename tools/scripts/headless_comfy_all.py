@@ -53,10 +53,13 @@ GATES = [
     # nothing. Needs no server and no card, so it is in every --fast sweep.
     {"key": "redwood", "script": "headless_redwood.py", "phase": "redwood-run fixes (items 3-11)",
      "fast": [], "slow": 1, "server": False},
-    # BobFoliage, whose whole point is that it needs no server: the geometry is procedural and only
-    # its two texture sets come from ComfyUI (docs/FOLIAGE.md).
-    {"key": "foliage", "script": "headless_foliage.py", "phase": "F1/F2 procedural tree + cards",
-     "fast": [], "slow": 1, "server": False},
+    # BobFoliage. Its geometry never needs a server -- that is the point of the track -- and since F3
+    # its two TEXTURE sets do, so it is the one gate that is half and half: every structural check
+    # runs regardless and `check_generation` alone prints SKIP without a server (docs/FOLIAGE.md).
+    # `server: False` still, because the gate is not skipped as a whole for want of one.
+    {"key": "foliage", "script": "headless_foliage.py",
+     "phase": "F1-F3 procedural tree, cards, textures",
+     "fast": [], "slow": 2, "server": False},
     {"key": "texset", "script": "headless_comfy_texset.py", "phase": "G1 prompt to a shaded layer",
      "fast": [], "slow": 1, "server": True},
     {"key": "g2", "script": "headless_comfy_g2.py", "phase": "G2 variants, preflight, maps",

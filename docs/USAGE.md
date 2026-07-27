@@ -104,17 +104,19 @@ Fourteen tools. Nine work with no ComfyUI at all:
 | `create_project` | Scaffold a new project folder. |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, which workflows are installed. Never fails. |
 
-Five more need a local ComfyUI:
+Seven more need a local ComfyUI:
 
 | Tool | What it does |
 |------|--------------|
 | `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. Returns the `apply_texture_set` op ready to send. |
+| `comfy_bark_set` | A bark set for BobFoliage, measured for grain direction as well as tiling. Pass the name a species preset asks for (`bark_conifer`, `bark_broadleaf`) and the tree wears it with no apply step. |
+| `comfy_leaf_atlas` | A grid of foliage sprites on transparent, for BobFoliage's leaf cards. The set records its own grid, so a tree only has to name it. |
 | `comfy_mesh` | Prompt to a staged scatter asset, geometry plus PBR. Returns the `import_generated` op. |
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. **MCP only; there is no panel button for this.** |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. A pitch frame, not geometry. |
 
-With no server the five return `{"ok": false, "error": "...not reachable..."}` and the nine are
+With no server the seven return `{"ok": false, "error": "...not reachable..."}` and the nine are
 unaffected.
 
 Each generation tool hands back the op that consumes its result, ready to send: `comfy_mesh`

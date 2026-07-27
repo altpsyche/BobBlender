@@ -37,6 +37,7 @@
     "card_width": 0.45,
     "droop": 0.5,
     "card_spread": 30.0,
-    "bark_scale": 0.7
+    "bark_scale": 0.7,
+    "bark_set": "bark_conifer"
   }
 }
