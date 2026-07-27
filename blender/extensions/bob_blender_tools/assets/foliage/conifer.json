@@ -2,7 +2,7 @@
   "meta": {
     "name": "Conifer",
     "kind": "trees",
-    "description": "A narrow spruce or redwood: a straight bole, short near-horizontal limbs and a crown well under half its height wide. The default shape of the track, and the one the redwood run could not generate."
+    "description": "A narrow spruce or redwood: a flared bole that stays near-cylindrical for most of its height, whorls of short limbs that sag under their own sprays, and a crown well under half its height wide. The default shape of the track, and the one the redwood run could not generate."
   },
   "params": {
     "levels": 3,
@@ -14,9 +14,9 @@
     "taper": 0.88,
     "lean": 0.1,
     "gnarl": 0.4,
-    "l1_branches": 18,
+    "l1_branches": 24,
     "l1_angle": 80.0,
-    "l1_length": 0.1,
+    "l1_length": 0.13,
     "l1_radius": 0.24,
     "l1_phyllotaxy": 137.5,
     "l1_start": 0.22,
@@ -32,14 +32,24 @@
     "l3_radius": 0.44,
     "l3_phyllotaxy": 137.5,
     "l3_start": 0.12,
-    "cards": 4,
-    "card_size": 0.9,
-    "card_width": 0.45,
-    "droop": 0.5,
+    "cards": 2,
+    "card_size": 1.0,
+    "card_width": 0.5,
+    "droop": 0.55,
     "card_spread": 30.0,
     "bark_scale": 0.7,
     "bark_set": "bark_conifer",
     "sway": 0.45,
-    "leaf_flutter": 0.5
+    "leaf_flutter": 0.5,
+    "taper_curve": 1.7,
+    "flare": 0.9,
+    "collar": 0.5,
+    "lobe": 0.22,
+    "l1_sag": 0.2,
+    "l2_sag": 0.3,
+    "l3_sag": 0.38,
+    "leaf_level": 3,
+    "leaf_start": 0.34,
+    "atlas": "leaf_conifer"
   }
 }

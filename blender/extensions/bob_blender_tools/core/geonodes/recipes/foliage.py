@@ -92,6 +92,35 @@ DEFAULT_ATLAS = "leaf_atlas_blockout"   # ships in the block-out pack, so a tree
 # same value now means the same SHAPE at any scale. See `_bend`.
 GNARL_SPAN = 0.05
 
+# -- F6: the terms that stop a limb being a pipe ---------------------------------------------------
+# Every one of these is INERT at its default, which is the point: F1 to F5 measured a tree with none
+# of them and those numbers still have to hold, so the shape they describe arrives through the
+# species presets rather than through the recipe's floor. See docs/FOLIAGE.md 2.9.
+#
+# How far up a limb a base swell reaches, as a fraction of its length. Two constants because the
+# two swells are different shapes: a root flare is the bottom twentieth of a 22 m bole, and a branch
+# collar is a much larger fraction of a short branch. Squared inside `_taper`, so both are concave.
+FLARE_SPAN = 0.05
+COLLAR_SPAN = 0.18
+# The wavelength of the radial lobing, as a multiple of the LOCAL radius (`_lobe`). Relative to the
+# radius rather than to the world, or a trunk gets a few broad bulges and a twig gets none: the same
+# reason `GNARL_SPAN` is a fraction of a length. Under 1 and the lobes are finer than a bark furrow
+# and read as noise; over 2 and a trunk is an oval.
+LOBE_WAVE = 1.3
+# `Lobe` is meant to read as "the peak radius deviation, as a fraction of the local radius", and a
+# raw fractal noise does not deliver that: its Fac clusters around 0.5 and never reaches either
+# bound, so the nominal +/-1 amplitude arrived as +/-0.324 measured over a whole trunk. The gain is
+# that number's reciprocal, so `Lobe` 0.2 really is a 20% peak swing and a preset value means the
+# thing the knob's name says. Measured, not chosen -- see docs/FOLIAGE.md 2.9.
+LOBE_GAIN = 3.09
+# The bottom fraction of a limb over which the lobing fades in. It exists because of the FLARE: a
+# flared base widens downward, so its first ring's normal tilts DOWNWARD, and a displacement along
+# that normal pushes the lowest vertices under z=0. Measured on the shipped conifer -- the lowest
+# vertex sat at -0.031 m, which is the pack writer's origin-at-the-base invariant broken and a
+# scattered tree buried by three centimetres. Fading over the bottom 1.5% (0.33 m on a 22 m bole)
+# costs nothing visible and puts the lowest vertex back at -0.0004 m.
+LOBE_FOOT = 0.015
+
 # Wind (F4). Amplitudes are FRACTIONS, never metres, for the reason `GNARL_SPAN` is: a species
 # preset is a shape description, and one that only holds at 20 m is not a description. The trunk
 # term scales with `Height` and the card term with `Card Size`, so a grass tuft in a gale bends by
@@ -112,11 +141,11 @@ _TAU = 2.0 * math.pi
 # trunk's length, so 0.42 was a 8.4 m arm. A conifer's lowest limbs are nearer a sixth of its height.
 # These are the floor for a bare build; a real species comes from a preset (assets.foliage_species).
 _LEVEL_DEFAULTS = (
-    # branches, angle, length, radius, phyllotaxy, start
-    (16, 78.0, 0.115, 0.26, 137.5, 0.26),
-    (5, 54.0, 0.30, 0.38, 137.5, 0.20),
-    (4, 47.0, 0.38, 0.45, 137.5, 0.16),
-    (3, 42.0, 0.46, 0.50, 137.5, 0.15),
+    # branches, angle, length, radius, phyllotaxy, start, sag
+    (16, 78.0, 0.115, 0.26, 137.5, 0.26, 0.0),
+    (5, 54.0, 0.30, 0.38, 137.5, 0.20, 0.0),
+    (4, 47.0, 0.38, 0.45, 137.5, 0.16, 0.0),
+    (3, 42.0, 0.46, 0.50, 137.5, 0.15, 0.0),
 )
 
 # 137.5 degrees is the golden angle, which is what real phyllotaxy converges on: successive children
@@ -138,13 +167,19 @@ PARAM_SOCKETS = {
     "seed": "Seed", "height": "Height", "segments": "Segments",
     "trunk_radius": "Trunk Radius", "taper": "Taper", "lean": "Lean", "gnarl": "Gnarl",
     "branch_segments": "Branch Segments", "shade_smooth": "Shade Smooth",
+    "taper_curve": "Taper Curve", "flare": "Flare", "collar": "Collar", "lobe": "Lobe",
     "cards": "Cards", "card_size": "Card Size", "card_width": "Card Width",
     "droop": "Droop", "card_spread": "Spread",
+    "leaf_level": "Leaf Level", "leaf_start": "Leaf Start",
     "atlas_cols": "Atlas Columns", "atlas_rows": "Atlas Rows", "bark_scale": "Bark Scale",
     "sway": "Sway", "leaf_flutter": "Leaf Flutter",
 }
+# `sag` is a LEVEL key and the card `droop` is a whole-tree one, which is why they are not the same
+# word: both are gravity, but one bends wood and the other hangs a leaf spray, and a single `Droop`
+# appearing once at the top and once per level would be two different knobs under one name.
 _LEVEL_SOCKETS = {"branches": "Branches", "angle": "Angle", "length": "Length",
-                  "radius": "Radius", "phyllotaxy": "Phyllotaxy", "start": "Start"}
+                  "radius": "Radius", "phyllotaxy": "Phyllotaxy", "start": "Start",
+                  "sag": "Sag"}
 # The two sockets the world owns, listed so a caller can say so rather than infer it from an absence.
 WORLD_SOCKETS = ("Wind", "Wind Direction")
 
@@ -259,12 +294,21 @@ def _unit_line(ng, segments, location=(0, 0)):
     return _resample(ng, line.outputs["Curve"], segments, (location[0] + 200, location[1]))
 
 
-def _bend(ng, curve, gnarl, lean, seed_f, scale, location):
+def _bend(ng, curve, gnarl, lean, seed_f, scale, location, sag=None):
     """Offset every point by a noise field in XY, weighted by its own spline factor.
 
     The weight is why a branch stays attached: factor is 0 at the base, so the base point does not
     move and remains coincident with the parent point it was instanced on. `lean` adds a steady pull
     in +X on the same weighting, which is what makes a trunk lean rather than wander.
+
+    `sag` (F6) is the third term and the only one in Z: a limb's own weight, as a downward pull that
+    grows with the SQUARE of the spline factor. Squared rather than linear because a cantilever's
+    deflection is, so a branch leaves its parent at the angle the rotation gave it and curves over
+    further out -- which is the difference between a bough and a spoke. Linear sag instead drops the
+    whole limb by a constant slope and just re-reads as a smaller `Angle`. Negative sags UPWARD, for
+    a young conifer's whorls or a fastigiate poplar, and it is a fraction of the limb's own length so
+    a species survives being applied at another size. At 0 the offset is identically zero, so every
+    F1-F5 measurement of a straight limb still holds.
 
     Both amplitudes are a fraction of the CURVE'S OWN LENGTH, not metres. F1 had them in metres,
     which is invisible on a 20 m trunk and destroys anything small: measured, a 0.10 m grass stem at
@@ -302,7 +346,17 @@ def _bend(ng, curve, gnarl, lean, seed_f, scale, location):
     lean_amp = math_node(ng, "MULTIPLY", math_node(ng, "MULTIPLY", lean, span, (lx + 360, ly + 60)),
                          weight, (lx + 540, ly + 60))
     ox = math_node(ng, "ADD", ox, lean_amp, (lx + 900, ly - 120))
-    offset = _combine(ng, ox, oy, 0.0, (lx + 1080, ly - 200))
+    oz = 0.0
+    if sag is not None:
+        # Squared weighting of its own, not the noise's factor^1.5: this is a cantilever and that is
+        # a wander. Both are 0 at the base, which is the invariant that keeps a branch in its socket.
+        drop = math_node(ng, "POWER", factor, 2.0, (lx + 180, ly + 640))
+        oz = math_node(ng, "MULTIPLY",
+                       math_node(ng, "MULTIPLY", sag, length.outputs["Length"],
+                                 (lx + 360, ly + 640)),
+                       math_node(ng, "MULTIPLY", drop, -1.0, (lx + 360, ly + 780)),
+                       (lx + 720, ly + 640))
+    offset = _combine(ng, ox, oy, oz, (lx + 1080, ly - 200))
     node = ng.nodes.new("GeometryNodeSetPosition")
     node.location = (lx + 1260, ly)
     ng.links.new(curve, node.inputs["Geometry"])
@@ -319,21 +373,107 @@ def _bend(ng, curve, gnarl, lean, seed_f, scale, location):
                   "FLOAT", "POINT", (lx + 1440, ly))
 
 
-def _taper(ng, curve, base_radius, taper, location):
-    """Radius falling from `base_radius` at the base to `base_radius * (1 - taper)` at the tip."""
+def _taper(ng, curve, base_radius, taper, location, power=None, swell=None, span=FLARE_SPAN):
+    """Radius falling from `base_radius` at the base to `base_radius * (1 - taper)` at the tip.
+
+    Two F6 terms on top of that, both inert at their defaults so the linear taper F1-F5 measured is
+    exactly what `power` 1 and `swell` 0 still produce.
+
+    `power` raises the spline factor before the taper is applied, which is the difference between a
+    cone and a bole. At 1 the radius falls linearly, and a straight line whose radius falls linearly
+    IS a cone -- the shape the review called a pipe. Above 1 the fall is slow at first and steep near
+    the top, which is what a trunk does: nearly cylindrical through the merchantable length, then
+    tapering out into the crown. Below 1 gives the opposite, a limb that thins immediately, which is
+    what a vine or a frond stem wants.
+
+    `swell` multiplies the radius by up to (1 + swell) over the bottom `span` of the limb, squared so
+    it is concave. It is one mechanism serving the two things the review asked for separately: on the
+    trunk it is the ROOT FLARE, on a branch it is the COLLAR where the limb meets its parent. They
+    are the same statement -- wood thickens where it has to carry a moment -- and differ only in how
+    far up they reach, which is the `span` argument (FLARE_SPAN against COLLAR_SPAN). A collar cannot
+    poke through its parent by construction: the base radius is already the parent's own radius times
+    a per-level ratio well under 1, so a swell of 1 on a 0.46 ratio is still under the parent.
+    """
     lx, ly = location
     factor, _ = _spline_parameter(ng, (lx, ly + 200))
+    curved = factor if power is None else math_node(ng, "POWER", factor, power, (lx + 180, ly + 380))
     shrink = math_node(ng, "SUBTRACT", 1.0,
-                       math_node(ng, "MULTIPLY", taper, factor, (lx + 180, ly + 200)),
+                       math_node(ng, "MULTIPLY", taper, curved, (lx + 180, ly + 200)),
                        (lx + 360, ly + 200))
-    radius = math_node(ng, "MAXIMUM",
-                       math_node(ng, "MULTIPLY", base_radius, shrink, (lx + 540, ly + 100)),
-                       MIN_RADIUS, (lx + 720, ly + 100))
+    radius = math_node(ng, "MULTIPLY", base_radius, shrink, (lx + 540, ly + 100))
+    if swell is not None:
+        ramp = math_node(ng, "POWER",
+                         math_node(ng, "MAXIMUM",
+                                   math_node(ng, "SUBTRACT", 1.0,
+                                             math_node(ng, "DIVIDE", factor, span,
+                                                       (lx + 180, ly - 240)),
+                                             (lx + 360, ly - 240)),
+                                   0.0, (lx + 540, ly - 240)),
+                         2.0, (lx + 720, ly - 240))
+        radius = math_node(ng, "MULTIPLY", radius,
+                           math_node(ng, "ADD", 1.0,
+                                     math_node(ng, "MULTIPLY", swell, ramp, (lx + 900, ly - 240)),
+                                     (lx + 1080, ly - 240)),
+                           (lx + 1260, ly + 100))
+    radius = math_node(ng, "MAXIMUM", radius, MIN_RADIUS, (lx + 1440, ly + 100))
     node = ng.nodes.new("GeometryNodeSetCurveRadius")
-    node.location = (lx + 900, ly)
+    node.location = (lx + 1620, ly)
     ng.links.new(curve, node.inputs["Curve"])
     ng.links.new(radius, node.inputs["Radius"])
     return node.outputs["Curve"]
+
+
+def _lobe(ng, mesh, gi, seed_f, location):
+    """Push every wood vertex along its own normal, by a noise whose amplitude is the local radius.
+
+    This is the answer to "the trunk is a pipe", and it is a pipe for a reason no knob could reach
+    before: the sweep's profile is ONE circle of one radius, so every cross-section of every limb in
+    every tree was a perfect circle, and the only thing that varied along a bole was how big that
+    circle was. A cylinder with a smooth radius function is a pipe however good the bark on it is.
+
+    Along the vertex NORMAL because on a swept tube the normal IS the radial direction, so one Set
+    Position buys lobes around the limb and bulges along it without any of the per-limb axis
+    arithmetic a proper radial displacement would need. Three properties make it safe:
+
+    - the amplitude is a fraction of `bbt_fol_rad`, the tapered radius this ring actually has, so a
+      trunk gets metres of relief and a twig gets millimetres and nothing is turned inside out;
+    - the noise WAVELENGTH is also scaled by the radius (`LOBE_WAVE`), so a limb carries the same
+      number of lobes around it whatever its size -- the `GNARL_SPAN` argument again;
+    - it runs after `_sweep_uv` and before the cards are joined, so it moves no card and rewrites no
+      UV: the bark UV was measured on the ring positions the sweep produced and displacing along the
+      normal does not change which texel a corner reads, it changes where that texel sits in space.
+
+    It adds no vertices, which is what keeps every F1-F5 count exact.
+    """
+    lx, ly = location
+    rad = math_node(ng, "MAXIMUM", _named(ng, "bbt_fol_rad", "FLOAT", (lx, ly + 200)),
+                    MIN_RADIUS, (lx + 180, ly + 200))
+    field = noise_field(ng, position(ng, (lx, ly - 200)),
+                        math_node(ng, "DIVIDE", LOBE_WAVE, rad, (lx + 360, ly + 200)),
+                        detail=2.0, seed=seed_f, location=(lx + 540, ly - 200))
+    # Faded in over the bottom `LOBE_FOOT` of the limb, so a flared base cannot be pushed under the
+    # ground plane by its own downward-tilted normal. See LOBE_FOOT.
+    foot = math_node(ng, "MINIMUM",
+                     math_node(ng, "DIVIDE", _named(ng, "bbt_fol_t", "FLOAT", (lx, ly + 380)),
+                               LOBE_FOOT, (lx + 180, ly + 380)),
+                     1.0, (lx + 360, ly + 380))
+    amount = math_node(ng, "MULTIPLY",
+                       math_node(ng, "MULTIPLY",
+                                 math_node(ng, "MULTIPLY", gi.outputs["Lobe"], rad,
+                                           (lx + 540, ly + 200)),
+                                 foot, (lx + 720, ly + 380)),
+                       math_node(ng, "MULTIPLY",
+                                 math_node(ng, "SUBTRACT", field, 0.5, (lx + 720, ly - 200)),
+                                 2.0 * LOBE_GAIN, (lx + 900, ly - 200)),
+                       (lx + 1080, ly))
+    normal = ng.nodes.new("GeometryNodeInputNormal")
+    normal.location = (lx + 1080, ly - 400)
+    node = ng.nodes.new("GeometryNodeSetPosition")
+    node.location = (lx + 1440, ly)
+    ng.links.new(mesh, node.inputs["Geometry"])
+    ng.links.new(_scaled(ng, normal.outputs["Normal"], amount, (lx + 1260, ly - 200)),
+                 node.inputs["Offset"])
+    return node.outputs["Geometry"]
 
 
 def _tag(ng, curve, level, location):
@@ -572,8 +712,42 @@ def _card_uv(ng, cards, gi, location):
                   "FLOAT2", "CORNER", (lx + 1340, ly))
 
 
+def _leafy(ng, gi, location):
+    """The selection a card grows on: deep enough a limb, far enough along it (F6).
+
+    F1 through F5 put a card only on a TIP, on every level, and that is the single biggest reason the
+    review read the trees as bare sticks with pom-poms on them: a 3 m bough carried its entire leaf
+    allowance in one cluster at the far end, and the grass tuft came back as fourteen woody dowels
+    with a sprig glued to each. Real foliage is distributed ALONG the youngest wood.
+
+    Two knobs, and both are inert at their defaults so every F1-F5 card measurement still holds:
+
+    - `Leaf Level` is the shallowest level that carries leaves. 0 (the default) is every level,
+      including the trunk's own tip, which is exactly what the tip-only rule did. Set to `levels` and
+      only the outermost twigs are leafy, which is what a tree does -- nothing grows out of a bole.
+    - `Leaf Start` is how far along a leafy limb the cards begin, as a fraction. At 1 only the last
+      point qualifies, which IS the tip, so the default reproduces the old selection exactly;
+      at 0.4 the outer 60% of every twig carries them.
+
+    The epsilon is not decoration. `bbt_fol_t` is the spline factor, exactly 1.0 at the last point, so
+    a bare `t > Leaf Start` at Leaf Start 1 selects nothing at all and the tree comes back bald.
+    """
+    lx, ly = location
+    level = _f(ng, _named(ng, "bbt_fol_level", "INT", (lx, ly + 200)), (lx + 180, ly + 200))
+    deep = math_node(ng, "GREATER_THAN", level,
+                     math_node(ng, "SUBTRACT", _f(ng, gi.outputs["Leaf Level"], (lx, ly + 380)),
+                               0.5, (lx + 180, ly + 380)),
+                     (lx + 360, ly + 200))
+    along = math_node(ng, "GREATER_THAN", _named(ng, "bbt_fol_t", "FLOAT", (lx, ly - 40)),
+                      math_node(ng, "SUBTRACT", gi.outputs["Leaf Start"], 1e-4, (lx + 180, ly - 40)),
+                      (lx + 360, ly - 40))
+    return math_node(ng, "GREATER_THAN",
+                     math_node(ng, "MULTIPLY", deep, along, (lx + 540, ly + 80)),
+                     0.5, (lx + 720, ly + 80))
+
+
 def _cards(ng, skeleton, gi, seed_f, location):
-    """Instance leaf cards on every branch tip of the skeleton. Returns a mesh socket.
+    """Instance leaf cards along the leafy wood of the skeleton. Returns a mesh socket.
 
     The route is tips -> a point cloud -> N duplicates of each point -> a card on each, and each hop
     exists for a reason:
@@ -600,9 +774,7 @@ def _cards(ng, skeleton, gi, seed_f, location):
     seed_tips.location = (lx + 200, ly)
     ng.links.new(skeleton, seed_tips.inputs["Points"])
     ng.links.new(one.outputs["Points"], seed_tips.inputs["Instance"])
-    ng.links.new(math_node(ng, "GREATER_THAN", _named(ng, "bbt_fol_tip", "FLOAT", (lx, ly + 200)),
-                           0.5, (lx + 200, ly + 200)),
-                 seed_tips.inputs["Selection"])
+    ng.links.new(_leafy(ng, gi, (lx - 800, ly + 400)), seed_tips.inputs["Selection"])
     tips = ng.nodes.new("GeometryNodeRealizeInstances")
     tips.location = (lx + 400, ly)
     ng.links.new(seed_tips.outputs["Instances"], tips.inputs["Geometry"])
@@ -965,8 +1137,30 @@ def _tree_materials(ng, params):
             node.inputs["Base Color"].default_value = (0.19, 0.13, 0.09, 1.0)
             node.inputs["Roughness"].default_value = 0.85
             node.inputs["Canopy Snow"].default_value = 1.0  # a trunk is vertical; snow needs the hint
-    card = foliage_card_material(f"{base} Leaf", atlas=str(params.get("atlas", DEFAULT_ATLAS)))
+    card = foliage_card_material(f"{base} Leaf", atlas=_atlas_set(params))
     return bark, card
+
+
+def _atlas_set(params):
+    """The atlas set this build will actually read: the one asked for, else the shipped block-out one.
+
+    The fallback is not politeness, and the ASYMMETRY WITH BARK is the whole point (F6). A species
+    preset naming a set that no pack provides is a documented STATE rather than a mistake
+    (docs/FOLIAGE.md 4.4) -- `conifer` asks for `bark_conifer`, and before anyone generates it the
+    trunk is a solid tint, which is the block-out convention everywhere in the suite.
+
+    A CARD has no such graceful floor. Its material is the surface master with a white tint so the
+    atlas reads at face value, and its cutout comes from the set; with no set there is no cutout and
+    no albedo, so every leaf renders as an opaque WHITE RECTANGLE. Measured on the first F6 run with
+    a generated atlas the resolver could not see: a whole canopy of white quads, which reads exactly
+    like the translucency bug F4 documents and is nothing of the kind.
+
+    So the two slots differ because their failures differ. A missing bark set costs a texture; a
+    missing atlas costs the silhouette. `_atlas_grid` resolves through here too, or a build would
+    read the absent set's (absent) sidecar and the fallback atlas with the wrong grid.
+    """
+    name = str(params.get("atlas", DEFAULT_ATLAS) or DEFAULT_ATLAS)
+    return name if assets.texture_set_maps(name) else DEFAULT_ATLAS
 
 
 DEFAULT_ATLAS_GRID = (2, 2)   # the placeholder atlas's own layout, and the floor when nothing says
@@ -986,7 +1180,7 @@ def _atlas_grid(params):
     artist may deliberately read a 4x4 as 2x2 to use only its bottom row.
     """
     cols, rows = DEFAULT_ATLAS_GRID
-    declared = assets.atlas_grid(str(params.get("atlas", DEFAULT_ATLAS)))
+    declared = assets.atlas_grid(_atlas_set(params))
     if declared is not None:
         cols, rows = declared
     return (max(1, min(16, int(params.get("atlas_cols", cols)))),
@@ -1042,8 +1236,15 @@ def build(ng, out, params: dict):
     add_input(ng, "Lean", "NodeSocketFloat", float(params.get("lean", 0.15)))
     add_input(ng, "Gnarl", "NodeSocketFloat", float(params.get("gnarl", 0.5)), 0.0)
     add_input(ng, "Branch Segments", "NodeSocketInt", int(params.get("branch_segments", 6)), 2, 64)
+    # The four F6 shape terms, all defaulting to INERT: `Taper Curve` 1 is the linear taper F1
+    # measured, and 0 flare, collar and lobe are the perfect cylinder it measured it on. A species
+    # preset turns them on, which is where a shape description belongs (docs/FOLIAGE.md 2.9).
+    add_input(ng, "Taper Curve", "NodeSocketFloat", float(params.get("taper_curve", 1.0)), 0.2, 5.0)
+    add_input(ng, "Flare", "NodeSocketFloat", float(params.get("flare", 0.0)), 0.0, 4.0)
+    add_input(ng, "Collar", "NodeSocketFloat", float(params.get("collar", 0.0)), 0.0, 3.0)
+    add_input(ng, "Lobe", "NodeSocketFloat", float(params.get("lobe", 0.0)), 0.0, 0.6)
     for level in range(1, levels + 1):
-        count, angle, length, radius, phyllo, start = _LEVEL_DEFAULTS[level - 1]
+        count, angle, length, radius, phyllo, start, sag = _LEVEL_DEFAULTS[level - 1]
         prefix = f"L{level} "
         add_input(ng, prefix + "Branches", "NodeSocketInt",
                   int(params.get(f"l{level}_branches", count)), 1, 64)
@@ -1057,6 +1258,10 @@ def build(ng, out, params: dict):
                   float(params.get(f"l{level}_phyllotaxy", phyllo)), 0.0, 360.0)
         add_input(ng, prefix + "Start", "NodeSocketFloat",
                   float(params.get(f"l{level}_start", start)), 0.0, 0.95)
+        # Gravity, per level, because it is per level in a tree: a bough sags and the twig on its end
+        # sags much less in absolute terms and about as much relative to itself. Negative sweeps up.
+        add_input(ng, prefix + "Sag", "NodeSocketFloat",
+                  float(params.get(f"l{level}_sag", sag)), -1.0, 1.0)
     # Leaf cards (F2). Live, because a canopy is tuned by eye and none of these changes the topology
     # of anything but the cards themselves. `Cards` 0 is the off switch and leaves a bare skeleton.
     add_input(ng, "Cards", "NodeSocketInt", int(params.get("cards", 5)), 0, 64)
@@ -1064,6 +1269,15 @@ def build(ng, out, params: dict):
     add_input(ng, "Card Width", "NodeSocketFloat", float(params.get("card_width", 0.60)), 0.01, 4.0)
     add_input(ng, "Droop", "NodeSocketFloat", float(params.get("droop", 0.35)), 0.0, 1.0)
     add_input(ng, "Spread", "NodeSocketFloat", float(params.get("card_spread", 34.0)), 0.0, 90.0)
+    # Where the leaves are (F6, `_leafy`). Both defaults reproduce the tip-only rule exactly: level 0
+    # is every level, and Leaf Start 1 is the last point of a limb, which is its tip.
+    # CLAMPED to this build's depth, and that is not defensive tidying -- it is what keeps the LOD
+    # ladder from producing a bald tree. A rung is a rebuild at `levels - 1` (docs/FOLIAGE.md 2.6),
+    # so a species that puts its leaves on level 3 asks LOD1 for a level that no longer exists, the
+    # selection matches nothing, and the rung comes back as bare wood with its canopy silently gone.
+    add_input(ng, "Leaf Level", "NodeSocketInt",
+              min(int(params.get("leaf_level", 0)), levels), 0, MAX_LEVELS)
+    add_input(ng, "Leaf Start", "NodeSocketFloat", float(params.get("leaf_start", 1.0)), 0.0, 1.0)
     # The atlas grid. The SET carries its own layout in a sidecar and that is the default; an
     # explicit param still wins. See `_atlas_grid` -- this is the [F3] open question answered.
     grid_cols, grid_rows = _atlas_grid(params)
@@ -1091,8 +1305,12 @@ def build(ng, out, params: dict):
     ng.links.new(_combine(ng, 0.0, 0.0, gi.outputs["Height"], (-2200, 460)), line.inputs["End"])
     trunk = _resample(ng, line.outputs["Curve"], gi.outputs["Segments"], (-1800, 300))
     trunk = _bend(ng, trunk, gi.outputs["Gnarl"], gi.outputs["Lean"], seed_f, 0.35, (-1600, 300))
-    trunk = _taper(ng, trunk, gi.outputs["Trunk Radius"], gi.outputs["Taper"], (-200, 300))
-    trunk = _tag(ng, trunk, 0, (800, 300))
+    # No sag on the trunk: a bole carries its load in compression, and a drooping one is a different
+    # species of plant. The swell here is the ROOT FLARE -- the same `_taper` term the branches use as
+    # a collar, over a much shorter span.
+    trunk = _taper(ng, trunk, gi.outputs["Trunk Radius"], gi.outputs["Taper"], (-200, 300),
+                   power=gi.outputs["Taper Curve"], swell=gi.outputs["Flare"], span=FLARE_SPAN)
+    trunk = _tag(ng, trunk, 0, (2200, 300))
 
     parts = [trunk]
     parent = trunk
@@ -1139,7 +1357,7 @@ def build(ng, out, params: dict):
         # N identical branches, and the point of a stand of trees is that no two limbs match. The
         # noise reads realized world position, so every branch samples a different part of the field.
         kids = _bend(ng, realize.outputs["Geometry"], gi.outputs["Gnarl"], 0.0, level_seed, 0.6,
-                     (-100, row))
+                     (-100, row), sag=gi.outputs[prefix + "Sag"])
         # The radius this branch starts at: the parent's ACTUAL radius where it attached, times this
         # level's ratio. `bbt_fol_rad` was stored after the parent's taper and rode here on the same
         # interpolation that carries `bbt_fol_plen`, so it is the parent's local thickness, not its
@@ -1149,8 +1367,10 @@ def build(ng, out, params: dict):
         base_radius = math_node(ng, "MULTIPLY",
                                 _named(ng, "bbt_fol_rad", "FLOAT", (1120, row + 400)),
                                 gi.outputs[prefix + "Radius"], (1300, row + 400))
-        kids = _taper(ng, kids, base_radius, gi.outputs["Taper"], (1500, row))
-        kids = _tag(ng, kids, level, (2500, row))
+        kids = _taper(ng, kids, base_radius, gi.outputs["Taper"], (1500, row),
+                      power=gi.outputs["Taper Curve"], swell=gi.outputs["Collar"],
+                      span=COLLAR_SPAN)
+        kids = _tag(ng, kids, level, (3400, row))
         parts.append(kids)
         parent = kids
 
@@ -1199,6 +1419,9 @@ def build(ng, out, params: dict):
     ng.links.new(to_mesh.outputs["Mesh"], smooth.inputs["Mesh"])
     ng.links.new(gi.outputs["Shade Smooth"], smooth.inputs["Shade Smooth"])
     swept = _sweep_uv(ng, smooth.outputs["Mesh"], gi, (4200, 0))
+    # The lobing goes HERE and nowhere else: after the UVs, which it must not disturb, and before the
+    # cards are joined, which it must not move. See `_lobe`.
+    swept = _lobe(ng, swept, gi, seed_f, (5600, 400))
 
     # -- Leaf cards on the tips, then one material each ------------------------------------------
     # The cards read the SKELETON, not the swept mesh: a tip on the mesh is a ring of `profile`

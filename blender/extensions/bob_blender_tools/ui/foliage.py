@@ -45,10 +45,14 @@ from . import helpers
 
 # Live knobs, grouped by the sub-panel that draws them. A name absent from this build's interface is
 # skipped by `helpers.live_knobs`, which is what lets one list serve levels=1 and levels=4.
-_TRUNK_KNOBS = ["Height", "Trunk Radius", "Taper", "Lean", "Gnarl", "Segments", "Branch Segments"]
-_LEVEL_KNOBS = ["Branches", "Angle", "Length", "Radius", "Phyllotaxy", "Start"]
-_CARD_KNOBS = ["Cards", "Card Size", "Card Width", "Droop", "Spread", "Bark Scale",
-               "Atlas Columns", "Atlas Rows"]
+# `Taper Curve`, `Flare`, `Collar` and `Lobe` (F6) sit with the trunk rather than in a box of their
+# own: they are all statements about how thick wood is where, which is what the Trunk box already is,
+# and a fifth box called Shape next to one called Trunk would be a coin toss to an artist.
+_TRUNK_KNOBS = ["Height", "Trunk Radius", "Taper", "Taper Curve", "Flare", "Collar", "Lobe",
+                "Lean", "Gnarl", "Segments", "Branch Segments"]
+_LEVEL_KNOBS = ["Branches", "Angle", "Length", "Radius", "Phyllotaxy", "Start", "Sag"]
+_CARD_KNOBS = ["Cards", "Card Size", "Card Width", "Droop", "Spread",
+               "Leaf Level", "Leaf Start", "Bark Scale", "Atlas Columns", "Atlas Rows"]
 _WIND_KNOBS = ["Wind", "Wind Direction", "Sway", "Leaf Flutter"]
 
 _SEED_KNOBS = {"Seed"}

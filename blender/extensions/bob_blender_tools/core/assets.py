@@ -499,7 +499,13 @@ def biome_terrain(biome):
 _FOLIAGE_SHAPE_KEYS = (
     "seed", "levels", "height", "segments", "branch_segments", "profile_segments",
     "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
+    # The F6 shape terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four are
+    # inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
+    "taper_curve", "flare", "collar", "lobe",
     "cards", "card_size", "card_width", "droop", "card_spread",
+    # Where the leaves sit on the wood, rather than how they look. Also inert by default: leaf_level
+    # 0 and leaf_start 1 are the tip-only rule F1-F5 measured.
+    "leaf_level", "leaf_start",
     "atlas_cols", "atlas_rows", "bark_scale", "bark_set", "atlas",
     # How stiff this species is (BobFoliage F4). A spruce barely moves and a birch is all motion, so
     # these belong to the species the way its taper does. `wind` and `wind_direction` deliberately
@@ -507,7 +513,7 @@ _FOLIAGE_SHAPE_KEYS = (
     # set them would be a tree carrying its own weather.
     "sway", "leaf_flutter",
 )
-_FOLIAGE_LEVEL_KEYS = ("branches", "angle", "length", "radius", "phyllotaxy", "start")
+_FOLIAGE_LEVEL_KEYS = ("branches", "angle", "length", "radius", "phyllotaxy", "start", "sag")
 _FOLIAGE_MAX_LEVELS = 4
 FOLIAGE_PARAM_KEYS = tuple(_FOLIAGE_SHAPE_KEYS) + tuple(
     f"l{n}_{k}" for n in range(1, _FOLIAGE_MAX_LEVELS + 1) for k in _FOLIAGE_LEVEL_KEYS)
