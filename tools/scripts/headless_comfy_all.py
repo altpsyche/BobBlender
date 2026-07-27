@@ -55,7 +55,7 @@ GATES = [
      "fast": [], "slow": 1, "server": False},
     # BobFoliage, whose whole point is that it needs no server: the geometry is procedural and only
     # its two texture sets come from ComfyUI (docs/FOLIAGE.md).
-    {"key": "foliage", "script": "headless_foliage.py", "phase": "F1 procedural tree skeleton",
+    {"key": "foliage", "script": "headless_foliage.py", "phase": "F1/F2 procedural tree + cards",
      "fast": [], "slow": 1, "server": False},
     {"key": "texset", "script": "headless_comfy_texset.py", "phase": "G1 prompt to a shaded layer",
      "fast": [], "slow": 1, "server": True},

@@ -315,10 +315,11 @@ and restores the same surface across a rebuild.
 
 ## foliage (recipe: `foliage`)
 
-A procedural tree or shrub: a trunk grown as a curve, branch levels grown off it,
-the whole skeleton swept to a mesh in one pass. BobFoliage F1 — see
-[FOLIAGE.md](FOLIAGE.md) for why the geometry is procedural rather than generated
-and how it reaches a scatter layer.
+A procedural tree, shrub or grass tuft: a trunk grown as a curve, branch levels
+grown off it, the whole skeleton swept to a mesh in one pass, and leaf cards
+instanced on its tips. BobFoliage F1 + F2 — see [FOLIAGE.md](FOLIAGE.md) for why
+the geometry is procedural rather than generated and how it reaches a scatter
+layer.
 
 Level 0 is a vertical line resampled to `segments`, bent by a noise field whose
 amplitude rises up the trunk (`gnarl`) plus a steady `lean`, tapering from
@@ -326,40 +327,76 @@ amplitude rises up the trunk (`gnarl`) plus a steady `lean`, tapering from
 fraction, resamples that to `branches` points, and instances a unit curve on them —
 rotated to leave the parent at `angle` and spun around it by `phyllotaxy` per
 index. So branch counts multiply: 9 / 5 / 4 over three levels is 9, 45, 180
-branches.
+branches. Then every tip gets `cards` quads fanned around it.
 
 | Param | Default | Live | What it does |
 |-------|---------|------|--------------|
 | `levels` | 3 | no | How many branch levels grow off the trunk (1–4). |
 | `profile_segments` | 6 | no | Sides of the swept tube. Vertex count is linear in it. |
-| `skeleton` | false | no | Emit the curves and skip the sweep. Faster structure tuning. |
-| `seed` | 0 | yes | Reshuffles the bend and every per-branch jitter. |
+| `skeleton` | false | no | Emit the curves and skip the sweep (and the cards). Faster structure tuning. |
+| `bark_set` | "" | no | Texture set on the trunk. Empty is a solid tint. |
+| `atlas` | `leaf_atlas_blockout` | no | Texture set the cards read their cells from. |
+| `seed` | 0 | yes | Reshuffles the bend, every per-branch jitter, and every card's atlas cell. |
 | `height` | 18.0 | yes | Trunk length in metres. |
 | `segments` | 14 | yes | Points along the trunk. |
 | `branch_segments` | 6 | yes | Points along every branch. |
-| `trunk_radius` | 0.45 | yes | Radius at the base. |
+| `trunk_radius` | 0.45 | yes | Radius at the base. Reaches the sweep through `Scale`, not the curve radius. |
 | `taper` | 0.85 | yes | Fraction of radius lost from base to tip, on every curve. |
-| `lean` | 0.4 | yes | Steady pull in +X, weighted up the curve. A trunk leans rather than wanders. |
-| `gnarl` | 0.9 | yes | Noise bend amplitude in metres. |
-| `l<n>_branches` | 9 / 5 / 4 / 3 | yes | Branches per parent at level n. |
-| `l<n>_angle` | 62 / 55 / 48 / 42 | yes | Degrees away from the parent, plus ±9° per branch. |
-| `l<n>_length` | 0.42 / 0.46 / 0.50 / 0.55 | yes | Length as a fraction of the parent's, ±22%. |
-| `l<n>_radius` | 0.34 / 0.42 / 0.50 / 0.55 | yes | Radius as a fraction of the parent's. |
+| `lean` | 0.15 | yes | Steady pull in +X, as a fraction of the curve's own length. A trunk leans rather than wanders. |
+| `gnarl` | 0.5 | yes | Noise bend amplitude, as a fraction of the curve's OWN length (not metres — see below). |
+| `l<n>_branches` | 16 / 5 / 4 / 3 | yes | Branches per parent at level n. |
+| `l<n>_angle` | 78 / 54 / 47 / 42 | yes | Degrees away from the parent, plus ±9° per branch. |
+| `l<n>_length` | 0.115 / 0.30 / 0.38 / 0.46 | yes | Length as a fraction of the parent's, ±22%. |
+| `l<n>_radius` | 0.26 / 0.38 / 0.45 / 0.50 | yes | Radius as a fraction of the parent's AT THE ATTACHMENT POINT. |
 | `l<n>_phyllotaxy` | 137.5 | yes | Degrees of spin per child index. 137.5 is the golden angle. |
-| `l<n>_start` | 0.28 / 0.22 / 0.18 / 0.15 | yes | Fraction up the parent where branches begin. |
-| `shade_smooth` | true | yes | Smooth shading on the swept mesh. |
+| `l<n>_start` | 0.26 / 0.20 / 0.16 / 0.15 | yes | Fraction up the parent where branches begin. |
+| `cards` | 5 | yes | Leaf cards per tip. 0 leaves a bare skeleton. |
+| `card_size` | 0.70 | yes | Card length in metres, from the tip outward. |
+| `card_width` | 0.60 | yes | Card width as a fraction of its length. |
+| `droop` | 0.35 | yes | Blends the spray's axis from the tip's tangent toward straight down. |
+| `card_spread` | 34.0 | yes | Degrees the spray opens away from that axis, plus that much jitter. |
+| `atlas_cols` / `atlas_rows` | 2 / 2 | yes | The atlas grid a card picks its cell from. |
+| `bark_scale` | 0.6 | yes | Metres of trunk per bark texture tile. |
+| `shade_smooth` | true | yes | Smooth shading on the swept mesh. Cards stay flat. |
 
-Attributes written, all on the mesh POINT domain: `bbt_fol_level` (0 for the
-trunk), `bbt_fol_t` (0 at a curve's base, 1 at its tip — bark UVs, wind falloff and
-card placement all need it), `bbt_fol_tip` (1 on the last ring of each curve, which
-is where leaf cards go), `bbt_fol_plen` (the curve's own length) and `bbt_fol_off`
-(how far the bend displaced the point).
+The shipped defaults are a floor, not a species. Real shapes are presets in a pack
+(`<pack>/foliage/<name>.json`, read by `assets.foliage_species`); the block-out pack
+ships `conifer`, `broadleaf`, `shrub` and `grass_tuft`.
 
-`bbt_fol_off` exists to be checked: the bend is weighted by `bbt_fol_t`, so a
-branch base cannot move and stays coincident with the parent point it grew from. A
-tree whose bases drifted renders perfectly as a cloud of floating sticks, so
-`tools/scripts/headless_foliage.py` asserts the offset is exactly zero there and
-non-zero elsewhere.
+Attributes written, on the mesh POINT domain unless noted: `bbt_fol_level` (0 for
+the trunk), `bbt_fol_t` (0 at a curve's base, 1 at its tip — bark UVs and wind
+falloff need it; on a card it is the card's own base-to-tip), `bbt_fol_tip` (1 on
+the last ring of each curve, where the cards go, and cleared on the cards
+themselves), `bbt_fol_plen` (the curve's own length), `bbt_fol_rad` (its radius
+after the taper), `bbt_fol_tan` (its tangent, which aims a spray), `bbt_fol_off`
+(how far the bend displaced the point), `bbt_fol_u` (the profile's parameter, so
+bark U runs around the tube), `bbt_fol_cuv` and `bbt_fol_cell` (a card's own UV and
+which atlas cell it drew), and `bbt_fol_leaf` on the FACE domain, which is what the
+two Set Material nodes select on.
+
+The recipe builds its own materials (`M_<name> Bark` and `M_<name> Leaf`, both
+ordinary surface BobShaders) and assigns them with two `Set Material` nodes in
+series inside the graph. That is not a shortcut around
+[the Set-Material rule](#rebuilding-in-place) — it sidesteps it. A GN-generated
+mesh ignores the object's material slots, so shading has to happen in the graph;
+doing it inside the recipe means a foliage object needs no `BBT_Material` modifier
+and so has nothing that can end up at the wrong index. Calling `assign_material` on
+one would flatten it back to a single material.
+
+Three attributes exist to be CHECKED, because each failure they catch still renders
+a convincing tree (`tools/scripts/headless_foliage.py`):
+
+- `bbt_fol_off` — the bend is weighted by `bbt_fol_t`, so a branch base cannot move
+  and stays coincident with the parent point it grew from. A tree whose bases
+  drifted renders perfectly as a cloud of floating sticks.
+- `bbt_fol_rad` — it feeds `Curve to Mesh`'s `Scale`. Blender 4.0 stopped applying
+  the curve radius implicitly, and until F2 wired this the sweep ignored every
+  radius knob and came out a uniform 1 m tube.
+- `bbt_fol_leaf` — the card faces, whose base edges must sit exactly on a tip.
+
+`gnarl` and `lean` are fractions of a curve's own length rather than metres so that
+one preset works at any size: as an absolute amplitude, the grass preset's 0.10 m
+stem was displaced 0.3 m and the tuft came back 1.7 m tall.
 
 ## volumetrics (recipe: `volumetrics`)
 

@@ -287,3 +287,104 @@ def test_a_hand_authored_models_block_is_still_inert(assets, monkeypatch, tmp_pa
                                                     "models": {"trees": ["oak.glb"]}}))
     monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
     assert any("models block is ignored" in w for w in assets.validate_biome("b"))
+
+
+# -- Foliage species presets (BobFoliage F2, docs/FOLIAGE.md 6) ------------------------------
+# Presets are DATA in a pack rather than a dict in the recipe, which is the whole point of these
+# tests: a pack can ship a species, so the reader has to survive whatever a pack ships.
+
+def _make_species(root, name, params=None, meta=None):
+    d = root / "foliage"
+    d.mkdir(parents=True, exist_ok=True)
+    body = {"meta": meta if meta is not None else {"name": name, "kind": "trees"},
+            "params": params if params is not None else {"levels": 2, "height": 4.0}}
+    (d / f"{name}.json").write_text(json.dumps(body))
+    return d / f"{name}.json"
+
+
+def test_blockout_ships_the_shipped_species(assets):
+    """The block-out pack is the floor, so a bare install can grow all three scatter kinds with
+    no pack configured and no ComfyUI server."""
+    names = assets.list_foliage_species()
+    assert {"conifer", "broadleaf", "shrub", "grass_tuft"} <= set(names)
+    kinds = {assets.foliage_species(n)["meta"]["kind"] for n in names}
+    assert {"trees", "plants", "grass"} <= kinds
+    for kind in ("trees", "plants", "grass"):
+        assert assets.foliage_species_for_kind(kind) in names
+
+
+def test_species_resolves_from_a_pack_and_first_hit_wins(assets, monkeypatch, tmp_path):
+    p1, p2 = tmp_path / "p1", tmp_path / "p2"
+    _make_species(p1, "spruce", params={"height": 30.0})
+    _make_species(p2, "spruce", params={"height": 3.0})
+    monkeypatch.setenv("BOB_ASSET_PACKS", os.pathsep.join([str(p1), str(p2)]))
+    assert assets.foliage_species("spruce")["params"]["height"] == 30.0
+
+
+def test_species_meta_defaults(assets, monkeypatch, tmp_path):
+    """A preset with no meta still reads: the name is titled from the filename and the kind
+    defaults to trees, so a minimal hand-written file is valid."""
+    pack = tmp_path / "p"
+    (pack / "foliage").mkdir(parents=True)
+    (pack / "foliage" / "black_pine.json").write_text(json.dumps({"params": {"levels": 3}}))
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    spec = assets.foliage_species("black_pine")
+    assert spec["meta"] == {"name": "Black Pine", "kind": "trees"}
+    assert spec["params"] == {"levels": 3}
+
+
+def test_unknown_params_are_dropped_and_flagged(assets, monkeypatch, tmp_path):
+    """An unknown key would be silently ignored by build_geonodes, so the tree would build at
+    defaults and look merely wrong. The reader drops it and the validator says so."""
+    pack = tmp_path / "p"
+    _make_species(pack, "typo", params={"levels": 2, "trunk_radius": 0.3, "trunkRadius": 0.9})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert "trunkRadius" not in assets.foliage_species("typo")["params"]
+    assert assets.foliage_species("typo")["params"]["trunk_radius"] == 0.3
+    assert any("unknown param 'trunkRadius'" in w for w in assets.validate_foliage_species("typo"))
+
+
+def test_inert_level_params_are_flagged(assets, monkeypatch, tmp_path):
+    """l3_* on a two-level species does nothing, which reads as "the preset did not take"."""
+    pack = tmp_path / "p"
+    _make_species(pack, "bush", params={"levels": 2, "l3_angle": 40.0, "l3_length": 0.5})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert any("l3_* params are inert" in w for w in assets.validate_foliage_species("bush"))
+
+
+def test_bad_species_files_are_warnings_not_crashes(assets, monkeypatch, tmp_path):
+    pack = tmp_path / "p"
+    (pack / "foliage").mkdir(parents=True)
+    (pack / "foliage" / "broken.json").write_text("{not json")
+    _make_species(pack, "empty", params={})
+    _make_species(pack, "odd_kind", meta={"kind": "rocks"})
+    _make_species(pack, "no_atlas", params={"levels": 1, "atlas": "nope"})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert assets.foliage_species("broken") == {}
+    assert any("unreadable" in w for w in assets.validate_foliage_species("broken"))
+    assert any("no params block" in w for w in assets.validate_foliage_species("empty"))
+    assert any("meta.kind 'rocks' unknown" in w for w in assets.validate_foliage_species("odd_kind"))
+    assert any("leaf atlas set missing" in w for w in assets.validate_foliage_species("no_atlas"))
+    assert assets.validate_foliage_species("nothing_here") == [
+        "nothing_here: no foliage/nothing_here.json in any pack"]
+
+
+def test_species_for_kind_is_none_when_nothing_grows_it(assets, monkeypatch, tmp_path):
+    """The Scatter panel only draws Grow in BobFoliage when this resolves, so a pack that
+    overrides the search path with no grass species must report that rather than guess."""
+    pack = tmp_path / "only"
+    _make_species(pack, "pine", meta={"kind": "trees"})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    monkeypatch.setattr(assets, "_bundled_root", lambda: str(tmp_path / "absent"))
+    assert assets.foliage_species_for_kind("trees") == "pine"
+    assert assets.foliage_species_for_kind("grass") is None
+
+
+def test_opacity_is_a_resolvable_texture_role(assets, monkeypatch, tmp_path):
+    """A leaf atlas's cutout can ship as its own map. It is resolved here but never reaches the
+    S_TexSet sampler, which is what keeps the role free of a shared-group version bump."""
+    pack = tmp_path / "p"
+    _make_set(pack, "leafy", roles=("basecolor", "opacity"))
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(pack))
+    assert "opacity" in assets.TEXTURE_MAP_ROLES
+    assert os.path.basename(assets.texture_set_maps("leafy")["opacity"]) == "leafy_opacity.jpg"
