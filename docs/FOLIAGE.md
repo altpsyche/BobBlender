@@ -1,11 +1,20 @@
 # BobFoliage: trees from curves and cards, not from image-to-3D
 
-Plan document, **built**. F1 to F5 are all landed (`core/geonodes/recipes/foliage.py`,
+Plan document, **built**. F1 to F6 are all landed (`core/geonodes/recipes/foliage.py`,
 `core/foliage_build.py`, `core/foliage_variants.py`, `ui/foliage.py` and `core/comfy.py` /
-`core/comfy_maps.py`, gated by `tools/scripts/headless_foliage.py`, 240 checks). The code is the
+`core/comfy_maps.py`, gated by `tools/scripts/headless_foliage.py`, 262 checks). The code is the
 source of truth throughout, the way it is in [SPLINES.md](SPLINES.md) and
 [SYSTEMS.md](SYSTEMS.md); what remains as intent is the short list at the end of
 [section 6](#6-open-questions), and none of it is on this track's path.
+
+F6 is the phase this document did not plan for, and it exists because of one sentence said in front
+of the F5 renders: *the trees are very pipe-y*. It was right, and none of the 240 checks could have
+said so — every one of them measured whether the recipe did what it meant to, and what it meant to do
+was sweep a circle of one radius along a straight line. [Section 2.9](#29-what-stops-a-limb-being-a-pipe-f6)
+is the answer, and [`tools/scripts/render_foliage_gallery.py`](../tools/scripts/render_foliage_gallery.py)
+is the thing that should have existed at F2: five framings of each shipped species, because a stand
+shot hides a trunk behind four hundred others and every defect F6 fixed lives inside two metres of one
+tree.
 
 **Origin.** Raised out of
 [COMFYUI.md's Foliage section](COMFYUI.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
@@ -111,7 +120,12 @@ Paths list under a single tree. The skeletons are curves built inside the graph.
 
 ### 2.3 Foliage: alpha cards on the tips
 
-**Landed at F2.** Cards instanced on branch tips, textured from a generated needle-spray or leaf
+**Landed at F2, and its placement rule replaced at F6** — cards on TIPS is what made these trees read
+as bare sticks with pom-poms, and [2.9](#29-what-stops-a-limb-being-a-pipe-f6) has the two knobs that
+replaced it. Everything else in this section is unchanged, including the count arithmetic below, which
+is still what the recipe does at its defaults.
+
+Cards instanced on branch tips, textured from a generated needle-spray or leaf
 atlas, with the atlas cell chosen per card from a random index. This is where the alpha lives and it
 is the only part with a ComfyUI dependency — and even that has a block-out fallback
 ([4.4](#44-textures-bring-your-own-or-generate)), so the phase never waited on a server.
@@ -377,9 +391,23 @@ so it reported 0.0087 m and failed on a bake that was correct. See
 [2.5](#25-one-tree-in-a-panel-n-variants-in-the-world) — a check can be wrong in exactly the way the
 code can.
 
+**F6 found three of its own**, and all three are in
+[2.9](#29-what-stops-a-limb-being-a-pipe-f6): a card whose atlas does not resolve renders as an opaque
+white rectangle, and the pack writer had the same bug one layer down; `Leaf Level` unclamped makes a LOD
+rung bald; and a flared, lobed base sank 0.031 m below the ground plane.
+
 Tally, by the phase that FOUND them rather than the one that shipped them: F2 found two of F1's, F3
-found one of F2's and one of its own, F4 one of its own, F5 two of its own. **Every one of the eight
-was found by writing a check, and none by looking.**
+found one of F2's and one of its own, F4 one of its own, F5 two of its own, F6 three of its own. **Every
+one of the eleven was found by writing a check, and none by looking.**
+
+**And then F6 happened, which is the qualification this section needs.** The pipe-y verdict was not a
+defect in any of the senses above — nothing was broken, nothing was inert, every number was the number
+the recipe intended — and no check could have produced it, because a check measures a recipe against
+its own intent and the intent was the problem. It took a person looking at a render and saying so. The
+lesson is not that the checks were wrong; it is that a gate is a floor and not a ceiling, and a track
+whose deliverable is how something LOOKS needs a gallery of it as well
+([`render_foliage_gallery.py`](../tools/scripts/render_foliage_gallery.py), which should have existed
+at F2).
 
 #### What F3 measured
 
@@ -403,17 +431,25 @@ taper and cards straight off the base. Same recipe, different preset, and the fi
 `BOB_Assets_Plants` or `BOB_Assets_Grass` instead. A second recipe for plants would be two copies of
 one branch solver, and they would drift.
 
-F2 shipped this as four presets in the block-out pack and measured all four:
+F2 shipped this as four presets in the block-out pack and measured all four. **F6 retuned every one of
+them**, because the F6 terms are inert in the recipe and a species preset is the only place they mean
+anything ([2.9](#29-what-stops-a-limb-being-a-pipe-f6)) — so these are the shipped numbers and the F2
+column is kept beside them, since the difference is the phase:
 
-| Species | Kind | Height | Width | w/h | Verts | Cards |
-|---|---|---|---|---|---|---|
-| `conifer` | trees | 23.3 m | 7.4 m | 0.32 | 12,642 | 1,228 |
-| `broadleaf` | trees | 13.6 m | 10.9 m | 0.80 | 7,916 | 635 |
-| `shrub` | plants | 1.27 m | 1.18 m | 0.93 | 1,850 | 205 |
-| `grass_tuft` | grass | 0.40 m | 0.45 m | 1.15 | 300 | 30 |
+| Species | Kind | Height | Width | w/h | Verts | Cards | at F2 |
+|---|---|---|---|---|---|---|---|
+| `conifer` | trees | 22.33 m | 9.33 m | 0.42 | 17,248 | 1,742 | 12,642 v / 1,228 c |
+| `broadleaf` | trees | 12.34 m | 12.12 m | 0.98 | 23,712 | 3,303 | 7,916 v / 635 c |
+| `shrub` | plants | 1.10 m | 1.20 m | 1.09 | 2,566 | 384 | 1,850 v / 205 c |
+| `grass_tuft` | grass | 0.38 m | 0.52 m | 1.36 | 508 | 64 | 300 v / 30 c |
 
 Two orders of magnitude of scale from one recipe, which is the claim this section makes, and is also
 why the scale-invariance check exists: the tuft was the thing that found the metres bug.
+
+The vertex budgets grew by 1.4× to 3× and all of it is cards, which is the trade F6 made knowingly: a
+canopy is what a tree is at any distance past a few metres, and the tip-only rule was buying its low
+budget by not having one. The ladder below absorbs it — a stand renders on LOD1 and LOD2 far more than
+on LOD0, and both rungs came down in the same phase.
 
 ### 2.6 LODs
 
@@ -451,10 +487,20 @@ Measured on the four shipped species, at each rung, against LOD0:
 
 | Species | LOD0 | LOD1 | LOD2 |
 |---|---|---|---|
-| `conifer` | 12,642 v | 3,320 v (26.3%) | 490 v (3.9%) |
-| `broadleaf` | 7,916 v | 1,740 v (22.0%) | 218 v (2.8%) |
-| `shrub` | 1,850 v | 364 v (19.7%) | 270 v (14.6%) |
-| `grass_tuft` | 300 v | *(already at the floor)* | 258 v (86.0%) |
+| `conifer` | 17,240 v | 4,768 v (27.7%) | 624 v (3.6%) |
+| `broadleaf` | 23,760 v | 4,558 v (19.2%) | 288 v (1.2%) |
+| `shrub` | 2,566 v | 568 v (22.1%) | 282 v (11.0%) |
+| `grass_tuft` | 508 v | *(already at the floor)* | 284 v (55.9%) |
+
+(F6's numbers. The F5 ladder ran 12,642 → 3,320 → 490 on the conifer, before the presets carried a
+canopy; the ratios barely moved, which is the point — the rung drops a LEVEL, and the cards go with the
+level they grew on.)
+
+**`Leaf Level` has to be clamped to the rung's depth, and F6 nearly shipped this one broken.** A rung
+rebuilds at `levels - 1`, so a species asking for leaves on level 3 asks LOD1 for a level that does not
+exist; unclamped, the selection matches nothing and the rung is bare wood with its canopy silently gone.
+Clamped, LOD1 of a 3-level species carries 632 cards on level 2. See
+[2.9](#29-what-stops-a-limb-being-a-pipe-f6).
 
 A rung that comes back identical to LOD0 is dropped rather than shipped: `grass_tuft` is one level
 on a 3-sided profile before anything is taken away, so it gets two rungs and not three, and a second
@@ -607,6 +653,157 @@ contradiction — a fallen log and a growing pine are different assets that both
 So `comfy_mesh(kind="trees")` keeps working and keeps its D16 note; what changes is which sentence
 the note carries. "Generates a trunk, not a crown" invited exactly the trunk-shaped use this section
 rejects. It should say what it is for.
+
+### 2.9 What stops a limb being a pipe (F6)
+
+**Landed at F6.** The phase that came from looking rather than from measuring, and the one place in
+this track where that was the only thing that could have worked.
+
+The F5 verdict was *"it's good, but the trees don't look natural — it's very pipe-y"*, and the review
+that followed found the trees were pipes for reasons that were all decisions rather than bugs. Every
+one of the 240 checks passed on them, and every one deserved to: the recipe swept **one circle of one
+radius**, along a **straight line**, whose radius fell **linearly**, and hung all of a limb's leaves
+in **one cluster at its far end**. A cylinder with a smooth radius function is a pipe no matter how
+good the bark on it is, and no check that asks "did the sweep use the radius the taper set" can notice
+that the radius function itself is the problem.
+
+Six terms, in the order their payoff justifies. **All six are INERT at their defaults**, which is not
+politeness — F1 through F5 measured a tree with none of them, those numbers are the contract, and the
+gate's first F6 check is that a default build is still **8,508 verts / 7,098 faces with a
+cross-section circular to a ten-thousandth**. The shape arrives through the species presets, which is
+where a shape description belongs ([4.3](#43-many-trees-many-species)).
+
+| Term | What it is | Measured |
+|---|---|---|
+| `Leaf Level` / `Leaf Start` | which wood is leafy, and how far along it the cards start | tip-only at the defaults (940 cards on 235 tips, F2's number); 2,628 at Leaf Start 0.4 |
+| `Lobe` | radial displacement along the vertex normal, amplitude a fraction of the LOCAL radius | peak deviation **0.2004** at `Lobe` 0.2, **0.4002** at 0.4; **0 extra vertices** |
+| `Flare` | a swell over the bottom `FLARE_SPAN` of the trunk: the root flare | base radius 0.4500 m → **0.8100 m** at `Flare` 0.8 (ratio 1.800); unchanged at 25% height |
+| `Taper Curve` | the spline factor raised to a power before the taper is applied | mid-trunk radius 0.2440 m linear → **0.3391 m** at 2.0, tip radius unchanged |
+| `L<n> Sag` | gravity per level: a downward pull weighted by the SQUARE of the spline factor | base offset still **exactly 0.0**; negative sags upward |
+| `Collar` | the same swell as `Flare`, on a branch, over `COLLAR_SPAN`: the union | L1 base swells over 1.5×, and the widest collar is still thinner than its trunk |
+
+Five of those need a sentence each about why they are the shape they are rather than the obvious one.
+
+**The lobing goes along the vertex NORMAL, and that is what makes it one node instead of a subsystem.**
+On a swept tube the normal IS the radial direction, so a single `Set Position` buys lobes around a limb
+and bulges along it with none of the per-limb axis arithmetic a real radial displacement needs. It has
+to sit after `_sweep_uv` and before the cards are joined, and both halves are gated: the UVs come back
+**byte-identical** (a UV is on the corner domain and displacing a vertex cannot change which texel it
+reads, only where that texel sits), and every card's base is still on its own anchor to **9.6e-07 m**
+under a lobed sweep. The wavelength is scaled by the local radius, so a twig carries the same number of
+lobes around it as a bole — the `GNARL_SPAN` argument again, and the reason the scale-invariance check
+still passes.
+
+`Lobe` is meant to read as "the peak deviation, as a fraction of the local radius", and a raw fractal
+noise does not deliver that: its Fac clusters around 0.5 and reaches neither bound, so the nominal ±1
+amplitude arrived as **±0.324** measured over a whole trunk. `LOBE_GAIN` is that number's reciprocal.
+The knob now means what its name says, which is worth one constant.
+
+**`Taper Curve` changes how the radius falls and never where it ends up.** At 1 the fall is linear, and
+a straight line whose radius falls linearly is a cone — the thing the review was looking at. Above 1 it
+falls slowly at first and steeply near the top, which is what a trunk does: near-cylindrical through
+the bole, tapering out into the crown. The tip radius is `Taper`'s to say, so the gate asserts it does
+not move (0.0675 m at both 1.0 and 2.0). A knob that changed both would be two knobs.
+
+**`Flare` and `Collar` are one mechanism, and the argument for that is not economy.** Wood thickens
+where it has to carry a moment; a root flare and a branch collar are the same statement at two scales,
+and they differ only in how far up the limb the swell reaches (`FLARE_SPAN` 0.05 against `COLLAR_SPAN`
+0.18 — a collar is a much larger fraction of a short branch than a flare is of a 22 m bole). A collar
+cannot poke through its parent by construction, because a branch's base radius is already the parent's
+own radius times a ratio well under 1, and the gate holds that as a number rather than as an argument.
+
+**The sag is weighted by the SQUARE of the spline factor because a cantilever's deflection is.** A limb
+therefore leaves its parent at the angle the rotation gave it and curves over further out, which is the
+difference between a bough and a spoke; linear sag drops the whole limb by a constant slope and simply
+re-reads as a smaller `Angle`. It is also the only F6 term in Z, which is the one axis where the
+attached-base invariant is at risk — so the gate checks that a sagging limb's base offset is still
+exactly 0.0, on the same 1,410 base verts F1 measured.
+
+**Cards along the young wood is the biggest single win and the cheapest change in the phase.** The
+tip-only rule put a 3 m bough's entire leaf allowance in one cluster at the far end, and the grass tuft
+came back as fourteen woody dowels with a sprig glued to each — the clearest evidence in the whole
+gallery, because a tuft has nowhere to hide. `Leaf Start` is the fraction along a leafy limb where the
+cards begin and `Leaf Level` is the shallowest level that carries any, so a bole grows nothing and a
+twig is covered. The epsilon in the comparison is load-bearing: `bbt_fol_t` is exactly 1.0 at a last
+point, so a bare `t > Leaf Start` at the default of 1 selects nothing at all and the tree comes back
+bald.
+
+#### Three things F6 found, in the family this track keeps finding
+
+None of them is in the shape code, and each was found by a check rather than by looking — after the
+shape work itself was found by looking, which is the phase's own joke.
+
+- **A card whose atlas does not resolve is an opaque WHITE RECTANGLE.** The presets now name generated
+  atlases, and the first end-to-end run rendered a full canopy of white quads — which reads exactly
+  like F4's documented translucency failure and is nothing of the kind. The cause was the generated
+  pack not being on the search path in a script that imports the addon without registering it; the
+  defect it exposed is that the card has **no graceful floor** where bark has one. A missing bark set
+  is a solid tint, which is the block-out convention ([4.4](#44-textures-bring-your-own-or-generate));
+  a missing atlas is no cutout and no albedo on a material whose tint is deliberately white. So
+  `_atlas_set` falls back to the shipped block-out atlas and bark deliberately does not, and the
+  asymmetry is the point: the two slots differ because their failures differ. The pack writer had the
+  same bug one layer down — it read `params["atlas"]` raw, so a packed card exported opaque while the
+  live tree beside it cut out correctly.
+- **`Leaf Level` has to be clamped to the build's depth, or the LOD ladder goes bald.** A rung is a
+  rebuild at `levels - 1` ([2.6](#26-lods)), so a species putting its leaves on level 3 asks LOD1 for a
+  level that no longer exists, the selection matches nothing, and the rung is bare wood with its canopy
+  silently gone — on the one asset nobody inspects closely. Clamped, LOD1 of a 3-level species carries
+  **632 cards on level 2**.
+- **A flared, lobed base sank below the ground plane.** A flare widens the trunk DOWNWARD, so its
+  lowest ring's normal tilts down, and a displacement along that normal pushed the lowest vertex to
+  **−0.031 m** — the pack writer's origin-at-the-base invariant broken, and every scattered instance
+  buried by three centimetres. `LOBE_FOOT` fades the lobing in over the bottom 1.5% of a limb (0.33 m
+  on a 22 m bole, invisible) and puts the lowest vertex back inside 0.005 m.
+
+#### One check F6 had to loosen, and why that is not a weakening
+
+`check_variants` asserted every variant came back at **exactly** the same vertex budget. That was right
+while a card could only grow on a tip, where the selection is an index and cannot drift. It is wrong
+now: `bbt_fol_t` is `Spline Parameter`'s factor, which is an ARC-LENGTH fraction measured after the bend
+and the sag have moved the points, so a different seed genuinely puts a handful of interior points on
+the other side of `Leaf Start`. Measured over four seeds of the shipped conifer: **17,240 / 17,248 /
+17,256** verts, a spread of 16 in 17,000. The check now allows a per-mille, because asserting exact
+equality would be asserting that the seed does nothing.
+
+#### What the two texture jobs finally produced
+
+F3 built `comfy_bark_set` and `comfy_leaf_atlas` and measured them; F6 is the first phase that ran them
+for the shipped species, which is what turns a solid-tint trunk into bark. Both took more than one
+seed, and the measurements are the reason it was obvious which to keep:
+
+| Set | Off vertical | Coherence | Block spread | Seam ratio |
+|---|---|---|---|---|
+| `bark_conifer`, seed 21 | 29.9° (**over the gate's 25**) | 0.524 | 1.1° | 0.995 |
+| `bark_conifer`, seed 7 — shipped | **0.8°** | 0.604 | 0.3° | 1.021 |
+| `bark_broadleaf`, seed 7 | 9.7° | 0.389 | 7.6° | **1.489** (a visible seam) |
+| `bark_broadleaf`, seed 31 — shipped | 19.4° | 0.502 | 2.6° | **0.972** |
+
+Two seeds, two different measures catching them: the first conifer set failed on grain direction and
+the first broadleaf set on the wrap seam, and each passed everything the other failed. That is
+[3.1](#31-the-grain-measure-and-why-the-seam-ratio-could-not-do-it)'s argument arriving in practice —
+neither measure alone is the check.
+
+Three atlases as well, one per species family, each 2×2 with all four cells reaching their bottom edge:
+`leaf_conifer` (cell distinctness 28.9, 74.2% clear), `leaf_broadleaf` (31.2, 76.4%) and `leaf_grass`
+(26.8, 88.2%). A conifer wearing a broadleaf frond was not a geometry problem and it was the loudest
+thing in the F5 gallery.
+
+**None of those five sets is checked in, and the presets name them anyway.** That is the arrangement
+[4.4](#44-textures-bring-your-own-or-generate) already chose for bark, extended to the atlas by the
+fallback above: a generated set is regenerable in seconds, weighs several megabytes, and belongs to
+whoever generated it, so what ships is the NAME. The seeds that measured well are recorded here
+because they are the part that is not cheap to rediscover:
+
+    comfy_bark_set(name="bark_conifer",    prompt="shaggy fibrous redwood bark, reddish brown",   seed=7)
+    comfy_bark_set(name="bark_broadleaf",  prompt="grey brown oak bark, deep cracked ridges",     seed=31)
+    comfy_leaf_atlas(name="leaf_conifer",  prompt="single spruce needle spray, dark green needles on one twig", seed=7)
+    comfy_leaf_atlas(name="leaf_broadleaf",prompt="single oak leaf cluster on one short twig, green summer leaves", seed=7)
+    comfy_leaf_atlas(name="leaf_grass",    prompt="single tuft of long thin green grass blades from one base", seed=7)
+
+With none of them present a tree is the block-out state and nothing is broken: solid-tint bark, the
+shipped block-out atlas on every card, and the whole of F6's shape intact — measured, the gate is
+**236 of 236** in exactly that state, and the geometry numbers in this document are unaffected because
+they are geometry.
 
 ## 3. What the generation track owes it
 
@@ -1018,7 +1215,21 @@ the other tracks use.
 
   The stand, measured: 8 variants at 12,642 verts, **945 trees over 260 m** drawing on all 8, and
   `_generated/foliage_stand.png` beside `_generated/redwood_03.png`, which is the frame that started
-  this. Reproduce it with `tools/scripts/render_foliage_stand.py`.
+  this. Reproduce it with `tools/scripts/render_foliage_stand.py`. (Re-shot at F6 with the retuned
+  presets and, with the sets generated, real bark: 8 variants at 17,256 verts, the same 945 trees.)
+- **F6 The shape, which no check asked for. DONE.** Six terms that stop a limb being a pipe, all inert
+  at their defaults, all turned on through the four species presets; the two texture jobs finally run
+  for the shipped species; and a per-species gallery so the next verdict of this kind arrives from a
+  contact sheet rather than from a stand shot ([2.9](#29-what-stops-a-limb-being-a-pipe-f6)). The gate
+  is **262 checks**, of which 22 are F6's, and the F1-F5 numbers are untouched because the defaults
+  are.
+
+  It is the only phase in this track that started from a person looking at a render, and the only one
+  whose finding no check could have produced — the recipe did exactly what it meant to, and what it
+  meant to do was sweep one circle of one radius along a straight line. Its three defects were all
+  found the usual way afterwards, and the loudest of them is the one worth carrying forward: a card
+  whose atlas does not resolve has **no graceful floor** the way a bark-less trunk does, so the atlas
+  falls back and bark deliberately does not.
 
 ## 6. Open questions
 
@@ -1063,6 +1274,16 @@ neither is on this track's path.
   re-evaluated per frame (1.322786 m of sway between frame 1 and 31, against 0.0 m for an applied
   copy), and the cost of that is per VARIANT and flat in instance count. See
   [2.5](#25-one-tree-in-a-panel-n-variants-in-the-world).
+- **[F6, answered] Why did none of the 240 checks say the trees were pipes?** Because a check measures
+  a recipe against its own intent, and the intent was the defect: one circle of one radius, swept along
+  a straight line, with a linear taper and all the leaves at the ends. The answer is not more checks of
+  that kind — it is that a track whose deliverable is an appearance needs a gallery as well as a gate,
+  and F6 built one. See [2.9](#29-what-stops-a-limb-being-a-pipe-f6).
+- **[F6, answered] Should a preset be allowed to name a set no pack provides?** For BARK yes, which
+  4.4 already said; for an ATLAS no, and the difference is the failure rather than the principle. A
+  bark-less trunk is a solid tint and a block-out convention; an atlas-less card is an opaque white
+  rectangle, because its material's tint is deliberately white and its cutout comes from the set. So
+  `_atlas_set` falls back to the shipped block-out atlas.
 - **[anytime] How much of MTree's parameter model to borrow?** It and the other GN tree generators
   have converged on roughly the same knobs, and that convergence is worth treating as prior art
   rather than re-deriving. MTree is **GPL**, so this is a question about the parameter vocabulary and
@@ -1075,8 +1296,11 @@ neither is on this track's path.
   drawn by hand and the branch solver runs on it unchanged. Cheap to add (the level stack already
   takes any curve as its level-0 parent) and worth doing only once someone wants it.
 
-**Settled and not to be reopened without new evidence:** a variant is a live GN object and not an
-applied mesh, and variants are spread out in the pool so each carries its own phase; the LOD ladder
+**Settled and not to be reopened without new evidence:** every F6 shape term is inert at its default and
+is turned on by a species preset, because F1 to F5's numbers are the contract and a shape description
+belongs to a species; the lobing is a normal displacement after the UVs and before the cards, and it
+adds no vertices; a leaf atlas falls back and a bark set does not. And a variant is a live GN object and
+not an applied mesh, and variants are spread out in the pool so each carries its own phase; the LOD ladder
 is a rebuild and never a decimate, and its card enlargement is fitted to the canopy's area and
 capped by the crown's width. The trunk is a sweep, always — there is no
 generated-mesh trunk option, so a tree needs no ComfyUI server for its geometry, only for the two

@@ -26,13 +26,23 @@
     "l2_radius": 0.6,
     "l2_phyllotaxy": 137.5,
     "l2_start": 0.12,
-    "cards": 5,
-    "card_size": 0.2,
+    "cards": 3,
+    "card_size": 0.16,
     "card_width": 0.8,
     "droop": 0.25,
     "card_spread": 52.0,
     "bark_scale": 0.12,
     "sway": 0.7,
-    "leaf_flutter": 1.3
+    "leaf_flutter": 1.3,
+    "taper_curve": 1.2,
+    "flare": 0.3,
+    "collar": 0.6,
+    "lobe": 0.3,
+    "l1_sag": 0.2,
+    "l2_sag": 0.35,
+    "leaf_level": 2,
+    "leaf_start": 0.1,
+    "atlas": "leaf_broadleaf",
+    "bark_set": "bark_broadleaf"
   }
 }

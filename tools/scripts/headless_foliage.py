@@ -335,6 +335,284 @@ def check_crown():
           f"crown {span:.2f} m on a {params['height']:.0f} m trunk, width/height {ratio:.2f}")
 
 
+def rings(mesh, level, profile):
+    """Per ring of one level: (mean z, mean radius about the ring's own axis, per-vertex radii).
+
+    Curve to Mesh emits a curve's rings in order and one ring per curve point, so a level's flagged
+    vertices arrive as consecutive runs of exactly `profile`. This is how a radius is read back off a
+    swept mesh -- `bbt_fol_rad` says what the recipe MEANT, and the geometry is what it did.
+    """
+    levels = attr(mesh, "bbt_fol_level")
+    idx = [i for i, v in enumerate(levels) if v == level]
+    out = []
+    for start in range(0, len(idx), profile):
+        run = idx[start:start + profile]
+        if len(run) != profile:
+            break
+        cx = sum(mesh.vertices[i].co.x for i in run) / profile
+        cy = sum(mesh.vertices[i].co.y for i in run) / profile
+        cz = sum(mesh.vertices[i].co.z for i in run) / profile
+        radii = [math.hypot(mesh.vertices[i].co.x - cx, mesh.vertices[i].co.y - cy) for i in run]
+        out.append((cz, sum(radii) / profile, radii))
+    return out
+
+
+def radius_deviation(mesh):
+    """(peak, rms) of |measured radius / bbt_fol_rad - 1| over the trunk. What `Lobe` is measured in.
+
+    Against the recipe's own stored radius rather than against a second build, so it answers the
+    question the knob's NAME asks -- how far from its nominal radius is this ring pushed -- and does
+    it per vertex, which is where the lobing lives.
+    """
+    rad = attr(mesh, "bbt_fol_rad")
+    levels = attr(mesh, "bbt_fol_level")
+    idx = [i for i, v in enumerate(levels) if v == 0]
+    devs = []
+    for start in range(0, len(idx), 6):
+        run = idx[start:start + 6]
+        if len(run) != 6:
+            break
+        cx = sum(mesh.vertices[i].co.x for i in run) / 6.0
+        cy = sum(mesh.vertices[i].co.y for i in run) / 6.0
+        for i in run:
+            if rad[i] > 1e-4:
+                r = math.hypot(mesh.vertices[i].co.x - cx, mesh.vertices[i].co.y - cy)
+                devs.append(abs(r / rad[i] - 1.0))
+    if not devs:
+        return 0.0, 0.0
+    return max(devs), (sum(d * d for d in devs) / len(devs)) ** 0.5
+
+
+def card_anchor_gaps(mesh, faces):
+    """Per card, how far its base-edge MIDPOINT sits from ITS OWN anchor point.
+
+    The F6 replacement for `card_base_gaps`, and strictly better than what it replaced. That helper
+    found the nearest TIP, which was exact while a card could only grow on a tip and is meaningless
+    now that cards grow along a limb: the nearest tip to a mid-twig card is not the point it grew on.
+    `bbt_fol_anchor` is that point by construction -- the skeleton position the card was instanced
+    on, written in `_tag` and inherited through the duplicate -- so this needs no nearest-neighbour
+    search and cannot be fooled by a dense crown, which is the trap `card_base_gaps` documents.
+    """
+    if not faces or not mesh.uv_layers:
+        return []
+    anchor = mesh.attributes.get("bbt_fol_anchor")
+    if anchor is None:
+        return []
+    uv = mesh.uv_layers[0].data
+    gaps = []
+    for i in faces:
+        face = mesh.polygons[i]
+        # The base pair by UV, for the reason `card_base_gaps` records: the card's own v runs 0 at
+        # its base, and picking corners by proximity is wrong in a dense crown.
+        pairs = sorted(zip((uv[c].uv[1] for c in face.loop_indices), face.vertices))
+        base = [mesh.vertices[v].co for _v, v in pairs[:2]]
+        mid = [(base[0][a] + base[1][a]) / 2.0 for a in range(3)]
+        at = anchor.data[pairs[0][1]].vector
+        gaps.append(math.dist(mid, (at.x, at.y, at.z)))
+    return gaps
+
+
+def check_shape():
+    """F6's four wood terms: the power taper, the root flare, the branch collar and the lobing.
+
+    Every one of them is INERT at its default, and the first check is that claim: F1 through F5
+    measured a tree with none of these terms and all of those numbers are still the contract, so a
+    default build has to come back at F1's 8,508 verts / 7,098 faces with a perfectly circular
+    cross-section. The shape they describe arrives through the species presets.
+
+    What each buys is measured against the geometry rather than against the stored radius, because
+    "the recipe set a radius" and "the sweep used it" are the two different things F2 found apart
+    (Curve to Mesh stopped applying the radius attribute implicitly in 4.0, and every F1 tree was a
+    uniform 1 m tube because of it).
+    """
+    ev, mesh, params = build("ShapeOff", cards=0)
+    profile = params["profile_segments"]
+    check("with every F6 term at its default the tree is F1's tree exactly",
+          (len(mesh.vertices), len(mesh.polygons)) == (8508, 7098),
+          f"{len(mesh.vertices)} verts, {len(mesh.polygons)} faces against 8508 / 7098")
+    peak, _rms = radius_deviation(mesh)
+    check("and its cross-section is a circle to a ten-thousandth", peak < 1e-3,
+          f"peak radius deviation {peak:.2e} of the local radius")
+    flat = rings(mesh, 0, profile)
+    ev.to_mesh_clear()
+
+    # 1. The power taper. Above 1 the radius falls slowly at first, so the bole stays near
+    #    cylindrical and then tapers into the crown -- the difference between a tree and a cone. The
+    #    TIP must not move: `Taper` still says where the taper ends up, `Taper Curve` only says how
+    #    it gets there, and a knob that changed both would be two knobs.
+    ev, mesh, _ = build("TaperCurve", cards=0, taper_curve=2.0)
+    curved = rings(mesh, 0, profile)
+    ev.to_mesh_clear()
+    mid = len(flat) // 2
+    check("Taper Curve above 1 keeps the bole thick at mid-height",
+          curved[mid][1] > flat[mid][1] * 1.3,
+          f"mid radius {flat[mid][1]:.4f} m linear against {curved[mid][1]:.4f} m at 2.0")
+    check("and leaves the tip radius exactly where Taper put it",
+          abs(curved[-1][1] - flat[-1][1]) < 1e-4,
+          f"tip {flat[-1][1]:.5f} m against {curved[-1][1]:.5f} m")
+
+    # 2. The root flare, on the trunk only, over FLARE_SPAN. Local by construction: a flare that
+    #    reached a quarter of the way up the trunk would just be a different Taper.
+    ev, mesh, _ = build("Flare", cards=0, flare=0.8)
+    flared = rings(mesh, 0, profile)
+    ev.to_mesh_clear()
+    check("Flare swells the base by exactly what it says",
+          abs(flared[0][1] / flat[0][1] - 1.8) < 0.02,
+          f"base {flat[0][1]:.4f} m to {flared[0][1]:.4f} m, ratio {flared[0][1] / flat[0][1]:.3f}")
+    quarter = len(flat) // 4
+    check("and reaches nowhere near a quarter of the way up",
+          abs(flared[quarter][1] - flat[quarter][1]) < 1e-4,
+          f"at 25% height {flat[quarter][1]:.5f} m against {flared[quarter][1]:.5f} m")
+
+    # 3. The branch collar: the same term on a branch, over a longer span. The invariant that matters
+    #    is that a collar CANNOT poke through the limb it grows from -- the base radius is the
+    #    parent's own radius times a ratio well under 1, so there is headroom, and this is the number
+    #    that says how much.
+    ev, mesh, _ = build("Collar", cards=0, collar=1.0)
+    l1_plain = rings(mesh, 1, profile)
+    parent = rings(mesh, 0, profile)
+    ev.to_mesh_clear()
+    ev2, mesh2, _ = build("CollarOff", cards=0)
+    l1_off = rings(mesh2, 1, profile)
+    ev2.to_mesh_clear()
+    check("Collar swells a branch where it leaves its parent",
+          l1_plain[0][1] > l1_off[0][1] * 1.5,
+          f"L1 base {l1_off[0][1]:.4f} m to {l1_plain[0][1]:.4f} m")
+    check("and a swollen collar is still thinner than the trunk it grows out of",
+          max(r[1] for r in l1_plain[:2]) < max(p[1] for p in parent),
+          f"widest collar {max(r[1] for r in l1_plain[:2]):.4f} m against trunk "
+          f"{max(p[1] for p in parent):.4f} m")
+
+    # 4. The lobing. Three properties, and the third is the one that makes it affordable.
+    ev, mesh, _ = build("Lobe", cards=0, lobe=0.25)
+    peak, rms = radius_deviation(mesh)
+    lobed_verts = len(mesh.vertices)
+    ev.to_mesh_clear()
+    check("Lobe means the PEAK deviation it says, as a fraction of the local radius",
+          abs(peak - 0.25) < 0.03, f"peak {peak:.4f} at Lobe 0.25, rms {rms:.4f}")
+    check("and it costs no vertices at all", lobed_verts == 8508,
+          f"{lobed_verts} verts against 8508 with the lobing off")
+
+    # And it must not disturb the two things measured on the ring positions it moves: the bark UV
+    # (written before the displacement, on the corner domain, so it cannot change) and the cards
+    # (joined after it). Byte-equal UVs is the strongest form of the first.
+    ev, mesh, params_c = build("LobeUV", cards=4, lobe=0.35)
+    uvs_on = [tuple(d.uv) for d in mesh.uv_layers[0].data]
+    gaps_on = card_anchor_gaps(mesh, card_faces(mesh))
+    ev.to_mesh_clear()
+    ev2, mesh2, _ = build("LobeUVOff", cards=4)
+    uvs_off = [tuple(d.uv) for d in mesh2.uv_layers[0].data]
+    ev2.to_mesh_clear()
+    check("the lobing leaves every UV byte-identical", uvs_on == uvs_off,
+          f"{len(uvs_on)} corners, {sum(1 for a, b in zip(uvs_on, uvs_off) if a != b)} differ")
+    check("and every card still sits on its own anchor under a lobed sweep",
+          gaps_on and max(gaps_on) < 1e-5,
+          f"worst {max(gaps_on):.2e} m over {len(gaps_on)} cards")
+
+    # 5. The sag, which adds a term in Z to the one place a term in Z is dangerous. The attached-base
+    #    invariant is the whole of F1's discipline and a cantilever weighted anything but 0 at the
+    #    base breaks it silently -- a tree of floating boughs renders perfectly.
+    ev, mesh, _ = build("Sag", cards=0, l1_sag=0.4, l2_sag=0.4, l3_sag=0.4)
+    off = attr(mesh, "bbt_fol_off")
+    t = attr(mesh, "bbt_fol_t")
+    bases = [o for o, f in zip(off, t) if f < 1e-4]
+    l1_sagged = [z for z, _r, _rr in rings(mesh, 1, profile)]
+    ev.to_mesh_clear()
+    check("a sagging limb's base still does not move, at all",
+          bases and max(bases) == 0.0, f"{len(bases)} base verts, max offset {max(bases)}")
+    ev, mesh, _ = build("SagOff", cards=0)
+    l1_level = [z for z, _r, _rr in rings(mesh, 1, profile)]
+    ev.to_mesh_clear()
+    ev, mesh, _ = build("SagUp", cards=0, l1_sag=-0.4, l2_sag=-0.4, l3_sag=-0.4)
+    l1_lifted = [z for z, _r, _rr in rings(mesh, 1, profile)]
+    ev.to_mesh_clear()
+    mean = lambda xs: sum(xs) / len(xs)
+    check("Sag drops the limbs and a NEGATIVE Sag lifts them",
+          mean(l1_sagged) < mean(l1_level) - 0.05 < mean(l1_level) + 0.05 < mean(l1_lifted),
+          f"mean L1 z: {mean(l1_sagged):.3f} sagging, {mean(l1_level):.3f} level, "
+          f"{mean(l1_lifted):.3f} lifted")
+
+    # 6. The lobe's foot. A flared base widens DOWNWARD, so its lowest ring's normal tilts down and a
+    #    displacement along it pushes vertices under the ground -- measured at -0.031 m on the shipped
+    #    conifer, which is the pack writer's origin-at-the-base invariant broken. LOBE_FOOT fades the
+    #    lobing in over the bottom 1.5%, and this is the number that says it worked.
+    ev, mesh, _ = build("Foot", cards=0, flare=1.0, lobe=0.3)
+    lowest = min(v.co.z for v in mesh.vertices)
+    ev.to_mesh_clear()
+    check("a flared, lobed base does not sink below the ground plane", abs(lowest) < 0.005,
+          f"lowest vertex {lowest:+.5f} m")
+
+
+def check_leaves():
+    """F6's leaf placement: cards ALONG the young wood rather than only on its tips.
+
+    The tip-only rule is why the review read these trees as bare sticks with pom-poms: a 3 m bough
+    carried its whole leaf allowance in one cluster at the far end, and the grass tuft came back as
+    fourteen woody dowels with a sprig glued to each. Two knobs replace it and BOTH are inert at
+    their defaults, so F2's 940-cards-on-235-tips is still the contract at the recipe's floor.
+    """
+    # 1. The defaults reproduce the old selection exactly, which is the only reason F2's card
+    #    measurements are still quotable. `Leaf Start` 1 selects a limb's last point, and a limb's
+    #    last point IS its tip; `Leaf Level` 0 is every level, including the trunk's own tip.
+    ev, mesh, params = build("LeafDefault", cards=4, card_size=0.5)
+    tip_cards = len(card_faces(mesh))
+    ev.to_mesh_clear()
+    check("at the default Leaf Start and Leaf Level the cards are still tip-only",
+          tip_cards == (1 + 9 + 45 + 180) * 4, f"{tip_cards} cards against 235 tips x 4")
+
+    # 2. Leaf Start below 1 distributes them, and the count is the arithmetic rather than a surprise:
+    #    `branch_segments` points per twig, of which those past Leaf Start qualify.
+    ev, mesh, _ = build("LeafAlong", cards=4, card_size=0.5, leaf_level=3, leaf_start=0.4)
+    along = card_faces(mesh)
+    gaps = card_anchor_gaps(mesh, along)
+    anchors = {tuple(round(c, 5) for c in mesh.attributes["bbt_fol_anchor"].data[v].vector)
+               for f in along for v in mesh.polygons[f].vertices}
+    ev.to_mesh_clear()
+    check("Leaf Start below 1 puts cards along the twigs and not only on their ends",
+          len(along) > tip_cards, f"{len(along)} cards against {tip_cards} tip-only")
+    check("on more than one point per twig", len(anchors) > 180,
+          f"{len(anchors)} distinct anchor points over 180 level-3 twigs")
+    check("and every one of them still sits on the point it grew on",
+          gaps and max(gaps) < 1e-5, f"worst {max(gaps):.2e} m over {len(gaps)} cards")
+
+    # 3. Leaf Level excludes the wood that should carry nothing. A card on a bole is the failure the
+    #    knob exists to prevent, and it is invisible in a crown -- so it is measured on the trunk's
+    #    own level, which has exactly one curve and cannot hide anything.
+    ev, mesh, _ = build("LeafDeep", cards=4, card_size=0.5, leaf_level=3, leaf_start=0.2)
+    levels_with_cards = {mesh.attributes["bbt_fol_level"].data[v].value
+                         for f in card_faces(mesh) for v in mesh.polygons[f].vertices}
+    ev.to_mesh_clear()
+    check("Leaf Level keeps leaves off the trunk and the boughs entirely",
+          levels_with_cards == {3}, f"cards found on levels {sorted(levels_with_cards)}")
+
+    # 4. The clamp, which is the one that would have shipped a silent defect. A LOD rung rebuilds at
+    #    `levels - 1` (docs/FOLIAGE.md 2.6), so a species asking for leaves on level 3 asks LOD1 for a
+    #    level that does not exist. Unclamped the selection matches nothing and the rung comes back as
+    #    bare wood with its canopy gone -- and a rung is exactly the thing nobody looks at closely.
+    ev, mesh, _ = build("LeafClamp", levels=2, cards=4, card_size=0.5, leaf_level=3, leaf_start=0.4)
+    clamped = card_faces(mesh)
+    clamped_levels = {mesh.attributes["bbt_fol_level"].data[v].value
+                      for f in clamped for v in mesh.polygons[f].vertices}
+    ev.to_mesh_clear()
+    check("Leaf Level is clamped to the build's depth, so a shallower LOD rung is not bald",
+          clamped and clamped_levels == {2}, f"{len(clamped)} cards, on levels "
+          f"{sorted(clamped_levels)}")
+
+    # 5. The atlas fallback. A card whose set does not resolve has no cutout AND no albedo, and its
+    #    tint is white, so the canopy renders as opaque white rectangles -- measured on the first F6
+    #    run against a generated atlas the resolver could not see. Bark has no such cliff, which is
+    #    why only the atlas falls back (`_atlas_set`).
+    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Fallback",
+              "params": dict(BASE, cards=4, atlas="no_such_atlas_anywhere"), "reset": True})
+    card = bpy.data.materials.get("M_Fallback Leaf")
+    bsdf = next((n for n in card.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"),
+                None) if card and card.node_tree else None
+    check("a species naming an atlas no pack provides still gets a cutout, not white rectangles",
+          bsdf is not None and bsdf.inputs["Alpha"].is_linked,
+          "Alpha is linked" if bsdf is not None and bsdf.inputs["Alpha"].is_linked
+          else "Alpha is NOT linked")
+
+
 def check_cards():
     """The leaf cards: one per tip per Cards, two triangles each, attached, and cell-varied."""
     ev, mesh, params = build("Cards", cards=4, card_size=0.5)
@@ -1216,9 +1494,17 @@ def check_variants():
           str([o.name for o in foliage_build.foliage_objects(bpy.context.scene)]))
 
     verts = {o.name: pool_verts(o) for o in variants}
-    budgets = {len(v) for v in verts.values()}
-    check("every variant built, and to the same vertex budget",
-          all(verts.values()) and len(budgets) == 1, f"budgets {sorted(budgets)}")
+    budgets = sorted({len(v) for v in verts.values()})
+    # WITHIN a per-mille of each other, not identical, and F6 is why. Cards are selected along a limb
+    # by `bbt_fol_t`, which is Spline Parameter's factor -- an ARC-LENGTH fraction, measured after the
+    # bend and the sag have moved the points. So a different seed genuinely puts a handful of interior
+    # points on the other side of `Leaf Start` and the budget moves by a few cards. Measured on the
+    # shipped conifer: 17,240 / 17,248 / 17,256 verts over four seeds, a spread of 16 in 17,000.
+    # Exact equality was the right check while cards grew only on tips, where the selection is an
+    # index and cannot drift; asserting it now would be asserting that the seed does nothing.
+    spread = (budgets[-1] - budgets[0]) / max(1, budgets[0])
+    check("every variant built, and to within a per-mille of the same vertex budget",
+          all(verts.values()) and spread < 0.001, f"budgets {budgets}, spread {spread * 100:.3f}%")
     worst = 0
     names = sorted(verts)
     for i, a in enumerate(names):
@@ -2148,6 +2434,13 @@ def main(argv=None):
     check_radius()
     check_scale_invariance()
     check_crown()
+
+    # -- F6: what stops a limb being a pipe, and where the leaves sit on it -----------------------
+    # Before the card checks, because `check_leaves` establishes that the default selection is still
+    # the tip-only one those checks measure.
+    check_shape()
+    check_leaves()
+
     check_cards()
     check_atlas()
     check_uvs()

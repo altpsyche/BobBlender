@@ -486,8 +486,14 @@ def _export_materials(copy, params, stem):
     """
     from .geonodes.recipes import foliage as fol
 
+    # The atlas goes through the recipe's own resolver, not straight off the params. A species may
+    # name a GENERATED atlas that this machine has not generated, and the recipe falls back to the
+    # shipped block-out one for it (`_atlas_set`) -- so reading the raw name here would build the
+    # export material from a set that resolves nothing, and a card with no cutout exports as an
+    # opaque rectangle while the live tree beside it is cut out correctly. Bark needs no such call:
+    # an unresolved bark set is a solid tint on both sides, which is the same answer.
     sets = ((str(params.get("bark_set", "")), "Bark"),
-            (str(params.get("atlas", fol.DEFAULT_ATLAS)), "Leaf"))
+            (fol._atlas_set(params), "Leaf"))
     made = []
     for i, slot in enumerate(copy.material_slots):
         if slot.material is None:
