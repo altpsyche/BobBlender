@@ -64,7 +64,7 @@ catalogue) that reference the model, so a licence term can be traced to the feat
    numbers rather than a happy accident: G7 measured Hunyuan 2.1 as **2.1x faster on solids** and the
    only one of the two that closes every shell, and the default still did not move, because a default
    an artist in the EU, the UK or South Korea may not use is worth more than 46 seconds an asset
-   (docs/COMFYUI.md, What G7 measured). TRELLIS.2 is MIT and stays primary, so every default route in
+   (docs/COMFYUI-MEASUREMENTS.md, G7). TRELLIS.2 is MIT and stays primary, so every default route in
    this integration is usable in those territories.
 
 2. **Depth Anything V2 Large is CC-BY-NC-4.0: non-commercial.** It is used by **W12e alone**, the
@@ -105,7 +105,7 @@ Three things about that table are worth stating rather than leaving in a cell.
 **`ComfyUI-Hy3D-Omni` ships no licence at all.** No `LICENSE`, no `COPYING`, no licence field in a
 `pyproject.toml`. So its terms are unstated, which under copyright means **no licence is granted**,
 not that it is public domain. It is also the least maintained dependency in the integration and the
-one that shipped with the control signal silently random (docs/COMFYUI.md, G4c). It is used by W7,
+one that shipped with the control signal silently random (docs/COMFYUI-MEASUREMENTS.md, G4c). It is used by W7,
 W7b and W7v and by nothing else. Treat all three as in-house tools until upstream states a licence.
 G8 read the same pack again while adding W7b and **G9 read it a third time while adding W7v**: still
 no `LICENSE`, no `COPYING`, no licence field, same commit `e513cd0`, and no push since 2025-10-03.

@@ -231,7 +231,7 @@ all reach it through the same key.
 
 It is a MASK, not a heightfield: the op blurs it at a fiftieth of the field width, so
 nothing finer than a massif survives to compete with the erosion. Measured on three
-prompts (docs/COMFYUI.md, "What G5 measured"): the mask's shape survives an erosion pass
+prompts (docs/COMFYUI-MEASUREMENTS.md, G5): the mask's shape survives an erosion pass
 at band-limited correlation 0.906 to 0.923 while supplying 0.28 to 0.31 m of a tile's
 relief against the erosion's 2.89 to 3.04 m. The Terrain panel's `Generate Base` writes
 one from a prompt through ComfyUI; any 8 or 16-bit PNG works, including a hand-painted
