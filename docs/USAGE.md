@@ -366,6 +366,18 @@ Kind is load-bearing beyond where the asset lands: `plants` and `grass` are trea
 which keeps the open surfaces a leaf needs by turning off both the remesh and the pinhole fill.
 Hero raises the bake and texture resolution; it does not buy you clean topology.
 
+**Without ComfyUI, for anything that grows: Grow in BobFoliage.** Pick trees, plants or grass and a
+**Grow in BobFoliage** button appears in the same box. It builds a real tree, shrub or grass tuft at
+the 3D cursor from that kind's species preset — a trunk, branch levels and alpha leaf cards, all
+procedural. It needs no server and is instant, and every knob is live on the object's modifier, so
+you can drag its height, branch angles, card size and droop and watch it change.
+
+Use it for anything standing and alive. Generation is for **dead wood** — stumps, fallen logs, snags,
+root balls — which is what it is genuinely good at, and for ground clumps that read at 2 m or further
+as scatter filler. It cannot make a crown: an image-to-3D model returns one solid mesh with no leaf
+cards and no alpha, so a generated tree comes back as an opaque fan. The greyed note under the kind
+selector says which is which, and the button beside it is the other road.
+
 **Asset from Block-out** is the same button with one extra input. Make a block-out proxy the active
 object and the generated asset keeps its silhouette and footprint, so it drops into the layout you
 blocked out. The proxy's own height replaces the Height field, because a proxy you already placed

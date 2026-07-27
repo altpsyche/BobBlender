@@ -1260,6 +1260,14 @@ what answered them, are in
 
   Note that `LEAFY_KINDS` (what the warning fires on: trees, plants, grass) deliberately differs
   from `FOLIAGE_KINDS` (what keeps its holes open through remesh and pinhole fill: plants, grass).
+
+  **Superseded in part by BobFoliage F2 (2026-07-27).** D16's notes were REFUSALS, held that way on
+  purpose: the generator existed but grew bare branches, so a note routing an artist to it for
+  plants would have been untrue. With leaf cards landed, all three notes became directions and the
+  panel gained a **Grow in BobFoliage** button beside them
+  ([FOLIAGE.md 4.5](FOLIAGE.md#45-routing-how-an-artist-knows-which-tool-makes-what)). The trees note
+  still names dead wood, which is the part of D16 that was about the merits rather than the timing,
+  and `headless_redwood.py` still owns that assertion.
   Dead wood is solid and still gets the warning, because a crown is usually why `trees` was picked.
 
   The generator itself is now [docs/FOLIAGE.md](FOLIAGE.md), which this section is the origin of.
