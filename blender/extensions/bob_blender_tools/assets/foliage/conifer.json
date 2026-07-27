@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "name": "Conifer",
+    "kind": "trees",
+    "description": "A narrow spruce or redwood: a straight bole, short near-horizontal limbs and a crown well under half its height wide. The default shape of the track, and the one the redwood run could not generate."
+  },
+  "params": {
+    "levels": 3,
+    "height": 22.0,
+    "segments": 16,
+    "branch_segments": 5,
+    "profile_segments": 5,
+    "trunk_radius": 0.42,
+    "taper": 0.88,
+    "lean": 0.1,
+    "gnarl": 0.4,
+    "l1_branches": 18,
+    "l1_angle": 80.0,
+    "l1_length": 0.1,
+    "l1_radius": 0.24,
+    "l1_phyllotaxy": 137.5,
+    "l1_start": 0.22,
+    "l2_branches": 4,
+    "l2_angle": 58.0,
+    "l2_length": 0.28,
+    "l2_radius": 0.36,
+    "l2_phyllotaxy": 137.5,
+    "l2_start": 0.15,
+    "l3_branches": 3,
+    "l3_angle": 50.0,
+    "l3_length": 0.36,
+    "l3_radius": 0.44,
+    "l3_phyllotaxy": 137.5,
+    "l3_start": 0.12,
+    "cards": 4,
+    "card_size": 0.9,
+    "card_width": 0.45,
+    "droop": 0.5,
+    "card_spread": 30.0,
+    "bark_scale": 0.7
+  }
+}

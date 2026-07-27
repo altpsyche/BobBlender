@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "name": "Broadleaf",
+    "kind": "trees",
+    "description": "An oak or maple: a short gnarled bole that forks high, few long limbs, and a crown wider than the tree is tall. The counterweight to the conifer, so a stand is not one silhouette repeated."
+  },
+  "params": {
+    "levels": 3,
+    "height": 9.0,
+    "segments": 14,
+    "branch_segments": 7,
+    "profile_segments": 6,
+    "trunk_radius": 0.48,
+    "taper": 0.78,
+    "lean": 0.35,
+    "gnarl": 1.1,
+    "l1_branches": 6,
+    "l1_angle": 54.0,
+    "l1_length": 0.44,
+    "l1_radius": 0.46,
+    "l1_phyllotaxy": 137.5,
+    "l1_start": 0.4,
+    "l2_branches": 4,
+    "l2_angle": 48.0,
+    "l2_length": 0.5,
+    "l2_radius": 0.52,
+    "l2_phyllotaxy": 137.5,
+    "l2_start": 0.22,
+    "l3_branches": 4,
+    "l3_angle": 44.0,
+    "l3_length": 0.55,
+    "l3_radius": 0.55,
+    "l3_phyllotaxy": 137.5,
+    "l3_start": 0.15,
+    "cards": 5,
+    "card_size": 0.8,
+    "card_width": 0.9,
+    "droop": 0.3,
+    "card_spread": 46.0,
+    "bark_scale": 0.55
+  }
+}
