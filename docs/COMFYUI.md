@@ -1,6 +1,16 @@
 # ComfyUI integration plan
 
-Status: revision 17. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5, G6, G7, G8 and G9 are done**; see
+**This track is CLOSED.** G9 closed the last open phase question (D12), and D10, the only remaining
+candidate for another phase, is answered **no** in [Decisions remaining](#decisions-remaining) with
+its reasons. What is left on the open list is not this track's work: D13 belongs to the terrain
+engine and three phases have said so, and D14 is an upstream fix whose re-test tripwire already
+sits in part A of two gates. Nothing here is waiting on anything. There is no next phase and no
+handover; reopen on a named trigger, not for coverage.
+
+The document below stays as the design record and the measurement record, and
+[USAGE.md](USAGE.md) is what a user should read instead of it.
+
+Status: revision 18. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5, G6, G7, G8 and G9 are done**; see
 [What G0 shipped](#what-g0-shipped), [What G0.5 measured](#what-g05-measured),
 [What G1 shipped](#what-g1-shipped), [What G2 shipped](#what-g2-shipped),
 [What G3 shipped](#what-g3-shipped), [What G3b measured](#what-g3b-measured),
@@ -4092,6 +4102,11 @@ the documented fallback for the concurrent-client window. See
 | **G8** | **DONE.** D12: **W7b** (`mesh_geom_bbox`, Omni's bounding-box control mode), the control mode as a value (`CONTROL_MODES`, `control_route`, `DEFAULT_CONTROL_MODE`), `gen_assets.control_bbox` / `control_signal`, and the scope decision that declined W14, W11 and batch generation. What shipped, the grid, the six corrections and what was declined with reasons are in [What G8 measured](#what-g8-measured). | **Passed, and D12's answer is no.** Eight corners do not replace 8,192 points: footprint IoU **0.5766** against the point route's **0.9200** on the same three block-outs, the same image and the same no-rotation-search scoring, which is **50.1% to 70.8% of each block-out's own ceiling** against the point route's **98.8% to 101.0%**, for 7 seconds an asset. **The control does reach the model and is simply not enough information**, which is the distinction that separates this from G4c's silently-random wrapper: Bob's proportions beat the node's `auto_bbox` guess **3 of 3 on aspect error** (0.205 / 0.051 / 0.015 against 0.504 / 1.352 / 0.183) and only **1 of 3 on ground plan**, and a box cannot describe a plan. The gain scales with how distinctive the box is: 3x over the null on the tall thin tree, a LOSS on the near-cubic rock. `DEFAULT_CONTROL_MODE` stays `"point"` by a rule fixed before the run. **W7b stays wired for a different reason than the one it was built for:** it uploads nothing, so with `comfy_dir()` forced away W7 fails in 4 ms with `Mesh file not found` where W7b completes, making it the block-out route's fallback wherever mesh transport is unavailable. One finished asset through W7b, W9c, W9t and steps 6 to 8 passes every G3 check (3,902 faces, UV overlap 0.0, height exact, LODs [3902, 1951, 585], BobShader, `bake_rescale` 1.0, normal detail 0.00372). **Three silent traps found:** `auto_bbox` defaults TRUE so the obvious wiring never sees the block-out, `stage_exports` asked "is there a control FILE" and would have laid every bbox asset on its side, and `omni_model_dir` is derived from `comfy_dir` so a process without the folder starts a 13.5 GB download instead of erroring. Proved by `tools/scripts/headless_comfy_g8.py`, four parts, 27 checks, no failures. |
 | **G9** | **DONE.** D12's remainder and its close: **W7v** (`mesh_geom_voxel`, Omni's voxel control mode), `comfy.VOXEL_INPUT_ROTATION` pinned by measurement, `MESH_CONTROL_MODES` and `control_route`'s refusal of an unknown mode, `comfy_mesh(control_mode=...)`, and the swapped-control null. The first phase chosen from the open list rather than read off this table, so it opens with a written scope decision. What shipped, the grid, the seven corrections and what was declined are in [What G9 measured](#what-g9-measured). | **Passed, and it closed D12 without changing the default.** An occupancy grid reaches **footprint IoU 0.8507** against the point route's **0.9106** on the same three block-outs, at **29.0 s warm against 36.0 s**, so `DEFAULT_CONTROL_MODE` stays `"point"` by a rule fixed before the run. The finding is the ordering: **point 0.9106, voxel 0.8507, bbox 0.5766**, so 4,096 cells recover most of what 8,192 points buy and eight corners about half, and the grid MATCHES the point cloud on a compact block-out (0.9290 against 0.9287) while losing a 21 cm-cell tree (0.8491 against 0.9759). The control reaches the model **3 of 3** against a swapped-control null that scores 0.2667: a run given another block-out's control follows it, **0.8960** against the block-out it was conditioned on and 0.2168 against the one it was pictured as. The node's own `apply_input_rotation` default costs **43% of the ground plan** and errors nowhere. Finished asset: 3,914 faces of 4,000, UV overlap 0.0, height exact, LODs [3914, 1957, 587], normal detail 0.00398, footprint 0.7723 against the raw mesh's 0.7739. W7v uploads a mesh, so **W7b keeps the no-ComfyUI-folder fallback alone**. |
 
+**The table ends at G9, and it ends for good.** G9 was the first phase chosen from the open list
+rather than read off this table, and the list is now empty of anything belonging to this track:
+D12 closed at G9, D10 answered no, D13 is the terrain engine's, D14 is upstream with its tripwire
+already in two gates. There is no G10 and no handover.
+
 ## Testing
 
 A Blender 5.2 binary is available in the CLI environment (`blender-headless-testing`), so these
@@ -4308,10 +4323,43 @@ one-command suite exists to prevent.
   is not "scatter-grade or hero" but "is a hero path worth a MANUAL retopo step", and that is a
   workflow question for after G7, not a tiering decision that needed answering before G3 hardened.
   `hero=True` survives as a bake-resolution and texture-resolution switch, honestly labelled.
-- **D10 MV-Adapter, now that there is a number to beat.** The paint route's cross-view drift is
-  measured (adjacent-view seam 24.1 of 255, front-to-back 30.1), which is what makes MV-Adapter worth
-  a phase: it is SDXL-based, so it keeps the LoRA style control, and its whole claim is the
-  consistency those two figures quantify. Not needed by G4c or G5. Open.
+- **D10 MV-Adapter. ANSWERED: no, and this is the decision that closes the track.** The case for it
+  was real and is unchanged: the paint route's cross-view drift is measured (adjacent-view seam 24.1
+  of 255, front-to-back 30.1, from G4's eight-view turntable), MV-Adapter is SDXL-based so it would
+  keep the LoRA style control, and consistency is exactly what it claims. What decides against it is
+  not the claim but the arithmetic around it.
+
+  **It unblocks nothing.** That was true when D10 was written and no phase since has come to need
+  it. Every route that ships is complete without it; nothing is waiting.
+
+  **The defect it would fix is below the tolerance of the thing it would fix.** The paint route
+  textures scatter-grade props: dense triangles, no edge flow, stated in this document as convincing
+  at 3 m and mush at 30 cm. A 24.1-of-255 adjacent-view seam is about 9% on assets whose declared
+  viewing distance already forgives more than that. The improvement would be spent where it cannot
+  be seen. If a hero tier ever exists, this reasoning inverts and D10 should be reopened on that
+  basis, which is the specific condition below.
+
+  **A fourth pack is a fourth liability, on top of three that are already one liability.** W7, W7b
+  and W7v all sit on `ComfyUI-Hy3D-Omni`, which ships **no licence file at all** (no `LICENSE`, no
+  `COPYING`, no licence field), is unchanged at `e513cd0`, and has had no push since 2025-10-03. The
+  suite is already carrying an unlicensed, unmaintained dependency across three of its routes; see
+  [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md). Adding a fourth pack for an improvement that
+  unblocks nothing is taking on more of the risk that is already the worst thing about this track.
+
+  **And the phase would cost about double what an integration costs, for a reason four phases have
+  now established.** These packs share one defect shape: **a control that does not reach the model
+  never errors.** G0.5 got a black albedo, G4c a silently random projection, G8 an `auto_bbox` that
+  quietly did not condition, G9 an `apply_input_rotation` that did not. Four for four. So an
+  MV-Adapter phase cannot be scoped as "integrate and measure the two figures"; it must budget for a
+  swapped-reference null of its own, because without one a passing measurement is not evidence the
+  adapter is doing anything. That is the honest cost, and it is not a cost worth paying for an
+  improvement that unblocks nothing and lands below the asset class's tolerance.
+
+  **Reopen only on a specific trigger, not for coverage.** Either a hero tier exists and generated
+  meshes are being looked at from 30 cm, or a route appears that needs cross-view consistency to
+  function rather than to improve. Coverage is not a trigger. With D10 answered, D13 belonging to
+  the terrain engine and D14 being upstream work with a tripwire already in two gates, there is no
+  remaining phase in this track: it is **closed**.
 - **D13 The terrain engine's slope-area gradient has the wrong sign, and G5 found it by accident.**
   Building the G5 landform statistic turned up something that is not about the mask at all: a no-mask
   `alpine` bake's log-log slope-area gradient is **+0.322**, i.e. slope RISES with upstream drainage
