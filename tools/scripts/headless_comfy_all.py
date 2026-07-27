@@ -70,6 +70,14 @@ GATES = [
     # all, so the cheap run still measures the route decision and the dense-mesh answer.
     {"key": "g7", "script": "headless_comfy_g7.py", "phase": "G7 the geometry A/B",
      "fast": ["--part", "a,d"], "slow": 30, "server": True},
+    # G8's --fast is part A: the values, the frame mapping and preflight, all of which cost a
+    # second and none of which needs the card.
+    {"key": "g8", "script": "headless_comfy_g8.py", "phase": "G8 Omni bbox control (D12)",
+     "fast": ["--part", "a"], "slow": 12, "server": True},
+    # G9's --fast is part A, for G8's reason: the values, the frame constant and preflight cost a
+    # second between them and none of them needs the card.
+    {"key": "g9", "script": "headless_comfy_g9.py", "phase": "G9 Omni voxel control (D12 closed)",
+     "fast": ["--part", "a"], "slow": 14, "server": True},
 ]
 
 FAIL_RE = re.compile(r"(\d+)\s+(?:failure\(s\)|FAILED)")

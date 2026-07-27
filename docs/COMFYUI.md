@@ -1,13 +1,16 @@
 # ComfyUI integration plan
 
-Status: revision 15. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5, G6 and G7 are done**; see
+Status: revision 17. **G0, G0.5, G1, G2, G3, G3b, G4, G4c, G5, G6, G7, G8 and G9 are done**; see
 [What G0 shipped](#what-g0-shipped), [What G0.5 measured](#what-g05-measured),
 [What G1 shipped](#what-g1-shipped), [What G2 shipped](#what-g2-shipped),
 [What G3 shipped](#what-g3-shipped), [What G3b measured](#what-g3b-measured),
 [What G4 measured](#what-g4-measured), [What G4c measured](#what-g4c-measured),
 [What G5 measured](#what-g5-measured), [What G6 measured](#what-g6-measured) and
-[What G7 measured](#what-g7-measured). Everything from G8
-on is still plan. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
+[What G7 measured](#what-g7-measured), [What G8 measured](#what-g8-measured) and
+[What G9 measured](#what-g9-measured). **The numbered phase list ended at G8.** Every phase from G9
+on is chosen from the open decisions rather than read off the table, so each one opens with a
+written scope decision naming what it built and what it declined, and the phase table records the
+choice as well as the outcome. **The G1 go/no-go passed with a lot of room: 7.6 s prompt to rendered terrain
 layer against a 60 s gate**; G2 generalised that path without losing it (ten sets at a mean of
 5.55 s, worst-case main-thread block 16.5 ms against the blocking path's 5563 ms); G3 carried
 the same shape into geometry, at 40 to 203 s prompt-to-scattered-prop against a 300 s gate; G3b
@@ -24,7 +27,15 @@ where an agent goes prompt to scattered asset in **102 s** and prompt to rendere
 killing the server; and G7 ran the geometry A/B on ten prompts and decided it per asset class,
 keeping TRELLIS.2 primary for foliage decisively and for solids on balance while Hunyuan 2.1 took the
 speed and surface-closure columns on solids, and found two silent defects on the way that mattered
-more than the verdict. See the verdicts below.
+more than the verdict; and G8 answered D12 in the negative, measuring Omni's bounding-box control
+against its point-cloud control on G4c's own three block-outs and finding that eight corners get
+**0.5766 footprint IoU against 0.9200**, so the block-out route keeps the point cloud and W7b ships
+as the fallback for a process that cannot transport a mesh at all; and G9 closed D12 by measuring
+the mode G8 had named as the interesting remainder, finding that an occupancy grid lands **between**
+the two at **0.8507** and 19% faster, that it matches the point cloud on a compact block-out and
+loses a thin one to its own 16-cubed cell size, and that the control unmistakably reaches the model:
+given another block-out's control it follows that one at **0.8960** and scores 0.2168 against the
+block-out it was pictured as. See the verdicts below.
 
 Steps 3 and 4 of the pinned pipeline are **decided**: `Trellis2Simplify` plus `Trellis2UVUnwrap`,
 by a wide margin over Blender Decimate and Quadriflow. The measurements and the three findings
@@ -2403,6 +2414,493 @@ literal.
 
 ---
 
+## What G8 measured
+
+**Scope decision first, because the phase is optional and its first deliverable is a reason rather
+than a feature.** G8 built **D12, Omni's bounding-box control mode (W7b)**, and declined the other
+three candidates. The reason it was the right one to build is not that it was cheapest: it is the
+only candidate on the list with a **number already on file to beat** (W7's footprint IoU, 0.8136 to
+0.9787 from 8,192 sampled points, measured at G4c on three named block-outs), so it could produce a
+verdict rather than a demo. What it declined, and why, is under
+[What G8 deliberately did not build](#what-g8-deliberately-did-not-build).
+
+**Verdict: D12 is answered, and the answer is no. The G4c footprint result needed the point cloud.**
+Eight corners get **footprint IoU 0.5766** against the point route's **0.9200** on the same three
+block-outs, the same conditioning image, the same seed and the same scoring with no rotation search.
+Read against each block-out's own self-agreement ceiling the gap is starker still: the point route
+lands at **98.8% to 101.0% of the ceiling** and the bbox route at **50.1% to 70.8%**. It saves 7
+seconds an asset. `comfy.DEFAULT_CONTROL_MODE` stays `"point"`, decided by a rule written into the
+gate before the run rather than after the table.
+
+**The finding underneath the verdict is the one worth keeping: the control works, it is just not
+enough information.** That distinction is not pedantry here, because the last time an Omni control
+scored badly it was because the wrapper was ignoring it entirely and saying nothing (G4c, 0.010
+voxel IoU from a vendored `linear` to `liner` rename). So the gate measures the thing a box CAN
+describe, separately from the thing it cannot. On **proportions** Bob's numbers beat the node's own
+guess **3 of 3** (aspect error 0.205, 0.051, 0.015 against 0.504, 1.352, 0.183). On **ground plan**
+they beat it on only **1 of 3**. A bounding box constrains the extent and says nothing about the
+plan, and the plan is what "drops into a layout" means.
+
+Files: `assets/workflows/mesh_geom_bbox.json` (W7b, new), `core/comfy.py` (`mesh_geom_bbox`,
+`CONTROL_MODES`, `CONTROL_WORKFLOWS`, `DEFAULT_CONTROL_MODE`, `control_route`, `control_bbox` and
+`control_mode` through `generate_asset_source` and `generate_asset_chain`, `asset_chain`'s second
+control form, and the `stage_exports` fix below), `core/gen_assets.py` (`control_bbox`,
+`CONTROL_BBOX_AXES`, `control_signal`, and `bbox` on `export_control`'s return),
+`ui/scatter.py` and `mcp_agent/server.py` (both routed through `control_signal` /
+`control_bbox` with no new widget and no new op), `tools/scripts/headless_comfy_g8.py` (new),
+`tools/scripts/headless_comfy_all.py` (the `g8` entry), `tools/tests/test_comfy.py` (81 tests, up
+from 78), `tools/tests/data/object_info_min.json` (57 classes, up from 56), `docs/MCP.md`,
+`docs/THIRD-PARTY-MODELS.md`. Suite **210**, up from 207.
+
+### The grid, RTX 5080 16 GB, `tools/scripts/headless_comfy_g8.py`
+
+The same three block-outs G4c used, two of them the shipped `core.proxies` and one asymmetric
+front-to-back, each conditioning on the same rendered view. Three columns: W7 with 8,192 sampled
+points, W7b with Bob's proportions, and W7b with the node's `auto_bbox`, which estimates the
+proportions off the conditioning image and is the null. No rotation search, for G4c's reason.
+
+| block-out | control | warm s | peak MiB | faces | IoU | footprint IoU | ceiling | Chamfer | aspect error |
+|---|---|---|---|---|---|---|---|---|---|
+| rock | W7 point | 92.0 (cold) | 10,072 | 406,972 | 0.4651 | **0.9302** | 0.9413 | 0.0159 | 0.004 |
+| rock | W7b bbox | 33.6 | 10,098 | 1,002,311 | 0.0122 | 0.6065 | 0.9413 | 0.1229 | 0.205 |
+| rock | W7b auto | 30.1 | 9,628 | 602,650 | 0.0260 | 0.6875 | 0.9413 | 0.1031 | 0.504 |
+| tree | W7 point | 37.0 | 9,788 | 125,778 | 0.8132 | **0.9812** | 0.9920 | 0.0091 | 0.026 |
+| tree | W7b bbox | 30.0 | 9,628 | 518,884 | 0.0625 | 0.7027 | 0.9920 | 0.0644 | 0.051 |
+| tree | W7b auto | 31.1 | 9,628 | 1,203,638 | 0.0521 | 0.2317 | 0.9920 | 0.1580 | 1.352 |
+| notched | W7 point | 37.1 | 9,788 | 382,420 | 0.3261 | **0.8484** | 0.8403 | 0.0189 | 0.019 |
+| notched | W7b bbox | 30.2 | 9,628 | 613,519 | 0.1375 | 0.4206 | 0.8403 | 0.0871 | 0.015 |
+| notched | W7b auto | 30.1 | 9,660 | 641,570 | 0.0104 | 0.4093 | 0.8403 | 0.1039 | 0.183 |
+
+Means: point **0.9200** footprint IoU at 37.0 s warm, bbox **0.5766** at 30.0 s, auto **0.4429** at
+30.1 s. The rock's 92.0 s is the session's first generation and carries the 13.5 GB Omni load, which
+is why the gate reports the fastest row as well as the mean; G4c's 35.8 s figure was warm and these
+are directly comparable with it.
+
+Four things in that table are worth reading rather than skimming.
+
+**The bbox result is not merely worse, it is a different surface.** Voxel IoU falls from 0.3261 to
+0.8132 down to 0.0122 to 0.1375, and it stays there when the scorer is allowed to search all 24 axis
+maps first (0.0212 to 0.1385). So this is not a frame problem and not a near miss: conditioned on a
+box, the model generates something whose surface barely intersects the block-out at all, while
+happening to fill roughly the right extent.
+
+**The bbox helps exactly as much as the block-out's proportions are distinctive, which is a rule you
+can read off the three rows.** The tree's box is `[0.42, 1.0, 0.44]`, tall and thin, and there the
+bbox beats the null by 3x (0.7027 against 0.2317). The rock's is `[1.0, 0.67, 0.95]` and the
+notched block's is `[1.0, 0.85, 0.81]`, both near-cubic, and there the bbox and the null are within
+0.08 of each other and the bbox actually LOSES on the rock. A near-cubic box is three numbers that
+say "about this big", which the image already said.
+
+**The null is not weak, and that is what makes the comparison honest.** `auto_bbox` reads the
+silhouette's own aspect off the conditioning image (Otsu, or alpha where there is one) and reaches
+0.4429 mean footprint IoU on its own. Any claim for the bbox mode has to clear that, and it clears
+it by 0.13.
+
+**The bbox route returns 1.6x to 4x the geometry at the same octree resolution** (up to 1.2M faces
+against the point route's 126k to 407k). Nothing downstream cares, because step 3 is a 4,000-face
+budget either way, but it is the visible sign that a weakly conditioned generation is a blobbier
+isosurface rather than a cleaner one.
+
+### The finished asset, and what steps 6 to 8 are actually on the hook for
+
+One block-out (the asymmetric one) through W7b, W9c, W9t and all of steps 6 to 8. Every G3 asset
+check passes: **3,902 faces** of 4,000, **UV overlap 0.0**, height **0.655 m** exact against the
+block-out's own, origin **0.0 m** above the base, LOD chain **[3902, 1951, 585]**, all four maps
+present (`ao`, `basecolor`, `normal`, `roughness`), material a BobShader. `bake_rescale` **1.0**, so
+this route needs no `match_frame` correction, and the baked normal carries **0.00372** mean absolute
+neighbour difference, i.e. it is not the flat map G7 caught.
+
+The footprint after the whole finish is **0.4418**, against the raw mesh's own **0.4206**. That
+number is reported and not gated, and the reason is a methodological one this suite should keep:
+**G4c's "> 0.5 footprint" bar belongs to the ADOPTED control mode**, which the G4c gate already holds
+the point route to and which it clears at 0.8484 on this same block-out. Holding the mode that lost
+to the same bar would record a disappointment as a test failure and leave the suite permanently red.
+What steps 6 to 8 are on the hook for is **preserving whatever the control achieved**, and that is
+what is checked: the finish does not lose ground, it gains 0.02.
+
+### Six things this plan had wrong, corrected here
+
+1. **`Hy3DOmniBBoxGenerate` takes no control mesh, so W7b is W7 minus a node rather than W7 with a
+   node swapped.** D12 read as though the four Omni modes were the same graph with different control
+   inputs. They are not: the bbox mode's control is three scalars on the generator itself, so
+   `Trellis2LoadMesh` disappears, `export_control` is not involved, and nothing is uploaded. That
+   turns out to be the route's one real advantage and it is not the one D12 expected.
+2. **The node's `auto_bbox` defaults to TRUE, which means the obvious wiring measures the node's
+   guess and never sees Bob's block-out at all.** The graph runs, returns a plausible mesh, and the
+   control is silently absent. That is the same failure shape as G0.5's black albedo and G4c's random
+   control signal, now three phases running: on this integration, a control that is not reaching the
+   model NEVER errors. W7b ships `auto_bbox: false` and part A of the gate asserts the binding both
+   ways.
+3. **`stage_exports` decided the absolute turn by asking "is there a control FILE", and W7b has
+   none.** Left alone it would have read the bbox route as uncontrolled, skipped the `raw: 1`
+   correction and laid every block-out asset on its side, with nothing erroring. The turn comes from
+   `Trellis2ExportTrimesh`, which both Omni routes end at, so the rule is "is there a control", and
+   `stage_exports` now reads either form.
+4. **The bbox is in the control glb's frame, not Blender's, and nothing would have said so.** Blender
+   is Z-up and every Omni control arrives in glTF Y-up, so a Blender `(x, y, z)` extent goes in as
+   `(x, z, y)`. A permuted bbox is still a valid bbox: the model would have conditioned on a
+   plausible wrong shape in silence. `gen_assets.CONTROL_BBOX_AXES` is the one place it lives, and
+   part A checks it against a control glb's own POSITION accessor extents rather than against the
+   code that produced them.
+5. **`omni_model_dir` is derived from `comfy_dir`, so a process with no ComfyUI folder loses the
+   local WEIGHTS as well as mesh transport, and the fallback is a 13.5 GB download rather than an
+   error.** Found while building part D: forcing the folder away to measure transport also unbound
+   the weights, the graph kept its portable `tencent/Hunyuan3D-Omni` default with
+   `resume_download: true`, and the job wedged inside the loader where `/interrupt` does not reach.
+   The gate now holds the weights fixed and varies only the transport, and `docs/MCP.md` records the
+   trap, because the MCP server is exactly the process this happens in.
+6. **A footprint threshold is a property of the adopted mode, not of the measurement.** Written the
+   obvious way, the G8 gate failed three checks the moment its own verdict came back negative. What
+   a gate must fail on is the WIRING (does the control reach the model, does the finish preserve it,
+   is the shipped default the one the rule chose); the verdict itself belongs in a number.
+
+### The transport claim, measured with one variable
+
+W7b uploads nothing, so it should be the one Omni route that survives a process with no ComfyUI
+folder, which is the failure G7 found over MCP. With `comfy_dir()` forced to None and the weights
+held at what this machine has:
+
+- **W7 fails in 4 ms**, at the node, with `Mesh file not found: input/3d/rock_control.glb`. G7's
+  finding reproduced exactly.
+- **W7b completes**, 24.1 MB of mesh in 51.3 s including the model load, on the same block-out and
+  the same image.
+
+So the bbox mode is not only a control mode: it is the block-out route's fallback on any install
+where mesh transport is unavailable, which is worth more than its 7 seconds. That is now the honest
+case for keeping it wired despite losing the comparison.
+
+### D14, re-tested the cheap way
+
+D14's own re-test condition is a fork update, so the version is the test. The installed
+`comfy-aimdo` is **0.4.10**, which is the version G6 measured the segfault on, and its
+`host_buffer.py` has not been touched since 2026-07-17. Nothing to re-test, `TILING_COPY_MODE` stays
+`"Modify in place"`, and the reminder is now a check in part A rather than a line in a document:
+when the version moves, the G8 gate says so.
+
+### Every shipped gate, still one command
+
+| gate | phase | wall | peak VRAM | checks |
+|---|---|---|---|---|
+| g0 | G0 texture-set sampler | 2.7 s | 10,723 MiB | 32 |
+| texset | G1 prompt to a shaded layer | 12.9 s | 15,554 MiB | 13 |
+| g2 | G2 variants, preflight, maps | 90.4 s | 15,710 MiB | 40 |
+| g3 | G3 prompt to a scattered asset | 31.2 s | 13,074 MiB | 41 |
+| g3b | G3b one-shot against staged | 69.1 s | 10,456 MiB | 45 |
+| g4 | G4 stylise, paint, multi-view | 9.2 s | 11,116 MiB | 18 |
+| g4c | G4c Omni block-out control | 4.3 s | 10,419 MiB | 4 |
+| g5 | G5 terrain macro mask | 1.5 s | 10,419 MiB | 7 |
+| g6 | G6 the agent-facing surface | 2.7 s | 10,419 MiB | 23 |
+| g7 | G7 the geometry A/B | 44.1 s | 10,415 MiB | 27 |
+| g8 | G8 Omni bbox control (D12) | 0.6 s | 10,415 MiB | 13 |
+
+**11 of 11 pass, 263 checks, 268.8 s, peak 15,710 MiB** on `--fast`. The G8 gate on its own is 27
+checks across all four parts. `pytest` is **210**, up from 207.
+
+### What G8 deliberately did not build
+
+**W14, the sky dome (track F). Declined, and the empty folder is not the argument.** `library/hdri/`
+being the one place in this suite where the intent exists and the folder does not is a real
+observation and it is still not a reason: Firmament's procedural sky is coupled to `bbt_env` and
+drives season, weather and time of day, so an HDRI is an alternative LOOK and not a replacement for
+anything. It is ranked 6 of 6 by the gap it closes, and it is the only candidate here whose gate
+would have needed a new measurement built from scratch (a latitude-aware seam plus pole distortion,
+because a sphere wraps in one axis and pinches in the other, which circular padding only half
+solves). A phase that invents both the feature and the yardstick is the shape this plan has been
+avoiding since G1.
+
+**W11, part-level variation. Declined for the reason that killed it at every earlier phase, now with
+a price on it.** Hunyuan3D-Part and P3-SAM have open weights and no maintained ComfyUI pack. The one
+unmaintained wrapper this integration already depends on shipped with its control signal silently
+random and cost G4c half a phase, and `THIRD-PARTY-MODELS.md` still records that it has no licence
+file at all. Writing a second wrapper is not a G8-sized job and the first one is the evidence.
+
+**Batch generation. Declined as orchestration without a question.** Everything it needs exists
+(`comfy_jobs`, the staging folder, `list_mesh_variants`, Accept and Reject), which is exactly why it
+would measure nothing: the honest question is whether an artist wants ten variants or one good one,
+and that is a product question a gate cannot answer. It stays available as a candidate for a phase
+that has a user asking for it.
+
+**D10 and D13 left open, and not because they were forgotten.** D10 (MV-Adapter) is a phase, not a
+cheap item: it is a new pack, new weights and a re-measurement of the paint route's two drift
+figures. D13 (the terrain engine's slope-area gradient sign) is cheap, and it belongs to the terrain
+engine rather than to this integration, exactly as its own entry has said since G5; doing it here
+would put a landform fix in a ComfyUI phase's diff. Both stay in the open list unchanged.
+
+**No panel widget for the control mode, and no `contracts.py` change.** The verdict is
+`comfy.DEFAULT_CONTROL_MODE` and the alternative is `comfy_mesh(control_bbox=...)`. A radio button
+on a decision with a measured answer is knob sprawl (G3b's rule, held at G7, held here), and
+`export_control` gained a field in its `data` rather than a new op, so no reconnect is needed.
+
+---
+
+## What G9 measured
+
+**Scope decision first, because the phase table ended at G8 and everything after it is chosen from
+the open list rather than read off a row.** G9 built **D12's remainder, Omni's voxel control mode
+(W7v)**, and declined D10, D13 and everything G8 declined. Three reasons in the order they mattered.
+
+It is the only open item that **closes a decision instead of opening one**. D12 has been open since
+G4c and half-answered since G8, and the voxel mode is the named remainder rather than the leftover:
+of the four control signals Omni takes, it is the last one that carries a GROUND PLAN. G8's whole
+finding was that a bounding box constrains extent and says nothing about plan, and "drops into a
+layout" is a statement about plan. So there was a specific question with a specific number already
+on file to beat, which is the same property that made W7b the right build at G8.
+
+It is **cheap in generations and expensive in nothing**. The measurement was already built: three
+block-outs, one conditioning view each, `fixed_agreement` with no rotation search, each read against
+its own self-agreement ceiling. Adding a column is generations, not apparatus.
+
+And what it declines, it declines for reasons that have not moved. **D10, MV-Adapter, is a phase and
+not an item**: a new pack, new weights and a re-measurement of both paint-route drift figures. The
+one unmaintained wrapper this integration already depends on shipped with its control signal
+silently random and cost G4c half a phase, and `docs/THIRD-PARTY-MODELS.md` still records that it
+has no licence file at all -- G9 read it a third time and it still does not. Taking on a second
+pack in the same phase as a third route on the first one is how a phase stops having a verdict.
+**D13, the terrain engine's slope-area gradient sign, is cheap and is not this integration's**: G5
+said so, G8 said so, and doing it here would put a landform fix in a ComfyUI phase's diff. **W14,
+W11 and batch generation** stay declined on G8's reasons, unchanged and not restated.
+
+One thing G9 did take on beyond the mode itself, because the phase would otherwise have been three
+generations and a table: the **wiring null is a new measurement shape**, not a reuse of G8's. G8
+could score Bob's bounding box against the node's own guess at one, because `auto_bbox` exists.
+There is no `auto_voxel`, so the null had to be built: each block-out generated a second time from
+its OWN conditioning image and a DIFFERENT block-out's control. If the control reaches the model the
+result follows the control and not the picture, and that is a stronger statement than "it scored
+well", which is what the last three phases each wished they had asked for.
+
+**Verdict: D12 is closed, and the answer is still the point cloud, by less than G8's half of it
+suggested.** An occupancy grid reaches **footprint IoU 0.8507** against the point route's **0.9106**
+on the same three block-outs, in **29.0 s warm against 36.0 s**, so it is 6% behind on the ground
+plan and 19% faster. The rule wanted a win or a draw on two of three and got one, so
+`comfy.DEFAULT_CONTROL_MODE` stays `"point"`. But the mode that D12 spent four phases asking about
+is not the mode G8 measured: the box got **0.5766** and the grid gets **0.8507**, so 4,096 cells
+recover most of what 8,192 points buy and eight corners recover about half.
+
+**W7v ships anyway, and the reason is in the per-block-out rows rather than in the mean.** The grid
+matches the point cloud on the rock (**0.9290** against **0.9287**, both at 98.7% of that
+block-out's ceiling) and loses badly on the tree (**0.8491** against **0.9759**). A 16-cubed grid
+over a 3.4 m pine is a 21 cm cell, and a trunk is thinner than that: the control describes what
+survives quantisation, so a compact block-out loses nothing to it and a thin one loses its thin
+parts. That is a rule an artist can apply, which is more than "it came second".
+
+Files: `assets/workflows/mesh_geom_voxel.json` (W7v, new), `core/comfy.py` (`mesh_geom_voxel`,
+`VOXEL_INPUT_ROTATION`, `MESH_CONTROL_MODES`, the third entry in `CONTROL_MODES` and
+`CONTROL_WORKFLOWS`, `control_route`'s refusal of an unknown mode, and the voxel arm of
+`generate_asset_source`), `core/gen_assets.py` (`control_signal`, which gained a mode label and no
+exporter), `mcp_agent/server.py` (`comfy_mesh(control_mode=...)`),
+`tools/scripts/headless_comfy_g9.py` (new), `tools/scripts/headless_comfy_g8.py` (one row of its
+part A truth table, see the corrections), `tools/scripts/headless_comfy_all.py` (the `g9` entry),
+`tools/tests/test_comfy.py` (213 tests, up from 210), `docs/MCP.md`, `docs/THIRD-PARTY-MODELS.md`.
+`tools/tests/data/object_info_min.json` needed no change: `Hy3DOmniVoxelGenerate` has been in the
+57-class dump since G4c pulled the whole pack's schema.
+
+### The input rotation, which is why this phase has a frame probe before it has a grid
+
+`Hy3DOmniVoxelGenerate` turns its control **-90 degrees about X before sampling it** and
+`Hy3DOmniPointGenerate` does not. That is not the wrapper being careless: upstream's
+`inference.py` does exactly the same thing, `infer_voxel` rotating and `infer_point` not, and the
+wrapper reproduces both faithfully. The asymmetry belongs to two demo datasets' frames rather than
+to the model -- `OmniEncoder.forward` reads point and voxel through the same Fourier embedder in the
+same [-1, 1] cube, and the branches differ only by the quantiser and one conditioning token.
+
+Bob's control glb is the file W7 already conditions on correctly, pinned at G4c over all 24
+axis-aligned rotations, so the node's default is a turn away from the frame that works. Measured on
+the asymmetric block-out, both ways, before anything else in the phase ran:
+
+| `apply_input_rotation` | footprint IoU | voxel IoU | aspect | warm s |
+|---|---|---|---|---|
+| **false** (shipped) | **0.7739** | 0.2133 | [1.0, 0.984, 0.951] | 29.0 |
+| true (the node's default) | 0.4410 | 0.1007 | [1.0, 0.987, 0.867] | 29.1 |
+
+The default costs **43% of the ground plan** and nothing anywhere says so: the graph runs, the mesh
+is plausible, the control is simply pointed the wrong way. Same shape as G0.5's black albedo, G4c's
+random projection and G8's `auto_bbox`, which is now four phases running.
+
+### The grid, RTX 5080 16 GB, `tools/scripts/headless_comfy_g9.py`
+
+The same three block-outs G4c and G8 used, two of them the shipped `core.proxies` and one
+asymmetric front-to-back, each conditioning on the same rendered view. Four columns in ONE session,
+so the VRAM figures are comparable with each other: W7 point, W7v voxel, W7v with a swapped control
+(the null), and W7b bbox for the record. No rotation search, for G4c's reason.
+
+| block-out | control | warm s | peak MiB | faces | IoU | footprint IoU | ceiling | Chamfer | aspect error |
+|---|---|---|---|---|---|---|---|---|---|
+| rock | W7 point | 36.1 | 9,600 | 407,968 | 0.4582 | **0.9287** | 0.9413 | 0.0159 | 0.005 |
+| rock | W7v voxel | 35.0 | 9,884 | 411,570 | 0.3791 | **0.9290** | 0.9413 | 0.0174 | 0.012 |
+| rock | W7v swap | 31.0 | 9,942 | 135,732 | 0.0287 | 0.2168 | 0.9413 | 0.1582 | 0.544 |
+| rock | W7b bbox | 30.2 | 9,472 | 1,002,311 | 0.0122 | 0.6065 | 0.9413 | 0.1229 | 0.205 |
+| tree | W7 point | 36.0 | 9,600 | 125,812 | 0.8163 | **0.9759** | 0.9920 | 0.0092 | 0.020 |
+| tree | W7v voxel | 29.0 | 9,440 | 133,410 | 0.3190 | 0.8491 | 0.9920 | 0.0162 | 0.060 |
+| tree | W7v swap | 30.3 | 9,472 | 886,016 | 0.0078 | 0.1519 | 0.9920 | 0.2506 | 1.352 |
+| tree | W7b bbox | 29.0 | 9,472 | 518,884 | 0.0625 | 0.7027 | 0.9920 | 0.0644 | 0.051 |
+| notched | W7 point | 37.1 | 9,600 | 382,200 | 0.3127 | **0.8273** | 0.8403 | 0.0188 | 0.019 |
+| notched | W7v voxel | 30.1 | 9,472 | 420,555 | 0.2133 | 0.7739 | 0.8403 | 0.0235 | 0.049 |
+| notched | W7v swap | 30.0 | 9,472 | 412,218 | 0.0235 | 0.4315 | 0.8403 | 0.1103 | 0.260 |
+| notched | W7b bbox | 29.2 | 9,472 | 613,519 | 0.1375 | 0.4206 | 0.8403 | 0.0871 | 0.015 |
+
+Means: point **0.9106** footprint IoU at 36.0 s warm, voxel **0.8507** at 29.0 s, bbox **0.5766** at
+29.0 s, and the swapped null **0.2667**. As a fraction of each block-out's own ceiling: point 98.4%
+to 98.7%, voxel 85.6% to 98.7%, bbox 50.1% to 70.8%.
+
+Four things in that table are worth reading rather than skimming.
+
+**The null is the strongest wiring evidence this integration has produced, and it says the control
+lands.** A swapped run sees its own block-out's image and a different block-out's control, and it
+follows the control: the notched image with the rock's control scores **0.8970 against the rock**
+and 0.4315 against the notched block it was pictured as; the rock image with the tree's control
+scores **0.8960 against the tree** and 0.2168 against the rock. So the voxel branch is not merely
+receiving a signal, it is dominating a conflicting image. Properly controlled beats swapped **3 of
+3**. That distinction is not pedantry: G4c's control scored 0.010 because the wrapper was ignoring
+it and saying nothing, and a low score alone cannot tell those two cases apart.
+
+**Voxel IoU falls where footprint IoU does not, and that is the quantiser rather than a defect.**
+The grid holds the ground plan (0.8507 mean) while its volumetric agreement drops to **0.3038**
+against the point route's 0.5291. A 16-cubed occupancy grid keeps at most 4,096 cell centres out of
+81,920 samples, so what reaches the model is a plan and a rough envelope with the surface thrown
+away, which is exactly what the encoder is documented to do and exactly what D12 hoped it did.
+
+**The gain over the box tracks how much shape survives quantisation.** On the near-cubic rock the
+grid is 53% better than the box (0.9290 against 0.6065) and matches the point cloud outright. On the
+notched block, whose alcove is one cell wide, it is 84% better (0.7739 against 0.4206). On the tall
+thin tree it is only 21% better (0.8491 against 0.7027), because a 21 cm cell cannot describe a
+trunk, and that is also the only block-out where the box's three numbers were distinctive enough to
+carry real information.
+
+**The bbox column reproduced G8's to the digit and the point column did not, which is a finding
+about the measurement rather than about the modes.** Same seed, same graph, same image, a different
+session: W7b returned 0.6065 / 0.7027 / 0.4206 and 1,002,311 / 518,884 / 613,519 faces, identical to
+G8's table. W7 moved: 0.9302 to 0.9287 on the rock, 0.9812 to 0.9759 on the tree, and **0.8484 to
+0.8273 on the notched block**. See the corrections below for why, and for what it does to a draw
+threshold of 0.02.
+
+### The finished asset, and the transport claim that did not survive
+
+One block-out (the asymmetric one) through W7v, W9c, W9t and all of steps 6 to 8. Every G3 asset
+check passes: **3,914 faces** of 4,000, **UV overlap 0.0**, height **0.655 m** exact against the
+block-out's own, origin **0.0 m** above the base, LOD chain **[3914, 1957, 587]**, all four maps
+present (`ao`, `basecolor`, `normal`, `roughness`), material a BobShader. `bake_rescale` **1.0**, so
+this route needs no `match_frame` correction either, and the baked normal carries **0.00398** mean
+absolute neighbour difference, so it is not G7's flat map. W7v took 30.1 s and W9c plus W9t took
+10.0 s.
+
+The footprint after the whole finish is **0.7723** against the raw mesh's **0.7739**, i.e. the
+finish gave back 0.002 of a ground plan it did not have to preserve at all. That number is reported
+and not gated against G4c's absolute bar, for G8's reason: the bar belongs to the adopted mode,
+which is still the point route, and the gate holds that one to it (0.8273 to 0.9759 here, all three
+clear). What steps 6 to 8 are on the hook for is preserving what the control achieved, and that is
+what is checked.
+
+**The transport claim died, which was worth measuring because the handover expected the opposite.**
+D12's remainder was framed partly as a possible cheaper control that needs no mesh upload, which
+would have mattered for MCP. It is not one: `Hy3DOmniVoxelGenerate` has a **required `control_mesh`
+socket**, so W7v reads the same file through the same `Trellis2LoadMesh` W7 does. With `comfy_dir()`
+forced to None and the weights held fixed, W7v fails at the node with `Mesh file not found:
+input/3d/rock_control.glb`, exactly as W7 does. **W7b is still the only Omni route that runs with no
+ComfyUI folder**, and that is now the whole of its case, since it has also lost the footprint
+comparison to two other modes.
+
+### Every shipped gate, still one command
+
+| gate | phase | wall | peak VRAM | checks |
+|---|---|---|---|---|
+| g0 | G0 texture-set sampler | 2.6 s | 11,493 MiB | 32 |
+| texset | G1 prompt to a shaded layer | 10.0 s | 15,695 MiB | 13 |
+| g2 | G2 variants, preflight, maps | 91.2 s | 15,714 MiB | 41 |
+| g3 | G3 prompt to a scattered asset | 17.1 s | 13,174 MiB | 42 |
+| g3b | G3b one-shot against staged | 66.1 s | 10,649 MiB | 46 |
+| g4 | G4 stylise, paint, multi-view | 9.2 s | 11,565 MiB | 18 |
+| g4c | G4c Omni block-out control | 3.6 s | 10,635 MiB | 4 |
+| g5 | G5 terrain macro mask | 1.4 s | 10,635 MiB | 7 |
+| g6 | G6 the agent-facing surface | 2.5 s | 10,634 MiB | 23 |
+| g7 | G7 the geometry A/B | 43.6 s | 10,684 MiB | 28 |
+| g8 | G8 Omni bbox control (D12) | 0.6 s | 10,578 MiB | 13 |
+| g9 | G9 Omni voxel control (D12 closed) | 0.6 s | 10,594 MiB | 13 |
+
+**12 of 12 pass, 280 checks, 248.6 s, peak 15,714 MiB** on `--fast`. The run G9 started from was 11
+of 11, **266 checks in 261.4 s**, which is already three checks above the 263 G8 recorded: g3 and g7
+gained one each and g2 gained one between the two runs of this session, so a check count drifts
+upward with the gates rather than with a phase, and a whole-card VRAM figure is comparable only
+within one run. The G9 gate on its own is **27 checks** across its four parts: 13 in part A, 4 in
+part B, 9 in part C and 1 in part D. `pytest` is **213**, up from 210.
+
+### Seven things this plan had wrong, corrected here
+
+1. **The voxel mode uploads a mesh, so D12's "a control that needs no mesh transport" is answered
+   for good and the answer is W7b or nothing.** The remainder was framed as possibly cheaper AND
+   lighter. It is cheaper (29.0 s against 36.0 s) and it is not lighter: the node's `control_mesh`
+   input is REQUIRED, so W7v is W7 with one node swapped, the same upload and the same failure.
+   Measured with the folder forced away rather than reasoned from the node schema, and the two
+   agree.
+2. **"Voxel" is a conditioning branch, not a file format, and no voxel grid ever leaves Blender.**
+   This plan's Omni section has read as though the four modes take four kinds of input. They take
+   three: a mesh (point and voxel), three scalars (bbox), an `[N, 3]` array (pose). The quantisation
+   happens inside `OmniEncoder.generate_voxel` at a **fixed 16 cubed** that no graph input exposes,
+   so `sample_point_count` is a budget for FILLING that grid rather than for detail in it: 81,920
+   samples collapse to at most 4,096 cell centres. That is also why the mode's ceiling is a property
+   of the block-out's size rather than of any setting.
+3. **A new control mode is one graph, one table entry and one MEASURED CONSTANT, not two of the
+   three.** The frame is not inherited just because the exporter is. `Hy3DOmniVoxelGenerate` turns
+   its control -90 degrees about X and `Hy3DOmniPointGenerate` does not, faithfully reproducing
+   upstream's `infer_voxel` and `infer_point`; on Bob's control that default costs 43% of the ground
+   plan (0.4410 against 0.7739) and errors nowhere. `comfy.VOXEL_INPUT_ROTATION` is where the answer
+   lives and part B measures it before the grid runs.
+4. **The point route's control is resampled from OS entropy every run, so a fixed seed does NOT fix
+   the control, and the run-to-run spread is the size of the draw threshold.**
+   `Hy3DOmniPointGenerate` calls `trimesh.Trimesh.sample`, whose `seed` defaults to None and whose
+   own docstring says it "pulls the seed from operating system entropy". The evidence is in G9's own
+   table: W7b, which samples nothing, reproduced G8's three rows and three face counts **exactly**,
+   while W7 moved by 0.0015, 0.0053 and **0.0211** footprint IoU on the same three block-outs. The
+   largest of those equals the 0.02 draw threshold both phases decide on. Two consequences that are
+   now rules: a mode comparison must run **all its columns in one session** (G9 did, which is why it
+   re-ran W7b rather than citing G8's), and a cross-phase footprint difference under about 0.02 on
+   a mesh-mode column is not a difference. W7v inherits the same sampler at 81,920 points, where
+   quantisation to 4,096 cells damps it further.
+5. **`control_route` fell through to an UNCONTROLLED generation for a mode name it did not know.**
+   With two modes that was nearly unreachable; with three and an MCP string it is a typo away, and
+   `generate_asset_source`'s `else` runs W5t, which returns a perfectly good mesh that no block-out
+   shaped. It raises now. This is the only place in the integration where a raise beats a fallback,
+   and the reason is the same one this section keeps recording: a control that misses never errors.
+6. **A control FILE no longer names a mode, and G8's gate asserted that it did.** Its part A truth
+   table read `control_route(control=...) == "point"` literally, which was true when point was the
+   only mesh mode and would fail the day the default moved. It reads against
+   `comfy.DEFAULT_CONTROL_MODE` now. That is the only edit G9 made to a shipped gate, and it is
+   recorded here rather than left in a diff.
+7. **The agent surface would have shipped a route it could not name.** G8 declined a panel widget
+   for the control mode and that still holds: the artist path has one block-out button and the
+   verdict is the default. MCP is not the same case, because `comfy_mesh` takes signals rather than
+   modes, and with two mesh modes a control path alone cannot select between them, so W7v would have
+   existed and been unreachable from the surface G6 built. `comfy_mesh` gains one optional validated
+   `control_mode` string, no new op, no `contracts.py` change. **Reconnect the MCP server** to see
+   it; no Blender-side reload is needed.
+
+### What G9 deliberately did not build
+
+**`Hy3DOmniPoseGenerate` stays dropped, not deferred, and D12 is now closed rather than reduced.**
+G8 dropped it because it conditions on a skeleton and a scatter suite generates rocks, trees, plants
+and grass. Nothing about the voxel result changes that. With point, bbox and voxel all measured on
+the same three block-outs against the same ceilings, every Omni control mode a scatter suite could
+use has a number, and **D12 leaves the open list**.
+
+**No sample-count or grid-resolution sweep.** The obvious follow-up to "the tree loses its trunk" is
+to raise `sample_point_count`, and it would measure nothing: the grid is fixed at 16 cubed inside the
+encoder, so more samples fill the same 4,096 cells more thoroughly and change no cell's occupancy
+once the surface is covered. The knob that would matter, `voxel_resolution`, is a constructor
+argument on `OmniEncoder` that the checkpoint was trained with and that no graph input reaches.
+Changing it is a retrain, not a setting.
+
+**No per-kind control-mode verdict, though G7 set the precedent for one.** The rock draws and the
+tree loses by 0.127, which looks like the shape of a `KIND_ROUTE` entry, and it is not one on three
+block-outs. G7 earned its per-class verdict on ten prompts, five of them foliage. What G9 has is a
+rule an artist can read (a cell is a sixteenth of the longest axis, so anything thinner than that
+is not in the control) and no evidence that it splits cleanly by scatter kind.
+
+**D10, D13 and D14 unchanged.** D10 is still a phase and G9's scope decision above says why it was
+not this one. D13 still belongs to the terrain engine. D14 still has its tripwire in two gates now,
+and the installed `comfy-aimdo` is still **0.4.10** with `host_buffer.py` untouched since
+2026-07-17, so there is still nothing to re-test.
+
+---
+
 ## Review findings that changed this plan
 
 Revision 1 had real defects. Each is listed with the fix, because the fixes are most of what is
@@ -2776,6 +3274,17 @@ One route, all local. Pinned rather than implied, which is the correction from R
               the answer. `gen_assets.export_control` writes the control and
               `CONTROL_RETURN_TURN` undoes the exporter's turn. Forces the staged
               chain below, because W9b generates its own geometry.
+            or Blender        block-out proxy -> three PROPORTIONS -> geometry    (W7b, Omni)
+              SHIPPED AT G8. The same route with the control reduced to eight
+              corners. `comfy.DEFAULT_CONTROL_MODE` picks between the modes and
+              `gen_assets.control_bbox` produces the numbers; nothing is uploaded,
+              so this is the one Omni route that needs no `$BOB_COMFY_DIR`.
+            or Blender        block-out proxy -> 16-cubed OCCUPANCY -> geometry   (W7v, Omni)
+              SHIPPED AT G9, and it closes D12. W7's own control file read as a
+              coarse grid instead of a surface: 0.8507 footprint IoU against
+              point's 0.9106 and bbox's 0.5766, 19% faster than point, and it
+              MATCHES point on a compact proxy while losing a thin one to its own
+              21 cm cell. Uploads a mesh, so it needs `$BOB_COMFY_DIR` too.
 2-5 ComfyUI  geometry, simplify, UV and PBR in ONE job.  DEFAULT since G3b.       (W9b)
               Trellis2ImageToShape -> Trellis2ProcessMesh(target_face_count) ->
               Trellis2RasterizePBR. Steps 2 to 5 below are the staged alternative,
@@ -3011,6 +3520,59 @@ Four things the plan had wrong about this graph, corrected here:
 Needs `ComfyUI-Hy3D-Omni` and 13.5 GB of Omni weights, and needs
 `tools/scripts/comfy_omni_fix.py` run once against them. Absent any of that, preflight fails the
 graph by class name and every other route is unaffected.
+
+**W7b `mesh_geom_bbox.json`, SHIPPED at G8, the second control mode.** W7 with the control reduced
+from a surface to three numbers. Five nodes, and it is W7's file minus one: `LoadImage(BOB_IMAGE)`
+plus `Hy3DOmniLoadPipeline(BOB_OMNI)` into `Hy3DOmniBBoxGenerate(BOB_SEED)`, then W7's
+`Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail. There is no `Trellis2LoadMesh`, because the
+node has no `control_mesh` socket at all: it takes `bbox_length`, `bbox_height` and `bbox_depth`, and
+`OmniEncoder.bbox_to_corners` turns those into the eight corners of a box spanning `[-d/2, d/2]` per
+axis. `core.comfy.mesh_geom_bbox()` drives it and `core.gen_assets.control_bbox()` produces the three
+numbers from any object.
+
+Three things about it that are not obvious:
+
+- **`auto_bbox` ships FALSE, and true is a null rather than a mode.** True makes the node estimate
+  the proportions from the conditioning image's silhouette (Otsu, or alpha when there is one), which
+  is a guess at something Bob knows exactly. It is still reachable, as `mesh_geom_bbox(None, ...)`,
+  and G8 scores it as the control that says whether Bob's numbers added anything.
+- **The three numbers are in the CONTROL GLB's frame, not Blender's.** Blender is Z-up and the frame
+  every other Omni route's control arrives in is glTF Y-up, so a Blender `(x, y, z)` extent goes in as
+  `(x, z, y)`. `gen_assets.CONTROL_BBOX_AXES` is the one place that lives, and part A of the G8 gate
+  checks it against the control glb's own POSITION accessor extents rather than against the code that
+  wrote it, because a permuted bbox is still a valid bbox: the model would condition on a plausible
+  wrong shape and say nothing.
+- **It uploads nothing.** That makes it the one Omni route that does not need `$BOB_COMFY_DIR`, which
+  is the failure G7 found over MCP. G9 confirmed that this is W7b's alone: the voxel mode's
+  `control_mesh` input is required, so it fails the same way W7 does. It is also why the graph needs
+  no unit-normalise round trip: a proportion has no scale to be outside the unit cube with.
+
+**W7v `mesh_geom_voxel.json`, SHIPPED at G9, the third control mode, and the one that closes D12.**
+W7's file with `Hy3DOmniPointGenerate` swapped for `Hy3DOmniVoxelGenerate` and nothing else moved:
+same `Trellis2LoadMesh(BOB_CONTROL)`, same `LoadImage(BOB_IMAGE)`, same `Hy3DOmniLoadPipeline`, same
+`Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail, same `CONTROL_RETURN_TURN` on the way back.
+`core.comfy.mesh_geom_voxel()` drives it and `core.gen_assets.control_signal(mode="voxel")` produces
+the control, which is the byte-identical file the point mode gets.
+
+Three things about it that are not obvious:
+
+- **"Voxel" is a branch in the encoder, not a file.** The node area-samples the control mesh and
+  `OmniEncoder.generate_voxel` quantises those samples onto a grid whose resolution is a constructor
+  argument fixed at **16 cubed**, keeping each occupied cell's centre once. So at most 4,096 points
+  reach the DiT however many are sampled, `sample_point_count` is a filling budget rather than a
+  detail budget, and the mode's ceiling is set by the proxy's proportions: a cell is a sixteenth of
+  the longest axis, and anything thinner is not in the control.
+- **`apply_input_rotation` ships FALSE against the node's own default of true.** The node turns its
+  control -90 degrees about X before sampling and the point node does not, faithfully reproducing
+  upstream's `infer_voxel` and `infer_point`. On Bob's control, which W7 already reads correctly,
+  that turn costs 43% of the ground plan and errors nowhere. `comfy.VOXEL_INPUT_ROTATION` is the one
+  place it lives and part B of the G9 gate measures both settings before it measures anything else.
+- **It is the only mode reachable by name alone.** Point and voxel take the same file, so
+  `control_route` cannot infer which was meant from a control path; the default breaks the tie and
+  `control_mode="voxel"` is how a caller overrides it, over MCP as well as in-process.
+
+Same pack and same weights as W7, so the same reachability gate and the same
+`tools/scripts/comfy_omni_fix.py` requirement apply.
 
 **W8 `mesh_geom_alt.json`, SHIPPED at G7, the A/B slot.** Same inputs and the same output contract
 as W5t, challenger model inside, so swapping the geometry model is a config change rather than a
@@ -3527,7 +4089,8 @@ the documented fallback for the concurrent-client window. See
 | **G5** | **DONE.** Track E: **W13**, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and `Generate Base` in the Terrain panel. What shipped, the measurements, and twelve corrections are in [What G5 measured](#what-g5-measured). | **Passed, and it answered R7 in the negative.** A prompted silhouette survives an erosion pass at **band-limited correlation 0.906 to 0.923** against a no-mask null of 0.078 to 0.208, on three prompts including the isolated massif erosion was expected to fight. It still looks intentional rather than shaped noise, as numbers: the erosion supplies **2.89 to 3.04 m** of fine relief against a mask-only baseline's **0.28 to 0.31 m**, the median slope is **42.1 to 42.8 deg** beside the no-mask bake's own 44.7, and the mask explains only 11 to 16% of the band above its own cutoff. **R7's terracing does not occur at 8 bits, and does not occur at 5 either** (histogram concentration 1.86 and 1.91 against 16-bit's 1.93), so the 16-bit save node is deferred on evidence; what the 8-bit write costs is determinism, 0.80 m rms against a reseed's 9.28 m. **About 12 s** prompt to a built terrain, **0.3 ms** of main thread, peak **7,444 to 9,844 MiB**, and it is the one route here that shares a card with Omni. Proved by `tools/scripts/headless_comfy_g5.py`, five parts, no failures. |
 | **G6** | **DONE.** The six `comfy_*` MCP tools, the single batched contract change (`apply_texture_set`, `import_generated`, `export_control`, plus `OpResult.data`), the `macro` key on `bake_heightfield`, websocket progress, `THIRD-PARTY-MODELS.md`, and the whole shipped-gate suite as one command. What shipped, the measurements, and eight corrections are in [What G6 measured](#what-g6-measured). | **Passed, and it found a crash that was not Bob's.** An agent goes prompt to a scattered, scaled, UV'd, PBR-textured, BobShaded asset in **102.5 s** with no GUI (generation 97.7 s, Blender 4.8 s) and prompt to a rendered shaded terrain in **24.1 s** (set 6.0, mask 3.9, bake 7.5, build and render 6.7), both through the real MCP tools and one op list, with every asset property read out of the op's own result: faces **3,672 to 3,930** against 4,000, UV overlap at most **0.0000017**, height **1.8 m** exact, origin **0.0 m** above the base, `master_type` surface. Websocket progress ships: **28 per-node updates against 5 status strings** on the same job, with termination still decided by the jobs API so a dead socket cannot cost a result. Every new op is rejected with a readable sentence when given bad params, proved rather than asserted (four contract rejections and two handler rejections). **The finding: this fork's `comfy-aimdo` dynamic-VRAM staging segfaults the server on the second copied-model decode of a session**, which is every tiling graph Bob ships. Five candidates were measured and the shipped fix keeps the staging feature: circular padding applied IN PLACE plus a lazy `ensure_untiled`, giving **ten texture sets in one session** (seam 0.83 to 1.18, drift -0.01 s) with W4 at seam 8.466 and W13's open route at 10.086, i.e. verified untiled. Proved by `tools/scripts/headless_comfy_g6.py`, four parts, 41 checks, no failures. |
 | **G7** | **DONE.** The geometry A/B: **W8** (Hunyuan 2.1 on a plate) and **W8p** (the shared processor), ten fixed prompts, five of them foliage, one shared W4 subject each, `remesh` controlled for on both sides. Plus D11 re-measured, the per-class verdict as a value (`comfy.KIND_ROUTE`), and `gen_assets.match_frame`. What shipped, the measurements, and eight corrections are in [What G7 measured](#what-g7-measured). | **Passed, with a verdict per class rather than a winner.** **Foliage: TRELLIS.2, structurally** -- 2.1x faster (median **15.0 s** against 31.3 s), half the VRAM (**4,964 MiB** against 9,620), 2.9x the boundary edges (median **984** against 344), and the challenger cannot return an open surface at all, so its holes are the simplifier's rather than the model's. **Solids: the challenger wins two columns and loses three** -- Hunyuan is **2.1x faster** (40.4 s against 86.1 s) and returns a closed shell (median **0** boundary edges against 116, unrepaired downstream on either route), against **3.7 GB more VRAM**, a flatter albedo (0.1259 against 0.1555), one black texture in ten where W9b cannot hit the trap at all, and a licence with a territorial exclusion where TRELLIS.2 is MIT; so the default holds and `route="alt"` is an explicit choice. **Block-out: Hunyuan through Omni and W7**, decided at G4c (footprint IoU 0.9079 against 0.6748); W8 takes no control, so the grid has no cell for it. Both models 10/10 inside the 4,000 budget, worst UV overlap 0.00047, three of ten through steps 6 to 8 on BOTH models with every G3 asset check passing. **Two silent defects found:** the challenger route returned a **fully black albedo on every asset** until W8p gained a normalise (Hunyuan is [-1, 1] where TRELLIS.2 is [-0.5, 0.5]), and the finished asset then baked a **perfectly flat normal** because that normalise moved the low mesh and not the cage (detail **0.00000** against 0.01750 fixed) -- which also proved this suite's "the baked normal is non-flat" check could not fail, since a flat normal reads std 0.2357 against a 0.01 threshold. **D11 answered both ways:** the G4c alignment fix raises transferred detail on 4 of 4 assets (14x on the fern), and the dense mesh still buys nothing at this budget (1 of 4 better than the no-dense-mesh control, 2 of 4 worse). Proved by `tools/scripts/headless_comfy_g7.py`, four parts, no failures. |
-| **G8** | Optional: track F sky dome (W14), part-level variation via W11, batch generation, ML retopo swap-in if open weights land. Pick by what the suite lacks rather than by novelty. | |
+| **G8** | **DONE.** D12: **W7b** (`mesh_geom_bbox`, Omni's bounding-box control mode), the control mode as a value (`CONTROL_MODES`, `control_route`, `DEFAULT_CONTROL_MODE`), `gen_assets.control_bbox` / `control_signal`, and the scope decision that declined W14, W11 and batch generation. What shipped, the grid, the six corrections and what was declined with reasons are in [What G8 measured](#what-g8-measured). | **Passed, and D12's answer is no.** Eight corners do not replace 8,192 points: footprint IoU **0.5766** against the point route's **0.9200** on the same three block-outs, the same image and the same no-rotation-search scoring, which is **50.1% to 70.8% of each block-out's own ceiling** against the point route's **98.8% to 101.0%**, for 7 seconds an asset. **The control does reach the model and is simply not enough information**, which is the distinction that separates this from G4c's silently-random wrapper: Bob's proportions beat the node's `auto_bbox` guess **3 of 3 on aspect error** (0.205 / 0.051 / 0.015 against 0.504 / 1.352 / 0.183) and only **1 of 3 on ground plan**, and a box cannot describe a plan. The gain scales with how distinctive the box is: 3x over the null on the tall thin tree, a LOSS on the near-cubic rock. `DEFAULT_CONTROL_MODE` stays `"point"` by a rule fixed before the run. **W7b stays wired for a different reason than the one it was built for:** it uploads nothing, so with `comfy_dir()` forced away W7 fails in 4 ms with `Mesh file not found` where W7b completes, making it the block-out route's fallback wherever mesh transport is unavailable. One finished asset through W7b, W9c, W9t and steps 6 to 8 passes every G3 check (3,902 faces, UV overlap 0.0, height exact, LODs [3902, 1951, 585], BobShader, `bake_rescale` 1.0, normal detail 0.00372). **Three silent traps found:** `auto_bbox` defaults TRUE so the obvious wiring never sees the block-out, `stage_exports` asked "is there a control FILE" and would have laid every bbox asset on its side, and `omni_model_dir` is derived from `comfy_dir` so a process without the folder starts a 13.5 GB download instead of erroring. Proved by `tools/scripts/headless_comfy_g8.py`, four parts, 27 checks, no failures. |
+| **G9** | **DONE.** D12's remainder and its close: **W7v** (`mesh_geom_voxel`, Omni's voxel control mode), `comfy.VOXEL_INPUT_ROTATION` pinned by measurement, `MESH_CONTROL_MODES` and `control_route`'s refusal of an unknown mode, `comfy_mesh(control_mode=...)`, and the swapped-control null. The first phase chosen from the open list rather than read off this table, so it opens with a written scope decision. What shipped, the grid, the seven corrections and what was declined are in [What G9 measured](#what-g9-measured). | **Passed, and it closed D12 without changing the default.** An occupancy grid reaches **footprint IoU 0.8507** against the point route's **0.9106** on the same three block-outs, at **29.0 s warm against 36.0 s**, so `DEFAULT_CONTROL_MODE` stays `"point"` by a rule fixed before the run. The finding is the ordering: **point 0.9106, voxel 0.8507, bbox 0.5766**, so 4,096 cells recover most of what 8,192 points buy and eight corners about half, and the grid MATCHES the point cloud on a compact block-out (0.9290 against 0.9287) while losing a 21 cm-cell tree (0.8491 against 0.9759). The control reaches the model **3 of 3** against a swapped-control null that scores 0.2667: a run given another block-out's control follows it, **0.8960** against the block-out it was conditioned on and 0.2168 against the one it was pictured as. The node's own `apply_input_rotation` default costs **43% of the ground plan** and errors nowhere. Finished asset: 3,914 faces of 4,000, UV overlap 0.0, height exact, LODs [3914, 1957, 587], normal detail 0.00398, footprint 0.7723 against the raw mesh's 0.7739. W7v uploads a mesh, so **W7b keeps the no-ComfyUI-folder fallback alone**. |
 
 ## Testing
 
@@ -3687,6 +4250,44 @@ one-command suite exists to prevent.
   column is directly comparable with that table, `--no-gen` re-scores and `--fresh` regenerates.
   Reachability-gated for the generation half. `--fast` is `--part a,d`, which is the whole
   no-GPU half of the gate.
+- `tools/scripts/headless_comfy_g8.py`, the G8 gate, in four parts (`--part a,b,c,d`), inside
+  Blender. **A**: preflight over every shipped graph offline against the committed dump, the
+  `api_node` assertion on W7b, the control mode as a value in one place (`control_route`'s whole
+  truth table, `CONTROL_WORKFLOWS`, `asset_chain` on either control form), the frame mapping checked
+  against a control glb's own POSITION accessor extents rather than against the code that wrote
+  them, W7b's `auto_bbox` binding both ways, and D14's tripwire (the installed `comfy-aimdo` version
+  against the one G6 measured). No server, always runs, costs a second. **B**: the grid, the same
+  three block-outs and the same conditioning image G4c used, three control columns (W7 point, W7b
+  from Bob's proportions, W7b `auto_bbox` as the null), scored with NO rotation search against each
+  block-out's own self-agreement ceiling, with the decision rule PRINTED before the table so the
+  verdict cannot be chosen after seeing it. **C**: one block-out through W7b, W9c, W9t and steps 6 to
+  8 against the G3 asset checks, with the footprint checked against this route's own raw mesh rather
+  than against the adopted mode's absolute bar. **D**: the transport claim, with `comfy_dir()` forced
+  to None and the weights held fixed, so W7 failing and W7b completing is one variable and not two.
+  Meshes cache WITH their timing and VRAM under `_generated/comfy_g8_check/gen/`, so `--no-gen`
+  re-scores in about a minute and `--fresh` regenerates. It imports the G4c gate's shape maths,
+  block-outs and VRAM sampler rather than copying them, so the two phases' figures are the same
+  measurement. Reachability-gated twice over: no server, or no Omni pack or weights, prints SKIP and
+  exits 0. `--fast` is `--part a`.
+- `tools/scripts/headless_comfy_g9.py`, the G9 gate, in four parts (`--part a,b,c,d`), inside
+  Blender. **A**: preflight over every shipped graph offline against the committed dump, the
+  `api_node` assertion on W7v, the third mode as a value (`control_route`'s extended truth table
+  including its REFUSAL of an unknown name, `MESH_CONTROL_MODES`, `CONTROL_WORKFLOWS`,
+  `stage_exports` on the mesh form), the shipped graph's `apply_input_rotation` against
+  `comfy.VOXEL_INPUT_ROTATION`, one exporter serving two modes, and D14's tripwire again. No server,
+  always runs. **B**: the input-rotation probe FIRST, both settings on the asymmetric block-out, then
+  the grid, four columns in ONE session (W7 point, W7v voxel, W7v with a swapped control, W7b bbox),
+  scored with no rotation search against each block-out's own ceiling, with both decision rules
+  printed before the table. The swapped-control null is the part worth reusing: each run sees its own
+  block-out's image and a different one's control, and it is scored against BOTH, so "the control
+  reached the model" is a measurement rather than an inference from a good score. **C**: one
+  block-out through W7v, W9c, W9t and steps 6 to 8 against the G3 asset checks, footprint checked
+  against this route's own raw mesh. **D**: transport, `comfy_dir()` forced to None with the weights
+  held fixed, which is where W7v's one claimed advantage over W7 turned out not to exist. Meshes
+  cache with their timing and VRAM under `_generated/comfy_g9_check/gen/`; `--no-gen` re-scores,
+  `--fresh` regenerates, `--no-bbox` drops the column G8 already measured. Imports G4c's shape maths,
+  block-outs, VRAM sampler and caching and G3's normal-detail read rather than copying any of them.
+  Reachability-gated twice over. `--fast` is `--part a`.
 - `tools/scripts/headless_comfy_g3b.py`, the G3b gate: ten prompts through both routes off ONE
   shared W4 subject each, with wall clock, per-process VRAM sampled from a thread at the queue
   moment and at the peak, face count, boundary edges after a weld, UV overlap, chart coverage and
@@ -3736,14 +4337,37 @@ one-command suite exists to prevent.
   process-global on the server, so a second client generating concurrently could see a padded model
   inside that window -- `--disable-dynamic-vram` is the documented fallback for anyone who hits it. Fix
   belongs upstream in `comfy_aimdo`. Re-test on each fork update: if the destructor is fixed, revert
-  `TILING_COPY_MODE` to `"Make a copy"`, and `ensure_untiled` and the whole concern can go.
-- **D12 The other three Omni control modes.** `Hy3DOmniVoxelGenerate`, `…BBoxGenerate` and
-  `…PoseGenerate` are installed and unmeasured. The bounding-box one is the interesting one for a
-  suite like this: Bob knows every proxy's bbox for free, it is the cheapest control there is, and it
-  would answer whether the footprint result at G4c needed 8,192 sampled points or just eight corners.
-  Open, cheap, and a good half-day.
+  `TILING_COPY_MODE` to `"Make a copy"`, and `ensure_untiled` and the whole concern can go. **G8 turned that reminder into a check.** The re-test
+condition is a fork update, so the version is the tripwire: the installed `comfy-aimdo` is
+**0.4.10**, which is what G6 measured, and `host_buffer.py` has not been touched since 2026-07-17.
+Part A of the G8 gate asserts that and fails with "re-run the G6 tiling test and D14" when the
+version moves, so nobody has to remember. **G9 put the same tripwire in its own part A**, so the
+reminder now survives either gate being dropped.
 
 ### Answered
+
+- **D12 Which Omni control a block-out should use. Answered over two phases, and CLOSED at G9: the
+  point cloud, with the whole ordering measured rather than the winner alone.** G8 took the
+  bounding-box half and G9 took the voxel remainder, both on G4c's own three block-outs, the same
+  conditioning images, the same no-rotation-search scoring against each block-out's own
+  self-agreement ceiling. Footprint IoU, which is what "drops into a layout" reduces to:
+  **point 0.9106, voxel 0.8507, bbox 0.5766**, against a swapped-control null at 0.2667. So 4,096
+  occupancy cells recover most of what 8,192 sampled points buy and eight corners recover about
+  half, and `DEFAULT_CONTROL_MODE` stays `"point"` by a rule fixed before each run.
+  All three modes ship, for three different reasons that are worth keeping apart. **Point is the
+  default** because it wins the ground plan outright. **Voxel is 19% faster (29.0 s warm against
+  36.0 s) and MATCHES point on a compact block-out** (0.9290 against 0.9287 on the rock) while
+  losing a thin one to its own cell size (0.8491 against 0.9759 on a 3.4 m tree, whose trunk is
+  narrower than the 21 cm cell a 16-cubed grid gives it), which is a rule an artist can apply.
+  **Bbox is the only mode that uploads nothing**, so it is the fallback wherever mesh transport is
+  unavailable; G9 measured that W7v does NOT share that property, because its `control_mesh` input
+  is required.
+  Two sub-questions are closed with it. **`Hy3DOmniPoseGenerate` stays dropped rather than
+  deferred**: it conditions on a skeleton and a scatter suite generates rocks, trees, plants and
+  grass. And **there is no sweep to run** on the voxel mode: the grid is fixed at 16 cubed inside
+  `OmniEncoder`, so `sample_point_count` fills the same cells more thoroughly and changes nothing,
+  and `voxel_resolution` is what the checkpoint was trained with. Full numbers in
+  [What G8 measured](#what-g8-measured) and [What G9 measured](#what-g9-measured).
 
 - **D2 Further challengers. Answered at G7: no, and the condition is what answers it.** D2 was
   "Direct3D-S2 for sharpness or Hi3DGen for normal-bridged detail, only if TRELLIS.2 versus Hunyuan

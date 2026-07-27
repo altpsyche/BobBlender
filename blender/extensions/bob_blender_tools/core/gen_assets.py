@@ -378,8 +378,50 @@ def export_control(obj, path, *, points=CONTROL_POINTS):
     """
     info = unit_normalise_export(obj, path)
     info.update(points=int(points), footprint=[round(d, 5) for d in dimensions(obj)],
-                footprint_ratio=[round(r, 5) for r in footprint_ratio(obj)])
+                footprint_ratio=[round(r, 5) for r in footprint_ratio(obj)],
+                bbox=control_bbox(obj))
     return info
+
+
+# Blender is Z-up and the control glb the whole Omni family reads is glTF Y-up, so a Blender
+# (x, y, z) extent leaves as (x, z, y). Measured rather than read off the exporter's flags: a cube
+# scaled to (0.3, 0.7, 1.0) through `unit_normalise_export` writes POSITION accessor extents of
+# (0.3, 1.0, 0.7). Getting this wrong is silent -- a permuted bbox is still a valid bbox, so the
+# model conditions on a plausible shape that is not the block-out's, which is the same class of
+# failure as G4c's random control signal.
+CONTROL_BBOX_AXES = (0, 2, 1)
+
+
+def control_bbox(obj):
+    """The block-out's proportions as Omni's `[length, height, width]`: W7b's whole control signal.
+
+    Eight corners in place of 8,192 sampled points, and no mesh leaves Blender at all, which is what
+    D12 asked and G8 measured. Normalised by the longest axis for the same reason the point route is
+    unit-normalised: the encoder works in a unit cube, the node clamps each dimension to [0.1, 3.0],
+    and a proportion is what a layout was composed around anyway.
+    """
+    dims = dimensions(obj)
+    mapped = [float(dims[i]) for i in CONTROL_BBOX_AXES]
+    longest = max(mapped) or 1.0
+    return [round(d / longest, 5) for d in mapped]
+
+
+def control_signal(obj, path, *, mode, points=CONTROL_POINTS):
+    """Whatever `mode` needs from a block-out proxy, in one call, so no caller branches on the mode.
+
+    The mesh modes write a unit-normalised mesh at `path` and the bbox route writes nothing, so
+    `path` is None in what comes back on that mode and `core.comfy` uses that to pick the graph. All
+    of them carry `height_m`, because a proxy placed in a layout already says how big the asset is.
+
+    The point and voxel modes produce the SAME file and differ only in what the server does with it,
+    so this function has two cases rather than three: G9 added a control mode and no exporter.
+    """
+    if mode == "bbox":
+        dims = dimensions(obj)
+        return {"path": None, "bbox": control_bbox(obj), "height_m": dims[2], "mode": "bbox",
+                "footprint": [round(d, 5) for d in dims],
+                "footprint_ratio": [round(r, 5) for r in footprint_ratio(obj)]}
+    return dict(export_control(obj, path, points=points), mode=str(mode or "point"))
 
 
 def footprint_ratio(obj):
@@ -1305,6 +1347,10 @@ def export_control_op(op: dict) -> dict:
     the silhouette and footprint the layout was composed around (G4c). No new exporter is involved --
     it is the same unit-cube round trip track B already owned -- so the whole op is a path and a
     height.
+
+    It also returns `bbox`, the proxy's three proportions, which is the OTHER control mode's whole
+    signal (`comfy_mesh(control_bbox=...)`, W7b, measured at G8). Both come out of one call because
+    the bbox costs nothing once the object is in hand, so an agent never re-exports to change mode.
     """
     from . import comfy
 

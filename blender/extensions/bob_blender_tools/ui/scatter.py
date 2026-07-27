@@ -295,7 +295,7 @@ class BBT_OT_scatter_generate_asset(Operator):
         # The block-out export is bpy, so it happens HERE, on the main thread, before the job is
         # submitted (the same rule as the stylise button's render). It is one mesh copy and one glTF
         # write, and it is the whole main-thread cost of the press.
-        control = None
+        control, control_bbox = None, None
         if self.from_control:
             proxy = context.active_object
             if proxy is None or proxy.type != "MESH":
@@ -303,10 +303,11 @@ class BBT_OT_scatter_generate_asset(Operator):
                 return {"CANCELLED"}
             staging = comfy.staging_dir(pack)
             os.makedirs(staging, exist_ok=True)
-            exported = gen_assets.export_control(
-                proxy, comfy.unique_file_name(staging, f"{comfy.slugify(prompt)}_control", ".glb"))
-            control = exported["path"]
-            height = exported["height_m"] or height
+            signal = gen_assets.control_signal(
+                proxy, comfy.unique_file_name(staging, f"{comfy.slugify(prompt)}_control", ".glb"),
+                mode=comfy.DEFAULT_CONTROL_MODE)
+            control, control_bbox = signal["path"], signal.get("bbox")
+            height = signal["height_m"] or height
         # Foliage is open by construction, so its holes are the asset, and this decides TWO stages:
         # the ComfyUI remesh and Blender's pinhole fill. See comfy.FOLIAGE_KINDS.
         foliage = comfy.is_foliage(kind)
@@ -321,11 +322,13 @@ class BBT_OT_scatter_generate_asset(Operator):
         # finish callbacks, so no route needs a second operator or a widget. G3b decided the default
         # and G7 decided which asset classes leave it.
         def generate(job):
-            chain = comfy.asset_chain(kind=kind, control=control)
+            chain = comfy.asset_chain(kind=kind, control=control, control_bbox=control_bbox)
             return chain(prompt, pack, seed=seed, tier="default",
                          faces=faces, remesh=not foliage,
                          texture_size=2048 if hero else 1024,
-                         **({"control": control} if control else {}),
+                         **({"control": control, "control_bbox": control_bbox,
+                             "control_mode": comfy.DEFAULT_CONTROL_MODE}
+                            if self.from_control else {}),
                          on_queued=job.note_prompt_id,
                          on_progress=job.report)
 

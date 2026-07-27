@@ -148,6 +148,8 @@ def comfy_mesh(
     route: str | None = None,
     hero: bool = False,
     control: str | None = None,
+    control_bbox: list[float] | None = None,
+    control_mode: str | None = None,
     subject: str | None = None,
 ) -> dict:
     """Generate a scatter asset from a prompt: reference image, then geometry plus PBR texture.
@@ -165,6 +167,13 @@ def comfy_mesh(
     faces: the face budget the simplify hits. hero: 2K bake and 2048 texture.
     control: a control mesh from the `export_control` op, so the result keeps a block-out's
           silhouette and footprint (forces the staged chain, which is the only one taking a control).
+    control_bbox: the same op's `bbox` field instead, which conditions on the block-out's three
+          proportions rather than on its surface. Cheaper and it uploads nothing; measured at G8,
+          and which one is the default is `comfy.DEFAULT_CONTROL_MODE`. Pass one or the other.
+    control_mode: which Omni control the mesh in `control` becomes. "point" samples its surface and
+          "voxel" quantises it to a 16-cubed occupancy grid; both read the same file, so the mesh
+          alone cannot say which was meant and leaving this unset takes the measured default. Only
+          "bbox" needs its own signal, which is `control_bbox`.
     subject: a local image with ALPHA to use instead of generating a reference.
     route: "oneshot" (default, W4 then W9b), "staged" (W4, W5t, W9c, W9t; the only route that
           leaves a dense mesh on disk) or "alt" (W4, W8, W8p, W9t; Hunyuan 2.1 geometry, which needs
@@ -174,11 +183,14 @@ def comfy_mesh(
     """
     def run(comfy):
         pack = str(paths.generated_pack())
-        chain = comfy.asset_chain(route=route, kind=kind, control=control)
+        chain = comfy.asset_chain(route=route, kind=kind, control=control,
+                                  control_bbox=control_bbox)
         staged = chain(prompt, pack, seed=int(seed), tier="hero" if hero else "default",
                        faces=int(faces), remesh=not comfy.is_foliage(kind),
                        texture_size=2048 if hero else 1024, subject=subject,
-                       **({"control": control} if control else {}))
+                       **({"control": control, "control_bbox": control_bbox,
+                           "control_mode": control_mode}
+                          if (control or control_bbox) else {}))
         return {"staged": staged, "seconds": staged.get("seconds"), "pack_dir": pack,
                 "import_op": {"op": "import_generated", "kind": kind, "staged": staged,
                               "height_m": float(height_m), "faces": int(faces),
@@ -187,6 +199,14 @@ def comfy_mesh(
     routes = _comfy().ASSET_ROUTES
     if route is not None and route not in routes:
         return {"ok": False, "error": f"unknown route {route!r} (have: {', '.join(routes)})"}
+    if control_bbox is not None and (len(control_bbox) != 3
+                                     or any(float(d) <= 0 for d in control_bbox)):
+        return {"ok": False, "error": "control_bbox is three positive numbers "
+                                      "[length, height, width], from export_control's bbox field"}
+    modes = _comfy().CONTROL_MODES
+    if control_mode is not None and control_mode not in modes:
+        return {"ok": False, "error": f"unknown control_mode {control_mode!r} "
+                                      f"(have: {', '.join(modes)})"}
     return _generation(run)
 
 

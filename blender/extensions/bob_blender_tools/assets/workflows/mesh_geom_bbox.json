@@ -1,0 +1,107 @@
+{
+ "_bob": {
+  "id": "mesh_geom_bbox",
+  "plan": "W7b, docs/COMFYUI.md track C, the second Omni control mode (D12, measured at G8)",
+  "purpose": "W7 with the control signal reduced from a sampled point cloud to the block-out's three proportions, so a generated asset keeps the footprint a layout was composed around without any mesh leaving Blender.",
+  "derived_from": "mesh_geom_ctrl.json (W7), with Hy3DOmniPointGenerate replaced by Hy3DOmniBBoxGenerate and the Trellis2LoadMesh control dropped; the node defaults follow Hunyuan3D-Omni/inference.py:infer_bbox (50 steps, guidance 4.5, box_v 1.01, mc_level 0).",
+  "deviations_from_source": [
+   "auto_bbox is FALSE, which is the whole point of the graph. True makes the node estimate the proportions from the conditioning image's silhouette, which is a guess about a shape Bob already knows exactly; false takes bbox_length / bbox_height / bbox_depth, and Bob binds them from the proxy's own bounding box. The auto path is still reachable through the same title and is what G8 scores as the null.",
+   "octree_resolution is 256 rather than the node's 512, for W7's reason: 512 returns roughly 700,000 faces and Bob's next step is a 4,000-face budget either way.",
+   "No mesh loader at all. Hy3DOmniBBoxGenerate takes no control_mesh socket, so this is the one Omni route that uploads nothing, and therefore the one that cannot hit the mesh-transport failure G7 found over MCP.",
+   "Trellis2ExportTrimesh plus Preview3D is W7's tail unchanged, because the exporter is what converts the pack's internal Z-up to glTF Y-up and is the only one that reports its path in a form Bob can fetch."
+  ],
+  "requires_nodes": [
+   "Hy3DOmniLoadPipeline",
+   "Hy3DOmniBBoxGenerate",
+   "Trellis2ExportTrimesh"
+  ],
+  "requires_pack": "ComfyUI-Hy3D-Omni (Rizzlord, NO license file, last push 2025-10-03) plus ComfyUI-TRELLIS2 for the mesh export",
+  "requires_models": "tencent/Hunyuan3D-Omni, 13.5 GB, and it needs tools/scripts/comfy_omni_fix.py run once or the control signal is silently random",
+  "runtime_inputs": [
+   "BOB_IMAGE.image",
+   "BOB_OMNI.repo_or_path"
+  ],
+  "notes": "The three numbers are [length, height, width] in the CONTROL GLB's frame, not Blender's: the encoder turns them into eight corners spanning [-d/2, d/2] on each axis (hy3dshape/models/conditioners/omni_encoder.py:bbox_to_corners), and every other Omni route feeds that encoder a signal in glTF Y-up. core.gen_assets.control_bbox is the one place that mapping lives, measured rather than assumed. The result comes back needing gen_assets.CONTROL_RETURN_TURN, exactly as W7's does and for the same reason: same exporter, one glb write. Omni takes NO text prompt, so the artist's words reach this graph only through the reference image."
+ },
+ "prompt": {
+  "1": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "example.png"
+   },
+   "_meta": {
+    "title": "BOB_IMAGE"
+   }
+  },
+  "3": {
+   "class_type": "Hy3DOmniLoadPipeline",
+   "inputs": {
+    "repo_or_path": "tencent/Hunyuan3D-Omni",
+    "variant": "default",
+    "torch_dtype": "auto",
+    "resume_download": true,
+    "force_reload": false
+   },
+   "_meta": {
+    "title": "BOB_OMNI"
+   }
+  },
+  "4": {
+   "class_type": "Hy3DOmniBBoxGenerate",
+   "inputs": {
+    "pipeline": [
+     "3",
+     0
+    ],
+    "image": [
+     "1",
+     0
+    ],
+    "num_inference_steps": 50,
+    "guidance_scale": 4.5,
+    "octree_resolution": 256,
+    "mc_level": 0.0,
+    "box_v": 1.01,
+    "auto_bbox": false,
+    "bbox_length": 1.0,
+    "bbox_height": 1.0,
+    "bbox_depth": 1.0,
+    "num_chunks": 8000,
+    "mc_mode": "mc",
+    "seed": 0,
+    "fast_decode": false,
+    "remove_floaters": true,
+    "remove_degenerate_faces": true
+   },
+   "_meta": {
+    "title": "BOB_SEED"
+   }
+  },
+  "5": {
+   "class_type": "Trellis2ExportTrimesh",
+   "inputs": {
+    "trimesh": [
+     "4",
+     0
+    ],
+    "filename_prefix": "bob_mesh_bbox",
+    "file_format": "glb"
+   },
+   "_meta": {
+    "title": "BOB_OUT"
+   }
+  },
+  "6": {
+   "class_type": "Preview3D",
+   "inputs": {
+    "model_file": [
+     "5",
+     0
+    ]
+   },
+   "_meta": {
+    "title": "BOB_VIEW"
+   }
+  }
+ }
+}
