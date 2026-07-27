@@ -1,4 +1,4 @@
-"""Headless gate for BobFoliage F1 to F4: the tree skeleton, its sweep, its leaf cards, the two
+"""Headless gate for BobFoliage F1 to F6: the tree skeleton, its sweep, its leaf cards, the two
 texture jobs that dress them, the wind and season that move and colour them, and the panel that
 authors them (docs/FOLIAGE.md).
 
@@ -1076,7 +1076,7 @@ def check_render():
 def check_routing():
     """The Scatter panel's routing (docs/FOLIAGE.md 4.5), which is copy and therefore drifts.
 
-    Held until F2 on purpose: until the cards existed, a panel that sent someone to BobFoliage for
+    Held until F2 on purpose: until the cards existed, a panel that sent someone to the Foliage panel for
     plants would have been recommending bare sticks. headless_redwood.py owns the D16 half of this
     (that every noted kind is a real kind, and that trees names dead wood); this owns the half that
     only became true with the cards -- that each note now points somewhere, and that the affordance
@@ -1087,20 +1087,29 @@ def check_routing():
     notes = ui_scatter._GEN_KIND_NOTE
     check("every noted kind is a real kind",
           set(notes) <= {"trees", "rocks", "plants", "grass"}, f"{sorted(notes)}")
+    # "the Foliage panel", matching that panel's actual HEADER rather than the track's name. The note
+    # is a pointer, and a pointer naming something the artist cannot find on screen is the dead end
+    # this copy replaced. Checked against the panel's own bl_label below, not against a literal here,
+    # or the two drift apart and the check certifies the drift.
+    from bob_blender_tools.ui import foliage as ui_foliage
+
+    header = ui_foliage.BBT_PT_foliage.bl_label
     for kind in ("trees", "plants", "grass"):
-        check(f"the '{kind}' note points at BobFoliage", "BobFoliage" in notes.get(kind, ""),
-              notes.get(kind, "(no note)"))
+        check(f"the '{kind}' note points at the {header} panel by its own header",
+              f"the {header} panel" in notes.get(kind, ""), notes.get(kind, "(no note)"))
+    check("and that header is a plain noun, like every other top-level panel in the category",
+          header == "Foliage", header)
     check("the trees note still names dead wood rather than refusing outright",
           "stumps" in notes.get("trees", ""), notes.get("trees", ""))
     check("generated ground clumps are still allowed as filler",
           all("2 m" in notes.get(k, "") for k in ("plants", "grass")),
           f"{notes.get('plants', '')} / {notes.get('grass', '')}")
-    check("Grow in BobFoliage exists as an operator",
+    check("Grow in Foliage exists as an operator",
           hasattr(bpy.types, "BBT_OT_scatter_grow_foliage")
           or hasattr(ui_scatter, "BBT_OT_scatter_grow_foliage"))
-    # The button is only drawn when the kind resolves a species, so a note pointing at BobFoliage
-    # for a kind nothing grows would be a dead end with an affordance-shaped hole where it says so.
-    check("every kind the notes route to BobFoliage can actually be grown",
+    # The button is only drawn when the kind resolves a species, so a note pointing at the Foliage
+    # panel for a kind nothing grows would be a dead end with an affordance-shaped hole where it says so.
+    check("every kind the notes route to Foliage can actually be grown",
           all(ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")),
           str({k: ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")}))
 
