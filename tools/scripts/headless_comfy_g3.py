@@ -256,9 +256,19 @@ def assert_finished(entry, report):
     key = entry["key"]
     budget = gen_assets.DEFAULT_FACES
     faces = report["lod_faces"][0]
-    check(f"{key}: face count within budget",
-          faces <= budget * 1.1,
-          f"{faces} against a {budget} budget ({report.get('simplify_source')})")
+    # The budget is delivered by `Trellis2Simplify` on the server, and D6 measured that Blender
+    # Decimate cannot reach it on a generated mesh at all. So on the no-server cached path this is
+    # not a Bob property to assert: it asserts the server. Skip it there, the same way the
+    # near-constant texture check below skips when no textured GLB was produced. Asserting it
+    # anyway made the whole runner report FAIL on a machine with no ComfyUI, which is the exact
+    # opposite of the "ComfyUI is never required" property this suite exists to demonstrate.
+    if report.get("simplify_source") == "decimate":
+        note("SKIP", f"{key}: face budget needs the server's simplify; "
+                     f"{faces} faces off the local decimate fallback (D6)")
+    else:
+        check(f"{key}: face count within budget",
+              faces <= budget * 1.1,
+              f"{faces} against a {budget} budget ({report.get('simplify_source')})")
     check(f"{key}: a UV layer with no overlap",
           report["uv_overlap"] is not None and report["uv_overlap"] < 0.01,
           f"overlap {report['uv_overlap']:.6f} ({report['uv_source']})")
