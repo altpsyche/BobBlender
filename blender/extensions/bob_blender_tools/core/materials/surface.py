@@ -219,14 +219,24 @@ def new_bobshader(obj, master="surface"):
 
 
 
-def surface_material(mat_name, texset_name=None, box=None):
+def surface_material(mat_name, texset_name=None, box=None, alpha=False):
     """A single-surface wrapper (S_SurfaceMaster): a solid-tint BobShader whose look comes from
     the master's procedural terms (colour/roughness/metallic + the weather layer).
 
     With a texture set assigned (S3) the set's albedo, with AO folded in, and its roughness feed
     the master's map inputs, and its height drives a Bump into the Principled Normal. Base Color
     stays the TINT it was authored as, so switching solid <-> textured loses no tuned value.
-    texset_name "" clears the set; both arguments default to what the material already records."""
+    texset_name "" clears the set; both arguments default to what the material already records.
+
+    `alpha` adds the cutout path a leaf card needs (BobFoliage F2, docs/FOLIAGE.md 2.7): the set's
+    `opacity` map if it ships one, else the basecolor image's OWN alpha channel, straight into the
+    Principled Alpha. It deliberately does NOT go through the master. Alpha is a matte -- it says
+    which texels are leaf and which are the gap between leaves -- and every term the master adds is
+    about how a surface looks where it EXISTS (tint, per-instance variation, macro break-up, snow,
+    wet, frost). Routing a matte through them would let a wet leaf turn semi-transparent. Keeping it
+    outside also means no new master output, so S_SurfaceMaster's interface is untouched and no
+    tuned terrain in the file gets reset by a shared-group version bump.
+    """
     master = surface_master_group()
     prev = bpy.data.materials.get(_wrapper_name(mat_name))
     sets, prev_box = texset.stored_sets(prev, 1)
@@ -234,7 +244,7 @@ def surface_material(mat_name, texset_name=None, box=None):
         sets = [str(texset_name or "")]
     box = prev_box if box is None else bool(box)
     maps = assets.texture_set_maps(sets[0]) if sets[0] else {}
-    sig = "surface|" + texset.sig_part(sets, box)
+    sig = "surface|" + texset.sig_part(sets, box) + (f"|alpha:{int(bool(alpha))}")
 
     def wire(nt, grp, bsdf, old_sig):
         if not maps:
@@ -251,7 +261,78 @@ def surface_material(mat_name, texset_name=None, box=None):
         nt.links.new(node.outputs["Albedo Map"], grp.inputs["Albedo Map"])
         nt.links.new(node.outputs["Roughness Map"], grp.inputs["Roughness Map"])
         texset.texset_bump(nt, node.outputs["Detail Height"], bsdf, loc=(100, -340))
+        if alpha:
+            _wire_cutout(nt, maps, src, bsdf, box)
 
     mat = _build_wrapper(mat_name, master, sig, wire)
     texset.store_sets(mat, sets, box)
+    return mat
+
+
+
+def _wire_cutout(nt, maps, coord, bsdf, box):
+    """Drive the Principled Alpha from a set's cutout. Returns the socket wired, or None.
+
+    Two sources, in order: a dedicated `opacity` map (what F3's atlas job will emit), else the
+    basecolor image's own alpha channel (what a matted W4 subject already carries, measured at G3 as
+    a real 0.000-1.000 range). Preferring the dedicated map means F3 can add one without touching
+    this, and falling back means F2's placeholder RGBA atlas works with no extra file.
+    """
+    src = None
+    if maps.get("opacity"):
+        try:
+            img = bpy.data.images.load(maps["opacity"], check_existing=True)
+        except RuntimeError:
+            img = None
+        if img is not None:
+            img.colorspace_settings.name = "Non-Color"
+            tex = nt.nodes.new("ShaderNodeTexImage")
+            tex.name = texset.TEXSET_NODE_PREFIX + "S opacity"
+            tex.image = img
+            tex.projection = "BOX" if box else "FLAT"
+            tex.extension = "REPEAT"
+            tex.location = (-480, -600)
+            nt.links.new(coord, tex.inputs["Vector"])
+            src = tex.outputs["Color"]
+    if src is None:
+        base = nt.nodes.get(texset.TEXSET_NODE_PREFIX + "S basecolor")
+        src = base.outputs["Alpha"] if base is not None else None
+    if src is not None:
+        nt.links.new(src, bsdf.inputs["Alpha"])
+    return src
+
+
+
+def foliage_card_material(mat_name, atlas="leaf_atlas_blockout"):
+    """The leaf-card BobShader (BobFoliage F2): the `surface` master with a cutout, not a fourth
+    master. Answers the [F2] open question in docs/FOLIAGE.md 2.7 the way that section preferred.
+
+    What a card needs is alpha cutout, two-sided shading and some translucency. Two of the three
+    are already free: Blender shades both faces unless `use_backface_culling` is set, and the
+    cutout is one link (see `surface_material`'s `alpha`). Translucency is the only term a fourth
+    master would have bought, it belongs with the season colour work rather than the geometry, and
+    it is not worth owning a second full node group for -- so it waits for F4.
+
+    Flat (UV) projection, not box: a card's whole point is that it reads a specific ATLAS CELL, and
+    a box projection would sample by world position and put a different part of the atlas on every
+    card at the same tip. The recipe writes the UVs that pick the cell.
+    """
+    fresh = _wrapper_name(mat_name) not in bpy.data.materials
+    mat = surface_material(mat_name, texset_name=atlas, box=False, alpha=True)
+    if fresh:
+        node = mat.node_tree.nodes.get("Master")
+        if node is not None:
+            # A white tint reads the atlas at face value, the same convention bobshade_material
+            # uses. Only on a fresh material: re-running a build must not clobber a tuned colour.
+            node.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            node.inputs["Roughness"].default_value = 0.62
+            node.inputs["Canopy Snow"].default_value = 1.0  # a leaf card is not an up-facing plane
+    # EEVEE Next has no blend_method any more: DITHERED is its cutout mode, and it is already the
+    # default. Set it anyway so a card stays a cutout if a caller changed the material, and let the
+    # shadow follow the alpha or a canopy casts a solid rectangle.
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "DITHERED"
+    mat.use_backface_culling = False  # two-sided, which is what makes a card read from behind
+    if hasattr(mat, "use_transparent_shadow"):
+        mat.use_transparent_shadow = True
     return mat

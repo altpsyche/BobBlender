@@ -255,7 +255,10 @@ def texture_set_dir(name):
 # A texture set names its files `<set>_<role>.<ext>`, which is what the Poly Haven sets on disk
 # already use and what the generated pack writes (docs/COMFYUI.md, Contracts). Roles are listed
 # in no particular order; the sampler picks the ones it consumes.
-TEXTURE_MAP_ROLES = ("basecolor", "roughness", "metallic", "normal", "height", "ao")
+# `opacity` is the cutout matte a leaf atlas needs (BobFoliage F2/F3). It is resolved here rather
+# than in the sampler because it never reaches S_TexSet: alpha goes straight to the Principled, so
+# adding the role costs no shared-group version bump (materials/surface.py `_wire_cutout`).
+TEXTURE_MAP_ROLES = ("basecolor", "roughness", "metallic", "normal", "height", "ao", "opacity")
 
 # Extension preference order per role, first hit wins. The shipped sets mix .jpg (colour, AO,
 # roughness) and .png (normal, height), so both have to be probed rather than assumed.
@@ -434,6 +437,142 @@ def biome_terrain(biome):
     """The biome's terrain spec ({"layers": [{"layer", "texture"}, ...]}), or None when the
     manifest carries none. Read by BobShaders to build a biome-matched terrain material."""
     return biome_manifest(biome)["terrain"]
+
+
+# -- Foliage species presets (BobFoliage, docs/FOLIAGE.md 4.3) --------------------------------
+# A species is a named set of `foliage` recipe params: `<pack>/foliage/<species>.json`, resolved
+# over the same search path as biomes and texture sets.
+#
+# WHY DATA AND NOT A PYTHON DICT (the [F2] open question, answered). Both were defensible -- the
+# suite's other preset tables (scatter's LAYER_TYPES, the terrain layer presets) are Python dicts.
+# What decided it is that those describe the TOOL and a species describes CONTENT: a spruce is the
+# same kind of thing as a texture set or a biome, it is what a pack would want to ship, and it is
+# what an artist would want to hand someone. A dict in the recipe can be shipped by exactly one
+# party. This also fixes the per-level radius shortcut it was tangled with: presets with
+# non-uniform per-level ratios are precisely what broke the running product, so the recipe now
+# reads the parent's real radius at the attachment point instead (recipes/foliage.py).
+
+# The `foliage` recipe param names a preset may set. Mirrored here rather than imported, for the
+# same acyclic reason `_SCATTER_KINDS` is: this module is bpy-free and is read BY the panels.
+_FOLIAGE_SHAPE_KEYS = (
+    "seed", "levels", "height", "segments", "branch_segments", "profile_segments",
+    "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
+    "cards", "card_size", "card_width", "droop", "card_spread",
+    "atlas_cols", "atlas_rows", "bark_scale", "bark_set", "atlas",
+)
+_FOLIAGE_LEVEL_KEYS = ("branches", "angle", "length", "radius", "phyllotaxy", "start")
+_FOLIAGE_MAX_LEVELS = 4
+FOLIAGE_PARAM_KEYS = tuple(_FOLIAGE_SHAPE_KEYS) + tuple(
+    f"l{n}_{k}" for n in range(1, _FOLIAGE_MAX_LEVELS + 1) for k in _FOLIAGE_LEVEL_KEYS)
+
+# Which BOB_Assets_<Kind> collection a species' baked variants join. Mirrors `_SCATTER_KINDS` minus
+# rocks, which nothing grows.
+FOLIAGE_KINDS = ("trees", "plants", "grass")
+
+
+def foliage_dir(pack_root):
+    return os.path.join(pack_root, "foliage")
+
+
+def list_foliage_species():
+    """Species names carrying a readable preset, unioned across all packs (first pack wins on a
+    name collision), sorted. What a species picker lists."""
+    seen = set()
+    for root in asset_roots():
+        base = foliage_dir(root)
+        if not os.path.isdir(base):
+            continue
+        for n in sorted(os.listdir(base)):
+            if n.endswith(".json") and os.path.isfile(os.path.join(base, n)):
+                seen.add(n[:-len(".json")])
+    return sorted(seen)
+
+
+def foliage_species(name):
+    """A species preset normalized to {meta, params}, or {} when it does not resolve.
+
+    `params` is filtered to `FOLIAGE_PARAM_KEYS`, so an unknown key in a hand-authored file is
+    dropped here rather than reaching `build_geonodes` -- where it would be silently ignored anyway,
+    which is the failure mode `validate_foliage_species` exists to make visible instead.
+    """
+    for root in asset_roots():
+        path = os.path.join(foliage_dir(root), f"{name}.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as fh:
+                raw = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        meta = dict(raw["meta"]) if isinstance(raw.get("meta"), dict) else {}
+        meta.setdefault("name", name.replace("_", " ").title())
+        meta.setdefault("kind", "trees")
+        params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
+        return {"meta": meta,
+                "params": {k: v for k, v in params.items() if k in FOLIAGE_PARAM_KEYS}}
+    return {}
+
+
+def foliage_species_for_kind(kind):
+    """The first species whose meta.kind matches, or None. What the Scatter panel's Grow in
+    BobFoliage button resolves a scatter kind through, so 'grass' grows a tuft and not a redwood."""
+    for name in list_foliage_species():
+        if foliage_species(name).get("meta", {}).get("kind") == kind:
+            return name
+    return None
+
+
+def validate_foliage_species(name):
+    """Static checks on a species preset, as human-readable warnings (empty = clean). Catches the
+    authoring mistakes that are otherwise silent: an unreadable file, an unknown param key (dropped
+    by the reader, so the tree just builds at defaults), an out-of-range level count, and a kind
+    that no BOB_Assets_ collection matches."""
+    path = None
+    for root in asset_roots():
+        cand = os.path.join(foliage_dir(root), f"{name}.json")
+        if os.path.isfile(cand):
+            path = cand
+            break
+    if path is None:
+        return [f"{name}: no foliage/{name}.json in any pack"]
+    try:
+        with open(path) as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return [f"{name}: unreadable ({exc})"]
+    if not isinstance(raw, dict):
+        return [f"{name}: must be an object, got {type(raw).__name__}"]
+
+    warnings = []
+    params = raw.get("params")
+    if not isinstance(params, dict) or not params:
+        warnings.append(f"{name}: no params block, so the preset does nothing")
+        params = params if isinstance(params, dict) else {}
+    for key in sorted(params):
+        if key not in FOLIAGE_PARAM_KEYS:
+            warnings.append(f"{name}: unknown param '{key}' (dropped; the tree builds at defaults)")
+    levels = params.get("levels")
+    if levels is not None and not (isinstance(levels, int) and 1 <= levels <= _FOLIAGE_MAX_LEVELS):
+        warnings.append(f"{name}: levels must be 1-{_FOLIAGE_MAX_LEVELS}, got {levels!r}")
+    # A level block with no matching level is inert, which reads as a preset that "did not take".
+    if isinstance(levels, int):
+        for n in range(levels + 1, _FOLIAGE_MAX_LEVELS + 1):
+            extra = sorted(k for k in params if k.startswith(f"l{n}_"))
+            if extra:
+                warnings.append(f"{name}: l{n}_* params are inert at levels={levels} ({len(extra)})")
+    meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+    kind = meta.get("kind", "trees")
+    if kind not in FOLIAGE_KINDS:
+        warnings.append(f"{name}: meta.kind '{kind}' unknown {list(FOLIAGE_KINDS)}")
+    atlas = params.get("atlas")
+    if atlas and texture_set_dir(atlas) is None:
+        warnings.append(f"{name}: leaf atlas set missing: textures/{atlas} (in any pack)")
+    bark = params.get("bark_set")
+    if bark and texture_set_dir(bark) is None:
+        warnings.append(f"{name}: bark set missing: textures/{bark} (in any pack)")
+    return warnings
 
 
 def validate_biome(biome):
