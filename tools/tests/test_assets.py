@@ -313,6 +313,36 @@ def test_blockout_ships_the_shipped_species(assets):
         assert assets.foliage_species_for_kind(kind) in names
 
 
+def test_a_species_owns_its_stiffness_but_not_the_weather(assets):
+    """Sway and Leaf Flutter are species traits; Wind and Wind Direction are the world's.
+
+    BobFoliage F4. A spruce barely moves and grass is nearly all motion, so how stiff a plant is
+    belongs to its preset the way its taper does -- and every shipped species sets both, or the
+    knob is a knob nothing ever turns. The world's wind is the other half and must NOT be settable
+    here: the world applier writes it onto every tree on every change, so a preset that carried one
+    would be overwritten on the next slider drag, which reads as a preset that did not take.
+    """
+    assert {"sway", "leaf_flutter"} <= set(assets.FOLIAGE_PARAM_KEYS)
+    assert not {"wind", "wind_direction"} & set(assets.FOLIAGE_PARAM_KEYS)
+    stiffness = {n: assets.foliage_species(n)["params"]
+                 for n in ("conifer", "broadleaf", "shrub", "grass_tuft")}
+    for name, params in stiffness.items():
+        assert "sway" in params and "leaf_flutter" in params, name
+    # And the shipped values say something rather than all being 1.0: a conifer is the stiffest
+    # thing in the set and grass is the loosest, which is the claim a stand has to read as.
+    assert stiffness["conifer"]["sway"] < stiffness["broadleaf"]["sway"]
+    assert stiffness["conifer"]["leaf_flutter"] < stiffness["grass_tuft"]["leaf_flutter"]
+
+
+def test_a_species_may_not_smuggle_the_weather_in(assets, monkeypatch, tmp_path):
+    """A preset naming `wind` has it dropped by the reader and reported by the validator, rather
+    than silently ignored downstream -- the same treatment any other unknown key gets."""
+    _make_species(tmp_path / "p", "windy", params={"height": 5.0, "wind": 9.0})
+    monkeypatch.setenv("BOB_ASSET_PACKS", str(tmp_path / "p"))
+    assert "wind" not in assets.foliage_species("windy")["params"]
+    assert any("unknown param 'wind'" in w for w in assets.validate_foliage_species("windy"))
+
+
 def test_species_resolves_from_a_pack_and_first_hit_wins(assets, monkeypatch, tmp_path):
     p1, p2 = tmp_path / "p1", tmp_path / "p2"
     _make_species(p1, "spruce", params={"height": 30.0})

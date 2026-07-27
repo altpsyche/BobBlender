@@ -38,6 +38,8 @@
     "droop": 0.3,
     "card_spread": 46.0,
     "bark_scale": 0.55,
-    "bark_set": "bark_broadleaf"
+    "bark_set": "bark_broadleaf",
+    "sway": 1.15,
+    "leaf_flutter": 1.6
   }
 }

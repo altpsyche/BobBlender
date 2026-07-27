@@ -58,8 +58,8 @@ GATES = [
     # runs regardless and `check_generation` alone prints SKIP without a server (docs/FOLIAGE.md).
     # `server: False` still, because the gate is not skipped as a whole for want of one.
     {"key": "foliage", "script": "headless_foliage.py",
-     "phase": "F1-F3 procedural tree, cards, textures",
-     "fast": [], "slow": 2, "server": False},
+     "phase": "F1-F4 procedural tree, cards, textures, wind, panel",
+     "fast": [], "slow": 3, "server": False},
     {"key": "texset", "script": "headless_comfy_texset.py", "phase": "G1 prompt to a shaded layer",
      "fast": [], "slow": 1, "server": True},
     {"key": "g2", "script": "headless_comfy_g2.py", "phase": "G2 variants, preflight, maps",

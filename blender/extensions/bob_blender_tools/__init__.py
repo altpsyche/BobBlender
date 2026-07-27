@@ -31,6 +31,7 @@ from .bridge import server  # noqa: F401
 from .core import comfy_jobs  # noqa: F401
 from .ui import (  # noqa: F401
     firmament,
+    foliage,
     helpers,
     scatter,
     shaders,
@@ -1819,6 +1820,7 @@ def register():
     firmament.register()  # owns and registers the shared world (bbt_env); subscribes its applier
     world.register()      # World panel + bbt_world master toggles (drive every consumer)
     shaders.register()    # reads bbt_env; subscribes its applier
+    foliage.register()    # BobFoliage authoring panel; subscribes its wind applier
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
     bpy.app.timers.register(_autostart, first_interval=0.2)
@@ -1832,6 +1834,7 @@ def unregister():
     if _preview_coll is not None:
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
+    foliage.unregister()
     shaders.unregister()
     world.unregister()
     firmament.unregister()

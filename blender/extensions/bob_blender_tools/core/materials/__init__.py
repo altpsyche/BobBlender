@@ -37,6 +37,7 @@ from .shared import (  # noqa: F401
     _vscale,
     _wrapper_name,
     assign_material,
+    group_version,
     is_bobshader,
     master_type,
 )
@@ -72,6 +73,8 @@ from .volumes import (  # noqa: F401
 from .weather import (  # noqa: F401
     ENV_STATE,
     ENV_STATE_DRIVERS,
+    LEAF_SEASON,
+    LEAF_SEASON_DRIVERS,
     SNOW_TEMP_FULL,
     WEATHER,
     _DUST_COLOR,
@@ -87,6 +90,7 @@ from .weather import (  # noqa: F401
     _WEATHER_RAIN,
     _WEATHER_STORM,
     env_state_group,
+    leaf_season_group,
     weather_group,
 )
 from .water import (  # noqa: F401
@@ -116,6 +120,7 @@ from .terrain import (  # noqa: F401
     terrain_material_for,
 )
 from .surface import (  # noqa: F401
+    LEAF_TRANSLUCENCY,
     bobshade_material,
     foliage_card_material,
     new_bobshader,
@@ -127,6 +132,9 @@ __all__ = [
     "CLOUD_MATERIAL",
     "ENV_STATE",
     "ENV_STATE_DRIVERS",
+    "LEAF_SEASON",
+    "LEAF_SEASON_DRIVERS",
+    "LEAF_TRANSLUCENCY",
     "FOG_DENSITY_SCALE",
     "FOG_MATERIAL",
     "GROUND_FOG_PREFIX",
@@ -198,11 +206,13 @@ __all__ = [
     "apply_curve_surface",
     "apply_curve_wet",
     "assign_material",
+    "group_version",
     "bobshade_material",
     "cloud_volume_material",
     "enable_eevee_refraction",
     "foliage_card_material",
     "env_state_group",
+    "leaf_season_group",
     "fog_volume_material",
     "ground_fog_volume_material",
     "is_bobshader",

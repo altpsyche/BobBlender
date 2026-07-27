@@ -148,12 +148,26 @@ S_GROUP_VER = 6
 #   embeds S_EnvState directly (its freeze path reads Temperature/Cloud/Wind/Frost), so its internal
 #   links to that group's outputs go stale when the group interface is rebuilt. Bumped in lockstep
 #   with the global S_GROUP_VER v6 so the water group rebuilds and re-links.
+#   S_LeafSeason v1 (BobFoliage F4): the leaf-card season layer. Versioned on its own from the
+#   start for the same reason S_TexSet is -- it embeds neither S_Weather nor S_EnvState, so it never
+#   needs the lockstep rebuild the masters do, and a future change to it must not cost every tuned
+#   terrain in the file a revert-to-default. It EXISTS at all rather than being a Season output on
+#   S_EnvState precisely to keep that cost off the masters (materials.LEAF_SEASON). The leaf wrapper
+#   folds this number into its signature, so bumping it here still rebuilds the cards that use it.
 #   S_TexSet v1 (BobShaders S3): the texture-set sampler. Versioned on its own from the start,
 #   because it embeds neither S_Weather nor S_EnvState, so it never needs the lockstep rebuild the
 #   masters do -- and a future change to its interface must not cost every tuned terrain in the
 #   file a revert-to-default. The wrappers that instance it fold this number into their signature
 #   (texset.sig_part), so bumping it here still rebuilds them.
-_GROUP_VER_OVERRIDE = {"S_WaterMaster": 9, "S_TexSet": 1}
+_GROUP_VER_OVERRIDE = {"S_WaterMaster": 9, "S_TexSet": 1, "S_LeafSeason": 1}
+
+
+
+def group_version(name):
+    """The version a shared group is stamped with: its own override if it has one, else the global.
+    The one reader of the override table besides `_cached_group`, so a wrapper that must rebuild
+    when a group it instances changes can fold the number into its signature."""
+    return _GROUP_VER_OVERRIDE.get(name, S_GROUP_VER)
 
 
 
@@ -163,7 +177,7 @@ def _cached_group(name):
     A stale group is rebuilt in place (datablock kept, nodes + interface cleared) so
     materials already referencing it pick up the fresh interface rather than dangling. The
     expected version is the per-group override if present, else the shared S_GROUP_VER."""
-    want = _GROUP_VER_OVERRIDE.get(name, S_GROUP_VER)
+    want = group_version(name)
     g = bpy.data.node_groups.get(name)
     if g is not None and g.get("bbt_ver") == want:
         return g, False

@@ -28,6 +28,34 @@ ENV_STATE = "S_EnvState"
 
 WEATHER = "S_Weather"
 
+# The leaf-card season layer (BobFoliage F4, docs/FOLIAGE.md 2.4). Its own group rather than a new
+# output on S_EnvState, and that is a decision rather than a convenience: S_EnvState is EMBEDDED by
+# S_Weather and by S_WaterMaster, a rebuild gives its sockets fresh identifiers, and every embedder
+# left un-rebuilt keeps stale links to them -- which is why the item-3 and snow-line changes each
+# cost a global S_GROUP_VER bump and a revert-to-default on every tuned terrain in the file. A
+# season term that only leaves shade on the cards is not worth that, so it lives here with its own
+# driven Value node and its own version, and the masters are untouched.
+LEAF_SEASON = "S_LeafSeason"
+
+# The Value node in S_LeafSeason the panel drives, in the shape ENV_STATE_DRIVERS uses. The field
+# is an ENUM, and a driver reads an enum as its INDEX -- measured on 5.2: bbt_env.season = "autumn"
+# drives 2.0, matching env.SEASONS order. The default is 1.0, summer, so a standalone .blend with
+# no Firmament renders a summer leaf rather than a bare index of 0 (spring).
+LEAF_SEASON_DRIVERS = (("env_season", "season", 1.0),)
+
+# env.SEASONS indices the leaf layer keys off (must match env.py SEASONS order).
+_SEASON_AUTUMN, _SEASON_WINTER = 2, 3
+
+# The hue an autumn leaf turns to. Scaled by the leaf's own luminance rather than mixed flat over
+# it (see `leaf_season_group`), so this is a full-brightness amber and the crown's light and shade
+# come from the atlas.
+_AUTUMN_COLOR = (0.85, 0.36, 0.07, 1.0)
+
+# What a leaf still on the tree in winter looks like: the same turn, further along and drier. It is
+# a FRACTION of the autumn turn rather than a colour of its own, because a leaf that is still there
+# in winter is a dead autumn leaf. Bare branches are geometry and belong to the LOD/variant work.
+_WINTER_TURN = 0.55
+
 
 # The S_EnvState internal Value nodes the panel drives from bbt_env: (node name, field,
 # default). One driver per node on the single shared group feeds every material (the
@@ -162,6 +190,92 @@ def env_state_group():
     g.links.new(eff, O["Wetness"])
     return g
 
+
+
+def leaf_season_group():
+    """The leaf-card season layer: a base colour in, the same colour turned for the season out.
+
+    Sits between the surface master and the Principled on a leaf card only (`foliage_card_material`),
+    which is the whole reason it is a group of its own -- see `LEAF_SEASON` for why a Season output
+    on S_EnvState would have cost every tuned terrain in the file a revert-to-default.
+
+    Two things it does that a straight colour mix would not:
+
+    - **The turn is staggered per card.** `bbt_fol_phase` is the recipe's per-card random, and the
+      turn is scaled by `1 - Stagger * phase`, so at Stagger 0 every leaf turns together and at 0.5
+      they turn between half and fully. A canopy that turns as one flat colour is the tell of a
+      season swap; a real one is mottled. The attribute is absent on anything that is not a
+      BobFoliage card, where the node returns 0 and the leaf simply turns fully.
+    - **Winter is autumn further along, not a colour of its own.** A leaf still on the tree in
+      winter is a dead autumn leaf, so it reads as a fraction of the same turn (`_WINTER_TURN`).
+      Dropping it entirely is geometry, and belongs with the variants.
+
+    The season itself arrives on a driven Value node exactly as the rest of the env does, so Apply
+    Season and the `set_env` op move a canopy with no rebuild and no per-material press.
+    """
+    g, _fresh = _cached_group(LEAF_SEASON)
+    if not _fresh:
+        return g
+    _gin(g, "Base Color", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gin(g, "Autumn Tint", "NodeSocketColor", _AUTUMN_COLOR)
+    _gin(g, "Autumn Amount", "NodeSocketFloat", 1.0, 0.0, 1.0)
+    _gin(g, "Stagger", "NodeSocketFloat", 0.5, 0.0, 1.0)
+    _gout(g, "Base Color", "NodeSocketColor")
+    _gout(g, "Turn", "NodeSocketFloat")  # how far this leaf has turned, for anything downstream
+    gi = g.nodes.new("NodeGroupInput")
+    gi.location = (-800, 0)
+    go = g.nodes.new("NodeGroupOutput")
+    go.location = (700, 0)
+    I, O = gi.outputs, go.inputs
+
+    season = g.nodes.new("ShaderNodeValue")
+    season.name = season.label = LEAF_SEASON_DRIVERS[0][0]
+    season.location = (-800, -300)
+    season.outputs[0].default_value = LEAF_SEASON_DRIVERS[0][2]
+    s = season.outputs[0]
+
+    # A band per season rather than an equality: a driven float is exact here, but a band is what
+    # the weather-to-wetness mapping in S_EnvState already uses and it costs one node.
+    autumn = _mmath(g, "MULTIPLY",
+                    _mmath(g, "GREATER_THAN", s, _SEASON_AUTUMN - 0.5, (-600, -220)),
+                    _mmath(g, "LESS_THAN", s, _SEASON_AUTUMN + 0.5, (-600, -360)), (-420, -280))
+    winter = _mmath(g, "MULTIPLY", _mmath(g, "GREATER_THAN", s, _SEASON_WINTER - 0.5, (-600, -500)),
+                    _WINTER_TURN, (-420, -500))
+    turned = _mmath(g, "MAXIMUM", autumn, winter, (-240, -380))
+
+    # The per-card stagger. Absent (anything that is not a foliage card) the node returns 0, so the
+    # scale is 1 and the leaf turns fully -- the safe direction: a season that reaches nothing is
+    # visible, a season that half-reaches everything is not.
+    phase = g.nodes.new("ShaderNodeAttribute")
+    phase.attribute_type = "GEOMETRY"
+    phase.attribute_name = "bbt_fol_phase"
+    phase.location = (-600, -700)
+    keep = _mmath(g, "SUBTRACT", 1.0,
+                  _mmath(g, "MULTIPLY", I["Stagger"], phase.outputs["Fac"], (-420, -700)),
+                  (-240, -700))
+    turn = g.nodes.new("ShaderNodeMath")
+    turn.operation = "MULTIPLY"
+    turn.use_clamp = True
+    turn.location = (60, -500)
+    g.links.new(_mmath(g, "MULTIPLY", turned, keep, (-60, -500)), turn.inputs[0])
+    g.links.new(I["Autumn Amount"], turn.inputs[1])
+
+    # Re-tint by LUMINANCE rather than mixing toward a flat colour. A straight mix to amber erases
+    # the atlas: at full turn every needle in the crown is the one value, which is the "season swap"
+    # look. Scaling the tint by the leaf's own brightness keeps the atlas's light and shade and
+    # replaces only its hue, and it can BRIGHTEN, which a multiply filter cannot -- a green leaf has
+    # little red in it, so multiplying a green atlas by an amber can only ever darken it to brown.
+    lum = g.nodes.new("ShaderNodeVectorMath")
+    lum.operation = "DOT_PRODUCT"
+    lum.location = (-60, 260)
+    g.links.new(I["Base Color"], lum.inputs[0])
+    lum.inputs[1].default_value = (0.2126, 0.7152, 0.0722)  # Rec. 709 luma
+    tinted = _vscale(g, I["Autumn Tint"],
+                     _mmath(g, "MULTIPLY", lum.outputs["Value"], 2.0, (120, 260)), (300, 260))
+    g.links.new(_mixcol(g, turn.outputs["Value"], I["Base Color"], tinted, (480, 100)),
+                O["Base Color"])
+    g.links.new(turn.outputs["Value"], O["Turn"])
+    return g
 
 
 def weather_group():

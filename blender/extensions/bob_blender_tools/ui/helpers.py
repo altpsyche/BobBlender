@@ -119,6 +119,40 @@ def select_row(layout, op_idname, text, selected, op_props=None, radio=True):
     return op
 
 
+def live_knobs(layout, obj, names, enabled=True, seed_op=None, seed_names=()):
+    """Draw a Geometry Nodes modifier's LIVE inputs by socket name (P3: the instant half).
+
+    A socket that does not exist on this build is skipped rather than drawn dead, which is what
+    lets one name list serve a recipe whose interface changes with its params. Values are read from
+    `mod.properties.inputs.<identifier>.value` -- the surface a Blender 5.2 Nodes modifier actually
+    evaluates. Not `mod[identifier]` (a Nodes modifier has no IDProperties and raises TypeError) and
+    not the interface `default_value`, which only seeds a fresh bind: drawing that would show and
+    edit a number the modifier is not using.
+
+    `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its
+    reshuffle button; the operator is passed `{"socket": <name>}`.
+
+    Scatter and Firmament each grew their own copy of this before it existed here. New panels use
+    this one; folding those two into it is a subtraction pass of its own, not a side effect of one.
+    """
+    mod = next((m for m in obj.modifiers if m.type == "NODES"), None) if obj is not None else None
+    if mod is None or mod.node_group is None:
+        return
+    ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
+           if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
+    col = layout.column(align=True)
+    col.enabled = enabled
+    for name in names:
+        ident = ids.get(name)
+        inp = getattr(mod.properties.inputs, ident, None) if ident else None
+        if inp is None:
+            continue
+        if seed_op and name in seed_names:
+            seed_row(col, inp, "value", seed_op, text=name, op_props={"socket": name})
+        else:
+            col.row(align=True).prop(inp, "value", text=name)
+
+
 def seed_row(layout, data, prop, op_idname, text="Seed", op_props=None):
     """The one seed idiom: the seed value and a reshuffle button on one row, marked with
     SEED_ICON so a reshuffle reads distinctly from a structural rebuild.

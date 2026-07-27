@@ -25,6 +25,8 @@
     "card_width": 0.35,
     "droop": 0.15,
     "card_spread": 18.0,
-    "bark_scale": 0.05
+    "bark_scale": 0.05,
+    "sway": 1.6,
+    "leaf_flutter": 1.8
   }
 }
