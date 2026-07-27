@@ -80,6 +80,12 @@ def main():
     if not ok:
         print("[SKIP] no ComfyUI server, so the generation half cannot run")
         print("    the suite is unaffected: this is the 'ComfyUI is never required' path")
+        # The runner reads a verdict wording to tell a clean finish from a silent crash (Blender
+        # exits 0 after a traceback), and this gate's every check is behind the server, so the skip
+        # path would otherwise reach the end having printed none. Say it explicitly: without this
+        # line headless_comfy_all.py reports FAIL "no verdict printed" on a machine with no server,
+        # which is the exact opposite of the property this path exists to demonstrate.
+        print("no failures")
         return 0
 
     # 1. Generate.
