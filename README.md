@@ -7,6 +7,10 @@ artwork, and procedural systems.
 Add-ons and extensions that are general tools live in their own repos. This repo
 holds projects, the reusable library, in-house tools, and conventions.
 
+**New here?** `docs/USAGE.md` is the front door: what the BobBlenderTools addon
+does, in the order you would do it, with a five-minute quickstart. This README is
+install and layout.
+
 ## Layout
 
 | Path | What lives here |
@@ -84,12 +88,13 @@ cp -r projects/_template projects/<my-piece>
 ```
 
 Then follow `projects/_template/README.md`. Naming, output paths, and where
-files go are in `docs/CONVENTIONS.md`. The overall design is in
-`docs/ARCHITECTURE.md`, and the recipe and parameter reference is in
-`docs/SYSTEMS.md`. Each capability has its own doc: `docs/TERRAIN.md` (the
-heightfield engine and presets), `docs/SHADERS.md` (BobShaders surfaces),
-`docs/FIRMAMENT.md` (sky, clouds, fog, weather, snow), `docs/SPLINES.md` (typed
-curves), and `docs/BIOME-SYSTEM.md` (whole-biome assembly).
+files go are in `docs/CONVENTIONS.md`. `docs/USAGE.md` is how to actually use the
+addon, stage by stage. The overall design is in `docs/ARCHITECTURE.md`, and the
+recipe and parameter reference is in `docs/SYSTEMS.md`. Each capability has its
+own doc: `docs/TERRAIN.md` (the heightfield engine and presets),
+`docs/SHADERS.md` (BobShaders surfaces), `docs/FIRMAMENT.md` (sky, clouds, fog,
+weather, snow), `docs/SPLINES.md` (typed curves), and `docs/BIOME-SYSTEM.md`
+(whole-biome assembly).
 
 ## Target
 

@@ -121,19 +121,28 @@ returns the `bake_params` fragment. ComfyUI is optional throughout — with no s
 tool returns `{"ok": false, "error": "...not reachable..."}` and nothing else changes.
 
 **One limit of headless `build`.** It imports the extension's `core` into a `--factory-startup`
-Blender without enabling the addon, so ops that read the shared env PropertyGroup (`set_env`,
-`apply_season`, `scene_preset`) raise there. Use `build_live` for those, or pass explicit params
-(`build_sky` with a `time_of_day` works headlessly; a bare `build_sky` reads the env it cannot see).
+Blender without enabling the addon, so any op that reads a PropertyGroup the addon registers raises
+there. That is the shared env (`set_env`, `apply_season`, `scene_preset`), and **also `apply_biome`**,
+whose scatter half reads `Object.bbt_scatter_coll` (registered in `ui/scatter.py`) and fails with
+`AttributeError: 'Object' object has no attribute 'bbt_scatter_coll'` even with `world: false`.
+
+Use `build_live` for those, or pass explicit params (`build_sky` with a `time_of_day` works
+headlessly; a bare `build_sky` reads the env it cannot see). For a headless `.blend` the pieces work
+one at a time: `shade_terrain` shades and a `build_geonodes` `scatter` recipe scatters, which is
+between them what `apply_biome` composes.
+
+The example below is therefore **`build_live` only** where it uses `apply_biome`.
 
 ## A full scene over MCP
 
 An agent can build a complete, shaded scene with no panel clicks. Bake a heightfield, then
-run one op list (`build_live` into the running session, or `build` headless). This is the
+run one op list. This one uses `apply_biome` and `set_env`, so it is **`build_live`**, into the
+running session; see the headless limit above. This is the
 `library/_generated/full_scene_ops.json` proof, abbreviated:
 
 ```jsonc
 // 1. bake_heightfield  out_file="_generated/forest_height.png"  params={preset:"alpine", size:1024}
-// 2. build_live / build with:
+// 2. build_live with:
 [
   {"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Terrain",
    "params": {"heightmap": "_generated/forest_height.png", "size": 200, "resolution": 400, "height": 70}},
