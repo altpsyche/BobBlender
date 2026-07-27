@@ -6,7 +6,7 @@ cost scatter its own controls. Paths is the precedent -- BobSplines has its own 
 scatter -- and this is the same shape.
 
 **What does NOT move here is the decision.** Filling a scatter kind stays one choice in one place:
-Make Proxies, Apply Biome, Generate Asset and Grow in BobFoliage sit together in Scatter, because
+Make Proxies, Apply Biome, Generate Asset and Grow in Foliage sit together in Scatter, because
 that is where an artist already picks between them. Grow sends you here with a tree already made;
 this panel is where you then tune it. So the suite gains a panel and no duplicated decision.
 
@@ -478,7 +478,11 @@ class BBT_UL_foliage(UIList):
 
 
 class BBT_PT_foliage(Panel):
-    bl_label = "BobFoliage"
+    # Plain "Foliage", the way every other top-level panel in the category is a plain noun: World,
+    # Biome, Paths, Scatter, Shaders, Atmosphere. "BobFoliage" is the TRACK's name (docs/FOLIAGE.md)
+    # and it stays that in the code and the docs; a header is not the place to say it, and it was the
+    # only one of the seven that did.
+    bl_label = "Foliage"
     bl_idname = "BBT_PT_foliage"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"

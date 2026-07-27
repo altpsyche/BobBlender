@@ -682,16 +682,19 @@ class BBT_PT_scatter(Panel):
 # cards a panel that sent someone to BobFoliage for plants would have been recommending bare sticks.
 # The plants and grass notes stop being about draw distance and start being about routing, while
 # still allowing generated ground clumps as filler -- that row of the routing table is still a yes.
+# Each note names the PANEL it sends the artist to, and that panel's header is "Foliage" -- so these
+# say Foliage and not BobFoliage, which is the track's name and not a thing on screen. A pointer that
+# names something the artist cannot find is the dead end this copy exists to remove.
 _GEN_KIND_NOTE = {
-    "trees": "stumps and logs only; grow standing trees in BobFoliage",
-    "plants": "ground clumps read at 2 m; grow real plants in BobFoliage",
-    "grass": "ground clumps read at 2 m; grow real tufts in BobFoliage",
+    "trees": "stumps and logs only; grow standing trees in the Foliage panel",
+    "plants": "ground clumps read at 2 m; grow real plants in the Foliage panel",
+    "grass": "ground clumps read at 2 m; grow real tufts in the Foliage panel",
 }
 
 
 class BBT_OT_scatter_grow_foliage(Operator):
     bl_idname = "bob_blender_tools.scatter_grow_foliage"
-    bl_label = "Grow in BobFoliage"
+    bl_label = "Grow in Foliage"
     bl_description = ("Grow this kind procedurally instead of generating it: builds a foliage "
                       "object at the 3D cursor from the kind's species preset. Needs no ComfyUI "
                       "server and takes no time, because the geometry is a recipe and only its "
@@ -738,7 +741,7 @@ class BBT_OT_scatter_grow_foliage(Operator):
         # modifier stack is not an authoring surface, and the artist is one panel away from the
         # thirty knobs grouped and labelled.
         self.report({"INFO"}, f"Grew {name} ({preset['meta'].get('name', species)}); "
-                              f"tune it in the BobFoliage panel{note}")
+                              f"tune it in the Foliage panel{note}")
         return {"FINISHED"}
 
 

@@ -921,7 +921,12 @@ white outwards and produced a *harder* halo than doing nothing. The floor is 0.9
 
 **Landed at F4** (`ui/foliage.py`, with the build layer in `core/foliage_build.py`). BobFoliage has
 its own N-panel for AUTHORING, at panel order 5 — directly after the Scatter stage that routes to
-it, so the artist sent here by Grow in BobFoliage finds it where they were pointed. The
+it, so the artist sent here by Grow in Foliage finds it where they were pointed. **Its header is the
+plain noun `Foliage`**, the way every other top-level panel in the category is (World, Biome, Paths,
+Scatter, Shaders, Atmosphere): BobFoliage is this TRACK's name and the code and this document keep it,
+but a header saying it was the only one of the seven that did. The routing copy below names the panel
+by its header for the same reason, and the gate reads that header rather than a literal, so the two
+cannot drift apart. The
 count forces it: eight trunk knobs plus six per level is around thirty, and folding that into the
 Scatter panel's Active Layer would bury scatter's own controls under a tree editor. Paths is the
 precedent — BobSplines has its own panel and also feeds scatter — and this is the same shape.
@@ -1028,22 +1033,22 @@ The routing, stated once:
 
 | Subject | Route |
 |---|---|
-| Standing trees, shrubs, grass tufts | **BobFoliage** |
+| Standing trees, shrubs, grass tufts | **the Foliage panel** |
 | Stumps, fallen logs, snags, root balls | `comfy_mesh(kind="trees")` |
 | Rocks, boulders, debris | `comfy_mesh` — this is its home |
 | Ground clumps read at 2 m or further | `comfy_mesh`, as scatter filler only |
 | Bark, leaf atlas, duff, moss, needle litter | `comfy_texture_set` |
 
 **Landed with F2, not before.** The tool grew bare branches until leaf cards existed, so a panel that
-sent someone to BobFoliage for plants would have been telling them something untrue. The three edits,
+sent someone to the Foliage panel for plants would have been telling them something untrue. The three edits,
 as shipped:
 
 1. The trees note is a direction rather than a refusal: *"stumps and logs only; grow standing trees
-   in BobFoliage"*. It still names dead wood, which is the D16 wording that stopped people reading
+   in the Foliage panel"*. It still names dead wood, which is the D16 wording that stopped people reading
    "a trunk, not a crown" as an invitation.
 2. The plants and grass notes are about routing rather than draw distance: *"ground clumps read at
-   2 m; grow real plants in BobFoliage"*. The clause keeps the filler row above a yes.
-3. A **Grow in BobFoliage** button sits in the same box, drawn whenever the kind resolves a species,
+   2 m; grow real plants in the Foliage panel"*. The clause keeps the filler row above a yes.
+3. A **Grow in Foliage** button sits in the same box, drawn whenever the kind resolves a species,
    and builds a foliage object at the 3D cursor from that kind's preset. An affordance beats a
    sentence: the sentence is what an artist reads after they have already spent 90 s generating.
    Unlike Generate it is never greyed, because it needs no server.
@@ -1054,7 +1059,7 @@ proxies, biome, generate and grow are four ways to fill `BOB_Assets_<Kind>`, and
 between them where they already are.
 
 Two invariants the gate holds, because this is copy and copy drifts: every kind whose note points at
-BobFoliage must actually resolve a species (a note pointing somewhere nothing grows is a worse dead
+the Foliage panel must actually resolve a species (a note pointing somewhere nothing grows is a worse dead
 end than the refusal it replaced), and the D16 half — every noted kind is a real kind, rocks carries
 no note — stays owned by `headless_redwood.py`.
 
@@ -1063,9 +1068,9 @@ filled, so the artist ends up back at the Scatter panel holding the assets they 
 `BOB_Assets_<Kind>` for the SPECIES's kind, not for anything chosen at bake time, so a pine and a
 shrub authored beside each other fill different pools with nothing to set.
 
-**The loop closed at F4.** Grow in BobFoliage now builds through `foliage_build.grow`, so the tree it
-makes is the same object the BobFoliage panel adds — stamped, filed in `BOB_Foliage`, already listed
-and already feeling the world's wind — and the operator's report says "tune it in the BobFoliage
+**The loop closed at F4.** Grow in Foliage now builds through `foliage_build.grow`, so the tree it
+makes is the same object the Foliage panel adds — stamped, filed in `BOB_Foliage`, already listed
+and already feeling the world's wind — and the operator's report says "tune it in the Foliage
 panel" rather than pointing at the modifier stack. It pointed there while there was nowhere better;
 a modifier stack is not an authoring surface, and it is a worse answer now that thirty knobs are
 grouped and labelled one panel away.
@@ -1172,7 +1177,7 @@ the other tracks use.
   that renders at luminance range 0.48.
 - **F4 Wind, season, translucency and the panel. DONE.** The sway and the flutter in the recipe, the
   season layer and the card translucency in the shading, the world feed that drives both, and the
-  BobFoliage panel ([2.4](#24-wind-and-season-for-free), [2.7](#27-materials-and-uvs-which-f2-added),
+  Foliage panel ([2.4](#24-wind-and-season-for-free), [2.7](#27-materials-and-uvs-which-f2-added),
   [4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl),
   [4.6](#46-how-the-world-reaches-a-tree)). It took the gate to **184 checks**.
 
@@ -1252,7 +1257,7 @@ neither is on this track's path.
   cylindrical-unwrap seam" suggested: 1,183 of 7,098 faces carried five times their share of the
   texture. Fixed for no vertices and no interface change; the measurement, the fix, and the wrong
   first version of the check are in [2.7](#27-materials-and-uvs-which-f2-added).
-- **[F4, answered] Who builds the BobFoliage panel?** F4 did, and it kept **Make Variants off it**
+- **[F4, answered] Who builds the Foliage panel?** F4 did, and it kept **Make Variants off it**
   rather than shipping it greyed: a button that does nothing teaches an artist to distrust every
   other button beside it, and the affordance is worth less than the trust. That held — the panel was
   complete without it, because a hero tree is a finished deliverable on its own
