@@ -95,6 +95,20 @@ def _has_biome_scatter():
     return any(assets.biome_scatter(n) for n in assets.list_biomes())
 
 
+# Which species a scatter kind grows, cached: `draw()` runs on every redraw and resolving this
+# lists a directory and parses every preset in it. Cleared on register, so a fresh session (or a
+# reload) picks up a pack that was added since.
+_FOLIAGE_SPECIES_CACHE = {}
+
+
+def _foliage_species_for(kind):
+    from ..core import assets
+
+    if kind not in _FOLIAGE_SPECIES_CACHE:
+        _FOLIAGE_SPECIES_CACHE[kind] = assets.foliage_species_for_kind(kind)
+    return _FOLIAGE_SPECIES_CACHE[kind]
+
+
 def _nodes_mod(obj):
     if obj is None:
         return None
@@ -656,19 +670,64 @@ class BBT_PT_scatter(Panel):
         _draw_generate(layout, scn, active=context.active_object)
 
 
-# The honesty note under the Generate Asset kind selector (D16, docs/FOLIAGE.md). Only the kinds
-# image-to-3D is weak at carry one: rocks is what the route is for and says nothing, which keeps the
-# row a warning rather than decoration. Trees is first because it is the one an artist reaches for
-# and the one TRELLIS.2 cannot do -- it returns a single solid mesh, so a crown comes back a fan.
+# The routing note under the Generate Asset kind selector (D16 then BobFoliage F2,
+# docs/FOLIAGE.md 4.5). Only the kinds image-to-3D is weak at carry one: rocks is what the route is
+# for and says nothing, which keeps the row a warning rather than decoration. Trees is first because
+# it is the one an artist reaches for and the one TRELLIS.2 cannot do -- it returns a single solid
+# mesh, so a crown comes back a fan.
 #
-# The trees note names DEAD WOOD rather than "a trunk, not a crown", which was the first wording and
-# invited the use it was meant to prevent: a standing trunk has to carry a skeleton for branches to
-# grow from, and a generated mesh has none. Live trees come from the foliage generator.
+# Each note now DIRECTS rather than refuses. The first wording said "a trunk, not a crown", which
+# invited exactly the use it meant to prevent; the second said what generation is for but left the
+# artist at a dead end. Both were held at a refusal deliberately, because until F2 landed the leaf
+# cards a panel that sent someone to BobFoliage for plants would have been recommending bare sticks.
+# The plants and grass notes stop being about draw distance and start being about routing, while
+# still allowing generated ground clumps as filler -- that row of the routing table is still a yes.
 _GEN_KIND_NOTE = {
-    "trees": "for stumps and logs, not standing trees",
-    "plants": "reads at 2 m or further",
-    "grass": "reads at 2 m or further",
+    "trees": "stumps and logs only; grow standing trees in BobFoliage",
+    "plants": "ground clumps read at 2 m; grow real plants in BobFoliage",
+    "grass": "ground clumps read at 2 m; grow real tufts in BobFoliage",
 }
+
+
+class BBT_OT_scatter_grow_foliage(Operator):
+    bl_idname = "bob_blender_tools.scatter_grow_foliage"
+    bl_label = "Grow in BobFoliage"
+    bl_description = ("Grow this kind procedurally instead of generating it: builds a foliage "
+                      "object at the 3D cursor from the kind's species preset. Needs no ComfyUI "
+                      "server and takes no time, because the geometry is a recipe and only its "
+                      "bark and leaf textures ever come from generation")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from ..core import assets
+
+        kind = context.scene.bbt_scatter.gen_kind
+        species = assets.foliage_species_for_kind(kind)
+        if species is None:
+            self.report({"ERROR"}, f"No foliage species ships for '{kind}'")
+            return {"CANCELLED"}
+        preset = assets.foliage_species(species)
+        # An op does not read a PropertyGroup and does not carry panel state into the recipe: the
+        # preset's params go straight to build_geonodes, which is what keeps foliage off the
+        # live-bridge-only list every curve op is on (docs/MCP.md, known gap).
+        name = _unique_object_name(species.replace("_", " ").title())
+        _apply([{"op": "build_geonodes", "recipe": "foliage", "name": name,
+                 "params": dict(preset["params"], seed=random.randint(0, 99999)), "reset": True}])
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            self.report({"ERROR"}, "Foliage build produced no object")
+            return {"CANCELLED"}
+        obj.location = context.scene.cursor.location.copy()
+        for other in context.selected_objects:
+            other.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        warn = assets.validate_foliage_species(species)
+        if warn:
+            print("[bob_blender_tools] foliage species warnings:", warn)
+        self.report({"INFO"}, f"Grew {name} ({preset['meta'].get('name', species)}); "
+                              f"its knobs are on the object's foliage modifier")
+        return {"FINISHED"}
 
 
 def _draw_generate(layout, scn, active=None):
@@ -692,6 +751,13 @@ def _draw_generate(layout, scn, active=None):
         row = box.row()
         row.enabled = False
         row.label(text=note, icon="INFO")
+    # The affordance the note points at. It sits in this box rather than in a panel of its own
+    # because filling a kind stays ONE decision in ONE place (docs/FOLIAGE.md 4.2): proxies, biome,
+    # generate and grow are four ways to fill BOB_Assets_<Kind> and the artist picks between them
+    # here. A sentence telling someone to go elsewhere is read after they have already spent 90 s.
+    # Unlike Generate it needs no server, so it is never greyed.
+    if _foliage_species_for(scn.gen_kind):
+        box.operator("bob_blender_tools.scatter_grow_foliage", icon="OUTLINER_OB_CURVES")
     row = box.row(align=True)
     row.prop(scn, "gen_faces")
     row.prop(scn, "gen_hero", toggle=True)
@@ -843,6 +909,7 @@ CLASSES = (
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
     BBT_OT_scatter_generate_asset,
+    BBT_OT_scatter_grow_foliage,
     BBT_OT_scatter_biome_scatter,
     BBT_OT_scatter_add,
     BBT_OT_scatter_remove,
@@ -859,6 +926,7 @@ CLASSES = (
 
 
 def register():
+    _FOLIAGE_SPECIES_CACHE.clear()  # a reload may have added a pack
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Object.bbt_scatter_coll = PointerProperty(type=bpy.types.Collection)
