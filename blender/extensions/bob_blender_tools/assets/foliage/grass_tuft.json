@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "name": "Grass Tuft",
+    "kind": "grass",
+    "description": "A clump of blades: one level, a stem too short to see, and blades longer than it that carry a card each. The bottom of the same recipe, not a second one. Bakes into BOB_Assets_Grass."
+  },
+  "params": {
+    "levels": 1,
+    "height": 0.1,
+    "segments": 4,
+    "branch_segments": 4,
+    "profile_segments": 3,
+    "trunk_radius": 0.006,
+    "taper": 0.9,
+    "lean": 0.05,
+    "gnarl": 0.6,
+    "l1_branches": 14,
+    "l1_angle": 26.0,
+    "l1_length": 1.8,
+    "l1_radius": 0.9,
+    "l1_phyllotaxy": 100.0,
+    "l1_start": 0.02,
+    "cards": 2,
+    "card_size": 0.14,
+    "card_width": 0.35,
+    "droop": 0.15,
+    "card_spread": 18.0,
+    "bark_scale": 0.05
+  }
+}
