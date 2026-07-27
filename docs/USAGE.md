@@ -11,6 +11,10 @@ edit. Nothing is baked behind your back except the terrain heightfield, and that
 
 Everything lives in one N-panel tab in the 3D viewport: press `N`, pick **BobBlenderTools**.
 
+Optionally, a local ComfyUI adds generation to four of the stages: prompted terrain layouts,
+prompted scatter assets, prompted materials, and a stylised concept frame. **None of it is
+required.** See [Generating content](#generating-content-with-comfyui).
+
 ---
 
 ## Five minutes to something on screen
@@ -41,6 +45,31 @@ any landform under it.
 
 ---
 
+## Set-up worth doing once
+
+None of this is needed to start, but all of it saves friction later. It lives in
+`Preferences > Add-ons > BobBlenderTools`.
+
+- **Asset Pack Folders.** Point these at folders holding `models/<biome>/` and `textures/<set>/`
+  and their biomes and texture sets join the pickers. `$BOB_ASSET_PACKS` does the same from the
+  environment. The bundled block-out pack is always present as the floor of the search path, so
+  the suite works with none set. After adding one, click **Rescan Asset Packs** in the Advanced
+  panel.
+- **Output Folder.** Where baked heightfields and generated data are written. Empty means beside
+  the saved `.blend`, or a per-user cache while the file is unsaved. Set it if you want bakes in a
+  known place.
+- **Start bridge on launch.** Off by default. Turn it on only if you drive Blender from an agent
+  every session.
+- **ComfyUI URL / Folder / Reserve VRAM.** Optional. Empty URL means `http://127.0.0.1:8188`. The
+  Folder is only needed for the Advanced panel's **Start Server** button; everything else works
+  over HTTP against a server you started yourself. Reserve VRAM is passed to a Bob-started server
+  so Blender keeps enough of the card to hold a viewport.
+
+The preferences also carry a short licensing notice, because models are your download and output
+licensing follows the model. Full table in [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md).
+
+---
+
 ## Three ways to drive it
 
 The same builders sit behind all three. Pick by what you are doing, not by preference.
@@ -61,7 +90,7 @@ to a wet autumn evening, render it".
 Start the bridge in the **Advanced** panel (**Start**), click **Copy MCP Config**, paste that into
 your client, connect. Full setup in [MCP.md](MCP.md).
 
-Fourteen tools:
+Fourteen tools. Nine work with no ComfyUI at all:
 
 | Tool | What it does |
 |------|--------------|
@@ -74,14 +103,24 @@ Fourteen tools:
 | `list_projects` | Project folders under the projects root. |
 | `create_project` | Scaffold a new project folder. |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, which workflows are installed. Never fails. |
+
+Five more need a local ComfyUI:
+
+| Tool | What it does |
+|------|--------------|
 | `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. Returns the `apply_texture_set` op ready to send. |
 | `comfy_mesh` | Prompt to a staged scatter asset, geometry plus PBR. Returns the `import_generated` op. |
-| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. |
+| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. **MCP only; there is no panel button for this.** |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. A pitch frame, not geometry. |
 
-The five `comfy_*` generation tools need a local ComfyUI. With none, they return
-`{"ok": false, "error": "...not reachable..."}` and the other nine are unaffected.
+With no server the five return `{"ok": false, "error": "...not reachable..."}` and the nine are
+unaffected.
+
+Each generation tool hands back the op that consumes its result, ready to send: `comfy_mesh`
+returns an `import_generated` op, `comfy_texture_set` an `apply_texture_set` op, `comfy_heightmap`
+the `macro` fragment for `bake_heightfield`. That split is deliberate: talking to ComfyUI needs no
+Blender, so only the steps that need `bpy` are ops.
 
 The op vocabulary the two build tools take spans the whole suite and is documented field by field
 in [API.md](API.md). Worked scenes, including a full one and a forest trail, are in
@@ -104,8 +143,10 @@ uv run --project tools python -m bobtools.hf_cli --out /abs/height.png --knobs-f
 uv run --project tools python -m bobtools.hf_cli --backends   # what compute is available
 ```
 
-`knobs.json` is flat: `{"preset": "alpine", "size": 1024, "seed": 7, "relief": 0.6}`. The result
-metadata prints as JSON on the last stdout line. Details in [TERRAIN.md](TERRAIN.md).
+`knobs.json` is flat: `{"preset": "alpine", "size": 1024, "seed": 7, "relief": 0.6}`. Add
+`--preview` for a fast 256 look, `--force` to ignore the cache, `--maps` to also emit the flow and
+wetness sidecars. The result metadata prints as JSON on the last stdout line. Details in
+[TERRAIN.md](TERRAIN.md).
 
 `tools/scripts/` holds the headless runners: `build_extension.py` builds the distributable zip,
 `headless_texset.py` exercises the texture-set sampler, and `headless_comfy_all.py` runs every
@@ -130,13 +171,15 @@ season.
   temperature, and winter builds falling snow and coverage for you.
 - **Conditions (live)** sit on top of the season and update immediately: Weather, Temperature,
   Wetness, Snow Line, Cloud Cover, Wind Direction and Strength, Frost. Below 0 C it snows, and
-  Snow Line decides how far down the mountain.
+  Snow Line decides how far down the mountain. Rain and storm wet the ground; whichever of that
+  and the Wetness slider is higher wins.
 - **Live Environment** is the master switch for whether materials and atmosphere follow this state
   at all. Off, they hold whatever they were built with.
 - **Quality** (Preview / Final) trades volumetric and particle cost against fidelity across every
-  atmosphere subsystem at once.
+  atmosphere subsystem at once. Leave it on Preview while you work.
 - **Time and place** is collapsed because you set it once: time of day, date, latitude, longitude,
-  UTC offset. It drives real sun geometry.
+  UTC offset. It drives real sun geometry, so an afternoon in Reykjavik and one in Nairobi do not
+  look the same.
 - **Sky Look** is a staged whole-atmosphere mood. It rebuilds the atmosphere subsystems and never
   touches the season.
 
@@ -151,7 +194,7 @@ For the full field list and how each consumer reads it, see [FIRMAMENT.md](FIRMA
 
 **What it is for.** One pick that stands up a coherent scene: terrain material, scatter layers, and
 world mood, all from one recipe. It is the fastest way from nothing to something worth looking at,
-and it is also a good starting point to then edit by hand.
+and a good starting point to then edit by hand.
 
 **Shortest path.** Select a terrain mesh (or set a Scatter emitter), pick a biome, click **Build
 Biome**.
@@ -164,13 +207,18 @@ Biome**.
 - **Weather assets** (on by default) converts the scattered props' materials to BobShaders so they
   react to rain and season like the ground does. Turn it off to keep plain materials.
 - **Set Biome World** takes only the mood from a biome: season, weather, time, wind. No terrain, no
-  scatter. Use it to match the light of one biome while keeping the ground you built.
+  scatter. Use it to match the light of one biome while keeping the ground you built. **Build Sky**
+  beside it (on by default) rebuilds the sky so the sun moves to the biome's time.
+
+The same recipe is also reachable one piece at a time: **Biome Terrain** in the Shaders panel
+builds only the layer stack, and **Biome Scatter** in the Scatter panel builds only the layers.
+Build Biome is those two plus the world, in order.
 
 **What ships.** One biome, `blockout`. Procedural proxies and solid-tint terrain layers, no
 external model files, no downloads. It is deliberately the canonical biome rather than a
 placeholder: it works everywhere, it validates, and it is what the whole pipeline is tested
-against. Add more by pointing the addon at an asset pack folder (add-on preferences, or
-`$BOB_ASSET_PACKS`) and clicking **Rescan Asset Packs** in Advanced.
+against. Add more by pointing the addon at an asset pack folder and clicking **Rescan Asset
+Packs**.
 
 **Next.** Terrain, to shape the ground the biome is sitting on. Or Shaders, to open up what it
 built.
@@ -198,20 +246,32 @@ to keep both.
   Dunes (`dunes`, `sand_sea`). Picking one loads slider values; nothing rebuilds until you bake.
 - **Sculpt**: the four knobs that modulate the preset. **Relief** (how much vertical), **Detail**
   (how much high frequency), **Erosion** (how hard the fluvial pass runs), **Warp** (how much the
-  domain distorts), plus **Seed**.
+  domain distorts), plus **Seed**. 0.5 on each means the preset as authored.
 - **Backend**: `auto` uses the GPU when CuPy is installed and falls back to CPU. **Check Backends**
-  tells you which you have.
-- **Displace** (collapsed) is where real-world scale lives. **Tile size** in metres, **Height**,
+  (the `?` beside the row) tells you which you have.
+- **Resolution** is the bake resolution. **Flow + wetness maps**, on by default, also writes
+  `<name>_flow.png` and `<name>_wetness.png` beside the heightmap. Those are what let a terrain
+  material put moss in the drainage channels, so leave it on unless you are iterating fast.
+- **Displace** (collapsed) is where real-world scale lives. **Size m** (tile width), **Height**,
   **Exaggeration**, **Sea Level**, **Mesh Density**. The panel prints the resulting peak height and
   metres-per-vertex, so you can tell whether a 1.8 m character will read on it. A preset holds a
   relief *ratio*, not a fixed height, so `alpine` stays proportioned whether the tile is 90 m or
-  4 km.
+  4 km. Exaggeration is an honest separate multiplier: the panel shows the true-scale peak beside
+  the exaggerated one when they differ.
 - **Filter Stack (advanced)** turns off the four curated knobs and lets you edit the op list
   directly: add, remove, reorder, and set each op's parameters and mask. **Load Preset Stack**
-  pulls the current preset's ops in as a starting point.
+  pulls the current preset's ops in as a starting point. In custom mode the bake runs your stack
+  verbatim and the Sculpt knobs are greyed, because they would be lying.
 
 Mesh Density is deliberately separate from bake resolution. The heightmap keeps full detail for
 shading; the mesh needs only enough vertices for the silhouette.
+
+**With ComfyUI: Generate Base.** A prompt field above Bake + Build produces a *macro mask*, not a
+terrain. It decides where the massif, the basin and the ridge go; the erosion stack still builds
+every slope. Once a mask exists you get a toggle, a **Mask Weight** and an **Invert** (which way a
+model paints elevation is a coin flip per prompt, so Invert is the fix when white came back as low
+ground). Turn the toggle off and the preset bakes exactly as it always did. It is labelled a mask
+rather than a generator on purpose, because it is an input to the press below it.
 
 **Next.** Paths, to carve a river or trail into it. The terrain must be baked before paths can be
 naturalised.
@@ -234,23 +294,27 @@ the curve in the viewport, click **Build This Curve**.
 **The knobs that matter.**
 
 - **Role** is the main decision, and re-picking it resets every shape parameter to that role's
-  preset. Five roles in two families. Follow-terrain: **Dirt Path** (4.8 m wide, 0.3 m deep),
-  **Trail** (2.4 m, barely recessed), **Road** (9.0 m, a flat bench plus 1.5 m shoulders, embanked
-  on slopes, and its own material class so paved reads different from dirt). Impose: **River**
-  (10 m, a monotonic descending channel the terrain conforms down to) and **Stream** (4 m,
-  shallower and quicker).
-- **Channels**: Terrain shape, Material band, Scatter, and for rivers and streams, Water. Each is a
-  checkbox and each applies on Build, not live.
+  preset. There is no separate reset; re-picking the role is the reset. Five roles in two families.
+  Follow-terrain, which levels to the live terrain height under the centreline and then recesses:
+  **Dirt Path** (4.8 m wide, 0.3 m deep), **Trail** (2.4 m, barely recessed), **Road** (9.0 m, a
+  flat bench plus 1.5 m shoulders, embanked on slopes, and its own material class so paved reads
+  different from dirt). Impose, where the terrain conforms down to a monotonic descending water
+  centreline: **River** (10 m, 1.2 m deep) and **Stream** (4 m, shallower and quicker).
+- **Channels** are checkboxes and each applies on Build, not live: Terrain shape, Material band,
+  Scatter, and for rivers and streams, Water.
 - **Build All** carves every terrain-channel curve at once.
 - **Bake & Erode Curves** is the finishing move: it folds the carves into the baked heightfield and
   weathers them, so a road cut stops looking like it was stamped. It needs a baked terrain, because
-  it works on the heightfield raster, not the live carve. **Revert to Clean** undoes it.
+  it works on the heightfield raster, not the live carve. **Erosion**, **Scope** and **Deposit
+  bars** tune it, and **Revert to Clean** undoes it.
 
 Paths are LIVE geometry nodes by default, so dragging a control point updates the carve. Bake and
 erode when the layout is settled.
 
-Reeds on a riverbank are a Scatter layer with Curve mode set to **Verge**, not a path setting. The
-panel says so where you need to know it.
+Two things the panel warns you about rather than failing silently: a curve dragged off the terrain
+carves only its on-terrain part, and a terrain with no bake gets carved using the curve's own Z.
+
+Reeds on a riverbank are a Scatter layer with Curve mode set to **Verge**, not a path setting.
 
 **Next.** Scatter, which can read the path mask you just made.
 
@@ -269,21 +333,44 @@ builds immediately with proxy assets.
 
 **The knobs that matter.**
 
-- **Layer type** presets the whole layer. **Trees** (sparse, upright, pulls back from paths),
-  **Rocks** (tilted to the surface, allows slopes), **Plants** (denser, lightly clumped), **Grass**
-  (dense, small, clumped), **Empty** (recipe defaults, bring your own collection).
-- **Emitter** is what you scatter on; **Camera** enables camera culling.
-- **Masks** (sub-panel): slope range, altitude range, noise clumping, and a **Mask Group** vertex
-  group you can paint by hand.
+- **Layer type** presets the whole layer. **Trees** (sparse, upright, pulls back further from a
+  path), **Rocks** (tilted to the surface, allows slopes), **Plants** (denser, tilted, lightly
+  clumped), **Grass** (dense, small, clumped), **Empty** (recipe defaults, bring your own
+  collection).
+- **Emitter** is what you scatter on; **Camera** enables the Camera Cull sub-panel, which stops
+  paying for instances outside the frame.
+- **Active Layer** carries density, spacing, scale range, and **Align** (Up for trees, Normal for
+  anything that should tilt to the ground).
+- **Masks** (sub-panel): an **Altitude** band, **Noise / clumping**, and **Paint** via a **Mask
+  Group** vertex group you set on the layer and then Build. Each band does nothing until its
+  Strength is above 0, and the dependent knobs grey out until then.
 - **Curve** mode binds the layer to your paths: **Clear** pulls it off the path band, **Keep only**
   confines it to the band, **Verge** puts it on the shoulders only (this is the reeds case), and
-  **Along curve** places instances along the curve itself for fence posts and cobbles.
+  **Along curve** places instances along the curve itself for fence posts and cobbles. An
+  along-curve layer is placed by spacing rather than masks, and the Masks sub-panel says so.
 - **Biome Scatter** builds a whole layer stack from a biome's recipe in one pick, without touching
   terrain or world.
-- **Build All** rebuilds every layer of the emitter.
+- **Build This Layer** / **Build All** rebuild one or every layer of the emitter.
 
 Each layer draws from a `BOB_Assets_<Kind>` collection. Adding a layer creates the shared proxies
 if they do not exist, so you never start from nothing.
+
+**With ComfyUI: Generate Asset.** A prompt, a **Kind** (trees / rocks / plants / grass), a
+real-world **Height (m)**, a **Face Budget**, a **Seed** and a **Hero** toggle. It generates a
+reference image, then geometry plus PBR texture, and Blender then bakes it, scales it to the
+height, drops the origin to the base, builds an LOD chain, converts it to a BobShader and writes it
+into the pack and the matching `BOB_Assets_<Kind>` collection, ready to scatter. It runs in the
+background; the viewport stays usable and a progress row with a cancel appears in Advanced.
+
+Kind is load-bearing beyond where the asset lands: `plants` and `grass` are treated as foliage,
+which keeps the open surfaces a leaf needs by turning off both the remesh and the pinhole fill.
+Hero raises the bake and texture resolution; it does not buy you clean topology.
+
+**Asset from Block-out** is the same button with one extra input. Make a block-out proxy the active
+object and the generated asset keeps its silhouette and footprint, so it drops into the layout you
+blocked out. The proxy's own height replaces the Height field, because a proxy you already placed
+has already said how big the asset is. The button only appears when there is a mesh to condition
+on, and names it.
 
 **Next.** Shaders, to make the props and the ground look like something.
 
@@ -302,21 +389,59 @@ next to an existing material.
 
 - **Three masters.** **Surface** for props, rocks and vegetation. **Terrain**, a multi-layer master
   that blends layers by slope, altitude, noise and paint with a height-aware blend. **Water** for
-  river and stream ribbons: flowing, depth-tinted, foaming, and it freezes below 0 C.
-- **Convert** appears per material slot, and the scope dropdown widens it to all slots, the
-  selected meshes, or a whole collection.
-- **Terrain Layers** (sub-panel) is where the terrain master is authored: **Add Layer**, per-layer
-  and whole-stack presets, and **Layer Masks** to control what each layer sticks to. **Biome
-  Terrain** builds the whole stack from a biome recipe.
-- **Apply Texture Set** assigns a PBR set to a layer. **Triplanar** switches a layer to projected
-  mapping so a cliff has no stretch.
-- **Weather** (sub-panel) is the per-material response to the World state: how wet it gets, how
-  much snow it takes, how much frost.
-- **Add Snow Shell** adds accumulated snow as a real shell rather than a shader trick.
+  river and stream ribbons.
+- The panel lists **every material slot on this mesh** and nothing else. Each row either reports
+  which master it is or offers **Convert**. The scope dropdown beside it widens Convert to all
+  slots, the selected meshes, or a whole collection.
+- **Surface Preset** stamps a whole look on a surface material: `rock`, `cliff`, `bark`, `soil`,
+  `metal`, `painted`, `grass_blade`.
+
+**Terrain Layers** (sub-panel) is where the terrain master is authored.
+
+- Up to **six layers**, and the panel draws only the enabled ones so the box shows the depth
+  actually in use. **Add Layer** adds; the per-row checkbox removes. Stacking is by Height Bias,
+  not slot order, so there is nothing to reorder.
+- **Stack Preset** (`temperate`, `alpine`, `desert`) sets the whole stack; **Layer Preset**
+  (`soil`, `grass`, `rock`, `cliff`, `scree`, `sand`) sets the active one. **Biome Terrain** builds
+  the stack from a biome recipe.
+- **Layer Masks** (sub-panel) is what makes a layer land somewhere specific, and it is the same
+  mask vocabulary Scatter uses: a **Slope band**, an **Altitude band**, **Noise / clumping**,
+  **Paint / curvature**, a **Flow band** that puts a layer in the drainage channels, and a **Curve
+  band** that puts one along a path or road. Flow needs the terrain's flow maps baked and Curve
+  needs Paths' Bake & Erode; both default to Strength 0, so an unbaked scene is unchanged.
+
+**Water** (sub-panel) opens on the depth colour and optics. Two collapsed children hold the rest:
+**Flow and foam** (animated, so it needs playback to read) and **Freeze**, which turns the surface
+to ice and also fires on its own below 0 C.
+
+**Textures.**
+
+- **Apply Texture Set** samples a set into the active terrain layer (or the surface material):
+  albedo, roughness and a detail height that drives a bump. It is staged rather than instant,
+  because assigning a set rewires the graph.
+- **Triplanar** switches a layer to projected mapping so a cliff has no UV stretch. Anti-tiling is
+  built into the masters rather than being a knob you have to find.
+
+**Weather** (sub-panel) is the per-material response to the World state: how wet it gets, how much
+snow it takes, how much frost. **Add Snow Shell** adds accumulated snow as real geometry rather
+than a shader trick, and **Remove Snow Shell** takes it off.
 
 **Scattered assets are editable here too.** Select a scatter layer object and the panel lists the
 materials of its instanced assets, with a **Convert assets to BobShader** button. The asset sources
 are unlinked and not viewport-selectable, so this is the way in.
+
+**With ComfyUI: Generate Variants.** Inside the texture-set block, so a generated set and a
+downloaded one are the same kind of thing from the moment it lands. A prompt describing the
+surface, an optional **Reference** photo (which switches to a reference workflow that locks your
+photo's palette), a **Seed** and a variant **count**. Texture generation is a pick-one-of-several
+loop, so it makes several at once and stages them; a thumbnail plus a picker then offers
+**Accept**, **Reject**, **Upres 2x** and **Reject All**. Accept moves the variant into the pack and
+assigns it through the same path the ordinary picker uses. Reject deletes it, so staging only ever
+holds what is still awaiting a decision.
+
+The sets are seamless by circular padding in both the UNet and the VAE, which is measured rather
+than claimed. The same block serves a surface material and a terrain layer, because a surface has
+one set where a terrain has six.
 
 **Next.** Atmosphere, to light it.
 
@@ -335,16 +460,21 @@ placed sun.
 **The knobs that matter.**
 
 - **Sky**: sun override and the sky knobs. Edit them, then **Rebuild Sky** on the Atmosphere
-  header. Without an override, the sun position comes from the World panel's time, date and
-  coordinates.
-- **Clouds** and **Fog** each have a Build button plus live knobs and presets. Fog defaults dense,
-  which is a real foggy-morning look but will wash a frame grey; the presets (`ground_mist`,
-  `valley`, `banks`, `thick`) and a density override are how you get a thin, beam-friendly haze.
-- **Weather**: **Build Rain**, **Build Motes** (dust and pollen; bind it to a camera), **Add Snow
-  Coverage**. **Use Env Wind** and **Use Env Snow** pull these from the shared world state rather
-  than setting them twice.
+  header (the same button changes label once a sky exists). Without an override, the sun position
+  comes from the World panel's time, date and coordinates.
+- **Clouds** and **Fog** each have a Build button plus live knobs and a preset menu. Fog defaults
+  dense, which is a real foggy-morning look but will wash a frame grey; the presets
+  (`ground_mist`, `valley`, `banks`, `thick`) and a density override are how you get a thin,
+  beam-friendly haze that lets light shafts read.
+- **Weather**: **Build Rain**, **Build Motes** (dust and pollen, worth binding to a camera),
+  **Add Snow Coverage**, each with its own preset menu. **Use Env Wind** and **Use Env Snow** pull
+  from the shared world state rather than making you set it twice.
+- **Randomize Seed** reshuffles the particulate layout without touching anything else.
 - **Apply Sky Look** on the World panel is the whole-atmosphere mood preset if you would rather not
   tune each subsystem.
+
+Remember **Quality** on the World panel. Preview keeps volumetrics cheap while you work; switch to
+Final before you render.
 
 **Next.** Frame a camera and render. Or go back to World and change the weather; everything you
 built follows.
@@ -364,16 +494,20 @@ service, and asset pack management. Collapsed by default on purpose.
   `running on :9876`. **Copy MCP Config** puts a ready snippet on your clipboard with this
   install's resolved path already filled in. **Reload Builders** is a dev reload for when you have
   edited a recipe body.
-- **ComfyUI (generation): optional, never required.** A status line, **Test Connection**, **Free
-  VRAM**, **Start Server** and **Stop Server**. Below that, **Stylise Last Render**: it renders the
-  camera plus true depth and normal passes and restyles the frame with a prompt. That makes a pitch
-  frame, not scene data, which is why it lives here rather than in a pipeline stage.
+- **ComfyUI (generation): optional, never required.** A cached status line showing URL, device,
+  free VRAM and queue depth, plus **Test Connection**, **Free VRAM**, **Start Server** and **Stop
+  Server**. Stop Server only stops a server Bob started. The status is a cache refreshed by a
+  button or a finishing job, never by drawing the panel, so a dead server cannot freeze the UI.
+- **Stylise Last Render**, with three widgets: a style prompt, a **Strength** (the denoise, the one
+  knob that trades style against silhouette) and render **Samples**. It renders the camera plus
+  true depth and normal passes and restyles the frame. That makes a pitch frame, not scene data,
+  which is why it lives here rather than in a pipeline stage.
 - **Rescan Asset Packs**, after you point the add-on preferences at a new pack folder.
 - Any running generation job shows here with its elapsed time and a cancel button.
 
 ---
 
-## What ComfyUI adds, and what happens without it
+## Generating content with ComfyUI
 
 **Nothing in this addon requires ComfyUI.** With no server running, the Generate rows read "not
 connected" and are greyed out, every `comfy_*` MCP tool returns `{"ok": false}` with a reason, and
@@ -385,35 +519,84 @@ That is a tested property, not a stated intention. On a machine with no server,
 or skipped cleanly", exiting 0: the checks behind the server skip, and everything that does not
 need one still runs and still passes.
 
-Install it if you want generated content. Skip it and you lose nothing you have read about above.
+Install it if you want generated content. Skip it and you lose nothing described above.
 
-What it adds, and where each one appears:
+### What it adds, and where
 
-| Where | What you get |
-|-------|--------------|
-| Terrain panel, **Generate Base** | A prompted macro mask that decides where the massif and the basins go. The erosion stack still builds every slope; the mask only sets the layout. |
-| Scatter panel, **Generate Asset** | A prompt to a finished scatter asset: reference image, geometry, PBR texture, then Blender bakes it, scales it to a real height, builds LODs and BobShades it into the pack. |
-| Scatter panel, **Asset from Block-out** | The same, but the active mesh's shape conditions the geometry, so the result keeps the silhouette and footprint of the proxy you placed in your layout. |
-| Shaders panel, **Generate Variants** | Seamless PBR texture sets from a prompt, with accept / reject / upres. |
-| Advanced panel, **Stylise Last Render** | A styled concept frame from your render, holding its composition via true depth and normal passes. |
+| Stage | Control | What it makes |
+|-------|---------|---------------|
+| Terrain | **Generate Base** | A macro mask: where the massif, basin and ridge go. The erosion stack still builds every slope. |
+| Scatter | **Generate Asset** | A finished scatter asset from a prompt: geometry, PBR texture, real-world scale, LODs, BobShader, in the pack. |
+| Scatter | **Asset from Block-out** | The same, conditioned on a proxy's shape, so it keeps that silhouette and footprint. |
+| Shaders | **Generate Variants** | Seamless PBR texture sets from a prompt or a reference photo, with accept / reject / upres. |
+| Advanced | **Stylise Last Render** | A styled concept frame from your render, composition held by true depth and normal passes. |
+| MCP only | `comfy_paint_mesh` | Textures a mesh you already have, in its own UVs. No panel button exists for this. |
 
-Three things worth knowing before you start.
+Two models do the 3D work, each for what only it does, and the panel never asks you to choose
+between them.
 
-- **Generated meshes are scatter-grade by design.** Dense triangles, no edge flow, no UV seam
-  control. Convincing at 3 m, mush at 30 cm. Fine for a scattered background prop, not for a hero
-  asset without retopology. The UI says so.
-- **Give every generated asset a real height.** Every image-to-3D model emits a unit-cube mesh.
-  Without a height in metres the scatter looks like a toy set. It is the most commonly skipped
-  detail in this kind of pipeline.
+- **TRELLIS.2 is the default for everything**, because it is the only one of the two that can
+  return an open surface at all (so a leaf stays a leaf rather than a leaf-shaped bag), it uses
+  less VRAM on both foliage and solids, and it is MIT.
+- **Hunyuan3D runs when you condition on a block-out.** Passing a control forces the route that
+  carries it, which is where the Omni block-out path lives. That is the one case where it is
+  automatic.
+- **Hunyuan3D is otherwise an explicit choice**, over MCP only, with `comfy_mesh(route="alt")`. It
+  is roughly twice as fast on solid shapes and returns properly closed shells, but it costs more
+  VRAM and its licence excludes the EU, UK and South Korea, which is why it is not a default
+  anybody can inherit by accident. It is also the route that still works if the TRELLIS.2 node pack
+  is missing or broken, since its geometry model needs no custom pack.
+
+The **Kind** field does not pick the model. It decides foliage handling: `plants` and `grass` turn
+off both the remesh and the pinhole fill, and it decides which `BOB_Assets_<Kind>` collection the
+asset joins.
+
+### What to expect, honestly
+
+- **Generated meshes are scatter-grade by design.** Roughly 50k to 500k triangles before
+  simplification, no quads, no edge flow, no UV seam control. Convincing at 3 m and mush at 30 cm.
+  Fine for a scattered background prop, not for a hero asset without retopology. There is no local
+  hero tier to have: the face budget is delivered by a ComfyUI simplify node, and Blender's own
+  Decimate cannot reach it on these meshes at all. The **Hero** toggle raises bake and texture
+  resolution, and says so rather than implying clean topology.
+- **Always give a generated asset a real height.** Every image-to-3D model emits a unit-cube mesh,
+  so without a height in metres the scatter looks like a toy set. It is the most commonly skipped
+  detail in this kind of pipeline, which is why the field is not optional in spirit.
+- **Diffusion heightmaps are not terrain.** They are low frequency and have no drainage logic,
+  which is exactly why Generate Base feeds the op stack as a mask instead of replacing it. If the
+  mask starts competing with the erosion stack it is being misused.
 - **Block-out control has three modes and the default is right.** `point` samples your proxy's
   surface and gives the best ground plan. `voxel` quantises it to a 16-cubed grid: 19% faster, and
   it matches `point` on a compact shape like a boulder, but it loses a thin one, because anything
   narrower than a sixteenth of the longest axis is not in the control. `bbox` sends three numbers
   and uploads nothing, which makes it the fallback when mesh transport is unavailable, at about
   half the footprint accuracy. Leave it unset unless you have a reason.
+- **16 GB of VRAM is the reference and it is tight.** Set Reserve VRAM in preferences so Blender
+  keeps enough of the card for a viewport, and use **Free VRAM** in Advanced when a job has
+  finished and you want the card back.
+- **Generation never blocks the viewport.** Jobs run on a worker with a progress row and a cancel.
+  The only main-thread cost is the bpy part of a press: one glTF write for a block-out, one render
+  for Stylise.
 
 Setup, model downloads, licensing and the full measurement record are in [COMFYUI.md](COMFYUI.md)
-and [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md).
+and [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md). Licensing is worth reading before you download
+20 GB of weights: models are your download, output licensing follows the model, and two of the
+routes use models that are not permissive.
+
+---
+
+## Rendering
+
+There is no render panel, on purpose: Blender's own is fine and the suite does not want to own it.
+Two things are worth knowing.
+
+- **Switch Quality to Final** on the World panel first. Preview deliberately undersamples the
+  volumetrics, and a fog or cloud pass rendered at Preview will not match what you approved.
+- **Over MCP, `render_scene` renders the live session by default** and returns the path, which is
+  how an agent sees its own result. Pass `base_file` to render a saved `.blend` headlessly instead.
+  The EEVEE engine id in Blender 5.2 is `BLENDER_EEVEE`, with no `_NEXT` suffix.
+
+Output paths follow [CONVENTIONS.md](CONVENTIONS.md): `renders/<project>/<YYYYMMDD>/`.
 
 ---
 
@@ -421,13 +604,12 @@ and [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md).
 
 **"Terrain compute not installed in Blender"** in the Terrain panel. The bake needs scipy on CPU
 and CuPy on GPU, inside Blender's own Python. Click **Enable Compute** in that same box; it
-downloads the right wheels and verifies the GPU. **Check Backends** (the `?` beside the backend
-row) reports what you actually have. Machines with no GPU bake on CPU and that is a supported path,
-not a degraded one.
+downloads the right wheels and verifies the GPU. **Check Backends** reports what you actually have.
+Machines with no GPU bake on CPU and that is a supported path, not a degraded one.
 
 **Generation says "ComfyUI not connected".** Expected if you have not installed it. If you have:
 **Advanced > Test Connection**, and **Start Server** if it is not up. Default address is
-`127.0.0.1:8188`.
+`127.0.0.1:8188`, overridable in preferences or `$BOB_COMFY_URL`.
 
 **A mesh-uploading generation route fails at the node, or starts a 13.5 GB download.** Every route
 that hands ComfyUI a mesh needs `BOB_COMFY_DIR` pointing at your ComfyUI checkout. Without it the
@@ -437,7 +619,7 @@ mesh-shaped control that works without it, because it uploads nothing.
 
 **Generated files land somewhere you did not expect.** Generation writes into the generated pack,
 and the Blender side has to resolve the same folder. Set `BOB_GENERATED` so both halves agree. In a
-live session the addon's own output folder wins instead, so pass back the `pack_dir` each tool
+live session the addon's own Output Folder wins instead, so pass back the `pack_dir` each tool
 returns.
 
 **A biome or asset pack does not show up.** Point the add-on preferences (or `$BOB_ASSET_PACKS`) at
@@ -445,10 +627,17 @@ the pack folder, then click **Rescan Asset Packs** in Advanced. The bundled bloc
 always present as the floor of the search path, so an empty biome list means the panel is not
 seeing your folder rather than that none exist.
 
+**A texture set or layer preset is there but nothing changes.** Texture sets and stack presets are
+*staged*, not instant: picking one arms it and the Apply button commits it. That is deliberate,
+because assigning a set rewires the material graph rather than setting a value.
+
+**A mask band does nothing.** Every band in Scatter Masks and Layer Masks is inert until its
+Strength is above 0, and the dependent knobs stay greyed until then. Flow and Curve bands
+additionally need their source baked: terrain flow maps for Flow, Paths' Bake & Erode for Curve.
+
 **`no live bridge on 127.0.0.1:9876`.** The bridge is not running. **Advanced > Start**, and check
 the status line reads `running on :9876`. Autostart is off by default because it is an agent
-feature, not something an artist needs; turn it on in the add-on preferences if you want it up
-every launch.
+feature, not something an artist needs.
 
 **Port already in use.** Set `BOB_BRIDGE_PORT` in the MCP config's `env` and `$BOB_BRIDGE_PORT` on
 the Blender side to match, or free the port.
