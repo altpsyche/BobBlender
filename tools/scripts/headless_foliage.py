@@ -1,5 +1,6 @@
-"""Headless gate for BobFoliage F1 to F3: the tree skeleton, its sweep, its leaf cards, and the two
-texture jobs that dress them (docs/FOLIAGE.md).
+"""Headless gate for BobFoliage F1 to F4: the tree skeleton, its sweep, its leaf cards, the two
+texture jobs that dress them, the wind and season that move and colour them, and the panel that
+authors them (docs/FOLIAGE.md).
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/headless_foliage.py -- [--no-gen] [--cols 2 --rows 2] [--size 1024]
@@ -20,6 +21,8 @@ goes wrong still renders something tree-shaped:
 - a radius that never reaches the sweep makes every twig as thick as the trunk,
 - an atlas cell that never varies makes one leaf repeated ten thousand times,
 - a card whose base misses its tip leaves leaves hanging in the air,
+- a wind that reaches the trunk but not the cards leaves a canopy hanging in mid-air,
+- a season that reaches nothing leaves a summer tree in November,
 
 and none of those raises. Two of them were found by writing these checks rather than by looking:
 `Curve to Mesh` stopped applying the curve radius in Blender 4.0 and takes an explicit Scale now, so
@@ -193,6 +196,19 @@ def live_grid(obj):
     inputs = mod.properties.inputs
     return tuple(getattr(inputs, ident[name]).value
                  for name in ("Atlas Columns", "Atlas Rows"))
+
+
+def live_value(obj, socket_name):
+    """One live modifier knob by socket name, off `mod.properties.inputs.<identifier>.value`.
+
+    The same rule `live_grid` follows and for the same reason: the interface `default_value` only
+    seeds a fresh bind, so reading it would pass whether or not the value reached the modifier.
+    """
+    mod = next(m for m in obj.modifiers if m.type == "NODES")
+    ident = next((s.identifier for s in mod.node_group.interface.items_tree
+                  if getattr(s, "in_out", "") == "INPUT" and s.name == socket_name), None)
+    inp = getattr(mod.properties.inputs, ident, None) if ident else None
+    return None if inp is None else inp.value
 
 
 def uv_bounds(mesh, faces):
@@ -726,6 +742,14 @@ def check_species():
               f"{len(mesh.vertices)} verts, {cards} cards")
         check(f"species '{name}' grows leaves", cards > 0, f"{cards} cards")
         ev.to_mesh_clear()
+        # F4: how stiff a plant is belongs to its species the way its taper does, and a preset
+        # value that never reaches the modifier is the inert-radius failure again in a new knob.
+        for knob, key in (("Sway", "sway"), ("Leaf Flutter", "leaf_flutter")):
+            want = spec["params"].get(key)
+            got = live_value(bpy.data.objects[f"sp_{name}"], knob)
+            check(f"species '{name}' sets its own {knob} and it reaches the modifier",
+                  want is not None and got is not None and abs(got - want) < 1e-5,
+                  f"preset {want}, modifier {got}")
 
 
 def check_render():
@@ -799,6 +823,458 @@ def check_routing():
     check("every kind the notes route to BobFoliage can actually be grown",
           all(ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")),
           str({k: ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")}))
+
+
+def vertices(name, **overrides):
+    """(positions, card flags) of a freshly built tree, as plain lists. The shape every wind check
+    compares against another: the wind is a vertex displacement, so the vertices are the evidence."""
+    ev, mesh, _ = build(name, **overrides)
+    pos = [tuple(v.co) for v in mesh.vertices]
+    flag = mesh.attributes.get("bbt_fol_card")
+    card = [d.value for d in flag.data] if flag else []
+    ev.to_mesh_clear()
+    return pos, card
+
+
+def moved(a, b):
+    """Per-vertex distance between two builds of the same tree."""
+    return [math.dist(p, q) for p, q in zip(a, b)]
+
+
+def check_wind():
+    """The F4 sway: off by default, pinned at the base, and one pass for the wood and the cards.
+
+    Wind is the first thing in this recipe that moves geometry AFTER it is built, which makes it the
+    first thing that can quietly take the tree apart. The failures it has to rule out, and none of
+    them raises:
+
+    - a default that is not zero, which would move every F1-F3 measurement out from under the gate,
+    - a base that is not pinned, which is F1's detached-branch failure at the root of the trunk,
+    - a card weighted by its own height instead of its twig's, which parts the canopy from the tree
+      by a fraction of a millimetre (measured at 7.7e-05 m before the anchor fix: invisible, and
+      exactly the size of defect this track keeps shipping),
+    - a flutter that is not gated to the cards, which shakes the trunk at leaf frequency,
+    - a clock that is not Scene Time, which renders a different frame every time.
+    """
+    # Built with no wind param at all, so this is the shipped DEFAULT and not a value the gate
+    # chose. Two things have to hold for the F1-F3 numbers above to still mean anything: the knob
+    # reads zero, and the tree does not move between frames.
+    still, card = vertices("WindOff", cards=4)
+    knob = live_value(bpy.data.objects["WindOff"], "Wind")
+    ev = bpy.data.objects["WindOff"].evaluated_get(bpy.context.evaluated_depsgraph_get())
+    bpy.context.scene.frame_set(41)
+    later = [tuple(v.co) for v in bpy.data.objects["WindOff"].evaluated_get(
+        bpy.context.evaluated_depsgraph_get()).to_mesh().vertices]
+    bpy.context.scene.frame_set(1)
+    ev.to_mesh_clear()
+    check("Wind defaults to zero", knob == 0.0, f"Wind knob {knob}")
+    check("so a tree with no weather is still, frame after frame",
+          len(later) == len(still) and max(moved(still, later)) == 0.0,
+          f"max movement over 40 frames {max(moved(still, later)) if len(later) == len(still) else 'budget differs'}")
+    gale, _ = vertices("WindOn", cards=4, wind=6.0, wind_direction=35.0)
+    check("a tree in a gale is the same vertex budget", len(still) == len(gale),
+          f"{len(still)} against {len(gale)}")
+    delta = moved(still, gale)
+    zs = [p[2] for p in still]
+    base = max(d for d, z in zip(delta, zs) if z < 0.05)
+    top = max(d for d, z in zip(delta, zs) if z > 0.8 * 20.0)
+    check("the trunk base does not move at all in a gale", base == 0.0,
+          f"max base displacement {base}")
+    check("but the crown does", top > 0.1, f"{top:.3f} m at the top")
+
+    # Linear in Wind, so the knob means something and a storm is not a shrug.
+    soft, _ = vertices("WindSoft", cards=4, wind=1.0)
+    hard, _ = vertices("WindHard", cards=4, wind=2.0)
+    ds, dh = max(moved(still, soft)), max(moved(still, hard))
+    check("displacement is linear in Wind", ds > 0.0 and abs(dh / ds - 2.0) < 0.05,
+          f"{ds:.4f} m at Wind 1, {dh:.4f} m at Wind 2")
+
+    # The anchor invariant: a card rides its twig, so the F2 attachment residual is unchanged.
+    ev, mesh, params = build("WindCards", cards=4, wind=6.0, wind_direction=35.0)
+    gaps = card_base_gaps(mesh, card_faces(mesh), tip_points(mesh, params))
+    ev.to_mesh_clear()
+    check("every card's base still sits on its tip in a gale", gaps and max(gaps) < 1e-4,
+          f"worst base gap {max(gaps):.2e} m over {len(gaps)} cards" if gaps else "no cards")
+
+    # The flutter is the cards' own term, and Sway 0 is how you prove it reaches nothing else.
+    only_leaves, flags = vertices("WindLeaf", cards=4, wind=6.0, sway=0.0, leaf_flutter=2.0)
+    d = moved(still, only_leaves)
+    wood = max(v for v, c in zip(d, flags) if c < 0.5)
+    leaf = max(v for v, c in zip(d, flags) if c > 0.5)
+    check("at Sway 0 the flutter moves the cards and NOTHING else", wood == 0.0 and leaf > 0.01,
+          f"wood {wood}, leaves {leaf:.3f} m")
+
+    # Scene Time is the clock: two frames of the same tree differ, and re-reading one repeats.
+    obj = bpy.data.objects["WindOn"]
+
+    def at_frame(frame):
+        bpy.context.scene.frame_set(frame)
+        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        m = ev.to_mesh()
+        out = [tuple(v.co) for v in m.vertices]
+        ev.to_mesh_clear()
+        return out
+
+    f1, f31 = at_frame(1), at_frame(31)
+    again = at_frame(1)
+    bpy.context.scene.frame_set(1)
+    check("the tree moves between frames", max(moved(f1, f31)) > 0.01,
+          f"max {max(moved(f1, f31)):.3f} m between frame 1 and 31")
+    check("and the same frame renders the same, so an animation is deterministic",
+          max(moved(f1, again)) == 0.0, f"max {max(moved(f1, again))}")
+
+
+def check_wind_phase():
+    """A stand must not pulse in unison, and the honest limit of that claim.
+
+    Two claims, and the second corrects the plan rather than confirming it. Per-TREE phase comes
+    from the object's own world location, so two trees placed apart are out of step. Per-INSTANCE
+    phase does not exist and cannot: an instanced object is evaluated once and the result copied,
+    which is the same property docs/FOLIAGE.md 2.5 already records for the seed. Measured here
+    rather than argued, because "F4 adds per-instance wind phase" was written before anyone tried.
+    """
+    a, _ = vertices("PhaseA", cards=4, wind=4.0)
+    obj_b = build("PhaseB", cards=4, wind=4.0)[0]
+    bpy.data.objects["PhaseB"].location = (11.0, 7.0, 0.0)
+    bpy.context.view_layer.update()
+    ev = bpy.data.objects["PhaseB"].evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = ev.to_mesh()
+    b = [tuple(v.co) for v in mesh.vertices]
+    ev.to_mesh_clear()
+    check("two identical trees standing apart do not sway in unison",
+          len(a) == len(b) and max(moved(a, b)) > 0.05,
+          f"max local difference {max(moved(a, b)):.3f} m" if len(a) == len(b) else "budget differs")
+
+    # ... and the same tree moved back is back in phase, so the phase is the PLACE and not a
+    # hidden per-object random that would make a bake unreproducible.
+    bpy.data.objects["PhaseB"].location = (0.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    ev = bpy.data.objects["PhaseB"].evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = ev.to_mesh()
+    home = [tuple(v.co) for v in mesh.vertices]
+    ev.to_mesh_clear()
+    check("and moving it back puts it back in phase", max(moved(a, home)) < 1e-6,
+          f"max difference back at the origin {max(moved(a, home)):.2e} m")
+
+    # The per-card phase: every card carries its own, spread over the range, so a spray shimmers.
+    ev, mesh, _ = build("PhaseCards", cards=4)
+    faces = set(card_faces(mesh))
+    attr_phase = mesh.attributes.get("bbt_fol_phase")
+    per_card = [{round(attr_phase.data[v].value, 6) for v in mesh.polygons[i].vertices}
+                for i in list(faces)[:400]] if attr_phase else []
+    values = sorted({next(iter(s)) for s in per_card if len(s) == 1})
+    ev.to_mesh_clear()
+    check("all four corners of a card share one phase", per_card and all(len(s) == 1 for s in per_card),
+          f"{sum(1 for s in per_card if len(s) != 1)} split cards")
+    check("and cards carry many different phases", len(values) > 0.5 * len(per_card),
+          f"{len(values)} distinct phases over {len(per_card)} cards")
+    check("spread over the whole 0..1 range", values and min(values) < 0.1 and max(values) > 0.9,
+          f"{min(values):.3f}..{max(values):.3f}" if values else "none")
+
+    # The limit, measured. An instanced tree is evaluated once, so every copy shares one phase.
+    src = bpy.data.objects["PhaseA"]
+    src.location = (0.0, 0.0, 0.0)
+    scatter_ng = bpy.data.node_groups.new("PhaseScatter", "GeometryNodeTree")
+    scatter_ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    out = scatter_ng.nodes.new("NodeGroupOutput")
+    line = scatter_ng.nodes.new("GeometryNodeMeshLine")
+    line.inputs["Count"].default_value = 2
+    line.inputs["Offset"].default_value = (25.0, 0.0, 0.0)
+    info = scatter_ng.nodes.new("GeometryNodeObjectInfo")
+    info.inputs["Object"].default_value = src
+    info.transform_space = "ORIGINAL"
+    iop = scatter_ng.nodes.new("GeometryNodeInstanceOnPoints")
+    scatter_ng.links.new(line.outputs["Mesh"], iop.inputs["Points"])
+    scatter_ng.links.new(info.outputs["Geometry"], iop.inputs["Instance"])
+    realize = scatter_ng.nodes.new("GeometryNodeRealizeInstances")
+    scatter_ng.links.new(iop.outputs["Instances"], realize.inputs["Geometry"])
+    scatter_ng.links.new(realize.outputs["Geometry"], out.inputs["Geometry"])
+    host = bpy.data.objects.new("PhaseStand", bpy.data.meshes.new("PhaseStand"))
+    bpy.context.collection.objects.link(host)
+    mod = host.modifiers.new("GeometryNodes", "NODES")
+    mod.node_group = scatter_ng
+    ev = host.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = ev.to_mesh()
+    half = len(mesh.vertices) // 2
+    first = [tuple(v.co) for v in mesh.vertices[:half]]
+    second = [(v.co[0] - 25.0, v.co[1], v.co[2]) for v in mesh.vertices[half:]]
+    ev.to_mesh_clear()
+    same = max(moved(first, second)) if len(first) == len(second) else None
+    check("two INSTANCES of one tree share a phase, which is why F5 bakes N variants",
+          same is not None and same < 1e-5,
+          f"max difference between instances {same:.2e} m -- an instanced object is evaluated once"
+          if same is not None else "instance halves differ in size")
+
+
+def check_no_master_change():
+    """This phase must not have widened a SHARED group. The one real hazard in F4.
+
+    Translucency and the season colour are both new terms on a leaf card, and the obvious place for
+    either is S_SurfaceMaster -- which terrain and water embed. A rebuild there reassigns every
+    socket identifier, so one socket costs a revert-to-default on every tuned terrain in the file
+    (the item-3 and snow-line bumps each paid exactly that). Both terms went outside the master
+    instead, and this is the check that says so in numbers rather than in a comment.
+    """
+    from bob_blender_tools.core.materials import shared
+
+    check("the global shared-group version is untouched by this phase", shared.S_GROUP_VER == 6,
+          f"S_GROUP_VER {shared.S_GROUP_VER}")
+    check("the leaf season layer carries its OWN version instead",
+          shared.group_version(materials.LEAF_SEASON) == 1
+          and materials.LEAF_SEASON in shared._GROUP_VER_OVERRIDE,
+          f"{materials.LEAF_SEASON} v{shared.group_version(materials.LEAF_SEASON)}")
+    master = materials.surface_master_group()
+    names = {s.name for s in master.interface.items_tree if getattr(s, "in_out", "") == "INPUT"}
+    outs = {s.name for s in master.interface.items_tree if getattr(s, "in_out", "") == "OUTPUT"}
+    check("S_SurfaceMaster gained no leaf sockets", not (names | outs) & {
+        "Translucency", "Season", "Autumn", "Autumn Tint", "Transmit"},
+          f"{sorted((names | outs) & {'Translucency', 'Season', 'Autumn'})}")
+    check("and it still outputs exactly the three the wrapper drives",
+          outs == {"Base Color", "Roughness", "Metallic"}, str(sorted(outs)))
+    # The other half of 2.7's argument, re-measured: alpha never became a texture-set role, so no
+    # sampler version bump and no weather layer modulating a matte.
+    from bob_blender_tools.core.materials import texset
+    check("opacity is still not a texture-set sampler role", "opacity" not in texset._ROLES,
+          str(sorted(texset._ROLES)))
+
+
+def check_translucency():
+    """A leaf lets light through, and the cutout still cuts.
+
+    The failure this exists for is specific and would render: a Mix Shader between the Principled
+    and a Translucent lights the WHOLE quad, because the Principled's Alpha mattes only the
+    Principled. Every texel the atlas cut away comes back as glowing translucent card, and a spray
+    renders as a bright rectangle -- which reads as a lighting problem, not a wiring one. So the
+    translucent branch is matted by the same cutout first, and that gate is what is measured here.
+    """
+    ev, _mesh, _ = build("Trans", cards=4)
+    ev.to_mesh_clear()
+    card = bpy.data.materials["M_Trans Leaf"]
+    nt = card.node_tree
+    out = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeOutputMaterial")
+    surface = out.inputs["Surface"].links[0].from_node if out.inputs["Surface"].is_linked else None
+    check("the card's surface is a mix, not the Principled alone",
+          surface is not None and surface.bl_idname == "ShaderNodeMixShader",
+          surface.bl_idname if surface else "not linked")
+    if surface is None:
+        return
+    check("and its amount is a leaf's, not a sheet of paper's",
+          0.05 <= surface.inputs[0].default_value <= 0.6,
+          f"translucency {surface.inputs[0].default_value:.2f}")
+    branches = [i.links[0].from_node for i in (surface.inputs[1], surface.inputs[2]) if i.is_linked]
+    kinds = {n.bl_idname for n in branches}
+    check("it mixes the Principled with a second lobe",
+          kinds == {"ShaderNodeBsdfPrincipled", "ShaderNodeMixShader"}, str(sorted(kinds)))
+    gate = next((n for n in branches if n.bl_idname == "ShaderNodeMixShader"), None)
+    if gate is None:
+        return
+    inner = {n.links[0].from_node.bl_idname for n in (gate.inputs[1], gate.inputs[2]) if n.is_linked}
+    check("whose translucent half is matted against a Transparent BSDF",
+          inner == {"ShaderNodeBsdfTransparent", "ShaderNodeBsdfTranslucent"}, str(sorted(inner)))
+    bsdf = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    alpha_src = bsdf.inputs["Alpha"].links[0].from_socket if bsdf.inputs["Alpha"].is_linked else None
+    gate_src = gate.inputs[0].links[0].from_socket if gate.inputs[0].is_linked else None
+    check("gated by the SAME cutout the Principled uses, so neither branch fills the gaps",
+          alpha_src is not None and alpha_src == gate_src,
+          f"{alpha_src.node.name if alpha_src else None} against "
+          f"{gate_src.node.name if gate_src else None}")
+    # The bark must not have picked any of this up: a translucent trunk is a lamp.
+    bark = bpy.data.materials["M_Trans Bark"]
+    bark_out = next(n for n in bark.node_tree.nodes if n.bl_idname == "ShaderNodeOutputMaterial")
+    src = bark_out.inputs["Surface"].links[0].from_node
+    check("the bark is still a plain Principled", src.bl_idname == "ShaderNodeBsdfPrincipled",
+          src.bl_idname)
+
+
+def _season_render(season, path):
+    """Render the scene with the world set to a season; return (mean R - mean G, mean luminance).
+
+    Rendered rather than read off the graph, for the reason every other shading check in this suite
+    is: a wired-and-dead season layer passes every structural test. Red minus green because that is
+    what turning is -- a leaf loses chlorophyll and keeps its carotenoids -- and it is measured as a
+    DIFFERENCE between two renders of the same frame, so the background cancels out.
+    """
+    from bob_blender_tools.core import shading
+
+    scene = bpy.context.scene
+    scene.bbt_env.season = season
+    shading.install_env_drivers(scene)          # re-installed so the value is current, as Apply does
+    scene.frame_set(scene.frame_current)
+    var = render_variance("BLENDER_EEVEE_NEXT", path)
+    if var is None:
+        var = render_variance("BLENDER_EEVEE", path)
+    if var is None or not os.path.isfile(path + ".png"):
+        return None
+    img = bpy.data.images.load(path + ".png")
+    px = np.asarray(img.pixels[:], dtype=np.float32).reshape(-1, 4)
+    bpy.data.images.remove(img)
+    return float((px[:, 0] - px[:, 1]).mean()), float(px[:, :3].mean())
+
+
+def check_season():
+    """Autumn has to reach the canopy, and only the canopy.
+
+    The season path is the shared one -- a driven Value node in a shared group, read live -- so the
+    thing to prove is that it arrives: `set_env`, Apply Season and the panel all move `bbt_env`, and
+    a canopy that does not follow is the "season swap changed nothing" failure the env-driver work
+    was built to end.
+    """
+    from bob_blender_tools.core import env as bbt_env
+
+    if getattr(bpy.context.scene, "bbt_env", None) is None:
+        bbt_env.register()
+    os.makedirs(OUT, exist_ok=True)
+    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Season",
+              "params": dict(assets.foliage_species("broadleaf")["params"], seed=4, wind=0.0),
+              "reset": True})
+    for obj in list(bpy.data.objects):
+        if obj.name != "Season":
+            bpy.data.objects.remove(obj, do_unlink=True)
+    tree = bpy.data.objects["Season"]
+    height = max(v.co.z for v in tree.evaluated_get(
+        bpy.context.evaluated_depsgraph_get()).to_mesh().vertices)
+    bpy.ops.object.light_add(type="SUN", location=(0, 0, height * 2))
+    bpy.context.active_object.data.energy = 5.0
+    bpy.ops.object.camera_add(location=(0, -height * 1.5, height * 0.5),
+                              rotation=(math.pi / 2, 0, 0))
+    bpy.context.scene.camera = bpy.context.active_object
+
+    summer = _season_render("summer", os.path.join(OUT, "season_summer"))
+    autumn = _season_render("autumn", os.path.join(OUT, "season_autumn"))
+    winter = _season_render("winter", os.path.join(OUT, "season_winter"))
+    if summer is None or autumn is None:
+        print("[SKIP] EEVEE could not render the season frames in this environment")
+        return
+    check("autumn turns the canopy warmer than summer does", autumn[0] > summer[0] + 0.002,
+          f"red-minus-green {summer[0]:+.4f} in summer against {autumn[0]:+.4f} in autumn")
+    if winter is not None:
+        check("winter is a dead autumn leaf, part-way between the two",
+              summer[0] < winter[0] < autumn[0] + 1e-4,
+              f"winter {winter[0]:+.4f} between summer {summer[0]:+.4f} and autumn {autumn[0]:+.4f}")
+    # The season must not be a global tint: with no cards at all, nothing may change.
+    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Season",
+              "params": dict(assets.foliage_species("broadleaf")["params"], seed=4, wind=0.0,
+                             cards=0), "reset": True})
+    bare_summer = _season_render("summer", os.path.join(OUT, "season_bare_summer"))
+    bare_autumn = _season_render("autumn", os.path.join(OUT, "season_bare_autumn"))
+    if bare_summer is not None and bare_autumn is not None:
+        check("a bare trunk does not turn: the season reaches the CARDS, not the tree",
+              abs(bare_autumn[0] - bare_summer[0]) < 0.0005,
+              f"bark red-minus-green {bare_summer[0]:+.5f} against {bare_autumn[0]:+.5f}")
+    bpy.context.scene.bbt_env.season = "summer"
+
+
+def check_panel():
+    """The BobFoliage panel (docs/FOLIAGE.md 4.2), which is as gateable as a recipe.
+
+    Registers the addon, which everything above deliberately does not: this is the only section
+    that needs the ui module, and `headless_redwood.py` does the same for the curve ops. It runs
+    LAST for that reason -- once `bbt_env` exists, a build seeds its wind from the world, and every
+    measurement above was taken on a still tree.
+
+    What it measures is the three properties the phase promised, plus the one that matters most and
+    is the easiest to lose: that the tree-building layer needs no PropertyGroup at all.
+    """
+    import bob_blender_tools
+    from bob_blender_tools.core import env as bbt_env
+    from bob_blender_tools.core import foliage_build
+
+    # `check_season` registers the shared world on its own (it is core, so it can); the addon's
+    # own register does it again through Firmament and raises on the duplicate class. Hand it back
+    # first, so the addon owns it from here as it does in a real session.
+    if getattr(bpy.context.scene, "bbt_env", None) is not None:
+        try:
+            bbt_env.unregister()
+        except (RuntimeError, AttributeError):
+            pass
+    bob_blender_tools.register()
+    scene = bpy.context.scene
+
+    # 1. The build layer is bpy-only, not ui-only: core/foliage_build.py imports no ui module and
+    #    reads no panel state, which is what keeps BobFoliage off the live-bridge-only list every
+    #    curve op is on (docs/MCP.md, known gap). A source check, because an import is a fact.
+    src = open(os.path.join(REPO, "blender", "extensions", "bob_blender_tools", "core",
+                            "foliage_build.py")).read()
+    bad = [tok for tok in ("from ..ui", "from .ui", "import ui", "bbt_foliage.", "bbt_scatter",
+                           "bbt_curves") if tok in src]
+    check("the tree-building layer imports no ui and reads no panel state", not bad, str(bad))
+
+    # 2. A species preset reaches a tree as plain params, with no panel in the loop at all.
+    grown = foliage_build.grow("GateTree", dict(assets.foliage_species("conifer")["params"],
+                                                seed=5), species="conifer", scene=scene)
+    check("core grows a tree with no panel involved", grown is not None and
+          foliage_build.is_foliage(grown), grown.name if grown else "none")
+    check("and stamps it, which is how the panel and the wind applier find it",
+          foliage_build.species_of(grown) == "conifer", foliage_build.species_of(grown))
+    check("it lands in the authoring collection",
+          foliage_build.FOLIAGE_COLL in [c.name for c in grown.users_collection],
+          str([c.name for c in grown.users_collection]))
+
+    # 3. Adding a second tree does not disturb the first one's tuned knobs.
+    tuned = foliage_build._live_input(grown, "Card Size")
+    tuned.value = 1.37
+    second = foliage_build.grow("GateTree2", dict(assets.foliage_species("broadleaf")["params"]),
+                                species="broadleaf", scene=scene)
+    scene.bbt_foliage.active = 1
+    check("adding a tree leaves another tree's tuned knobs alone",
+          abs(foliage_build._live_input(grown, "Card Size").value - 1.37) < 1e-6,
+          f"Card Size {foliage_build._live_input(grown, 'Card Size').value:.3f} after a second tree")
+    check("and the panel lists both", len(foliage_build.foliage_objects(scene)) == 2,
+          str([o.name for o in foliage_build.foliage_objects(scene)]))
+
+    # 4. Loading a species keeps the tree's transform AND its object identity: a preset is params
+    #    applied to a tree, not a new tree, so anything pointing at it still does.
+    grown.location = (3.0, -4.0, 5.0)
+    before = grown.name
+    reloaded = foliage_build.load_species(grown, "shrub", scene=scene)
+    check("loading a species keeps the same object", reloaded is grown and grown.name == before,
+          f"{before} -> {reloaded.name if reloaded else None}")
+    check("and its transform", tuple(round(v, 5) for v in grown.location) == (3.0, -4.0, 5.0),
+          str(tuple(grown.location)))
+    check("and it is now that species", foliage_build.species_of(grown) == "shrub",
+          foliage_build.species_of(grown))
+
+    # 5. A structural rebuild keeps tuned live knobs (the reason Build is a press and not a callback).
+    foliage_build._live_input(second, "Droop").value = 0.81
+    foliage_build.rebuild(second, overrides={"profile_segments": 4}, scene=scene)
+    check("a structural rebuild keeps the tuned live knobs",
+          abs(foliage_build._live_input(second, "Droop").value - 0.81) < 1e-6,
+          f"Droop {foliage_build._live_input(second, 'Droop').value:.3f} after a rebuild")
+
+    # 6. The world feed: the world's wind reaches every tree, with no rebuild and no per-tree press.
+    scene.bbt_env.wind_strength = 4.25
+    scene.bbt_env.wind_direction = 210.0
+    reached = foliage_build.apply_wind(scene)
+    winds = [foliage_build._live_input(o, "Wind").value
+             for o in foliage_build.foliage_objects(scene)]
+    dirs = [foliage_build._live_input(o, "Wind Direction").value
+            for o in foliage_build.foliage_objects(scene)]
+    check("the world's wind reaches every tree", reached == len(winds)
+          and all(abs(w - 4.25) < 1e-5 for w in winds), f"{reached} trees, winds {winds}")
+    check("direction too", all(abs(d - 210.0) < 1e-4 for d in dirs), str(dirs))
+    # And it is the WORLD applier that does it, so a slider in the World panel is enough.
+    from bob_blender_tools.ui import world as ui_world
+    scene.bbt_env.wind_strength = 0.75
+    ui_world.apply_all(scene)
+    check("and the World applier is what runs it, so no BobFoliage press is needed",
+          all(abs(foliage_build._live_input(o, "Wind").value - 0.75) < 1e-5
+              for o in foliage_build.foliage_objects(scene)),
+          str([foliage_build._live_input(o, "Wind").value
+               for o in foliage_build.foliage_objects(scene)]))
+
+    # 7. The two texture pickers exist, their Generate buttons are real operators, and Make Variants
+    #    is NOT here: a button that does nothing teaches an artist to distrust the panel, so F5
+    #    brings it with the thing it does (docs/FOLIAGE.md 6).
+    from bob_blender_tools.ui import foliage as ui_foliage
+    props = {p for p in ui_foliage.BBT_FoliageProps.__annotations__}
+    check("the panel carries both texture-set pickers", {"bark_set", "atlas"} <= props,
+          str(sorted(props & {"bark_set", "atlas"})))
+    for op in ("foliage_generate_bark", "foliage_generate_atlas", "foliage_add",
+               "foliage_load_species", "foliage_build"):
+        check(f"{op} is a registered operator", hasattr(bpy.ops.bob_blender_tools, op))
+    variants = [n for n in dir(bpy.ops.bob_blender_tools) if "variant" in n and "foliage" in n]
+    check("Make Variants is absent rather than greyed, and arrives with F5", not variants,
+          str(variants))
 
 
 def check_generation(args):
@@ -1084,8 +1560,19 @@ def main(argv=None):
     check_bark_uv()
     check_grain()
     check_atlas_sidecar()
+
+    # -- F4: the wind, what it costs the shared groups, the translucency, the season, the panel ----
+    check_wind()
+    check_wind_phase()
+    check_no_master_change()
+    check_translucency()
+
     check_render()      # deletes everything but its own tree to get a clean frame
-    check_generation(args)  # last: needs a server, and renders its own frame the same way
+    check_season()      # renders its own frames the same way, one per season
+    check_generation(args)  # needs a server; renders its own frame
+    # Last, because it registers the addon: once bbt_env exists a build seeds its wind from the
+    # world, and every measurement above was taken on a still tree.
+    check_panel()
 
     print()
     if FAILURES:

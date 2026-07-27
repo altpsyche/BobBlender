@@ -501,6 +501,11 @@ _FOLIAGE_SHAPE_KEYS = (
     "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
     "cards", "card_size", "card_width", "droop", "card_spread",
     "atlas_cols", "atlas_rows", "bark_scale", "bark_set", "atlas",
+    # How stiff this species is (BobFoliage F4). A spruce barely moves and a birch is all motion, so
+    # these belong to the species the way its taper does. `wind` and `wind_direction` deliberately
+    # do NOT: they are the WORLD's, written onto every tree by the world applier, and a preset that
+    # set them would be a tree carrying its own weather.
+    "sway", "leaf_flutter",
 )
 _FOLIAGE_LEVEL_KEYS = ("branches", "angle", "length", "radius", "phyllotaxy", "start")
 _FOLIAGE_MAX_LEVELS = 4

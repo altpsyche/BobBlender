@@ -129,43 +129,60 @@ def _live_env_on(scene):
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 
+def _env_driven_groups():
+    """Every shared group carrying env-driven Value nodes, as (group, drivers) pairs.
+
+    S_EnvState is the world-to-shader bridge every master ends in; S_LeafSeason is BobFoliage's
+    leaf-card season layer, which is a group of its own precisely so a season term did not have to
+    widen S_EnvState's interface and reset every tuned terrain in the file (materials.LEAF_SEASON).
+    A second group means a second place to forget, so the list lives here and both installers walk
+    it -- a driven Value node that nothing installs a driver on holds its default silently, which is
+    a canopy stuck in summer with nothing on screen to say so.
+    """
+    return ((materials.env_state_group(), materials.ENV_STATE_DRIVERS),
+            (materials.leaf_season_group(), materials.LEAF_SEASON_DRIVERS))
+
+
 def install_env_drivers(scene):
-    """Drivers on the single shared S_EnvState group so every material reads the live world.
+    """Drivers on the shared env-reading groups so every material reads the live world.
     Reinstalled on every New/Convert (harmless if already present)."""
-    g = materials.env_state_group()
-    for node_name, field, _default in materials.ENV_STATE_DRIVERS:
-        node = g.nodes.get(node_name)
-        if node is None:
-            continue
-        sock = node.outputs[0]
-        try:
-            sock.driver_remove("default_value")
-        except (TypeError, RuntimeError):
-            pass
-        fc = sock.driver_add("default_value")
-        fc = fc[0] if isinstance(fc, list) else fc
-        drv = fc.driver
-        drv.type = "SCRIPTED"
-        var = drv.variables.new()
-        var.name = "v"
-        var.type = "SINGLE_PROP"
-        tgt = var.targets[0]
-        tgt.id_type = "SCENE"
-        tgt.id = scene
-        tgt.data_path = "bbt_env." + field
-        drv.expression = "v"
+    for g, drivers in _env_driven_groups():
+        for node_name, field, _default in drivers:
+            node = g.nodes.get(node_name)
+            if node is None:
+                continue
+            sock = node.outputs[0]
+            try:
+                sock.driver_remove("default_value")
+            except (TypeError, RuntimeError):
+                pass
+            fc = sock.driver_add("default_value")
+            fc = fc[0] if isinstance(fc, list) else fc
+            drv = fc.driver
+            drv.type = "SCRIPTED"
+            var = drv.variables.new()
+            var.name = "v"
+            var.type = "SINGLE_PROP"
+            tgt = var.targets[0]
+            tgt.id_type = "SCENE"
+            tgt.id = scene
+            # An ENUM field drives as its INDEX (measured on 5.2: season "autumn" -> 2.0), which is
+            # what both the weather mapping and the leaf season layer decode.
+            tgt.data_path = "bbt_env." + field
+            drv.expression = "v"
 
 
 def remove_env_drivers():
-    g = bpy.data.node_groups.get(materials.ENV_STATE)
-    if g is None:
-        return
-    for node in g.nodes:
-        if node.type == "VALUE":
-            try:
-                node.outputs[0].driver_remove("default_value")
-            except (TypeError, RuntimeError):
-                pass
+    for name in (materials.ENV_STATE, materials.LEAF_SEASON):
+        g = bpy.data.node_groups.get(name)
+        if g is None:
+            continue
+        for node in g.nodes:
+            if node.type == "VALUE":
+                try:
+                    node.outputs[0].driver_remove("default_value")
+                except (TypeError, RuntimeError):
+                    pass
 
 
 def feed_env(scene):

@@ -1,9 +1,10 @@
 # BobFoliage: trees from curves and cards, not from image-to-3D
 
-Plan document, part built. **F1, F2 and F3 are landed** (`core/geonodes/recipes/foliage.py` and
-`core/comfy.py` / `core/comfy_maps.py`, gated by `tools/scripts/headless_foliage.py`, 126 checks);
-F4 and F5 are still plan. Where this describes F1 to F3 the code is the source of truth, the way it is
-in [SPLINES.md](SPLINES.md) and [SYSTEMS.md](SYSTEMS.md); everything else is intent.
+Plan document, part built. **F1, F2, F3 and F4 are landed** (`core/geonodes/recipes/foliage.py`,
+`core/foliage_build.py`, `ui/foliage.py` and `core/comfy.py` / `core/comfy_maps.py`, gated by
+`tools/scripts/headless_foliage.py`, 184 checks); F5 is still plan. Where this describes F1 to F4 the
+code is the source of truth, the way it is in [SPLINES.md](SPLINES.md) and [SYSTEMS.md](SYSTEMS.md);
+everything else is intent.
 
 **Origin.** Raised out of
 [COMFYUI.md's Foliage section](COMFYUI.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
@@ -143,10 +144,70 @@ card work.
 
 ### 2.4 Wind and season, for free
 
-The cards read `S_EnvState` like every other BobShader, so wind sway and autumn colour come from the
-[shared env](MCP.md#reading-the-scene-back) rather than from per-tree animation. Sway is a
-vertex-level deflection driven by `Wind` and `Wind Direction` with a per-instance phase offset so a
-stand does not pulse in unison; autumn is the same season path the rest of the suite already reads.
+**Landed at F4.** Wind and season both come from the [shared env](MCP.md#reading-the-scene-back)
+rather than from per-tree animation, so a tree responds to the weather with no keyframes and no
+per-tree press. What each of them turned out to be is not quite what this section predicted.
+
+**Sway is geometry, not shading.** It is a vertex deflection in the recipe (`_sway`), one
+`Set Position` on the joined mesh, and it has to be: EEVEE Next has no vertex displacement, so a
+shader cannot move a leaf. The world reaches it through the two ordinary live knobs `Wind` and
+`Wind Direction`, which the World applier writes onto every tree
+([4.6](#46-how-the-world-reaches-a-tree)). The offset is
+
+    downwind * Wind * Sway * 0.02 * Height * (anchor.z/Height)^2 * (0.6 + 0.4 * gust)
+  + crosswind * Wind * Leaf Flutter * 0.30 * Card Size * card * t * wobble
+
+and four details in it are load-bearing:
+
+- **The height weight is read from `bbt_fol_anchor`, the SKELETON point a vertex belongs to**, not
+  from the vertex itself. A swept ring's vertices sit at slightly different heights, so a squared
+  falloff evaluated per vertex shears every cross-section — and drifts a tip ring away from the card
+  standing on it. Measured before the fix: **7.7e-05 m** at `Wind` 6, eighty times F2's attachment
+  residual, on a tree that rendered perfectly. With the anchor the residual in a gale is 9.67e-07 m,
+  which is F2's number unchanged. This is F4's own contribution to the tally in
+  [2.5.1](#251-what-f1-and-f2-measured), and it was found by writing the check.
+- **The gust rides on a bias (0.6 + 0.4·sin)**, so wind pushes a tree over and then breathes about
+  that lean. An unbiased sine swings it through vertical twice a cycle, which reads as a metronome.
+- **The flutter is gated to the cards and weighted by `bbt_fol_t`.** That is exactly why F2 rewrote
+  `bbt_fol_t` on the cards to their own 0-at-the-base: a card pivots at the twig it hangs from
+  rather than through it. Measured at `Sway` 0: the wood moves **exactly 0.0** and the cards move.
+- **Scene Time is the clock**, so an animation is deterministic and a still frame is still. `Wind`
+  defaults to 0, which is what lets every F1–F3 measurement stand unchanged.
+
+`Sway` and `Leaf Flutter` are per-species — a spruce is the stiffest thing in the set at 0.45 / 0.5
+and a grass tuft the loosest at 1.6 / 1.8 — so they are preset params. `Wind` and `Wind Direction`
+are deliberately NOT: they belong to the world, the applier overwrites them on every change, and a
+preset carrying one would be a tree bringing its own weather.
+
+**Phase, and the claim this section had to correct.** A per-TREE phase comes from the object's own
+world location (Self Object → Object Info → Location), so a stand placed by hand is out of step the
+moment it is placed and a tree dragged across the scene re-phases as it goes. A per-INSTANCE phase
+does not exist and cannot: an instanced object is evaluated once and the result copied. Measured —
+two scatter instances of one tree differ by **9.54e-07 m**, i.e. not at all. That is the same
+property [2.5](#25-one-tree-in-a-panel-n-variants-in-the-world) already records for the seed, with
+the same answer: variety across a stand comes from baking N variants, each of which carries its own
+phase. The line in 2.5 promising "per-instance wind phase" was written before anyone tried it.
+
+**Season is shading, and it did not touch a shared master.** A `S_LeafSeason` group sits between the
+surface master's Base Color and the card's Principled, carrying its own driven `env_season` Value
+node (a driver reads an enum as its index — measured, `autumn` drives 2.0). Autumn re-tints by
+LUMINANCE rather than mixing toward a flat colour, so the atlas's light and shade survive and a
+green leaf can brighten into amber instead of only darkening to brown; winter is the same turn
+further along (`_WINTER_TURN` 0.55), because a leaf still on the tree in winter is a dead autumn
+leaf and dropping it is geometry. The turn is staggered per card by `bbt_fol_phase` — the same
+per-card random the flutter reads, so a leaf that moves as itself also turns as itself — because a
+canopy that turns as one flat colour is the tell of a season swap.
+
+Measured over three renders of one broadleaf, as mean red-minus-green across the frame: summer
+**+0.0004**, winter **+0.0029**, autumn **+0.0049**; and with `Cards` 0 the bark reads +0.00125 in
+both summer and autumn, so the season reaches the leaves and nothing else.
+
+**Why S_LeafSeason is its own group and not a `Season` output on S_EnvState.** S_EnvState is
+embedded by S_Weather and by S_WaterMaster; rebuilding it reassigns every socket identifier and
+every embedder left un-rebuilt keeps stale links, which is why the item-3 and snow-line changes each
+cost a global `S_GROUP_VER` bump and a revert-to-default on every tuned terrain in the file. A term
+that reaches only leaves is not worth that. The gate holds the result as a number:
+`S_GROUP_VER` is still **6** and S_SurfaceMaster's interface is untouched by this whole track.
 
 Precedent: `S_Weather` and `S_EnvState` (`core/materials/weather.py`), and the wind inputs already
 in `particulates` and `volumetrics`.
@@ -177,8 +238,11 @@ is the working default — enough that a repeat is not findable in a frame, few 
 minute.
 
 Variety on top of N is continuous and free, from what scatter already does: random scale, random
-yaw, the altitude and noise masks. F4 adds per-instance wind phase and autumn timing, which is the
-one that matters most — identical geometry moving out of phase reads as different trees.
+yaw, the altitude and noise masks. **Wind phase is NOT on that list, and F4 measured why.** An
+instanced tree is evaluated once, so every copy of one variant shares its phase (measured: two
+instances differ by 9.54e-07 m). Phase varies per VARIANT, from each baked tree's own location, and
+per CARD within a tree — which is where the shimmer comes from — but not per instance. Same property
+as the seed, same answer: bake N. See [2.4](#24-wind-and-season-for-free).
 
 **Hero trees skip all of this.** A tree the camera gets close to stays a live GN object with its own
 seed and its own sliders, placed by hand. Same recipe, no bake. That is the LIVE-versus-BAKED split
@@ -241,8 +305,12 @@ Neither is a coincidence. They are the same failure the whole track exists to na
 not the same as right*, and only a number tells them apart. F3 found a third one of the same family
 (bark shaded through a box projection, so no bark UV reached the shader at all) and one of its own
 making (an alpha bleed that read from the silhouette's own background pixels, so it pushed white
-outwards and made a *harder* halo than doing nothing). Tally, by the phase that FOUND them rather than
-the one that shipped them: F2 found two of F1's, F3 found one of F2's and one of its own.
+outwards and made a *harder* halo than doing nothing). F4 found one of its own the same way: a wind
+falloff weighted per VERTEX sheared every swept ring and drifted a tip 7.7e-05 m away from the card
+standing on it, in a tree that rendered perfectly — fixed by weighting from the skeleton point
+(`bbt_fol_anchor`) instead, at no vertex cost. Tally, by the phase that FOUND them rather than the
+one that shipped them: F2 found two of F1's, F3 found one of F2's and one of its own, F4 one of its
+own. **Every one of the six was found by writing a check, and none by looking.**
 
 #### What F3 measured
 
@@ -383,6 +451,24 @@ in this family across two phases, all found by writing a check rather than by lo
   fourth master would have bought, it belongs with the season colour work rather than the geometry,
   and it is not worth a second full node group — so it waits for F4.
 
+  **F4 added it, still with no fourth master and still outside S_SurfaceMaster** — and the argument
+  turned out stronger than the one that deferred it. Three reasons, decisive last: the master is
+  SHARED, so one socket on it costs a revert-to-default on every tuned terrain in the file; it is the
+  matte argument above one step further, since translucency is about the leaf as a thin OBJECT and
+  not as a surface, and a wet leaf must not turn transparent; and **the master's contract cannot
+  express it at all** — it outputs three scalars into one Principled, and translucency is a second
+  BSDF lobe. There is no socket shape on the master that carries one.
+
+  So it lives in the card WRAPPER (`_wire_translucency`): a Translucent BSDF mixed into the surface
+  at 0.25, its colour taken from the season-turned base so a backlit autumn tree glows amber. The
+  part that had to be right is the gate. A plain mix of a Principled and a Translucent lights the
+  whole quad, because the Principled's Alpha mattes only the Principled — every texel the atlas cut
+  away comes back as glowing card and a spray renders as a bright rectangle, which reads as a
+  lighting problem rather than a wiring one. The translucent branch is therefore matted against a
+  Transparent BSDF by the SAME cutout socket first, so each branch is matted exactly once and the
+  edges do not thin the way a doubled alpha would. The gate asserts both branches and that the two
+  cutout sources are the same socket.
+
   The alpha comes from the set's `opacity` map if it ships one, else the basecolor image's own alpha
   channel, and goes **straight to the Principled, not through the master**. Alpha is a matte: it says
   which texels are leaf and which are the gap between leaves, whereas every term the master adds is
@@ -516,7 +602,9 @@ white outwards and produced a *harder* halo than doing nothing. The floor is 0.9
 
 ### 4.2 A panel of its own, and why that is not panel sprawl
 
-**Owned by [F4](#5-phases); not built yet.** BobFoliage gets its own N-panel for AUTHORING. The
+**Landed at F4** (`ui/foliage.py`, with the build layer in `core/foliage_build.py`). BobFoliage has
+its own N-panel for AUTHORING, at panel order 5 — directly after the Scatter stage that routes to
+it, so the artist sent here by Grow in BobFoliage finds it where they were pointed. The
 count forces it: eight trunk knobs plus six per level is around thirty, and folding that into the
 Scatter panel's Active Layer would bury scatter's own controls under a tree editor. Paths is the
 precedent — BobSplines has its own panel and also feeds scatter — and this is the same shape.
@@ -526,11 +614,35 @@ Apply Biome, Generate Asset and Grow Foliage sit together in Scatter, because th
 artist already picks between them. So the suite gains one panel and zero duplicated decisions, which
 is the subtraction rule honoured rather than broken.
 
+What the panel holds, and what it deliberately does not:
+
+| Lives on | What |
+|---|---|
+| The OBJECT | the tree itself, stamped `bbt_foliage`, filed in `BOB_Foliage`, with the species it was built from |
+| The MODIFIER | every live knob — trunk, per level, cards, wind. Edited in place; no sync code, nothing to drift |
+| `Scene.bbt_foliage` | UI state only: the active index, and the structural choices staged for the next Build |
+
+**No panel state reaches a recipe except as a plain param.** Every operator resolves its context and
+calls `core/foliage_build.py`, which imports no ui module and reads no PropertyGroup; the headless
+gate builds trees through the same functions with the addon not registered at all. That is why
+BobFoliage adds no MCP op and is not on the live-bridge-only list every curve op is on
+([known gap](MCP.md#known-gap-ops-that-need-the-addon)) — and the gate checks it as a source fact
+rather than as an intention.
+
 ### 4.3 Many trees, many species
 
-Each authored tree is an OBJECT carrying the foliage modifier, and the panel keeps a scene-level list
-with an active index — the same model `bbt_curves` uses for Paths, not a new one. A species preset is
-a set of params applied to the active tree, so "add a species" is "add a tree and load a preset".
+Each authored tree is an OBJECT carrying the foliage modifier. **The list is the `BOB_Foliage`
+collection**, drawn with a `template_list` over its real objects with an active index in
+`Scene.bbt_foliage` — the Scatter panel's model rather than Paths'. Both were available; what
+decided it is that a `CollectionProperty` of Object pointers has to be kept in step with the scene,
+and a collection cannot fall out of step with itself. A tree deleted in the outliner simply leaves
+the list. `is_foliage` keys off the STAMP and not the collection, so a hero tree dragged into a
+set-dress collection is still a tree to everything that looks for one.
+
+A species preset is a set of params applied to the active tree, so "add a species" is "add a tree and
+load a preset" — and loading one onto an existing tree keeps the object, its transform and its
+identity, because `build_geonodes` rebuilds in place under the same name. Gated: same datablock,
+same location, new shape.
 
 **A species is DATA in a pack, not a dict in the recipe.** [F2 answered.] `<pack>/foliage/<name>.json`
 with a `meta` block (name, description, kind) and a `params` block, resolved over the same search
@@ -632,11 +744,32 @@ no note — stays owned by `headless_redwood.py`.
 The loop closes in the other direction too: Make Variants reports which collection it filled, so the
 artist ends up back at the Scatter panel holding the assets they just grew. That half is F5's.
 
-**Not yet built: the BobFoliage panel itself** ([4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl)),
-which **F4 owns**. Grow in BobFoliage creates the object and selects it, and its thirty-odd knobs are
-live on the object's Geometry Nodes modifier, which is where a Blender user can already reach them —
-so the button is honest and the tree is tunable, but the modifier stack is not an authoring surface
-and the operator's own report says where the knobs are rather than pretending otherwise.
+**The loop closed at F4.** Grow in BobFoliage now builds through `foliage_build.grow`, so the tree it
+makes is the same object the BobFoliage panel adds — stamped, filed in `BOB_Foliage`, already listed
+and already feeling the world's wind — and the operator's report says "tune it in the BobFoliage
+panel" rather than pointing at the modifier stack. It pointed there while there was nowhere better;
+a modifier stack is not an authoring surface, and it is a worse answer now that thirty knobs are
+grouped and labelled one panel away.
+
+### 4.6 How the world reaches a tree
+
+Wind arrives as VALUES written onto each tree's live knobs by the World applier
+(`foliage_build.apply_world_wind`, subscribed at register), not as drivers. Firmament drives its own
+wind knobs with real drivers, and that is right for a cloud layer: one object, one stable modifier.
+A stand is N objects that each get a fresh modifier and fresh socket identifiers on every structural
+rebuild, so N drivers would need reinstalling by every rebuild anyway. Values cost one pass over the
+trees on a world change, need no cleanup when a tree is deleted, and are measurable headlessly —
+a driver's value is only correct on the evaluated copy, which is exactly the kind of thing that
+passes a check and renders wrong.
+
+The build path seeds the same two knobs from `bbt_env` as well, so a tree grown over MCP into a scene
+that is already blowing comes out blowing rather than waiting for the next slider drag. With no
+Firmament there is no world to read, the knobs default to 0, and the tree is still — which is also
+what keeps every F1–F3 measurement valid.
+
+Season goes the other way, through the shader: one driven Value node in a shared group, installed by
+the same `install_env_drivers` that feeds S_EnvState. The two mechanisms are different because the
+two effects are: one moves vertices and one changes a colour.
 
 ## 5. Phases
 
@@ -667,29 +800,35 @@ the other tracks use.
   no bark UV reached the shader at all ([2.7](#27-materials-and-uvs-which-f2-added)). And it answered
   both of its open questions — the atlas grid lives in the set's sidecar, and the seam mattered.
 
-  The gate is `tools/scripts/headless_foliage.py` at **126 checks**, of which the 25 in the generation half
-  prints SKIP and exits 0 with no server. Measured end to end on a warm 5080: a 2×2 atlas in 9.9 s,
+  The gate is `tools/scripts/headless_foliage.py`, which F4 took to **184 checks**, of which the 25
+  in the generation half print SKIP and exit 0 with no server. Measured end to end on a warm 5080: a 2×2 atlas in 9.9 s,
   a bark set in 4.9 s, both resolving through the ordinary pack resolver onto a preset-built conifer
   that renders at luminance range 0.48.
-- **F4 Wind, season, and the panel.** `S_EnvState` into the sway and the colour, per-instance phase,
-  plus card translucency (deferred here from F2, where it was the one term a fourth master would
-  have bought). Check: vertex displacement responds to `set_env` wind, autumn colour responds to
-  season, a stand does not move in unison.
+- **F4 Wind, season, translucency and the panel. DONE.** The sway and the flutter in the recipe, the
+  season layer and the card translucency in the shading, the world feed that drives both, and the
+  BobFoliage panel ([2.4](#24-wind-and-season-for-free), [2.7](#27-materials-and-uvs-which-f2-added),
+  [4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl),
+  [4.6](#46-how-the-world-reaches-a-tree)). The gate is **184 checks**.
 
-  **F4 also owns the BobFoliage panel** ([4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl),
-  [4.3](#43-many-trees-many-species)) — the scene-level tree list with an active index, the species
-  picker, the structural-versus-live split, and the two texture-set pickers with their Generate
-  buttons. It sits here rather than at F5 for three reasons. F4 is the smaller phase and can carry
-  it. F5's Make Variants needs an ACTIVE TREE to bake, which is the list this panel owns, so putting
-  the panel later means F5 builds both. And the order is the artist's order: you author a tree, then
-  you bake variants of it — building the authoring surface after the bake is backwards.
+  It answered its one real hazard in the safe direction: **no shared master was widened.**
+  Translucency is a second BSDF lobe that the master's three-scalar contract cannot express, and the
+  season is a term that reaches only leaves, so both live in the card wrapper and `S_GROUP_VER` is
+  still 6 — which the gate asserts, along with S_SurfaceMaster's output set. `S_LeafSeason` carries
+  its own version in `_GROUP_VER_OVERRIDE`, the way `S_TexSet` does.
 
-  Its own checks, since a panel is as gateable as a recipe: the props feed `build_geonodes` params on
-  press and **no operator reads a PropertyGroup** (the [known gap](MCP.md#known-gap-ops-that-need-the-addon)
-  every curve op is on, and the one thing this track has stayed off by construction); adding a tree
-  and switching the active index does not disturb another tree's tuned knobs; and loading a species
-  onto an existing tree keeps its transform and its object identity, because a preset is params
-  applied to a tree, not a new tree.
+  Two things it corrected rather than confirmed. Per-instance wind phase **does not exist**: an
+  instanced object is evaluated once, measured at 9.54e-07 m between two copies, so phase varies per
+  variant and per card and not per instance ([2.5](#25-one-tree-in-a-panel-n-variants-in-the-world)).
+  And its own defect, in the family this track keeps finding: a per-vertex wind falloff sheared every
+  swept ring and drifted a tip 7.7e-05 m from its own card, fixed by weighting from the skeleton
+  point for no vertices ([2.5.1](#251-what-f1-and-f2-measured)).
+
+  The panel's own checks, since a panel is as gateable as a recipe: the build layer imports no ui and
+  reads no PropertyGroup, so a headless gate grows trees through the same functions the panel does
+  (the [known gap](MCP.md#known-gap-ops-that-need-the-addon) every curve op is on, and the one thing
+  this track has stayed off by construction); adding a tree leaves another tree's tuned knobs alone;
+  a structural rebuild keeps them; loading a species keeps the tree's transform AND its object
+  identity; and the World applier alone is enough to move every tree's wind.
 - **F5 Variants, LODs and scatter.** Make Variants (N seeds into `BOB_Assets_<Kind>`), the foliage
   LOD ladder, then a real stand scattered on a terrain at a real density. Check: no two variants
   share a vertex set, the per-LOD budgets in [2.6](#26-lods), instance counts and frame time per LOD,
@@ -704,7 +843,7 @@ the other tracks use.
 
 ## 6. Open questions
 
-Each is tagged with the phase that forces it. None blocks starting F3.
+Each is tagged with the phase that forces it. None blocks starting F5.
 
 - **[F2, answered] What master does a leaf card use?** The `surface` master with a cutout wired
   straight to the Principled, not a fourth master. See
@@ -722,11 +861,18 @@ Each is tagged with the phase that forces it. None blocks starting F3.
   cylindrical-unwrap seam" suggested: 1,183 of 7,098 faces carried five times their share of the
   texture. Fixed for no vertices and no interface change; the measurement, the fix, and the wrong
   first version of the check are in [2.7](#27-materials-and-uvs-which-f2-added).
-- **[F4, answered] Who builds the BobFoliage panel?** F4, which now says so in its phase entry. It
-  was briefly unowned between F2 and this line, which is the state in which a described feature
-  quietly never gets built. What is still genuinely open is one detail of it: whether **Make
-  Variants** appears on the panel at F4, greyed with a "F5" note, or only arrives with F5. Prefer the
-  second — a button that does nothing teaches an artist to distrust the panel.
+- **[F4, answered] Who builds the BobFoliage panel?** F4 did. **Make Variants is not on it**, which
+  confirms the preference this line recorded rather than inheriting it: a button that does nothing
+  teaches an artist to distrust every other button beside it, and the affordance is worth less than
+  the trust. The panel is complete without it, which is the part worth stating — a hero tree is a
+  finished deliverable on its own ([2.5](#25-one-tree-in-a-panel-n-variants-in-the-world)), so
+  nothing on the panel is waiting for F5 to make sense. Duplicate Tree covers placing a small stand
+  by hand in the meantime, which is what an artist would otherwise want the missing button for.
+- **[F4, answered] Does translucency belong on the surface master?** No, and for a reason stronger
+  than the version-bump cost: the master outputs three scalars into one Principled and translucency
+  is a second BSDF lobe, so there is no socket on it that could carry one. It is wired in the card
+  wrapper next to the alpha, matted by the same cutout. See
+  [2.7](#27-materials-and-uvs-which-f2-added).
 - **[F5] What writes a variant into the pack?** See the F5 phase note; `finish_asset` is the wrong
   tool and reaching for it would undo F1 and F2 both — the tree's UVs, LODs and materials are all
   already correct, and `finish_asset` bakes, decimates and unwraps.

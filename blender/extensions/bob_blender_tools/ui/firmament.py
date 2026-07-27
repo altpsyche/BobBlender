@@ -630,7 +630,7 @@ class BBT_PT_firmament(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 6  # after the pipeline stages (docs/UX-REDESIGN.md section 4)
+    bl_order = 7  # after the pipeline stages (docs/UX-REDESIGN.md section 4)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

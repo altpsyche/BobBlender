@@ -699,7 +699,7 @@ class BBT_OT_scatter_grow_foliage(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        from ..core import assets
+        from ..core import assets, foliage_build
 
         kind = context.scene.bbt_scatter.gen_kind
         species = assets.foliage_species_for_kind(kind)
@@ -707,17 +707,19 @@ class BBT_OT_scatter_grow_foliage(Operator):
             self.report({"ERROR"}, f"No foliage species ships for '{kind}'")
             return {"CANCELLED"}
         preset = assets.foliage_species(species)
-        # An op does not read a PropertyGroup and does not carry panel state into the recipe: the
-        # preset's params go straight to build_geonodes, which is what keeps foliage off the
-        # live-bridge-only list every curve op is on (docs/MCP.md, known gap).
+        # The preset's params go straight to build_geonodes, with no panel state carried into the
+        # recipe: that is what keeps foliage off the live-bridge-only list every curve op is on
+        # (docs/MCP.md, known gap). Through `foliage_build.grow`, so a tree grown from HERE is the
+        # same object the BobFoliage panel adds -- stamped, filed in BOB_Foliage, already listed
+        # and already feeling the world's wind. The routing note sends the artist to that panel, so
+        # the tree had better be waiting in it (docs/FOLIAGE.md 4.5).
         name = _unique_object_name(species.replace("_", " ").title())
-        _apply([{"op": "build_geonodes", "recipe": "foliage", "name": name,
-                 "params": dict(preset["params"], seed=random.randint(0, 99999)), "reset": True}])
-        obj = bpy.data.objects.get(name)
+        obj = foliage_build.grow(name, dict(preset["params"], seed=random.randint(0, 99999)),
+                                 species=species, scene=context.scene,
+                                 location=context.scene.cursor.location.copy())
         if obj is None:
             self.report({"ERROR"}, "Foliage build produced no object")
             return {"CANCELLED"}
-        obj.location = context.scene.cursor.location.copy()
         for other in context.selected_objects:
             other.select_set(False)
         obj.select_set(True)
@@ -731,8 +733,12 @@ class BBT_OT_scatter_grow_foliage(Operator):
         # otherwise the tree just looks flat and there is nothing on screen explaining why.
         missing = ", ".join(v for _k, _label, v in assets.foliage_missing_sets(species))
         note = f"; solid tint until {missing} is generated" if missing else ""
+        # Now that F4's panel exists, the report names it. It used to point at the object's modifier
+        # stack, which was honest while there was nowhere better and is a worse answer now: the
+        # modifier stack is not an authoring surface, and the artist is one panel away from the
+        # thirty knobs grouped and labelled.
         self.report({"INFO"}, f"Grew {name} ({preset['meta'].get('name', species)}); "
-                              f"its knobs are on the object's foliage modifier{note}")
+                              f"tune it in the BobFoliage panel{note}")
         return {"FINISHED"}
 
 

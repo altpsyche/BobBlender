@@ -8,8 +8,8 @@ import bpy
 
 from .. import assets
 from . import texset
-from .shared import SURFACE_MASTER, SURFACE_WRAPPER_PREFIX, _build_wrapper, _cached_group, _gin, _gout, _macro_break, _mmath, _vscale, _wrapper_name, assign_material
-from .weather import _WEATHER_EXTRA, weather_group
+from .shared import SURFACE_MASTER, SURFACE_WRAPPER_PREFIX, _build_wrapper, _cached_group, _gin, _gout, _macro_break, _mmath, _vscale, _wrapper_name, assign_material, group_version
+from .weather import _WEATHER_EXTRA, LEAF_SEASON, weather_group
 from .water import water_material
 from .terrain import _autoconfig_riverbed, _terrain_maps, terrain_material
 
@@ -219,7 +219,7 @@ def new_bobshader(obj, master="surface"):
 
 
 
-def surface_material(mat_name, texset_name=None, box=None, alpha=False):
+def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=False):
     """A single-surface wrapper (S_SurfaceMaster): a solid-tint BobShader whose look comes from
     the master's procedural terms (colour/roughness/metallic + the weather layer).
 
@@ -236,6 +236,10 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False):
     wet, frost). Routing a matte through them would let a wet leaf turn semi-transparent. Keeping it
     outside also means no new master output, so S_SurfaceMaster's interface is untouched and no
     tuned terrain in the file gets reset by a shared-group version bump.
+
+    `leaf` adds the two terms a CARD needs on top of that cutout (BobFoliage F4): the season layer
+    (`_wire_season`) and the translucency (`_wire_translucency`). Both stay outside the master for
+    the reasons in `foliage_card_material`.
     """
     master = surface_master_group()
     prev = bpy.data.materials.get(_wrapper_name(mat_name))
@@ -244,25 +248,34 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False):
         sets = [str(texset_name or "")]
     box = prev_box if box is None else bool(box)
     maps = assets.texture_set_maps(sets[0]) if sets[0] else {}
-    sig = "surface|" + texset.sig_part(sets, box) + (f"|alpha:{int(bool(alpha))}")
+    # The leaf part of the signature carries S_LeafSeason's VERSION, not a flag: a bump there
+    # changes that group's interface, which leaves this wrapper's instance sockets at type-zero, so
+    # the wrapper has to rebuild with it. Same reason `texset.sig_part` carries S_TexSet's.
+    sig = "surface|" + texset.sig_part(sets, box) + (f"|alpha:{int(bool(alpha))}") \
+        + (f"|leaf:{group_version(LEAF_SEASON) if leaf else 0}")
 
     def wire(nt, grp, bsdf, old_sig):
-        if not maps:
-            return
-        coord = nt.nodes.new("ShaderNodeTexCoord")
-        coord.name = texset.TEXSET_NODE_PREFIX + "Coord"
-        coord.location = (-1100, 400)
-        # A prop carries UVs, so flat projection uses them; box projection is the un-UV'd case
-        # (and the default here), and needs a 3D coordinate instead.
-        src = coord.outputs["Object"] if box else coord.outputs["UV"]
-        node = texset.texset_sample(nt, "S", maps, src, box=box, loc=(-800, 400))
-        if node is None:
-            return
-        nt.links.new(node.outputs["Albedo Map"], grp.inputs["Albedo Map"])
-        nt.links.new(node.outputs["Roughness Map"], grp.inputs["Roughness Map"])
-        texset.texset_bump(nt, node.outputs["Detail Height"], bsdf, loc=(100, -340))
-        if alpha:
-            _wire_cutout(nt, maps, src, bsdf, box)
+        cutout = None
+        if maps:
+            coord = nt.nodes.new("ShaderNodeTexCoord")
+            coord.name = texset.TEXSET_NODE_PREFIX + "Coord"
+            coord.location = (-1100, 400)
+            # A prop carries UVs, so flat projection uses them; box projection is the un-UV'd case
+            # (and the default here), and needs a 3D coordinate instead.
+            src = coord.outputs["Object"] if box else coord.outputs["UV"]
+            node = texset.texset_sample(nt, "S", maps, src, box=box, loc=(-800, 400))
+            if node is not None:
+                nt.links.new(node.outputs["Albedo Map"], grp.inputs["Albedo Map"])
+                nt.links.new(node.outputs["Roughness Map"], grp.inputs["Roughness Map"])
+                texset.texset_bump(nt, node.outputs["Detail Height"], bsdf, loc=(100, -340))
+                if alpha:
+                    cutout = _wire_cutout(nt, maps, src, bsdf, box)
+        # The leaf terms do NOT depend on a texture set resolving: a block-out card with no atlas
+        # still turns in autumn and still lets light through, which is the whole point of the
+        # solid-tint fallback everywhere else in the suite.
+        if leaf:
+            base = _wire_season(nt, grp, bsdf)
+            _wire_translucency(nt, bsdf, base, cutout)
 
     mat = _build_wrapper(mat_name, master, sig, wire)
     texset.store_sets(mat, sets, box)
@@ -303,22 +316,118 @@ def _wire_cutout(nt, maps, coord, bsdf, box):
 
 
 
+def _wire_season(nt, grp, bsdf):
+    """Insert S_LeafSeason between the master's Base Color and the Principled. Returns its output.
+
+    After the master, not inside it: the season reads the WEATHERED colour, so a snowed leaf turns
+    under its snow rather than over it, and a wet autumn canopy is a wet autumn canopy. Before the
+    Principled, so the translucency below transmits the turned colour and an autumn tree glows
+    amber from behind, which is the single most recognisable thing a backlit autumn tree does.
+    """
+    from .weather import leaf_season_group
+
+    node = nt.nodes.new("ShaderNodeGroup")
+    node.name = texset.TEXSET_NODE_PREFIX + "Leaf Season"
+    node.node_tree = leaf_season_group()
+    node.location = (60, 260)
+    nt.links.new(grp.outputs["Base Color"], node.inputs["Base Color"])
+    nt.links.new(node.outputs["Base Color"], bsdf.inputs["Base Color"])
+    return node.outputs["Base Color"]
+
+
+# How much of a leaf's light comes through it rather than off it, and the hue it comes through as.
+# 0.25 is a leaf, not a sheet of paper; the transmit tint is warm because chlorophyll passes green
+# and red and holds blue back, which is why a backlit canopy is warmer than a lit one.
+LEAF_TRANSLUCENCY = 0.25
+
+_LEAF_TRANSMIT = (1.0, 0.72, 0.28, 1.0)
+
+
+def _wire_translucency(nt, bsdf, base_color, cutout):
+    """Mix a Translucent BSDF into the card's surface, gated by the same cutout the Principled uses.
+
+    **Why this is not a term on S_SurfaceMaster** (the [F2] deferral, answered at F4). Three
+    reasons, and the last one is decisive:
+
+    - The master is SHARED. Terrain and water embed it, a rebuild reassigns every socket identifier,
+      and the cost of adding one socket to it is a revert-to-default on every tuned terrain in the
+      file (the item-3 and snow-line bumps both paid exactly that). Translucency reaches leaves.
+    - It is the alpha argument again (docs/FOLIAGE.md 2.7). Every term the master adds says how a
+      surface looks WHERE IT EXISTS; a matte says which texels exist, and translucency says what
+      happens to light that does not stop there. Both are about the leaf as a thin OBJECT rather
+      than as a surface, and routing them through the weather layer would let a wet leaf turn
+      transparent and a snowed one glow.
+    - **The master's contract cannot express it.** It outputs Base Color, Roughness and Metallic --
+      three scalars into one Principled. Translucency is a second BSDF lobe. There is no socket
+      shape that carries it, so putting it "on the master" would mean widening the wrapper for
+      every master, and the wrapper is what the terrain and water masters share too.
+
+    The cutout gate is the part that has to be right. A plain Mix Shader between the Principled and
+    a Translucent would light the whole quad: the Principled's Alpha only mattes the Principled, so
+    the translucent branch would fill in every texel the atlas cut away and a spray would render as
+    a glowing rectangle. So the translucent branch is mixed against a Transparent BSDF by the SAME
+    cutout first. Each branch is matted exactly once, so the edges do not thin the way an alpha
+    applied twice would.
+    """
+    out = next((n for n in nt.nodes if n.bl_idname == "ShaderNodeOutputMaterial"), None)
+    if out is None:
+        return None
+    trans = nt.nodes.new("ShaderNodeBsdfTranslucent")
+    trans.location = (300, -560)
+    tint = nt.nodes.new("ShaderNodeMix")
+    tint.name = texset.TEXSET_NODE_PREFIX + "Leaf Transmit"
+    tint.data_type = "RGBA"
+    tint.location = (100, -560)
+    tint.inputs[0].default_value = 0.55          # how far toward the transmit hue
+    tint.inputs[7].default_value = _LEAF_TRANSMIT
+    if base_color is not None:
+        nt.links.new(base_color, tint.inputs[6])
+    else:
+        tint.inputs[6].default_value = (1.0, 1.0, 1.0, 1.0)
+    nt.links.new(tint.outputs[2], trans.inputs["Color"])
+
+    clear = nt.nodes.new("ShaderNodeBsdfTransparent")
+    clear.location = (300, -720)
+    # Both Mix Shader inputs are named "Shader", so they are reached POSITIONALLY (1 and 2).
+    gate = nt.nodes.new("ShaderNodeMixShader")
+    gate.name = texset.TEXSET_NODE_PREFIX + "Leaf Cutout Gate"
+    gate.location = (480, -600)
+    gate.inputs[0].default_value = 1.0   # no cutout map: the branch is simply not matted
+    if cutout is not None:
+        nt.links.new(cutout, gate.inputs[0])
+    nt.links.new(clear.outputs["BSDF"], gate.inputs[1])
+    nt.links.new(trans.outputs["BSDF"], gate.inputs[2])
+
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    mix.name = texset.TEXSET_NODE_PREFIX + "Leaf Translucency"
+    mix.location = (660, -300)
+    mix.inputs[0].default_value = LEAF_TRANSLUCENCY
+    nt.links.new(bsdf.outputs["BSDF"], mix.inputs[1])
+    nt.links.new(gate.outputs["Shader"], mix.inputs[2])
+    nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    return mix
+
+
 def foliage_card_material(mat_name, atlas="leaf_atlas_blockout"):
     """The leaf-card BobShader (BobFoliage F2): the `surface` master with a cutout, not a fourth
     master. Answers the [F2] open question in docs/FOLIAGE.md 2.7 the way that section preferred.
 
     What a card needs is alpha cutout, two-sided shading and some translucency. Two of the three
-    are already free: Blender shades both faces unless `use_backface_culling` is set, and the
-    cutout is one link (see `surface_material`'s `alpha`). Translucency is the only term a fourth
-    master would have bought, it belongs with the season colour work rather than the geometry, and
-    it is not worth owning a second full node group for -- so it waits for F4.
+    were already free at F2: Blender shades both faces unless `use_backface_culling` is set, and the
+    cutout is one link (see `surface_material`'s `alpha`). **F4 added the third, and kept it outside
+    the master too** -- see `_wire_translucency` for the argument, which turned out to be stronger
+    than the one that deferred it: the master's contract is three scalars into one Principled, and
+    translucency is a second BSDF lobe, so there is no socket shape on the master that could carry
+    it. The season colour (`_wire_season`) sits in the same place for the same kind of reason.
+
+    So no fourth master, and S_SurfaceMaster's interface is still untouched by this whole track.
 
     Flat (UV) projection, not box: a card's whole point is that it reads a specific ATLAS CELL, and
     a box projection would sample by world position and put a different part of the atlas on every
     card at the same tip. The recipe writes the UVs that pick the cell.
     """
     fresh = _wrapper_name(mat_name) not in bpy.data.materials
-    mat = surface_material(mat_name, texset_name=atlas, box=False, alpha=True)
+    mat = surface_material(mat_name, texset_name=atlas, box=False, alpha=True, leaf=True)
     if fresh:
         node = mat.node_tree.nodes.get("Master")
         if node is not None:

@@ -1,5 +1,5 @@
 """foliage: a procedural tree or shrub grown from a skeleton, swept to mesh, with leaf cards on
-its tips (BobFoliage F1 + F2).
+its tips, moving in the world's wind (BobFoliage F1 to F4).
 
 docs/FOLIAGE.md. The geometry is entirely procedural and image-to-3D supplies none of it, for one
 structural reason: branches attach to POINTS ON A CURVE with a tangent and a radius, and a generated
@@ -55,6 +55,17 @@ whole texture reversed (`_unwrap_u`); and the bark material was assigned with BO
 metres-based UV above reached nothing at all and the grain followed the world axes instead of the
 limb (`_tree_materials`). Both rendered convincingly, which is the recurring lesson of this track.
 
+Wind (F4, docs/FOLIAGE.md 2.4). The whole tree leans and gusts downwind, weighted by the square of
+each point's height, and the cards flutter on top of that about their own bases. Both are driven by
+`Wind` / `Wind Direction`, which are ordinary live knobs that the world applier feeds from
+`bbt_env`, so a tree responds to the shared weather with no per-tree animation and no keyframes;
+Scene Time is the clock, so a render is deterministic. Three attributes make it work and each is
+written where the information still exists: `bbt_fol_card` says which vertices are cards (the wood
+has no such attribute, and Join Geometry zero-fills the side that lacks one -- measured);
+`bbt_fol_anchor` is the TIP a card grew on, so a card rides its twig with exactly the twig's own
+deflection and its base cannot part from it; and `bbt_fol_phase` is a per-card random that both the
+flutter and the shader's autumn stagger read, so no two cards move or turn together.
+
 Params: seed, levels (1-4), segments, profile_segments, the shape values below, and two texture-set
 names (`bark_set`, `atlas`). Structural (a rebuild): levels, profile_segments, and the two set names.
 Everything else is a live modifier knob, so tuning a tree is a slider drag and only changing its
@@ -80,6 +91,20 @@ DEFAULT_ATLAS = "leaf_atlas_blockout"   # ships in the block-out pack, so a tree
 # keeps the numbers F1 was measured at (Gnarl 0.9 on a 20 m trunk is still +/- 0.45 m) while the
 # same value now means the same SHAPE at any scale. See `_bend`.
 GNARL_SPAN = 0.05
+
+# Wind (F4). Amplitudes are FRACTIONS, never metres, for the reason `GNARL_SPAN` is: a species
+# preset is a shape description, and one that only holds at 20 m is not a description. The trunk
+# term scales with `Height` and the card term with `Card Size`, so a grass tuft in a gale bends by
+# its own size and not by a tree's.
+SWAY_SPAN = 0.02        # tip deflection per unit Wind, as a fraction of Height
+SWAY_FREQ = 0.55        # gusts per second at Wind 1; the whole-tree rate, deliberately slow
+FLUTTER_SPAN = 0.30     # card-tip wobble per unit Wind, as a fraction of Card Size
+FLUTTER_FREQ = 1.9      # leaf rate at Wind 1, well above the trunk's so the two do not beat
+# The steady part of the gust. Wind pushes a tree downwind and then breathes about that lean, so
+# the oscillation rides on a bias rather than swinging symmetrically through the rest pose --
+# a tree that passes through vertical every cycle reads as a metronome, not as weather.
+SWAY_BIAS = 0.6
+_TAU = 2.0 * math.pi
 
 # Per-level defaults, index 0 = level 1 (the first branches off the trunk). A NARROW CONIFER: F1's
 # defaults grew a 13 m crown on a 20 m trunk, which is a spreading broadleaf and the opposite of the
@@ -156,6 +181,17 @@ def _vec(ng, op, a, b=None, location=(0, 0)):
             node.inputs[i].default_value = value
         else:
             ng.links.new(value, node.inputs[i])
+    return node.outputs["Vector"]
+
+
+def _scaled(ng, vector, scalar, location=(0, 0)):
+    """A vector times a scalar. `Scale` is a NAMED socket on Vector Math's SCALE operation and not
+    the second vector input, so it cannot go through `_vec`."""
+    node = ng.nodes.new("ShaderNodeVectorMath")
+    node.operation = "SCALE"
+    node.location = location
+    ng.links.new(vector, node.inputs[0])
+    ng.links.new(scalar, node.inputs["Scale"])
     return node.outputs["Vector"]
 
 
@@ -296,8 +332,16 @@ def _tag(ng, curve, level, location):
     # axis a leaf spray fans around. A curve field, so it has to be stored before the sweep.
     tangent = ng.nodes.new("GeometryNodeInputTangent")
     tangent.location = (lx + 1120, ly - 260)
-    return _store(ng, out, "bbt_fol_tan", tangent.outputs["Tangent"], "FLOAT_VECTOR", "POINT",
-                  (lx + 1300, ly))
+    out = _store(ng, out, "bbt_fol_tan", tangent.outputs["Tangent"], "FLOAT_VECTOR", "POINT",
+                 (lx + 1300, ly))
+    # Where this SKELETON point is, kept for the wind (F4). Curve to Mesh gives every point a ring
+    # of `profile` vertices at slightly different heights, and the cards grow on the same points, so
+    # this one attribute is what lets both be deflected as rigid pieces of a limb rather than
+    # vertex by vertex. Measured: with the ring weighted per vertex instead, the z^2 falloff shears
+    # each cross-section and a tip ring's centroid drifts 7.7e-05 m from the card standing on it at
+    # Wind 6 -- eighty times the F2 attachment residual, from a tree that renders perfectly.
+    return _store(ng, out, "bbt_fol_anchor", position(ng, (lx + 1300, ly - 260)),
+                  "FLOAT_VECTOR", "POINT", (lx + 1480, ly))
 
 
 def _branch_rotation(ng, angle_deg, phyllo_deg, seed_f, location):
@@ -544,6 +588,25 @@ def _cards(ng, skeleton, gi, seed_f, location):
     ng.links.new(math_node(ng, "ADD", seed_f, 5417.0, (lx + 780, ly - 720)), pick.inputs["Seed"])
     placed = _store(ng, dup.outputs["Geometry"], "bbt_fol_cell", pick.outputs["Value"],
                     "INT", "POINT", (lx + 1160, ly))
+    # One more per-card value, stored HERE for the same reason the cell is: this is the last stage
+    # at which a card is one point, so `Index` is unique per card. After the instancing it is four
+    # vertices with no way back. (`bbt_fol_anchor`, the tip a card rides, needs no store of its own
+    # -- it was written on the skeleton point in `_tag` and rides here with every other tip
+    # attribute, which is the same free ride `bbt_fol_tan` takes to aim the spray.)
+    #
+    # `bbt_fol_phase` is this card's own 0..1 random, read by the flutter here and by the leaf
+    # shader's autumn stagger. One attribute for both, because they are the same statement -- this
+    # leaf is not that leaf -- and two independent randoms would let a card flutter as one leaf and
+    # turn colour as another.
+    phase = ng.nodes.new("FunctionNodeRandomValue")
+    phase.data_type = "FLOAT"
+    phase.location = (lx + 1160, ly - 400)
+    phase.inputs["Min"].default_value = 0.0
+    phase.inputs["Max"].default_value = 1.0
+    ng.links.new(index.outputs["Index"], phase.inputs["ID"])
+    ng.links.new(math_node(ng, "ADD", seed_f, 811.0, (lx + 960, ly - 480)), phase.inputs["Seed"])
+    placed = _store(ng, placed, "bbt_fol_phase", phase.outputs["Value"], "FLOAT", "POINT",
+                    (lx + 1520, ly))
 
     instance = ng.nodes.new("GeometryNodeInstanceOnPoints")
     instance.location = (lx + 1900, ly)
@@ -568,10 +631,165 @@ def _cards(ng, skeleton, gi, seed_f, location):
     ng.links.new(_named(ng, "bbt_fol_cuv", "FLOAT_VECTOR", (lx + 3520, ly - 300)), local.inputs[0])
     cards = _store(ng, cards, "bbt_fol_t", local.outputs["Y"], "FLOAT", "POINT", (lx + 3880, ly))
     cards = _store(ng, cards, "bbt_fol_tip", 0.0, "FLOAT", "POINT", (lx + 4060, ly))
+    # Which vertices are cards, on the POINT domain, for the wind pass. Written only on the cards
+    # and never on the wood: Join Geometry zero-fills the side that lacks an attribute (measured on
+    # 5.2 -- a join of a flagged grid and an unflagged one reads back four 1s and four 0s), so the
+    # swept mesh answers 0 without the recipe having to walk it. `bbt_fol_leaf` cannot serve here
+    # because it is a FACE flag, and a vertex offset is a POINT question.
+    cards = _store(ng, cards, "bbt_fol_card", 1.0, "FLOAT", "POINT", (lx + 4240, ly))
     # The face flag the two Set Material nodes key off. On the FACE domain because that is the
     # domain a material selection is evaluated on; a point flag would have to interpolate, and a
     # face straddling the join between a card and a twig would then be neither.
     return _store(ng, cards, "bbt_fol_leaf", True, "BOOLEAN", "FACE", (lx + 4240, ly))
+
+
+def _wind_axes(ng, gi, location):
+    """(downwind, crosswind) unit vectors in XY from `Wind Direction`, in degrees.
+
+    The same convention the rest of the suite uses (`particulates`, `volumetrics`, and the env
+    field they all read): degrees clockwise from north, naming the direction the wind blows TOWARD.
+    Crosswind is that turned a quarter turn, which is the axis a leaf flutters across -- a leaf
+    that only moves along the wind reads as a flag rather than as foliage.
+    """
+    lx, ly = location
+    rad = math_node(ng, "MULTIPLY", gi.outputs["Wind Direction"], _DEG, (lx, ly))
+    cos = math_node(ng, "COSINE", rad, None, (lx + 180, ly + 80))
+    sin = math_node(ng, "SINE", rad, None, (lx + 180, ly - 80))
+    downwind = _combine(ng, sin, cos, 0.0, (lx + 360, ly + 80))
+    crosswind = _combine(ng, cos, math_node(ng, "MULTIPLY", sin, -1.0, (lx + 360, ly - 200)), 0.0,
+                         (lx + 540, ly - 120))
+    return downwind, crosswind
+
+
+def _tree_phase(ng, location):
+    """A per-TREE phase offset, from the object's own world location.
+
+    Two trees standing side by side must not pulse in unison, and the cheapest thing that is true
+    of two trees and false of one is where they are. Read through Self Object -> Object Info, whose
+    Location is the object's world position (measured: moving the object to x=7 moves the value to
+    7 with no rebuild), so a stand placed by hand is out of phase the moment it is placed and a
+    tree dragged across the scene re-phases as it goes.
+
+    **What this does NOT buy, measured rather than assumed.** An object INSTANCED by scatter is
+    evaluated once and its result copied, so every instance of one baked variant reads the source
+    object's location and therefore shares its phase -- exactly the property docs/FOLIAGE.md 2.5
+    already records for the seed, and with the same answer: variety across a stand comes from
+    baking N variants, each of which then carries its own phase.
+    """
+    lx, ly = location
+    self_obj = ng.nodes.new("GeometryNodeSelfObject")
+    self_obj.location = (lx, ly)
+    info = ng.nodes.new("GeometryNodeObjectInfo")
+    info.location = (lx + 180, ly)
+    ng.links.new(self_obj.outputs["Self Object"], info.inputs["Object"])
+    sep = ng.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (lx + 380, ly)
+    ng.links.new(info.outputs["Location"], sep.inputs[0])
+    # Two incommensurate multipliers, so a stand on a grid does not land back in phase every row.
+    return math_node(ng, "ADD",
+                     math_node(ng, "MULTIPLY", sep.outputs["X"], 0.7, (lx + 560, ly + 80)),
+                     math_node(ng, "MULTIPLY", sep.outputs["Y"], 1.31, (lx + 560, ly - 80)),
+                     (lx + 740, ly))
+
+
+def _sway(ng, geo, gi, location):
+    """Deflect the finished tree by the wind: a whole-tree lean and gust, plus a per-card flutter.
+
+    One `Set Position` on the joined mesh, because the two terms share a falloff argument and
+    because a card has to inherit its twig's motion before it adds its own. The offset is:
+
+        downwind * Wind * Sway * SWAY_SPAN * Height * (z/Height)^2 * (bias + gust)
+      + crosswind * Wind * Leaf Flutter * FLUTTER_SPAN * Card Size * card * t * wobble
+
+    and every factor of it earns its place:
+
+    - **The height weight is squared, and it is read from `bbt_fol_anchor`.** Squared because a
+      trunk is stiff at the butt and whippy at the top, and linear reads as a hinge at the ground.
+      Read from the anchor -- the SKELETON point a vertex belongs to -- rather than from the vertex
+      itself, so a tube's cross-section and the cards standing on it are all displaced by the one
+      amount and a limb translates instead of shearing. Per-vertex weighting instead is what the
+      first version did, and it drifted a tip ring 7.7e-05 m from its own card at Wind 6: eighty
+      times the F2 attachment residual, invisible, and the same failure family as the rest of this
+      track. With the anchor the residual is unchanged from a still tree.
+    - **The gust rides on a bias, not on zero.** Wind blows a tree over and then breathes; an
+      unbiased sine swings it through vertical twice a cycle, which reads as a metronome.
+    - **The flutter is gated by `bbt_fol_card` and weighted by `bbt_fol_t`.** That is the whole
+      reason F2 rewrote `bbt_fol_t` on the cards to their OWN 0-at-the-base: a card pivots at the
+      twig it hangs from rather than swinging through it.
+    - **Scene Time is the clock.** No keyframes and no drivers on the geometry, so an animation
+      renders the same every time and a still frame is a still frame.
+
+    At `Wind` 0 every term is zero, so a tree with no weather is byte-identical to an F3 tree --
+    which is what lets every F1 to F3 measurement in the gate stand unchanged.
+    """
+    lx, ly = location
+    downwind, crosswind = _wind_axes(ng, gi, (lx, ly + 600))
+    seconds = ng.nodes.new("GeometryNodeInputSceneTime")
+    seconds.location = (lx, ly + 300)
+    time = seconds.outputs["Seconds"]
+    wind = math_node(ng, "MAXIMUM", gi.outputs["Wind"], 0.0, (lx, ly + 180))
+    height = math_node(ng, "MAXIMUM", gi.outputs["Height"], 0.01, (lx, ly + 100))
+    card = _named(ng, "bbt_fol_card", "FLOAT", (lx, ly - 100))
+    anchor = ng.nodes.new("ShaderNodeSeparateXYZ")
+    anchor.location = (lx + 180, ly - 200)
+    ng.links.new(_named(ng, "bbt_fol_anchor", "FLOAT_VECTOR", (lx, ly - 200)), anchor.inputs[0])
+    frac = math_node(ng, "MINIMUM",
+                     math_node(ng, "DIVIDE", anchor.outputs["Z"], height, (lx + 920, ly - 200)),
+                     1.0, (lx + 1100, ly - 200))
+    weight = math_node(ng, "MULTIPLY", frac, frac, (lx + 1280, ly - 200))
+
+    gust = math_node(ng, "ADD", SWAY_BIAS,
+                     math_node(ng, "MULTIPLY", 1.0 - SWAY_BIAS,
+                               math_node(ng, "SINE",
+                                         math_node(ng, "ADD",
+                                                   math_node(ng, "MULTIPLY", time,
+                                                             _TAU * SWAY_FREQ, (lx + 180, ly + 300)),
+                                                   _tree_phase(ng, (lx - 900, ly + 420)),
+                                                   (lx + 360, ly + 300)),
+                                         None, (lx + 540, ly + 300)),
+                               (lx + 720, ly + 300)),
+                     (lx + 900, ly + 300))
+    bend = math_node(ng, "MULTIPLY",
+                     math_node(ng, "MULTIPLY",
+                               math_node(ng, "MULTIPLY", wind, gi.outputs["Sway"],
+                                         (lx + 1100, ly + 180)),
+                               math_node(ng, "MULTIPLY", height, SWAY_SPAN, (lx + 1100, ly + 100)),
+                               (lx + 1280, ly + 140)),
+                     math_node(ng, "MULTIPLY", weight, gust, (lx + 1460, ly + 40)),
+                     (lx + 1640, ly + 100))
+
+    # The flutter: fast, small, per card, and across the wind. Its own phase comes from the card's
+    # `bbt_fol_phase`, so a spray shimmers rather than beating as one sheet.
+    phase = math_node(ng, "MULTIPLY", _named(ng, "bbt_fol_phase", "FLOAT", (lx, ly - 600)),
+                      _TAU, (lx + 180, ly - 600))
+    wobble = math_node(ng, "SINE",
+                       math_node(ng, "ADD",
+                                 math_node(ng, "MULTIPLY", time,
+                                           _TAU * FLUTTER_FREQ, (lx + 180, ly - 480)),
+                                 phase, (lx + 380, ly - 520)),
+                       None, (lx + 560, ly - 520))
+    # Weighted by the card's own base-to-tip factor, so the attachment corner does not move at all.
+    span = math_node(ng, "MULTIPLY",
+                     math_node(ng, "MULTIPLY", wind, gi.outputs["Leaf Flutter"],
+                               (lx + 740, ly - 640)),
+                     math_node(ng, "MULTIPLY", gi.outputs["Card Size"], FLUTTER_SPAN,
+                               (lx + 740, ly - 720)),
+                     (lx + 920, ly - 680))
+    flutter = math_node(ng, "MULTIPLY",
+                        math_node(ng, "MULTIPLY", span, wobble, (lx + 1100, ly - 600)),
+                        math_node(ng, "MULTIPLY", card,
+                                  _named(ng, "bbt_fol_t", "FLOAT", (lx + 920, ly - 860)),
+                                  (lx + 1100, ly - 800)),
+                        (lx + 1280, ly - 700))
+
+    offset = _vec(ng, "ADD", _scaled(ng, downwind, bend, (lx + 1820, ly + 100)),
+                  _scaled(ng, crosswind, flutter, (lx + 1820, ly - 700)), (lx + 2000, ly))
+
+    node = ng.nodes.new("GeometryNodeSetPosition")
+    node.location = (lx + 2200, ly)
+    ng.links.new(geo, node.inputs["Geometry"])
+    ng.links.new(offset, node.inputs["Offset"])
+    return node.outputs["Geometry"]
 
 
 # How far below its own face's mean a corner's U has to sit before it is read as the wrap corner.
@@ -735,6 +953,25 @@ def _atlas_grid(params):
             max(1, min(16, int(params.get("atlas_rows", rows)))))
 
 
+def _env_wind(params):
+    """(Wind, Wind Direction) for this build: the explicit params, else the shared world, else 0.
+
+    Reading `bbt_env` at build time is what makes "wind for free" true of every caller and not only
+    of the panel -- a tree grown over MCP into a scene that is already blowing comes out blowing.
+    It is a SEED and not the live feed: the live half is `foliage_build.apply_wind`, which the World
+    applier runs on every change. Absent Firmament (a standalone .blend, the headless gate) there is
+    no world to read and the default is a still tree, which is also what keeps every F1-F3
+    measurement valid at its defaults.
+    """
+    from ... import env as bbt_env
+
+    world = bbt_env.get_env()
+    wind = params.get("wind", getattr(world, "wind_strength", 0.0) if world else 0.0)
+    direction = params.get("wind_direction",
+                           getattr(world, "wind_direction", 0.0) if world else 0.0)
+    return max(0.0, float(wind)), float(direction) % 360.0
+
+
 def _trim_upper(ng, curve, start, location):
     """The parent from `start` (a factor) to its tip. Branches grow off the upper stretch: a conifer
     with limbs down to the ground reads as a bush, and the bare stretch is the species tell."""
@@ -793,6 +1030,15 @@ def build(ng, out, params: dict):
     add_input(ng, "Atlas Columns", "NodeSocketInt", grid_cols, 1, 16)
     add_input(ng, "Atlas Rows", "NodeSocketInt", grid_rows, 1, 16)
     add_input(ng, "Bark Scale", "NodeSocketFloat", float(params.get("bark_scale", 0.6)), 0.01)
+    # Wind (F4). Live, and seeded from the shared world so a tree built into a windy scene is
+    # already moving; the world applier keeps both fed after that (core.foliage_build). `Wind` 0
+    # is a still tree and every F1-F3 measurement still holds at it.
+    wind, wind_dir = _env_wind(params)
+    add_input(ng, "Wind", "NodeSocketFloat", wind, 0.0)
+    add_input(ng, "Wind Direction", "NodeSocketFloat", wind_dir, 0.0, 360.0)
+    add_input(ng, "Sway", "NodeSocketFloat", float(params.get("sway", 1.0)), 0.0, 4.0)
+    add_input(ng, "Leaf Flutter", "NodeSocketFloat", float(params.get("leaf_flutter", 1.0)),
+              0.0, 4.0)
     add_input(ng, "Shade Smooth", "NodeSocketBool", bool(params.get("shade_smooth", True)))
 
     seed_f = _f(ng, gi.outputs["Seed"], (-2000, -700))
@@ -926,6 +1172,9 @@ def build(ng, out, params: dict):
     ng.links.new(cards, both.inputs["Geometry"])
     ng.links.new(swept, both.inputs["Geometry"])
 
+    # Wind last, on the joined mesh: the cards have to be in place before anything moves them, and
+    # the trunk and its leaves must be deflected by ONE pass or they part company (`_sway`).
+    swaying = _sway(ng, both.outputs["Geometry"], gi, (7800, -2400))
     bark_mat, card_mat = _tree_materials(ng, params)
-    ng.links.new(_materials(ng, both.outputs["Geometry"], bark_mat, card_mat, (7800, 0)),
+    ng.links.new(_materials(ng, swaying, bark_mat, card_mat, (10200, 0)),
                  out.inputs["Geometry"])
