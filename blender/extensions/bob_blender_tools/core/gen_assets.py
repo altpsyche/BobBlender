@@ -812,15 +812,21 @@ def cutout_render_method(mat):
     return None
 
 
-def apply_baked_material(obj, maps, name):
-    """Wire the baked maps into a fresh Principled material on `obj`.
+def baked_material(maps, name):
+    """A fresh plain Principled material wired from a map dict. Returns it, and links nothing.
+
+    Split out of `apply_baked_material` so a caller that has to REPLACE one slot of several can
+    have the material without the clear-and-append (BobFoliage's pack writer is that caller: a
+    variant has two slots and the frozen copy has to keep both, in order, or its `material_index`
+    values point at the wrong surface).
 
     Backface culling stays OFF and the alpha channel is honoured, because a generated leaf is a
     single-sided open surface and culling it would make it invisible from behind. Both are
     asserted in the headless gate rather than left to the default.
 
-    The alpha comes from the basecolor's own fourth channel, which is where `bake_high_to_low` puts
-    TRELLIS.2's opacity output, and it drags the render method with it (`cutout_render_method`).
+    The alpha comes from a dedicated `opacity` map where the set ships one and from the basecolor's
+    own fourth channel otherwise -- which is where `bake_high_to_low` puts TRELLIS.2's opacity
+    output -- and either way it drags the render method with it (`cutout_render_method`).
     """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -851,9 +857,12 @@ def apply_baked_material(obj, maps, name):
             nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
         else:
             nt.links.new(albedo.outputs["Color"], bsdf.inputs["Base Color"])
-        if albedo.image.depth in (32, 64):
+        if "opacity" not in maps and albedo.image.depth in (32, 64):
             nt.links.new(albedo.outputs["Alpha"], bsdf.inputs["Alpha"])
             cutout_render_method(mat)
+    if "opacity" in maps:
+        nt.links.new(image_node(maps["opacity"], True, 480).outputs["Color"], bsdf.inputs["Alpha"])
+        cutout_render_method(mat)
     if "roughness" in maps:
         nt.links.new(image_node(maps["roughness"], True, -120).outputs["Color"],
                      bsdf.inputs["Roughness"])
@@ -862,7 +871,12 @@ def apply_baked_material(obj, maps, name):
         nmap.location = (bsdf.location.x - 300, bsdf.location.y - 320)
         nt.links.new(image_node(maps["normal"], True, -320).outputs["Color"], nmap.inputs["Color"])
         nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    return mat
 
+
+def apply_baked_material(obj, maps, name):
+    """`baked_material` as the object's ONLY material, which is what a generated solid wants."""
+    mat = baked_material(maps, name)
     obj.data.materials.clear()
     obj.data.materials.append(mat)
     return mat

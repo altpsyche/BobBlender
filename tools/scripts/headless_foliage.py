@@ -39,6 +39,8 @@ import math
 import os
 import shutil
 import sys
+import tempfile
+import time
 from collections import Counter
 
 import bpy
@@ -1086,6 +1088,456 @@ def check_translucency():
           src.bl_idname)
 
 
+# -- F5: variants, the LOD ladder, the pack writer and a real stand ----------------------------
+def pool_verts(obj):
+    """A pooled variant's evaluated vertices, through `evaluable`.
+
+    Not a convenience. `BOB_Assets_<Kind>` is not linked to the scene, and an object outside the
+    view layer is not evaluated at all, so a direct `evaluated_get(...).to_mesh()` on a baked
+    variant returns an EMPTY mesh and says nothing -- which is how the first run of the baker
+    reported four variants of 0 verts and exported four meshes with no primitives. Reading them any
+    other way is a check that passes on a pool that does not exist.
+    """
+    from bob_blender_tools.core import foliage_variants
+
+    with foliage_variants.evaluable(obj):
+        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        mesh = ev.to_mesh()
+        out = [tuple(round(c, 5) for c in v.co) for v in mesh.vertices]
+        ev.to_mesh_clear()
+    return out
+
+
+def instance_stand(name, sources, count, spacing=6.0, realize=True, pick_by_index=False):
+    """A host object instancing `sources` on a grid, the way a scatter layer does. Returns it."""
+    coll = bpy.data.collections.new(name + "Pool")
+    for obj in sources:
+        for c in list(obj.users_collection):
+            c.objects.unlink(obj)
+        coll.objects.link(obj)
+    ng = bpy.data.node_groups.new(name, "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    out = ng.nodes.new("NodeGroupOutput")
+    line = ng.nodes.new("GeometryNodeMeshLine")
+    line.inputs["Count"].default_value = count
+    line.inputs["Offset"].default_value = (spacing, 0.0, 0.0)
+    info = ng.nodes.new("GeometryNodeCollectionInfo")
+    info.inputs["Collection"].default_value = coll
+    info.inputs["Separate Children"].default_value = True
+    info.inputs["Reset Children"].default_value = True
+    iop = ng.nodes.new("GeometryNodeInstanceOnPoints")
+    iop.inputs["Pick Instance"].default_value = True
+    if pick_by_index:
+        idx = ng.nodes.new("GeometryNodeInputIndex")
+        ng.links.new(idx.outputs["Index"], iop.inputs["Instance Index"])
+    ng.links.new(line.outputs["Mesh"], iop.inputs["Points"])
+    ng.links.new(info.outputs["Instances"], iop.inputs["Instance"])
+    tail = iop.outputs["Instances"]
+    if realize:
+        r = ng.nodes.new("GeometryNodeRealizeInstances")
+        ng.links.new(tail, r.inputs["Geometry"])
+        tail = r.outputs["Geometry"]
+    ng.links.new(tail, out.inputs["Geometry"])
+    host = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+    bpy.context.scene.collection.objects.link(host)
+    host.modifiers.new("GeometryNodes", "NODES").node_group = ng
+    return host
+
+
+def host_verts(host, frame=None):
+    if frame is not None:
+        bpy.context.scene.frame_set(frame)
+    ev = host.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = ev.to_mesh()
+    out = [tuple(v.co) for v in mesh.vertices]
+    ev.to_mesh_clear()
+    return out
+
+
+def frame_ms(frames=6):
+    """Milliseconds of DEPSGRAPH re-evaluation per frame, which is what `frame_set` forces.
+
+    Not `to_mesh` time. The first version of this measured the loop body and reported 0.00 ms for a
+    stand of applied meshes -- true, and measuring nothing: a mesh with no time dependency is never
+    re-evaluated, so the loop did no work at all. That reading is the answer, but only once the
+    thing being timed is the re-evaluation itself.
+    """
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    t0 = time.perf_counter()
+    for f in range(2, 2 + frames):
+        bpy.context.scene.frame_set(f)
+        bpy.context.evaluated_depsgraph_get()
+    bpy.context.scene.frame_set(1)
+    return (time.perf_counter() - t0) / frames * 1000.0
+
+
+def wipe_scene(keep=()):
+    for obj in list(bpy.data.objects):
+        if obj.name not in keep:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def check_variants():
+    """Make Variants: N seeds in the pool, still alive, still the tree that was authored.
+
+    The failures this rules out, and every one of them produces a pool that looks right:
+
+    - a bake that reads the SPECIES PRESET instead of the tree loses every slider the artist moved,
+      so the stand is eight copies of a tree nobody authored,
+    - a bake whose seed does not reach the geometry is eight clones (the same failure the seed check
+      at the top of this gate exists for, one level up),
+    - a bake that FREEZES the variants silently deletes the whole of docs/FOLIAGE.md 2.4: an applied
+      mesh is a tree stopped at the frame it was baked on, and a still forest under a moving sky
+      reads as a render setting rather than as a missing feature,
+    - a bake that leaves each variant its own materials makes retuning a species twenty-four edits,
+      so a stand drifts away from the tree it came from,
+    - an origin that is not at the base buries or floats every scattered instance.
+    """
+    from bob_blender_tools.core import foliage_build, foliage_variants
+
+    wipe_scene()
+    hero = foliage_build.grow("Hero", dict(assets.foliage_species("conifer")["params"], seed=4),
+                              species="conifer", scene=bpy.context.scene)
+    # Two knobs moved off the preset, so the bake has something to lose if it reads the wrong thing.
+    foliage_build.live_input(hero, "Card Size").value = 1.55
+    foliage_build.live_input(hero, "Droop").value = 0.77
+    mats_before = len(bpy.data.materials)
+
+    report = foliage_variants.make_variants(hero, count=4, levels=(0,), scene=bpy.context.scene)
+    pool = bpy.data.collections.get(report["collection"])
+    variants = sorted((o for o in pool.objects if foliage_build.is_foliage(o)),
+                      key=lambda o: o.name) if pool else []
+    check("Make Variants fills BOB_Assets_<Kind> from the species' own kind",
+          report["collection"] == "BOB_Assets_Trees" and len(variants) == 4,
+          f"{report['collection']}, {len(variants)} variants")
+    check("and the authored tree is not one of them: the panel still lists one tree",
+          [o.name for o in foliage_build.foliage_objects(bpy.context.scene)] == ["Hero"],
+          str([o.name for o in foliage_build.foliage_objects(bpy.context.scene)]))
+
+    verts = {o.name: pool_verts(o) for o in variants}
+    budgets = {len(v) for v in verts.values()}
+    check("every variant built, and to the same vertex budget",
+          all(verts.values()) and len(budgets) == 1, f"budgets {sorted(budgets)}")
+    worst = 0
+    names = sorted(verts)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            worst = max(worst, sum(1 for p, q in zip(verts[a], verts[b]) if p == q))
+    check("no two variants share a vertex set", worst == 0,
+          f"worst pair shares {worst} of {len(verts[names[0]])} verts")
+
+    tuned = {round(foliage_build.live_input(o, "Card Size").value, 3) for o in variants}
+    droop = {round(foliage_build.live_input(o, "Droop").value, 3) for o in variants}
+    check("the bake carries the tree's TUNED knobs, not its species preset",
+          tuned == {1.55} and droop == {0.77}, f"Card Size {tuned}, Droop {droop}")
+
+    wanted = {m.name for m in foliage_variants._tree_materials(hero) if m}
+    got = {m.name for o in variants for m in foliage_variants._tree_materials(o) if m}
+    check("every variant wears the source tree's two materials", got == wanted and len(got) == 2,
+          f"{sorted(got)} against {sorted(wanted)}")
+    check("so baking four variants added no materials at all",
+          len(bpy.data.materials) == mats_before,
+          f"{mats_before} before, {len(bpy.data.materials)} after, "
+          f"{report['materials_shared']} duplicates binned")
+
+    bases = [min(v[2] for v in verts[n]) for n in names]
+    check("the origin sits at the base of every variant, so a scattered tree is not buried",
+          max(abs(b) for b in bases) < 0.01,
+          "lowest vertex " + ", ".join(f"{b:+.5f}" for b in bases))
+
+    # Re-pressing must refresh rather than double what a scatter layer instances.
+    again = foliage_variants.make_variants(hero, count=4, levels=(0,), scene=bpy.context.scene)
+    check("a second press replaces the pool rather than doubling it",
+          again["replaced"] == 4 and len([o for o in pool.objects
+                                          if foliage_build.is_foliage(o)]) == 4,
+          f"replaced {again['replaced']}, pool now "
+          f"{len([o for o in pool.objects if foliage_build.is_foliage(o)])}")
+
+    # ... but a SECOND tree of the same species is a second tree, and baking it must not wipe the
+    # first's pool. It would if the variant stem came from the species name, which reads better and
+    # is what this reached for first: eight variants a scatter layer was already instancing, gone
+    # with no warning and no error.
+    other = foliage_build.grow("Hero Two", dict(assets.foliage_species("conifer")["params"], seed=9),
+                               species="conifer", scene=bpy.context.scene)
+    foliage_variants.make_variants(other, count=2, levels=(0,), scene=bpy.context.scene)
+    stems = sorted({o.name.split("_v")[0] for o in pool.objects if foliage_build.is_foliage(o)})
+    check("and baking a SECOND tree of the same species does not wipe the first's variants",
+          len([o for o in pool.objects if foliage_build.is_foliage(o)]) == 6 and len(stems) == 2,
+          f"{len([o for o in pool.objects if foliage_build.is_foliage(o)])} in the pool "
+          f"under stems {stems}")
+
+
+def check_variants_alive():
+    """The phase's one real hazard, measured rather than argued: an instanced variant still MOVES.
+
+    F4 established that two instances of one tree AGREE at one frame (9.54e-07 m apart), which is a
+    statement about phase and says nothing about motion, and the obvious reading of "bake" -- apply
+    the modifier -- would have made every stand static while passing every other check in this file.
+    So both halves are measured here: the live variant across frames, and the applied copy across
+    the same frames, because a number that moves means nothing without the one that does not.
+    """
+    from bob_blender_tools.core import foliage_build, foliage_variants
+
+    wipe_scene()
+    hero = foliage_build.grow("Gale", dict(assets.foliage_species("conifer")["params"],
+                                           seed=4, wind=5.0, wind_direction=30.0),
+                              species="conifer", scene=bpy.context.scene)
+    foliage_variants.make_variants(hero, count=2, levels=(0,), scene=bpy.context.scene)
+    pool = bpy.data.collections["BOB_Assets_Trees"]
+    variants = sorted((o for o in pool.objects if foliage_build.is_foliage(o)),
+                      key=lambda o: o.name)
+    bpy.data.objects.remove(hero, do_unlink=True)
+
+    host = instance_stand("LiveStand", variants, 2, spacing=30.0, pick_by_index=True)
+    f1, f31 = host_verts(host, 1), host_verts(host, 31)
+    moved_live = max(moved(f1, f31)) if len(f1) == len(f31) else None
+    check("an INSTANCED variant still sways: the bake keeps the wind",
+          moved_live is not None and moved_live > 0.1,
+          f"max {moved_live:.4f} m between frame 1 and 31 over {len(f1)} instanced verts"
+          if moved_live is not None else "instance budgets differ")
+
+    # The other half: freeze one and instance that, so the number above has something to mean.
+    bpy.context.scene.frame_set(7)
+    with foliage_variants.evaluable(variants[0]):
+        dg = bpy.context.evaluated_depsgraph_get()
+        frozen = bpy.data.objects.new(
+            "Frozen", bpy.data.meshes.new_from_object(variants[0].evaluated_get(dg)))
+    bpy.context.scene.collection.objects.link(frozen)
+    fhost = instance_stand("FrozenStand", [frozen], 2, spacing=30.0)
+    g1, g31 = host_verts(fhost, 1), host_verts(fhost, 31)
+    moved_frozen = max(moved(g1, g31)) if len(g1) == len(g31) else None
+    check("and an APPLIED copy does not, which is what the live variant is worth",
+          moved_frozen == 0.0, f"max {moved_frozen} m over the same 30 frames")
+
+    # The cost of that, and its shape: flat in instance count, so a forest is not more expensive
+    # than a copse. Timed rather than asserted, because the number is the decision's whole basis.
+    bpy.data.objects.remove(fhost, do_unlink=True)
+    bpy.data.objects.remove(frozen, do_unlink=True)
+    bpy.data.objects.remove(host, do_unlink=True)
+    small = instance_stand("Small", variants, 25, spacing=8.0, realize=False)
+    ms_small = frame_ms()
+    bpy.data.objects.remove(small, do_unlink=True)
+    big = instance_stand("Big", variants, 400, spacing=8.0, realize=False)
+    ms_big = frame_ms()
+    check("the per-frame cost is per VARIANT, not per instance",
+          ms_big < ms_small * 1.5 + 1.0,
+          f"{ms_small:.2f} ms/frame at 25 instances, {ms_big:.2f} ms at 400")
+    bpy.data.objects.remove(big, do_unlink=True)
+
+
+def check_variant_phase():
+    """Variants are spread out in the pool, and stacking them would cost the stand its shimmer.
+
+    A tree's phase is its own world location (F4, `_tree_phase`), and a pool is authored at the
+    origin, so this is the one thing about the bake that is easy to leave out and impossible to see:
+    eight variants at (0,0,0) sway in perfect unison and the forest breathes as one object. Both
+    sides are measured at the SAME seed, so the only thing that can differ is the phase.
+
+    **Over a gust CYCLE and not at one frame**, which is the part that had to be got right. Two
+    sinusoids of the same frequency and different phase are equal twice per cycle, so a single-frame
+    reading is a coin toss: measured at frame 1 the 40 m spread differs by 0.0087 m (the two phases
+    happen to land on the same point of the gust, 0.657 against 0.652) and at frame 9 by 1.1618 m.
+    The first version of this check read frame 1 and failed on a recipe that was working perfectly
+    -- F3's bark-seam check in the other direction. Out of step means "not always together", and the
+    frames are spread over one period of `SWAY_FREQ` so that is what gets measured.
+    """
+    from bob_blender_tools.core.geonodes.recipes import foliage as fol
+
+    from bob_blender_tools.core import foliage_variants
+
+    wipe_scene()
+    period = bpy.context.scene.render.fps / fol.SWAY_FREQ      # frames in one gust
+    frames = [1 + round(i * period / 5.0) for i in range(5)]
+    build("PoolA", cards=4, wind=4.0)
+    build("PoolB", cards=4, wind=4.0)
+    a_obj, b_obj = bpy.data.objects["PoolA"], bpy.data.objects["PoolB"]
+
+    def spread(dx):
+        b_obj.location = (dx, 0.0, 0.0)
+        bpy.context.view_layer.update()
+        worst = 0.0
+        for frame in frames:
+            bpy.context.scene.frame_set(frame)
+            # LOCAL coordinates on both sides. `to_mesh` is object space, so the offset goes nowhere
+            # near these numbers, and subtracting it back out would BE the difference -- which an
+            # earlier version did, reporting exactly 40.0000 m and passing on anything at all.
+            pa, pb = pool_verts(a_obj), pool_verts(b_obj)
+            if len(pa) != len(pb):
+                return None
+            worst = max(worst, max(moved(pa, pb)))
+        bpy.context.scene.frame_set(1)
+        return worst
+
+    stacked = spread(0.0)
+    check("two same-seed variants stacked at the origin are identical at every frame -- the failure",
+          stacked is not None and stacked < 1e-4,
+          f"worst over {len(frames)} frames of a gust: {stacked:.2e} m" if stacked is not None
+          else "budgets differ")
+    apart = spread(foliage_variants.VARIANT_SPACING)
+    check(f"and {foliage_variants.VARIANT_SPACING:.0f} m apart -- the spread the baker uses -- "
+          f"they are not", apart is not None and apart > 0.05,
+          f"worst over the same gust: {apart:.4f} m of phase difference" if apart is not None
+          else "budgets differ")
+
+    # ... and the spread must not move the instances, or a stand would be laid out by the pool.
+    host = instance_stand("SpreadStand", [b_obj], 1, spacing=0.0)
+    xs = [v[0] for v in host_verts(host, 1)]
+    check("but an instance still lands on its POINT, because Reset Children resets the transform",
+          xs and abs((min(xs) + max(xs)) / 2.0) < 1.0,
+          f"instance x-range {min(xs):.2f} .. {max(xs):.2f} for a source authored at "
+          f"x={foliage_variants.VARIANT_SPACING:.0f}")
+
+
+def check_lods():
+    """The LOD ladder: a rebuild, budgeted, and not wider than the tree it replaces.
+
+    Three things have to hold and each fails differently. The rung has to be genuinely cheaper, or
+    it is a second copy of LOD0 under a name that promises otherwise. It has to keep the CANOPY, or
+    a distant stand thins out and pops as the camera closes. And it has to keep the SILHOUETTE, or
+    the tree grows as it recedes -- which the area rule alone does: preserving the conifer's 447 m2
+    of canopy on 18 cards makes each card 7.4 m across and the tree comes back 253% as wide.
+    """
+    from bob_blender_tools.core import foliage_variants
+
+    wipe_scene()
+    print("    the ladder, per species")
+    print(f"      {'species':11} {'rung':4} {'verts':>7} {'cards':>6} {'canopy':>7} {'width':>7}")
+    for species in ("conifer", "broadleaf", "shrub", "grass_tuft"):
+        base = dict(assets.foliage_species(species)["params"], seed=3)
+        ladder = foliage_variants.fit_ladder(base)
+        shots = []
+        for level, rung in ladder:
+            apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Rung",
+                      "params": dict(rung), "reset": True})
+            shots.append((level, foliage_variants.measure(bpy.data.objects["Rung"])))
+        zero = shots[0][1]
+        for level, got in shots:
+            print(f"      {species:11} {level:4} {got['verts']:7} {got['cards']:6} "
+                  f"{got['area'] / zero['area'] * 100:6.1f}% {got['width'] / zero['width'] * 100:6.1f}%")
+        verts = [got["verts"] for _l, got in shots]
+        check(f"{species}: every rung is cheaper than the one above it",
+              all(a > b for a, b in zip(verts, verts[1:])), " -> ".join(str(v) for v in verts))
+        widest = max(got["width"] / zero["width"] for _l, got in shots)
+        check(f"{species}: no rung is wider than the tree it stands in for",
+              widest <= foliage_variants.WIDTH_TOLERANCE + 0.02, f"widest {widest * 100:.1f}%")
+        # A rebuild, not a decimate: a Decimate triangulates, and the card quads are the evidence.
+        last = bpy.data.objects["Rung"].evaluated_get(bpy.context.evaluated_depsgraph_get())
+        mesh = last.to_mesh()
+        cards = card_faces(mesh)
+        check(f"{species}: the cheapest rung still has whole card QUADS, so it was rebuilt",
+              cards and all(len(mesh.polygons[i].vertices) == 4 for i in cards),
+              f"{len(cards)} card faces, "
+              f"{sorted({len(mesh.polygons[i].vertices) for i in cards})} verts each")
+        check(f"{species}: and it still carries a UV layer and both materials",
+              len(mesh.uv_layers) == 1 and len([m for m in mesh.materials if m]) == 2,
+              f"{len(mesh.uv_layers)} UV layers, "
+              f"{[m.name for m in mesh.materials if m]}")
+        last.to_mesh_clear()
+        if species == "grass_tuft":
+            check("a species already at the floor gets ONE rung, not a duplicate of LOD0",
+                  [level for level, _r in ladder] == [0, 2],
+                  str([level for level, _r in ladder]))
+
+    # The budgets, re-derived rather than defended: docs/FOLIAGE.md 2.6's 8 k target predates cards.
+    conifer = dict(assets.foliage_species("conifer")["params"], seed=3)
+    ladder = dict(foliage_variants.fit_ladder(conifer))
+    got = {}
+    for level, rung in sorted(ladder.items()):
+        apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Budget",
+                  "params": dict(rung), "reset": True})
+        got[level] = foliage_variants.measure(bpy.data.objects["Budget"])
+    check("LOD1 costs about a quarter of LOD0", got[1]["verts"] < 0.30 * got[0]["verts"],
+          f"{got[1]['verts']} of {got[0]['verts']} ({got[1]['verts'] / got[0]['verts'] * 100:.1f}%)")
+    check("LOD2 costs under a twentieth", got[2]["verts"] < 0.05 * got[0]["verts"],
+          f"{got[2]['verts']} of {got[0]['verts']} ({got[2]['verts'] / got[0]['verts'] * 100:.1f}%)")
+    check("LOD1 keeps the canopy it is standing in for",
+          got[1]["area"] > 0.9 * got[0]["area"],
+          f"{got[1]['area'] / got[0]['area'] * 100:.1f}% of LOD0's card area")
+    # LOD2 cannot, and the number is recorded rather than asserted away: a narrow crown of 1,228
+    # small cards has no 76-card equivalent that is not a sphere, so the width wins and the coverage
+    # is the price. Held above the first rule's 7.5%, which was a stick with leaves on it.
+    check("LOD2 keeps as much of it as a billboard rung can, and more than a stick",
+          got[2]["area"] > 0.2 * got[0]["area"],
+          f"{got[2]['area'] / got[0]['area'] * 100:.1f}% of LOD0's card area on "
+          f"{got[2]['cards']} cards")
+
+
+def check_variant_pack(tmp):
+    """The narrow pack writer, and the two things it cannot carry.
+
+    `gen_assets.finish_asset` is the wrong tool -- it bakes dense-to-low, decimates, unwraps and
+    converts to a BobShader, and a procedural tree needs none of it -- so this reuses three helpers
+    and nothing else. What it must prove is that the reduction is HONEST: a packed variant is a
+    frozen mesh with a plain PBR material, and its manifest entry carries the species and seed that
+    regrow it alive, so the mesh is the fallback and the two numbers are the record.
+    """
+    from bob_blender_tools.core import foliage_build, foliage_variants
+
+    wipe_scene()
+    pack = os.path.join(tmp, "variant_pack")
+    assets.ensure_generated_pack(pack)
+    assets.add_pack_root(pack)
+    hero = foliage_build.grow("PackHero", dict(assets.foliage_species("conifer")["params"], seed=4),
+                              species="conifer", scene=bpy.context.scene)
+    report = foliage_variants.make_variants(hero, count=2, scene=bpy.context.scene, pack_dir=pack)
+    written = report.get("pack") or []
+    check("the writer wrote a file per variant",
+          len(written) == 2 and all(os.path.getsize(f) > 10000 for _n, f in written),
+          ", ".join(f"{n} {os.path.getsize(f) // 1024} KB" for n, f in written))
+
+    entries = foliage_variants.manifest_variants(pack, "trees")
+    check("each is a manifest entry the ordinary reader normalises",
+          len(entries) == 2 and all(e.get("origin") == "base" and e.get("faces") for e in entries),
+          str([(e["file"], e["faces"]) for e in entries]))
+    check("carrying the species and seed that regrow it, so the frozen mesh is the FALLBACK",
+          all(e["foliage"].get("species") == "conifer" and "seed" in e["foliage"]
+              for e in entries),
+          str([e["foliage"]["seed"] for e in entries]))
+    check("and the rungs it holds", all(e.get("lod") == [1, 2] for e in entries),
+          str([e.get("lod") for e in entries]))
+
+    # The regrown tree must BE the variant, not merely resemble it. Same wind on both sides, or the
+    # check measures the weather: an earlier version of this compared a still capture against a
+    # regrow into a blowing scene and reported a 0.93 m miss on an exact match.
+    pool = bpy.data.collections["BOB_Assets_Trees"]
+    first = sorted((o for o in pool.objects if foliage_build.is_foliage(o)),
+                   key=lambda o: o.name)[0]
+    was = pool_verts(first)
+    back = foliage_variants.regrow(entries[0], "Regrown", scene=bpy.context.scene,
+                                   location=tuple(first.location))
+    foliage_build.live_input(back, "Wind").value = foliage_build.live_input(first, "Wind").value
+    bpy.context.view_layer.update()
+    now = pool_verts(back)
+    gap = max(moved(was, now)) if len(was) == len(now) else None
+    check("regrowing from species and seed reproduces the variant exactly, and alive",
+          gap is not None and gap < 1e-6,
+          f"max {gap:.2e} m over {len(now)} verts" if gap is not None else
+          f"budgets differ: {len(was)} against {len(now)}")
+
+    # The export material has to be a plain Principled. Not a preference: the glTF exporter
+    # segfaults at teardown on the card material's Mix Shader chain (isolated -- bark alone exits 0,
+    # the card alone exits 139), and a gate that crashes AFTER printing its verdict reads as a clean
+    # run to an exit code, which is how the G2 gate hid a crash for two phases.
+    exported = [m for m in bpy.data.materials if "_export_" in m.name]
+    check("the packed variant's materials are plain Principleds, which is all glTF carries",
+          len(exported) == 2 and all(
+              next(n for n in m.node_tree.nodes
+                   if n.bl_idname == "ShaderNodeOutputMaterial").inputs["Surface"]
+              .links[0].from_node.bl_idname == "ShaderNodeBsdfPrincipled" for m in exported),
+          str(sorted(m.name for m in exported)))
+    leaf = next((m for m in exported if m.name.endswith("Leaf")), None)
+    if leaf is not None:
+        bsdf = next(n for n in leaf.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+        check("and the leaf one still cuts out, so a packed card is not a rectangle",
+              bsdf.inputs["Alpha"].is_linked, "Alpha is linked" if bsdf.inputs["Alpha"].is_linked
+              else "Alpha is not linked")
+    # The live tree keeps everything: the export materials are a copy, not a conversion.
+    live = {m.name for m in foliage_variants._tree_materials(first) if m}
+    check("while the LIVE variants keep their BobShaders untouched",
+          live == {"M_PackHero Bark", "M_PackHero Leaf"}, str(sorted(live)))
+
+
 def _season_render(season, path):
     """Render the scene with the world set to a season; return (mean R - mean G, mean luminance).
 
@@ -1164,6 +1616,113 @@ def check_season():
     bpy.context.scene.bbt_env.season = "summer"
 
 
+HEIGHTMAP = os.path.join(REPO, "library", "textures", "grass", "grass_height.png")
+
+
+def check_stand():
+    """A real stand: baked variants, a scatter layer on a terrain, and a frame.
+
+    The end of the track and the only check here that exercises all of it at once. Everything above
+    measures one hop; this is the hop nobody writes a check for, which is that the hops connect --
+    a pool a scatter layer can actually read, a random pick that spans it, instances that sit ON the
+    ground rather than through it, and a frame that is a forest.
+    """
+    from bob_blender_tools.core import foliage_build, foliage_variants
+
+    wipe_scene()
+    os.makedirs(OUT, exist_ok=True)
+    hero = foliage_build.grow("StandHero", dict(assets.foliage_species("conifer")["params"],
+                                                seed=4, wind=2.0, wind_direction=40.0),
+                              species="conifer", scene=bpy.context.scene)
+    foliage_variants.make_variants(hero, count=8, scene=bpy.context.scene)
+    bpy.data.objects.remove(hero, do_unlink=True)
+    pool = bpy.data.collections["BOB_Assets_Trees"]
+    check("eight variants in the pool, at LOD0", len([o for o in pool.objects
+                                                      if foliage_build.is_foliage(o)]) == 8,
+          str(len(pool.objects)))
+
+    apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Ground",
+              "params": {"heightmap": HEIGHTMAP, "size": 220.0, "resolution": 128,
+                         "height": 24.0, "sea_level": 0.2}, "reset": True})
+    apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
+              "params": {"emitter": "Ground", "assets": pool.name, "align": "up",
+                         "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
+                         "min_scale": 0.85, "max_scale": 1.25}})
+    bpy.context.view_layer.update()
+    host = bpy.data.objects["Stand"]
+    count, sources = foliage_variants.stand_report(host)
+    check("the scatter layer instances the baked pool", count > 60, f"{count} trees on 220 m")
+    check("and its random pick spans every variant, so the stand is not one tree repeated",
+          len(sources) == 8, f"{len(sources)} of 8 variants used")
+
+    # A tree must stand ON the terrain. The origin is at the base of every variant (checked above),
+    # so an instance's own Z is the ground's, and the mesh under it is what says whether that held.
+    dg = bpy.context.evaluated_depsgraph_get()
+    ground = bpy.data.objects["Ground"].evaluated_get(dg)
+    gmesh = ground.to_mesh()
+    zs = [v.co.z for v in gmesh.vertices]
+    ground.to_mesh_clear()
+    inst_z = [i.matrix_world.translation.z for i in dg.object_instances
+              if i.is_instance and i.parent is not None and i.parent.original.name == "Stand"]
+    check("every instance sits within the terrain's own height range, not under it",
+          inst_z and min(inst_z) >= min(zs) - 0.5 and max(inst_z) <= max(zs) + 0.5,
+          f"instances {min(inst_z):.2f}..{max(inst_z):.2f} m, terrain {min(zs):.2f}..{max(zs):.2f} m"
+          if inst_z else "no instances")
+
+    # The same stand off each rung in turn, which is the number a distant layer is chosen on.
+    # One collection per rung, so the comparison is eight variants against eight variants rather
+    # than eight against the sixteen the mixed LOD collection holds.
+    lods = bpy.data.collections.get(foliage_build.LOD_COLL)
+    print(f"    {'stand':34} {'trees':>6} {'verts each':>11} {'ms/frame':>9}")
+    for level, source in ((0, pool),) + tuple(
+            (level, [o for o in (lods.objects if lods else []) if o.name.endswith(f"_LOD{level}")])
+            for level in (1, 2)):
+        members = list(source.objects) if hasattr(source, "objects") else list(source)
+        if not members:
+            continue
+        rung_coll = bpy.data.collections.get(f"RungPool{level}")
+        if rung_coll is None:
+            rung_coll = bpy.data.collections.new(f"RungPool{level}")
+        for obj in members:
+            if obj.name not in rung_coll.objects:
+                rung_coll.objects.link(obj)
+        apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
+                  "params": {"emitter": "Ground", "assets": rung_coll.name, "align": "up",
+                             "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
+                             "min_scale": 0.85, "max_scale": 1.25}})
+        bpy.context.view_layer.update()
+        rung_count, _src = foliage_variants.stand_report(bpy.data.objects["Stand"])
+        per = foliage_variants.measure(members[0])["verts"]
+        print(f"    {f'LOD{level}, {len(members)} live variants':34} {rung_count:6} "
+              f"{per:11,} {frame_ms():9.2f}")
+
+    # Back to LOD0 for the frame.
+    apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
+              "params": {"emitter": "Ground", "assets": pool.name, "align": "up",
+                         "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
+                         "min_scale": 0.85, "max_scale": 1.25}})
+    bpy.context.view_layer.update()
+
+    # The frame. Every check above passes on a stand of invisible trees.
+    bpy.ops.object.light_add(type="SUN", location=(0, 0, 120))
+    bpy.context.active_object.data.energy = 4.0
+    bpy.context.active_object.rotation_euler = (0.75, 0.0, 0.6)
+    bpy.ops.object.camera_add(location=(0.0, -135.0, 34.0), rotation=(math.pi / 2.35, 0, 0))
+    bpy.context.scene.camera = bpy.context.active_object
+    bpy.context.scene.render.resolution_x = 960
+    bpy.context.scene.render.resolution_y = 540
+    var = None
+    for engine in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
+        var = render_variance(engine, os.path.join(OUT, "stand"))
+        if var is not None:
+            break
+    if var is None:
+        print("[SKIP] EEVEE could not render the stand in this environment")
+    else:
+        check("the stand renders, and is not flat", var > 0.05,
+              f"luminance range {var:.4f} at {os.path.join(OUT, 'stand.png')}")
+
+
 def check_panel():
     """The BobFoliage panel (docs/FOLIAGE.md 4.2), which is as gateable as a recipe.
 
@@ -1211,14 +1770,14 @@ def check_panel():
           str([c.name for c in grown.users_collection]))
 
     # 3. Adding a second tree does not disturb the first one's tuned knobs.
-    tuned = foliage_build._live_input(grown, "Card Size")
+    tuned = foliage_build.live_input(grown, "Card Size")
     tuned.value = 1.37
     second = foliage_build.grow("GateTree2", dict(assets.foliage_species("broadleaf")["params"]),
                                 species="broadleaf", scene=scene)
     scene.bbt_foliage.active = 1
     check("adding a tree leaves another tree's tuned knobs alone",
-          abs(foliage_build._live_input(grown, "Card Size").value - 1.37) < 1e-6,
-          f"Card Size {foliage_build._live_input(grown, 'Card Size').value:.3f} after a second tree")
+          abs(foliage_build.live_input(grown, "Card Size").value - 1.37) < 1e-6,
+          f"Card Size {foliage_build.live_input(grown, 'Card Size').value:.3f} after a second tree")
     check("and the panel lists both", len(foliage_build.foliage_objects(scene)) == 2,
           str([o.name for o in foliage_build.foliage_objects(scene)]))
 
@@ -1235,19 +1794,19 @@ def check_panel():
           foliage_build.species_of(grown))
 
     # 5. A structural rebuild keeps tuned live knobs (the reason Build is a press and not a callback).
-    foliage_build._live_input(second, "Droop").value = 0.81
+    foliage_build.live_input(second, "Droop").value = 0.81
     foliage_build.rebuild(second, overrides={"profile_segments": 4}, scene=scene)
     check("a structural rebuild keeps the tuned live knobs",
-          abs(foliage_build._live_input(second, "Droop").value - 0.81) < 1e-6,
-          f"Droop {foliage_build._live_input(second, 'Droop').value:.3f} after a rebuild")
+          abs(foliage_build.live_input(second, "Droop").value - 0.81) < 1e-6,
+          f"Droop {foliage_build.live_input(second, 'Droop').value:.3f} after a rebuild")
 
     # 6. The world feed: the world's wind reaches every tree, with no rebuild and no per-tree press.
     scene.bbt_env.wind_strength = 4.25
     scene.bbt_env.wind_direction = 210.0
     reached = foliage_build.apply_wind(scene)
-    winds = [foliage_build._live_input(o, "Wind").value
+    winds = [foliage_build.live_input(o, "Wind").value
              for o in foliage_build.foliage_objects(scene)]
-    dirs = [foliage_build._live_input(o, "Wind Direction").value
+    dirs = [foliage_build.live_input(o, "Wind Direction").value
             for o in foliage_build.foliage_objects(scene)]
     check("the world's wind reaches every tree", reached == len(winds)
           and all(abs(w - 4.25) < 1e-5 for w in winds), f"{reached} trees, winds {winds}")
@@ -1257,24 +1816,65 @@ def check_panel():
     scene.bbt_env.wind_strength = 0.75
     ui_world.apply_all(scene)
     check("and the World applier is what runs it, so no BobFoliage press is needed",
-          all(abs(foliage_build._live_input(o, "Wind").value - 0.75) < 1e-5
+          all(abs(foliage_build.live_input(o, "Wind").value - 0.75) < 1e-5
               for o in foliage_build.foliage_objects(scene)),
-          str([foliage_build._live_input(o, "Wind").value
+          str([foliage_build.live_input(o, "Wind").value
                for o in foliage_build.foliage_objects(scene)]))
 
     # 7. The two texture pickers exist, their Generate buttons are real operators, and Make Variants
-    #    is NOT here: a button that does nothing teaches an artist to distrust the panel, so F5
-    #    brings it with the thing it does (docs/FOLIAGE.md 6).
+    #    is HERE now: F4 kept it off the panel rather than shipping it greyed, and F5 brings it with
+    #    the thing it does (docs/FOLIAGE.md 6).
     from bob_blender_tools.ui import foliage as ui_foliage
     props = {p for p in ui_foliage.BBT_FoliageProps.__annotations__}
     check("the panel carries both texture-set pickers", {"bark_set", "atlas"} <= props,
           str(sorted(props & {"bark_set", "atlas"})))
     for op in ("foliage_generate_bark", "foliage_generate_atlas", "foliage_add",
-               "foliage_load_species", "foliage_build"):
+               "foliage_load_species", "foliage_build", "foliage_make_variants"):
         check(f"{op} is a registered operator", hasattr(bpy.ops.bob_blender_tools, op))
-    variants = [n for n in dir(bpy.ops.bob_blender_tools) if "variant" in n and "foliage" in n]
-    check("Make Variants is absent rather than greyed, and arrives with F5", not variants,
-          str(variants))
+    check("and the panel has the knobs Make Variants needs",
+          {"variant_count", "variant_lods", "variant_pack"} <= props,
+          str(sorted(props & {"variant_count", "variant_lods", "variant_pack"})))
+
+    # 8. F5's own panel checks. The operator has to bake through core and nothing else, and the
+    #    baked pool has to feel the world -- which is the half that is easy to lose, because
+    #    BOB_Assets_<Kind> is not in the scene and `scene.objects` walks straight past it.
+    scene.bbt_foliage.variant_count = 3
+    scene.bbt_foliage.variant_lods = False
+    scene.bbt_foliage.variant_pack = False
+    for other in bpy.context.selected_objects:
+        other.select_set(False)
+    second.select_set(True)
+    bpy.context.view_layer.objects.active = second
+    bpy.ops.bob_blender_tools.foliage_make_variants()
+    from bob_blender_tools.core import foliage_variants
+    kind = foliage_variants.variant_kind(second)
+    pooled = foliage_variants.variant_summary(kind)
+    check("the panel's Make Variants bakes the active tree through core",
+          len(pooled) == 3, f"{len(pooled)} in BOB_Assets_{kind.capitalize()}")
+    check("and its variants are measurable, which a pooled object is not by default",
+          all(v > 0 for _n, v in pooled), str(pooled))
+
+    scene.bbt_env.wind_strength = 5.5
+    ui_world.apply_all(scene)
+    winds = {round(foliage_build.live_input(bpy.data.objects[n], "Wind").value, 3)
+             for n, _v in pooled}
+    check("the World applier reaches the BAKED POOL too, so a stand feels the weather",
+          winds == {5.5}, f"pooled winds {sorted(winds)}")
+    check("and the pool is still not listed as an authored tree",
+          not ({n for n, _v in pooled} & {o.name
+                                          for o in foliage_build.foliage_objects(scene)}),
+          str([o.name for o in foliage_build.foliage_objects(scene)]))
+
+    # 9. A rebuild keeps the STRUCTURE it was last built with, which is what makes a bake reproduce
+    #    the tree rather than its species. Without the build stamp the panel's staged levels were
+    #    the only record and a second rebuild silently went back to the preset's depth.
+    foliage_build.rebuild(second, overrides={"levels": 2}, scene=scene)
+    foliage_build.rebuild(second, scene=scene)
+    depth = max((int(it.name[1]) for it in next(m for m in second.modifiers if m.type == "NODES")
+                 .node_group.interface.items_tree
+                 if it.name.startswith("L") and it.name[1:2].isdigit()), default=0)
+    check("a rebuild keeps the structural depth the last one set", depth == 2,
+          f"{depth} branch levels after a plain rebuild")
 
 
 def check_generation(args):
@@ -1568,6 +2168,20 @@ def main(argv=None):
     check_translucency()
 
     check_render()      # deletes everything but its own tree to get a clean frame
+
+    # -- F5: the variants, the ladder, the pack writer and the stand ------------------------------
+    # After the render, because each of these wipes the scene to bake into a clean pool.
+    check_variants()
+    check_variants_alive()
+    check_variant_phase()
+    check_lods()
+    tmp = tempfile.mkdtemp(prefix="bbt_foliage_")
+    try:
+        check_variant_pack(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    check_stand()       # a terrain, a real density, and the frame beside the redwood reference
+
     check_season()      # renders its own frames the same way, one per season
     check_generation(args)  # needs a server; renders its own frame
     # Last, because it registers the addon: once bbt_env exists a build seeds its wind from the

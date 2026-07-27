@@ -18,6 +18,8 @@ resolves its own state into those arguments before calling. Panel state that nev
 is what keeps this track off the live-bridge-only list.
 """
 
+import json
+
 import bpy
 
 from . import assets
@@ -33,6 +35,15 @@ FOLIAGE_STAMP = "bbt_foliage"
 # Empty on a bare `build_geonodes(recipe="foliage")`, which is a legitimate state: a tree tuned by
 # hand from the defaults belongs to no species.
 SPECIES_STAMP = "bbt_foliage_species"
+
+# The params this tree was last BUILT with, as JSON (F5). The live knobs live on the modifier and
+# need no copy, but the STRUCTURAL ones -- `levels`, `profile_segments`, `bark_set`, `atlas` -- are
+# Python arguments to the recipe and are recoverable from nothing afterwards. Without this a tree
+# the artist rebuilt at two levels forgot it on the next rebuild (the panel's staged choice was the
+# only record, and it is UI state), and a baked variant would come out at the species' depth rather
+# than at the tree's. `heightmap_terrain` stamps its own build params for the same reason
+# (core/geonodes/__init__.py `_TERRAIN_STAMP`); this is that idiom, kept local to foliage.
+BUILD_STAMP = "bbt_foliage_build"
 
 # Where authored trees live. One collection so the panel can list them with a template_list over
 # real objects (the Scatter panel's model) instead of a CollectionProperty of pointers that can go
@@ -59,24 +70,83 @@ def is_foliage(obj):
 
 
 def foliage_objects(scene=None):
-    """Every BobFoliage tree in the scene, in name order. What the panel lists and what the wind
-    applier walks."""
+    """Every AUTHORED BobFoliage tree in the scene, in name order. What the panel lists.
+
+    Scene objects only, which is the distinction `wind_targets` exists to bridge: a baked variant
+    lives in `BOB_Assets_<Kind>`, and that collection is deliberately not linked to the scene (it
+    shows up only as scattered instances), so a variant is not in `scene.objects` at all.
+    """
     scene = scene or bpy.context.scene
     if scene is None:
         return []
-    return sorted((o for o in scene.objects if is_foliage(o)), key=lambda o: o.name)
+    pools = set(pool_names())
+    return sorted((o for o in scene.objects if is_foliage(o)
+                   and not pools.intersection(c.name for c in o.users_collection)),
+                  key=lambda o: o.name)
 
 
-def stamp(obj, species=""):
-    """Mark an object as a BobFoliage tree, and record the species it was built from."""
+# The unlinked collections a baked variant lives in (F5). `BOB_Assets_<Kind>` is the pool a scatter
+# layer instances; `BOB_Foliage_LODs` holds the lower rungs, out of the pool for the reason
+# `gen_assets.LOD_COLLECTION` exists -- a GN instancer takes the WHOLE collection, so leaving LOD1
+# and LOD2 in the pool would scatter three copies of every variant at three budgets.
+LOD_COLL = "BOB_Foliage_LODs"
+
+
+def pool_names():
+    return tuple(f"BOB_Assets_{kind.capitalize()}" for kind in assets.FOLIAGE_KINDS) + (LOD_COLL,)
+
+
+def pool_objects():
+    """Every baked variant, across the asset pools and the LOD collection, in name order."""
+    seen = {}
+    for name in pool_names():
+        coll = bpy.data.collections.get(name)
+        if coll is None:
+            continue
+        for obj in coll.objects:
+            if is_foliage(obj):
+                seen[obj.name] = obj
+    return [seen[k] for k in sorted(seen)]
+
+
+def wind_targets(scene=None):
+    """Every tree the world's wind has to reach: the authored ones AND the baked variants.
+
+    Baking the variants is what makes a stand, and a stand that does not feel the weather is the
+    whole of docs/FOLIAGE.md 2.4 undone at the last step. The pools are not in `scene.objects`, so
+    walking the scene alone reaches the hero tree in the viewport and none of the four hundred
+    instances behind it -- which renders, and looks exactly like wind that works.
+    """
+    trees = foliage_objects(scene)
+    known = {o.name for o in trees}
+    return trees + [o for o in pool_objects() if o.name not in known]
+
+
+def stamp(obj, species="", params=None):
+    """Mark an object as a BobFoliage tree, and record the species and the params it was built with.
+
+    `params` is written only when given, so a caller that only wants to re-stamp the species (a
+    rebuild) does not erase the structural record with an empty one.
+    """
     if obj is None:
         return
     obj[FOLIAGE_STAMP] = 1
     obj[SPECIES_STAMP] = str(species or "")
+    if params is not None:
+        obj[BUILD_STAMP] = json.dumps({k: v for k, v in params.items()}, sort_keys=True)
 
 
 def species_of(obj):
     return str(obj.get(SPECIES_STAMP, "")) if obj is not None else ""
+
+
+def built_params(obj):
+    """The params this tree was last built with, off its own stamp ({} when it carries none)."""
+    try:
+        got = json.loads(str(obj.get(BUILD_STAMP, "") or "{}"))
+    except (ValueError, TypeError):
+        return {}
+    return got if isinstance(got, dict) else {}
 
 
 def foliage_collection(scene=None, create=True):
@@ -128,7 +198,7 @@ def grow(name, params, *, species="", scene=None, location=None, collection=True
     obj = bpy.data.objects.get(name)
     if obj is None:
         return None
-    stamp(obj, species)
+    stamp(obj, species, params=params)
     if location is not None:
         obj.location = location
     if collection:
@@ -159,7 +229,7 @@ def load_species(obj, species, *, scene=None, extra=None):
     _apply_op({"op": "build_geonodes", "recipe": "foliage", "name": obj.name,
                "params": params, "reset": True})
     obj = bpy.data.objects.get(obj.name)
-    stamp(obj, species)
+    stamp(obj, species, params=params)
     apply_wind(scene or bpy.context.scene, only=obj)
     return obj
 
@@ -179,14 +249,21 @@ def rebuild(obj, *, overrides=None, scene=None):
     _apply_op({"op": "build_geonodes", "recipe": "foliage", "name": name, "params": params,
                "reset": False})
     obj = bpy.data.objects.get(name)
-    stamp(obj, species_of(obj))
+    stamp(obj, species_of(obj), params=params)
     apply_wind(scene or bpy.context.scene, only=obj)
     return obj
 
 
 def build_params(obj, *, species="", overrides=None):
     """The structural params a rebuild of THIS tree needs, read off the object rather than off any
-    panel state: its species preset (if it has one) with the caller's overrides on top.
+    panel state: its species preset, then what it was last actually built with, then the caller's
+    overrides.
+
+    The middle layer is what makes a rebuild idempotent. Without it a tree the artist rebuilt at two
+    levels went back to the species' three on the next press, because the panel's staged choice is
+    UI state and nothing else recorded it -- and a variant baked from that tree came out a different
+    shape from the tree it was baked from. Asking for a species explicitly skips the stamp, since
+    loading a species IS the instruction to forget what this tree was.
 
     The live knobs are deliberately absent. `build_geonodes` restores those by socket name across a
     rebuild (unless reset is asked), so passing them would be a second copy of a value that already
@@ -195,13 +272,15 @@ def build_params(obj, *, species="", overrides=None):
     """
     spec = assets.foliage_species(species or species_of(obj))
     params = dict(spec.get("params", {})) if spec else {}
+    if not species:
+        params.update(built_params(obj))
     if overrides:
         params.update({k: v for k, v in overrides.items() if v is not None})
     return params
 
 
 # -- The live world feed ----------------------------------------------------------------------
-def _live_input(obj, socket_name):
+def live_input(obj, socket_name):
     """The modifier input struct for a socket name (it has a live `.value`), or None.
 
     `mod.properties.inputs.<identifier>.value` is where Blender 5.2 keeps a Nodes modifier's input
@@ -233,19 +312,23 @@ def apply_wind(scene=None, only=None):
 
     A tree therefore holds its last-applied wind when Firmament is absent, which is the standalone
     behaviour the rest of the suite has: the value is real, it is just not being updated.
+
+    It walks `wind_targets` and not the scene, which is F5's correction: a baked variant lives in an
+    unlinked `BOB_Assets_<Kind>` and would otherwise never be reached, so the hero tree in the
+    viewport would blow and the four hundred instances behind it would stand still.
     """
     scene = scene or bpy.context.scene
     world = bbt_env.get_env(scene)
     if world is None:
         return 0
-    targets = [only] if only is not None else foliage_objects(scene)
+    targets = [only] if only is not None else wind_targets(scene)
     reached = 0
     for obj in targets:
         if not is_foliage(obj):
             continue
         hit = False
         for socket, field in _WIND_INPUTS:
-            inp = _live_input(obj, socket)
+            inp = live_input(obj, socket)
             if inp is None:
                 continue
             inp.value = float(getattr(world, field, 0.0))

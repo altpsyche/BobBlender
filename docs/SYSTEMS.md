@@ -317,9 +317,9 @@ and restores the same surface across a rebuild.
 
 A procedural tree, shrub or grass tuft: a trunk grown as a curve, branch levels
 grown off it, the whole skeleton swept to a mesh in one pass, and leaf cards
-instanced on its tips. BobFoliage F1 + F2 — see [FOLIAGE.md](FOLIAGE.md) for why
-the geometry is procedural rather than generated and how it reaches a scatter
-layer.
+instanced on its tips, deflected by the world's wind in one pass. BobFoliage,
+F1 to F5 — see [FOLIAGE.md](FOLIAGE.md) for why the geometry is procedural rather
+than generated and how it reaches a scatter layer.
 
 Level 0 is a vertical line resampled to `segments`, bent by a noise field whose
 amplitude rises up the trunk (`gnarl`) plus a steady `lean`, tapering from
@@ -382,6 +382,15 @@ mesh ignores the object's material slots, so shading has to happen in the graph;
 doing it inside the recipe means a foliage object needs no `BBT_Material` modifier
 and so has nothing that can end up at the wrong index. Calling `assign_material` on
 one would flatten it back to a single material.
+
+**Baking a stand** is `core/foliage_variants.py` rather than a recipe param: N
+seeds of one tuned tree into `BOB_Assets_<Kind>`, plus a LOD ladder that is another
+build of this recipe at a lower `levels` and `profile_segments` (never a decimate —
+that spikes the twigs and destroys the card quads). The variants stay LIVE GN
+objects, so an instanced stand is still re-evaluated per frame and keeps its wind,
+and the per-frame cost is per variant rather than per instance. They are also
+spread out inside the pool, because a tree's wind phase is its own world location
+and a pool authored at the origin would sway as one object.
 
 Three attributes exist to be CHECKED, because each failure they catch still renders
 a convincing tree (`tools/scripts/headless_foliage.py`):
