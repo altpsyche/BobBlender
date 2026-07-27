@@ -385,10 +385,10 @@ Two texture jobs and one warning:
 
 ### 4.2 A panel of its own, and why that is not panel sprawl
 
-BobFoliage gets its own N-panel for AUTHORING. The count forces it: eight trunk knobs plus six per
-level is around thirty, and folding that into the Scatter panel's Active Layer would bury scatter's
-own controls under a tree editor. Paths is the precedent — BobSplines has its own panel and also
-feeds scatter — and this is the same shape.
+**Owned by [F4](#5-phases); not built yet.** BobFoliage gets its own N-panel for AUTHORING. The
+count forces it: eight trunk knobs plus six per level is around thirty, and folding that into the
+Scatter panel's Active Layer would bury scatter's own controls under a tree editor. Paths is the
+precedent — BobSplines has its own panel and also feeds scatter — and this is the same shape.
 
 What does NOT move is the decision. **Filling a kind stays one choice in one place**: Make Proxies,
 Apply Biome, Generate Asset and Grow Foliage sit together in Scatter, because that is where an
@@ -488,11 +488,11 @@ no note — stays owned by `headless_redwood.py`.
 The loop closes in the other direction too: Make Variants reports which collection it filled, so the
 artist ends up back at the Scatter panel holding the assets they just grew. That half is F5's.
 
-**Not yet built: the BobFoliage panel itself** ([4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl)).
-Grow in BobFoliage creates the object and selects it, and its thirty-odd knobs are live on the
-object's modifier, which is where a Blender user can already reach them — so the button is honest,
-but the authoring surface the panel describes is still to come. It has no phase; F4 or F5 should
-claim it, since F4's wind knobs and F5's Make Variants both want somewhere to live.
+**Not yet built: the BobFoliage panel itself** ([4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl)),
+which **F4 owns**. Grow in BobFoliage creates the object and selects it, and its thirty-odd knobs are
+live on the object's Geometry Nodes modifier, which is where a Blender user can already reach them —
+so the button is honest and the tree is tunable, but the modifier stack is not an authoring surface
+and the operator's own report says where the knobs are rather than pretending otherwise.
 
 ## 5. Phases
 
@@ -518,9 +518,25 @@ the other tracks use.
   per-cell coverage on the atlas, plus a directionality measure on bark — a dominant-gradient-angle
   histogram, since a bark set whose grain wanders is unusable on a swept trunk however well it
   tiles.
-- **F4 Wind and season.** `S_EnvState` into the sway and the colour, per-instance phase. Check:
-  vertex displacement responds to `set_env` wind, autumn colour responds to season, a stand does not
-  move in unison.
+- **F4 Wind, season, and the panel.** `S_EnvState` into the sway and the colour, per-instance phase,
+  plus card translucency (deferred here from F2, where it was the one term a fourth master would
+  have bought). Check: vertex displacement responds to `set_env` wind, autumn colour responds to
+  season, a stand does not move in unison.
+
+  **F4 also owns the BobFoliage panel** ([4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl),
+  [4.3](#43-many-trees-many-species)) — the scene-level tree list with an active index, the species
+  picker, the structural-versus-live split, and the two texture-set pickers with their Generate
+  buttons. It sits here rather than at F5 for three reasons. F4 is the smaller phase and can carry
+  it. F5's Make Variants needs an ACTIVE TREE to bake, which is the list this panel owns, so putting
+  the panel later means F5 builds both. And the order is the artist's order: you author a tree, then
+  you bake variants of it — building the authoring surface after the bake is backwards.
+
+  Its own checks, since a panel is as gateable as a recipe: the props feed `build_geonodes` params on
+  press and **no operator reads a PropertyGroup** (the [known gap](MCP.md#known-gap-ops-that-need-the-addon)
+  every curve op is on, and the one thing this track has stayed off by construction); adding a tree
+  and switching the active index does not disturb another tree's tuned knobs; and loading a species
+  onto an existing tree keeps its transform and its object identity, because a preset is params
+  applied to a tree, not a new tree.
 - **F5 Variants, LODs and scatter.** Make Variants (N seeds into `BOB_Assets_<Kind>`), the foliage
   LOD ladder, then a real stand scattered on a terrain at a real density. Check: no two variants
   share a vertex set, the per-LOD budgets in [2.6](#26-lods), instance counts and frame time per LOD,
@@ -551,9 +567,11 @@ Each is tagged with the phase that forces it. None blocks starting F3.
 - **[F3] Does the bark seam matter?** The cylindrical unwrap leaves one column of reversed UV per
   limb ([2.7](#27-materials-and-uvs-which-f2-added)). Nothing is textured yet, so nobody can see it.
   Raised now so F3 measures it rather than discovering it.
-- **[F4/F5] Who builds the BobFoliage panel?** [4.2](#42-a-panel-of-its-own-and-why-that-is-not-panel-sprawl)
-  describes it and no phase owns it. F2 shipped the Grow button without it, on the grounds that the
-  knobs are already reachable on the modifier; that is true and it is not an authoring surface.
+- **[F4, answered] Who builds the BobFoliage panel?** F4, which now says so in its phase entry. It
+  was briefly unowned between F2 and this line, which is the state in which a described feature
+  quietly never gets built. What is still genuinely open is one detail of it: whether **Make
+  Variants** appears on the panel at F4, greyed with a "F5" note, or only arrives with F5. Prefer the
+  second — a button that does nothing teaches an artist to distrust the panel.
 - **[F5] What writes a variant into the pack?** See the F5 phase note; `finish_asset` is the wrong
   tool and reaching for it would undo F1 and F2 both — the tree's UVs, LODs and materials are all
   already correct, and `finish_asset` bakes, decimates and unwraps.
