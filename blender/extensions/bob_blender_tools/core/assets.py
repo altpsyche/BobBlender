@@ -255,7 +255,7 @@ def texture_set_dir(name):
 # A texture set names its files `<set>_<role>.<ext>`, which is what the Poly Haven sets on disk
 # already use and what the generated pack writes (docs/GENERATION.md, Contracts). Roles are listed
 # in no particular order; the sampler picks the ones it consumes.
-# `opacity` is the cutout matte a leaf atlas needs (BobFoliage F2/F3). It is resolved here rather
+# `opacity` is the cutout matte a leaf atlas needs (BobFoliage). It is resolved here rather
 # than in the sampler because it never reaches S_TexSet: alpha goes straight to the Principled, so
 # adding the role costs no shared-group version bump (materials/surface.py `_wire_cutout`).
 TEXTURE_MAP_ROLES = ("basecolor", "roughness", "metallic", "normal", "height", "ao", "opacity")
@@ -325,7 +325,7 @@ def texture_set_meta(name):
 def atlas_grid(name):
     """(cols, rows) for a leaf-atlas texture set, from its sidecar, or None when it declares none.
 
-    **The [F3] open question in docs/FOLIAGE.md 6, answered: the SET carries its layout.** F2 shipped
+    **The open question in docs/FOLIAGE.md 6, answered: the SET carries its layout.** The card work shipped
     the interim answer -- `Atlas Columns` and `Atlas Rows` as live recipe params defaulting to the
     placeholder's 2x2 -- which works and does not scale: an artist assigning a generated 4x4 atlas has
     to know to change two numbers, and nothing checks that they did. A card reading the wrong grid
@@ -485,7 +485,7 @@ def biome_terrain(biome):
 # A species is a named set of `foliage` recipe params: `<pack>/foliage/<species>.json`, resolved
 # over the same search path as biomes and texture sets.
 #
-# WHY DATA AND NOT A PYTHON DICT (the [F2] open question, answered). Both were defensible -- the
+# WHY DATA AND NOT A PYTHON DICT (the open question, answered). Both were defensible -- the
 # suite's other preset tables (scatter's LAYER_TYPES, the terrain layer presets) are Python dicts.
 # What decided it is that those describe the TOOL and a species describes CONTENT: a spruce is the
 # same kind of thing as a texture set or a biome, it is what a pack would want to ship, and it is
@@ -499,15 +499,15 @@ def biome_terrain(biome):
 _FOLIAGE_SHAPE_KEYS = (
     "seed", "levels", "height", "segments", "branch_segments", "profile_segments",
     "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
-    # The F6 shape terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four are
+    # The wood-shaping terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four are
     # inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
     "taper_curve", "flare", "collar", "lobe",
     "cards", "card_size", "card_width", "droop", "card_spread",
     # Where the leaves sit on the wood, rather than how they look. Also inert by default: leaf_level
-    # 0 and leaf_start 1 are the tip-only rule F1-F5 measured.
+    # 0 and leaf_start 1 are the tip-only rule the earlier measured.
     "leaf_level", "leaf_start",
     "atlas_cols", "atlas_rows", "bark_scale", "bark_set", "atlas",
-    # How stiff this species is (BobFoliage F4). A spruce barely moves and a birch is all motion, so
+    # How stiff this species is (BobFoliage). A spruce barely moves and a birch is all motion, so
     # these belong to the species the way its taper does. `wind` and `wind_direction` deliberately
     # do NOT: they are the WORLD's, written onto every tree by the world applier, and a preset that
     # set them would be a tree carrying its own weather.
@@ -584,7 +584,7 @@ _FOLIAGE_SET_PARAMS = (("atlas", "leaf atlas set"), ("bark_set", "bark set"))
 def foliage_missing_sets(name):
     """[(param, label, set_name)] for the texture sets a species NAMES that no pack provides.
 
-    Split out of `validate_foliage_species` because it is a different KIND of finding, and F3 is what
+    Split out of `validate_foliage_species` because it is a different KIND of finding, and that is what
     made the difference matter. The other warnings are authoring mistakes -- a typo, an inert level
     block, an unknown kind -- and are always wrong. This one is the ordinary state of a preset whose
     bark has not been generated yet: no placeholder bark set ships, deliberately, because a hand-made

@@ -49,7 +49,7 @@ _OP_SAMPLES = {
     "curve_build": {"op": "curve_build", "curve": "River"},
     "bake_erode": {"op": "bake_erode", "terrain": "Terrain"},
     "revert_erode": {"op": "revert_erode", "terrain": "Terrain"},
-    # Generation, the Blender half (G6). The ComfyUI half is tools, not ops.
+    # Generation, the Blender half (the agent-surface gate). The ComfyUI half is tools, not ops.
     "apply_texture_set": {"op": "apply_texture_set", "object": "Terrain", "set": "grass",
                           "index": 1},
     "import_generated": {"op": "import_generated", "kind": "rocks", "name": "boulder",
@@ -88,7 +88,7 @@ def test_shade_terrain_requires_object():
         contracts.BuildRequest(output_file="x.blend", ops=[{"op": "shade_terrain"}])
 
 
-# -- The generation ops (G6) ------------------------------------------------------------------
+# -- The generation ops (the agent-surface gate) ------------------------------------------------------------------
 # Rejection is the half that matters here: an agent gets these wrong before it gets them right, and
 # the difference between a readable rejection and a traceback is the difference between a retry and
 # a stuck agent. Each case below is a DIFFERENT failure mode, not the same one four times.
@@ -150,7 +150,7 @@ def _round_trip(payload):
       "pack_dir": "/packs/generated"}, "pack_dir", "/packs/generated"),
     # drape_curve reads the four terrain numbers off the object, so `terrain` has to arrive.
     ({"op": "drape_curve", "name": "Road", "terrain": "Terrain"}, "terrain", "Terrain"),
-    # render's D15 buffer release, whose default is the behaviour change.
+    # render's the VRAM-handback rule buffer release, whose default is the behaviour change.
     ({"op": "render", "output": "/tmp/x.png"}, "release_gpu", True),
     # set_env's applier switch: writing the fields without applying them was the whole defect.
     ({"op": "set_env", "params": {"season": "winter"}}, "apply", True),

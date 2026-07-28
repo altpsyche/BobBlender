@@ -1,16 +1,16 @@
-"""Baking a tuned tree into N variants and a LOD ladder (docs/FOLIAGE.md 2.5, 2.6; BobFoliage F5).
+"""Baking a tuned tree into N variants and a LOD ladder (docs/FOLIAGE.md 2.5, 2.6; BobFoliage).
 
 This is the last hop of the track: one authored tree becomes the pool a scatter layer instances, so
 a forest is a scatter layer over `BOB_Assets_<Kind>` and not four hundred hand-placed objects.
 `core/foliage_build.py` is the layer below (what makes an object a tree); this is what turns one of
 those into a stand. bpy-only, imports no ui, reads no PropertyGroup -- the panel operator resolves
-its own state and calls in here with plain arguments, exactly as F4 established.
+its own state and calls in here with plain arguments, exactly as the wind pass established.
 
 **A variant is a LIVE GN object, and that was the phase's one real hazard.** Freezing a variant to a
 static mesh is the obvious reading of "bake", and it would have silently deleted the whole of
 docs/FOLIAGE.md 2.4: the sway is a `Set Position` driven by Scene Time, so an applied mesh is a tree
 stopped at whatever frame it was baked on. Three measurements decided it, and none of them was
-settled by F4 (which only established that two instances agree at ONE frame, which is phase and not
+settled earlier (which only established that two instances agree at ONE frame, which is phase and not
 motion):
 
 - an instanced live-GN tree still MOVES: 1.322786 m between frame 1 and frame 31, the same figure
@@ -28,7 +28,7 @@ what the pack writer does, because glTF cannot carry a node group -- see `write_
 says so in the manifest rather than leaving someone to find out.
 
 **Variants are SPREAD OUT in the pool, and that is not cosmetic.** A tree's wind phase is read from
-its own world location (F4, `_tree_phase`), and a pool is authored at the origin, so eight variants
+its own world location (wind and season, `_tree_phase`), and a pool is authored at the origin, so eight variants
 stacked at (0,0,0) share one phase and the whole stand pulses in unison -- measured, two same-seed
 variants at the origin differ by 9.54e-07 m, and 40 m apart by 0.7189 m. `Collection Info`'s Reset
 Children means the spread costs nothing: an instance still lands on its point (measured, a variant
@@ -384,7 +384,7 @@ def make_variants(tree, *, count=DEFAULT_VARIANTS, kind=None, levels=LOD_LEVELS,
                   overrides=None, seed_base=1000, pack_dir=None):
     """Bake `count` seeds of `tree` into `BOB_Assets_<Kind>` as live GN objects. Returns a report.
 
-    The whole of F5's first half. Each variant is the SAME tree at a different `Seed` -- the tuned
+    The whole of the variant pass's first half. Each variant is the SAME tree at a different `Seed` -- the tuned
     knobs and the structural choices come off the source object, not off its species preset -- so a
     stand is the tree the artist authored, eight times, rather than eight of the preset it started
     from.
@@ -477,7 +477,8 @@ def _export_materials(copy, params, stem):
     is the Mix Shader chain (`_wire_translucency` mattes a Translucent against a Transparent and
     mixes that into the Principled) that the exporter's tree walk cannot survive. A gate that
     crashed after printing its verdict would read as a clean run to an exit code, which is exactly
-    how the G2 gate hid a crash for two phases (docs/GENERATION.md), so this is a fix and not a
+    how one generation gate hid a crash for three releases (docs/GENERATION.md), so this is a fix and
+    not a
     workaround.
 
     Slots are replaced IN PLACE and slot 0 (the base mesh's empty implicit slot, which no face
@@ -520,7 +521,7 @@ def write_variant_pack(tree, variants, pack_dir, *, kind, stem, ladder, seed_bas
 
     **A packed variant is FROZEN, and the entry says so.** glTF carries meshes and PBR materials; it
     cannot carry a node group, so the export is the evaluated mesh at the current frame and the
-    round trip loses the two things this track spent F4 building -- the wind (an applied mesh moved
+    round trip loses the two things the wind pass built -- the wind (an applied mesh moved
     0.0 m over 30 frames, measured) and the leaf shader's season and translucency, which come back
     as a plain Principled. The round trip also splits vertices at the UV seams: 12,642 out, 14,188
     back, which is glTF's own normal/UV split and not a change to the mesh.

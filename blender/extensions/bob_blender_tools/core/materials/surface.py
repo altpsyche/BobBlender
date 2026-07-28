@@ -40,7 +40,7 @@ def surface_master_group():
     _gin(g, "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gin(g, "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Metallic Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
-    # AO Map (S4/F3): a scalar occlusion map multiplied into the albedo, identity 1.0 = off. The
+    # AO Map (S4/the texture sets): a scalar occlusion map multiplied into the albedo, identity 1.0 = off. The
     # convert path feeds this with the arm map's AO (R) channel (glTF drops occlusionTexture, so
     # the packed AO would otherwise go unused); the texture-set path folds AO into its albedo
     # instead, so it leaves this at 1.0 (no double-darkening). A solid-colour surface keeps 1.0.
@@ -228,7 +228,7 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=Fal
     stays the TINT it was authored as, so switching solid <-> textured loses no tuned value.
     texset_name "" clears the set; both arguments default to what the material already records.
 
-    `alpha` adds the cutout path a leaf card needs (BobFoliage F2, docs/FOLIAGE.md 2.7): the set's
+    `alpha` adds the cutout path a leaf card needs (BobFoliage, docs/FOLIAGE.md 2.7): the set's
     `opacity` map if it ships one, else the basecolor image's OWN alpha channel, straight into the
     Principled Alpha. It deliberately does NOT go through the master. Alpha is a matte -- it says
     which texels are leaf and which are the gap between leaves -- and every term the master adds is
@@ -237,7 +237,7 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=Fal
     outside also means no new master output, so S_SurfaceMaster's interface is untouched and no
     tuned terrain in the file gets reset by a shared-group version bump.
 
-    `leaf` adds the two terms a CARD needs on top of that cutout (BobFoliage F4): the season layer
+    `leaf` adds the two terms a CARD needs on top of that cutout (BobFoliage): the season layer
     (`_wire_season`) and the translucency (`_wire_translucency`). Both stay outside the master for
     the reasons in `foliage_card_material`.
     """
@@ -286,10 +286,10 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=Fal
 def _wire_cutout(nt, maps, coord, bsdf, box):
     """Drive the Principled Alpha from a set's cutout. Returns the socket wired, or None.
 
-    Two sources, in order: a dedicated `opacity` map (what F3's atlas job will emit), else the
+    Two sources, in order: a dedicated `opacity` map (what the atlas job emits), else the
     basecolor image's own alpha channel (what a matted `mesh_subject` subject already carries, measured at G3 as
-    a real 0.000-1.000 range). Preferring the dedicated map means F3 can add one without touching
-    this, and falling back means F2's placeholder RGBA atlas works with no extra file.
+    a real 0.000-1.000 range). Preferring the dedicated map means a generated set can carry one without touching
+    this, and falling back means the card work's placeholder RGBA atlas works with no extra file.
     """
     src = None
     if maps.get("opacity"):
@@ -346,7 +346,7 @@ _LEAF_TRANSMIT = (1.0, 0.72, 0.28, 1.0)
 def _wire_translucency(nt, bsdf, base_color, cutout):
     """Mix a Translucent BSDF into the card's surface, gated by the same cutout the Principled uses.
 
-    **Why this is not a term on S_SurfaceMaster** (the [F2] deferral, answered at F4). Three
+    **Why this is not a term on S_SurfaceMaster** (the deferral, answered by the wind pass). Three
     reasons, and the last one is decisive:
 
     - The master is SHARED. Terrain and water embed it, a rebuild reassigns every socket identifier,
@@ -409,12 +409,12 @@ def _wire_translucency(nt, bsdf, base_color, cutout):
 
 
 def foliage_card_material(mat_name, atlas="leaf_atlas_blockout"):
-    """The leaf-card BobShader (BobFoliage F2): the `surface` master with a cutout, not a fourth
-    master. Answers the [F2] open question in docs/FOLIAGE.md 2.7 the way that section preferred.
+    """The leaf-card BobShader (BobFoliage): the `surface` master with a cutout, not a fourth
+    master. Answers the open question in docs/FOLIAGE.md 2.7 the way that section preferred.
 
     What a card needs is alpha cutout, two-sided shading and some translucency. Two of the three
-    were already free at F2: Blender shades both faces unless `use_backface_culling` is set, and the
-    cutout is one link (see `surface_material`'s `alpha`). **F4 added the third, and kept it outside
+    were already free at the time: Blender shades both faces unless `use_backface_culling` is set, and the
+    cutout is one link (see `surface_material`'s `alpha`). **The wind pass added the third, and kept it outside
     the master too** -- see `_wire_translucency` for the argument, which turned out to be stronger
     than the one that deferred it: the master's contract is three scalars into one Principled, and
     translucency is a second BSDF lobe, so there is no socket shape on the master that could carry

@@ -503,7 +503,7 @@ def test_panel_presets_json_in_sync():
     spec.loader.exec_module(mod)
     committed = json.loads(mod.OUT.read_text())
     assert committed["presets"] == mod.build_panel_presets()
-    assert committed["stacks"] == mod.build_panel_stacks()  # P4 stack editor source
+    assert committed["stacks"] == mod.build_panel_stacks()  # the stack editor's source
 
 
 # Resolution independence and channel structure (the two headline behaviours).
@@ -552,7 +552,7 @@ def test_no_border_rim(tmp_path):
     assert np.percentile(ring, 99) <= np.percentile(interior, 99) + 1e-6
 
 
-# Auxiliary flow/wetness maps (P5).
+# Auxiliary flow and wetness maps.
 
 def test_flow_map_concentrates():
     # Flow accumulation must concentrate into channels: the top percentile far above
@@ -717,7 +717,7 @@ def test_with_macro_demotes_the_stack_s_own_generator(tmp_path):
 
 
 def test_a_mask_pulls_the_bake_toward_its_shape(tmp_path):
-    """The measurement the G5 gate makes at 768 with real generations, in miniature: the same preset
+    """The measurement the macro-mask gate gate makes at 768 with real generations, in miniature: the same preset
     and seed, baked with and without a mask, and the mask's shape has to show up in one and not the
     other."""
     path = tmp_path / "mask.png"

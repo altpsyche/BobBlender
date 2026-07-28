@@ -1,5 +1,5 @@
 """foliage: a procedural tree or shrub grown from a skeleton, swept to mesh, with leaf cards on
-its tips, moving in the world's wind (BobFoliage F1 to F4).
+its tips, moving in the world's wind (BobFoliage).
 
 docs/FOLIAGE.md. The geometry is entirely procedural and image-to-3D supplies none of it, for one
 structural reason: branches attach to POINTS ON A CURVE with a tangent and a radius, and a generated
@@ -27,7 +27,7 @@ Three invariants worth stating, because all three fail silently when broken:
   level-3 twig is as long as the trunk. `SplineLength` is a curve-domain read that cannot survive the
   trim and resample, so the length is stored as the point attribute `bbt_fol_plen` first: constants
   interpolate to themselves, so it arrives intact at every attachment point.
-- **A branch is thinner than the parent it grows from, WHERE it grows from it.** F1 computed that as
+- **A branch is thinner than the parent it grows from, WHERE it grows from it.** An early version computed that as
   a running product of the per-level Radius ratios, which is exact only while the ratios are uniform
   and the parent does not taper -- and species presets are exactly what breaks both. The radius is
   now read off the parent at the attachment point (`bbt_fol_rad`, stored after the taper and carried
@@ -37,7 +37,7 @@ Three invariants worth stating, because all three fail silently when broken:
 Attributes written, and who reads them: `bbt_fol_plen` (the curve's own length, per point) and
 `bbt_fol_rad` (its radius after the taper) feed the next level; `bbt_fol_level` (per curve, 0 for the
 trunk) and `bbt_fol_off` (how far the bend moved this point) are what the gate measures structure
-with; `bbt_fol_t` (0 at the base, 1 at the tip) is the bark V coordinate and F4's wind falloff;
+with; `bbt_fol_t` (0 at the base, 1 at the tip) is the bark V coordinate and the wind pass's wind falloff;
 `bbt_fol_tip` and `bbt_fol_tan` place and aim the cards; `bbt_fol_leaf` (per face) is what tells the
 two Set Material nodes which faces are cards; `bbt_fol_cell` records which atlas cell each card drew.
 
@@ -49,13 +49,13 @@ into one cell of the atlas grid, whose size the atlas SET declares (`_atlas_grid
 `UVMap` on the corner domain, which is what makes them a real UV layer rather than a float2 nobody
 reads.
 
-F3 fixed two things about that which were invisible while nothing was textured. The cyclic profile's
+Two things about that were fixed which were invisible while nothing was textured. The cyclic profile's
 U jumped from 1-1/n back to 0 on one quad of every ring, so a single column per limb carried the
 whole texture reversed (`_unwrap_u`); and the bark material was assigned with BOX projection, so the
 metres-based UV above reached nothing at all and the grain followed the world axes instead of the
 limb (`_tree_materials`). Both rendered convincingly, which is the recurring lesson of this track.
 
-Wind (F4, docs/FOLIAGE.md 2.4). The whole tree leans and gusts downwind, weighted by the square of
+Wind (docs/FOLIAGE.md, wind and season). The whole tree leans and gusts downwind, weighted by the square of
 each point's height, and the cards flutter on top of that about their own bases. Both are driven by
 `Wind` / `Wind Direction`, which are ordinary live knobs that the world applier feeds from
 `bbt_env`, so a tree responds to the shared weather with no per-tree animation and no keyframes;
@@ -88,12 +88,12 @@ _DEG = 0.017453292519943295
 DEFAULT_ATLAS = "leaf_atlas_blockout"   # ships in the block-out pack, so a tree never waits on ComfyUI
 
 # How far a limb wanders per unit of `Gnarl`, as a fraction of its OWN length. Chosen so the knob
-# keeps the numbers F1 was measured at (Gnarl 0.9 on a 20 m trunk is still +/- 0.45 m) while the
+# keeps the numbers the skeleton was first measured at (Gnarl 0.9 on a 20 m trunk is still +/- 0.45 m) while the
 # same value now means the same SHAPE at any scale. See `_bend`.
 GNARL_SPAN = 0.05
 
-# -- F6: the terms that stop a limb being a pipe ---------------------------------------------------
-# Every one of these is INERT at its default, which is the point: F1 to F5 measured a tree with none
+# -- The wood shaping: the terms that stop a limb being a pipe ---------------------------------------------------
+# Every one of these is INERT at its default, which is the point: every earlier measured a tree with none
 # of them and those numbers still have to hold, so the shape they describe arrives through the
 # species presets rather than through the recipe's floor. See docs/FOLIAGE.md 2.9.
 #
@@ -121,7 +121,7 @@ LOBE_GAIN = 3.09
 # costs nothing visible and puts the lowest vertex back at -0.0004 m.
 LOBE_FOOT = 0.015
 
-# Wind (F4). Amplitudes are FRACTIONS, never metres, for the reason `GNARL_SPAN` is: a species
+# Wind. Amplitudes are FRACTIONS, never metres, for the reason `GNARL_SPAN` is: a species
 # preset is a shape description, and one that only holds at 20 m is not a description. The trunk
 # term scales with `Height` and the card term with `Card Size`, so a grass tuft in a gale bends by
 # its own size and not by a tree's.
@@ -135,7 +135,7 @@ FLUTTER_FREQ = 1.9      # leaf rate at Wind 1, well above the trunk's so the two
 SWAY_BIAS = 0.6
 _TAU = 2.0 * math.pi
 
-# Per-level defaults, index 0 = level 1 (the first branches off the trunk). A NARROW CONIFER: F1's
+# Per-level defaults, index 0 = level 1 (the first branches off the trunk). A NARROW CONIFER: an early version's
 # defaults grew a 13 m crown on a 20 m trunk, which is a spreading broadleaf and the opposite of the
 # redwood that started this track. The lever is `length` -- a level-1 branch is a fraction of the
 # trunk's length, so 0.42 was a 8.4 m arm. A conifer's lowest limbs are nearer a sixth of its height.
@@ -152,7 +152,7 @@ _LEVEL_DEFAULTS = (
 # never line up, so a whorl does not read as a wheel of spokes. It is a default, not a constant --
 # a whorled conifer wants 90 and an opposite-leaved species wants 180.
 
-# Which live socket each param key becomes (F5). The recipe owns both vocabularies -- the params
+# Which live socket each param key becomes (variants and LODs). The recipe owns both vocabularies -- the params
 # `build` reads and the sockets `add_input` creates -- so this is the one place they are tied
 # together, and `core/foliage_variants.py` reads a TUNED tree's live knobs back into params through
 # it. Without that a variant would be baked from the species preset alone and every slider the
@@ -301,16 +301,16 @@ def _bend(ng, curve, gnarl, lean, seed_f, scale, location, sag=None):
     move and remains coincident with the parent point it was instanced on. `lean` adds a steady pull
     in +X on the same weighting, which is what makes a trunk lean rather than wander.
 
-    `sag` (F6) is the third term and the only one in Z: a limb's own weight, as a downward pull that
+    `sag` (the wood shaping) is the third term and the only one in Z: a limb's own weight, as a downward pull that
     grows with the SQUARE of the spline factor. Squared rather than linear because a cantilever's
     deflection is, so a branch leaves its parent at the angle the rotation gave it and curves over
     further out -- which is the difference between a bough and a spoke. Linear sag instead drops the
     whole limb by a constant slope and just re-reads as a smaller `Angle`. Negative sags UPWARD, for
     a young conifer's whorls or a fastigiate poplar, and it is a fraction of the limb's own length so
     a species survives being applied at another size. At 0 the offset is identically zero, so every
-    F1-F5 measurement of a straight limb still holds.
+    the earlier measurement of a straight limb still holds.
 
-    Both amplitudes are a fraction of the CURVE'S OWN LENGTH, not metres. F1 had them in metres,
+    Both amplitudes are a fraction of the CURVE'S OWN LENGTH, not metres. An early version had them in metres,
     which is invisible on a 20 m trunk and destroys anything small: measured, a 0.10 m grass stem at
     the default Gnarl of 0.6 was displaced 0.3 m, so the tuft came back 1.7 m tall and 2 m wide.
     Species presets are the whole reason that matters -- a shape description has to survive being
@@ -334,8 +334,8 @@ def _bend(ng, curve, gnarl, lean, seed_f, scale, location, sag=None):
     shifted.inputs[1].default_value = (13.7, 4.2, 9.1)
     ny = noise_field(ng, shifted.outputs["Vector"], scale, seed=seed_f,
                      location=(lx + 360, ly - 360))
-    # GNARL_SPAN keeps the knob's numbers where F1 left them: at Gnarl 0.9 on a 20 m trunk this is
-    # the same +/- 0.45 m the F1 measurements were taken at, so a tuned tree does not change shape.
+    # GNARL_SPAN keeps the knob's numbers where they started: at Gnarl 0.9 on a 20 m trunk this is
+    # the same +/- 0.45 m the original measurements were taken at, so a tuned tree does not change shape.
     span = math_node(ng, "MULTIPLY", length.outputs["Length"], GNARL_SPAN, (lx + 180, ly + 480))
     amp = math_node(ng, "MULTIPLY", math_node(ng, "MULTIPLY", gnarl, span, (lx + 360, ly + 320)),
                     weight, (lx + 540, ly + 200))
@@ -376,7 +376,7 @@ def _bend(ng, curve, gnarl, lean, seed_f, scale, location, sag=None):
 def _taper(ng, curve, base_radius, taper, location, power=None, swell=None, span=FLARE_SPAN):
     """Radius falling from `base_radius` at the base to `base_radius * (1 - taper)` at the tip.
 
-    Two F6 terms on top of that, both inert at their defaults so the linear taper F1-F5 measured is
+    Two wood-shaping terms on top of that, both inert at their defaults so the linear taper the earlier numbers were measured against is
     exactly what `power` 1 and `swell` 0 still produce.
 
     `power` raises the spline factor before the taper is applied, which is the difference between a
@@ -443,7 +443,7 @@ def _lobe(ng, mesh, gi, seed_f, location):
       UV: the bark UV was measured on the ring positions the sweep produced and displacing along the
       normal does not change which texel a corner reads, it changes where that texel sits in space.
 
-    It adds no vertices, which is what keeps every F1-F5 count exact.
+    It adds no vertices, which is what keeps every the earlier count exact.
     """
     lx, ly = location
     rad = math_node(ng, "MAXIMUM", _named(ng, "bbt_fol_rad", "FLOAT", (lx, ly + 200)),
@@ -499,7 +499,7 @@ def _tag(ng, curve, level, location):
     tip = math_node(ng, "GREATER_THAN", factor, 0.999, (lx + 580, ly - 260))
     out = _store(ng, out, "bbt_fol_tip", tip, "FLOAT", "POINT", (lx + 760, ly))
     # The along-branch coordinate, 0 at the base and 1 at the tip. Written because the SHADER needs
-    # it and cannot compute it: bark UVs run along the limb, F4's wind sway has to fall off to zero
+    # it and cannot compute it: bark UVs run along the limb, the wind pass's wind sway has to fall off to zero
     # at the base or a branch pivots out of its socket, and the cards are placed by it.
     out = _store(ng, out, "bbt_fol_t", factor, "FLOAT", "POINT", (lx + 940, ly))
     # The tapered radius, per point. Read by the NEXT level for its own base radius, and by the bark
@@ -514,12 +514,12 @@ def _tag(ng, curve, level, location):
     tangent.location = (lx + 1120, ly - 260)
     out = _store(ng, out, "bbt_fol_tan", tangent.outputs["Tangent"], "FLOAT_VECTOR", "POINT",
                  (lx + 1300, ly))
-    # Where this SKELETON point is, kept for the wind (F4). Curve to Mesh gives every point a ring
+    # Where this SKELETON point is, kept for the wind. Curve to Mesh gives every point a ring
     # of `profile` vertices at slightly different heights, and the cards grow on the same points, so
     # this one attribute is what lets both be deflected as rigid pieces of a limb rather than
     # vertex by vertex. Measured: with the ring weighted per vertex instead, the z^2 falloff shears
     # each cross-section and a tip ring's centroid drifts 7.7e-05 m from the card standing on it at
-    # Wind 6 -- eighty times the F2 attachment residual, from a tree that renders perfectly.
+    # Wind 6 -- eighty times the card-attachment residual, from a tree that renders perfectly.
     return _store(ng, out, "bbt_fol_anchor", position(ng, (lx + 1300, ly - 260)),
                   "FLOAT_VECTOR", "POINT", (lx + 1480, ly))
 
@@ -713,14 +713,14 @@ def _card_uv(ng, cards, gi, location):
 
 
 def _leafy(ng, gi, location):
-    """The selection a card grows on: deep enough a limb, far enough along it (F6).
+    """The selection a card grows on: deep enough a limb, far enough along it (the wood shaping).
 
-    F1 through F5 put a card only on a TIP, on every level, and that is the single biggest reason the
+    every earlier put a card only on a TIP, on every level, and that is the single biggest reason the
     review read the trees as bare sticks with pom-poms on them: a 3 m bough carried its entire leaf
     allowance in one cluster at the far end, and the grass tuft came back as fourteen woody dowels
     with a sprig glued to each. Real foliage is distributed ALONG the youngest wood.
 
-    Two knobs, and both are inert at their defaults so every F1-F5 card measurement still holds:
+    Two knobs, and both are inert at their defaults so every the earlier card measurement still holds:
 
     - `Leaf Level` is the shallowest level that carries leaves. 0 (the default) is every level,
       including the trunk's own tip, which is exactly what the tip-only rule did. Set to `levels` and
@@ -757,7 +757,7 @@ def _cards(ng, skeleton, gi, seed_f, location):
       means anything useful on a curve's point domain,
     - `Duplicate Elements` gives `Cards` copies of each tip point, so a card is one instance on one
       point and every card can be aimed and textured on its own. Building an N-card cluster ONCE and
-      instancing that would be cheaper and wrong for the same reason F1's bend runs after the
+      instancing that would be cheaper and wrong for the same reason an early version's bend runs after the
       realize: every tip would get the identical spray, down to the atlas cells,
     - the atlas cell is drawn HERE, on the duplicated cloud, where `Index` is unique per card, and
       stored so the UV stage downstream can read it off the realized mesh.
@@ -835,7 +835,7 @@ def _cards(ng, skeleton, gi, seed_f, location):
     # attribute on a tip rides through the duplicate and the instancing, so without this every card
     # vertex claims to be a branch tip (`bbt_fol_tip` 1) at the very end of a limb (`bbt_fol_t` 1).
     # Both are read downstream -- the tip flag is how anything finds the tips, and `bbt_fol_t` is
-    # F4's wind falloff -- so leaving them is not cosmetic. `bbt_fol_t` is rewritten to the card's
+    # the wind pass's wind falloff -- so leaving them is not cosmetic. `bbt_fol_t` is rewritten to the card's
     # OWN 0 at the base and 1 at the free end, which is what a card's sway has to fall off over or
     # it pivots out of the twig it hangs from.
     local = ng.nodes.new("ShaderNodeSeparateXYZ")
@@ -921,18 +921,18 @@ def _sway(ng, geo, gi, location):
       itself, so a tube's cross-section and the cards standing on it are all displaced by the one
       amount and a limb translates instead of shearing. Per-vertex weighting instead is what the
       first version did, and it drifted a tip ring 7.7e-05 m from its own card at Wind 6: eighty
-      times the F2 attachment residual, invisible, and the same failure family as the rest of this
+      times the card-attachment residual, invisible, and the same failure family as the rest of this
       track. With the anchor the residual is unchanged from a still tree.
     - **The gust rides on a bias, not on zero.** Wind blows a tree over and then breathes; an
       unbiased sine swings it through vertical twice a cycle, which reads as a metronome.
     - **The flutter is gated by `bbt_fol_card` and weighted by `bbt_fol_t`.** That is the whole
-      reason F2 rewrote `bbt_fol_t` on the cards to their OWN 0-at-the-base: a card pivots at the
+      reason the card work rewrites `bbt_fol_t` on the cards to their OWN 0-at-the-base: a card pivots at the
       twig it hangs from rather than swinging through it.
     - **Scene Time is the clock.** No keyframes and no drivers on the geometry, so an animation
       renders the same every time and a still frame is a still frame.
 
-    At `Wind` 0 every term is zero, so a tree with no weather is byte-identical to an F3 tree --
-    which is what lets every F1 to F3 measurement in the gate stand unchanged.
+    At `Wind` 0 every term is zero, so a tree with no weather is byte-identical to a tree with no weather --
+    which is what lets every every earlier measurement in the gate stand unchanged.
     """
     lx, ly = location
     downwind, crosswind = _wind_axes(ng, gi, (lx, ly + 600))
@@ -1020,7 +1020,7 @@ def _unwrap_u(ng, location):
     unwrap need a seam -- but a UV lives on the CORNER domain, and a corner can. So the wrap corners
     are found and pushed up by a whole turn, and U becomes monotonic 0 .. 1 with no duplicated
     geometry: the alternative fix is an open profile with n+1 points, which would add a vertex ring
-    per curve point and change every vertex count F1 and F2 measured.
+    per curve point and change every vertex count the gate measures.
 
     A corner is a wrap corner when its U sits far below its own FACE's mean U. `Evaluate on Domain`
     at the FACE domain averages a point attribute over the face's corners -- verified on Blender 5.2
@@ -1051,11 +1051,11 @@ def _sweep_uv(ng, mesh, gi, location):
     tile of bark, so the twig's grain is ten times too coarse -- the single thing that makes a
     procedural trunk read as plastic.
 
-    The wrap seam, which F3 measured and fixed. The profile is cyclic, so its spline parameter runs
+    The wrap seam, which was measured and fixed. The profile is cyclic, so its spline parameter runs
     0 .. 1-1/n and the last quad of every ring runs from nearly 1 back to 0 -- one column per limb
     carrying the WHOLE texture, reversed and squeezed into a single quad. Measured on a 6-sided
     profile: the median face spanned 0.035 of a tile in U and the worst spanned 3.927, a factor of
-    112, i.e. a smeared mirrored band down every trunk. Nobody could see it at F2 because nothing was
+    112, i.e. a smeared mirrored band down every trunk. Nobody could see it at the time because nothing was
     textured, which is why it was raised as an open question rather than found later.
 
     The fix is `_unwrap_u`, and it costs no vertices and no interface change.
@@ -1117,11 +1117,11 @@ def _tree_materials(ng, params):
     The bark tint is set only on a genuinely fresh material: re-pressing Build must not revert a
     colour someone tuned, which is the same rule `_build_wrapper` follows for its own inputs.
 
-    **Bark is UV-projected, not box-projected, and F2 had it the other way round.** F2 built the
+    **Bark is UV-projected, not box-projected, and an early version had it the other way round.** The card work built the
     metres-based bark UV of docs/FOLIAGE.md 2.7 and then assigned the bark set with `box=True`, which
     samples by WORLD POSITION -- so the UVs it had just measured reached nothing, the grain followed
     the world axes instead of the limb, and a leaning trunk was a slab of bark projected through it.
-    The third defect in the family F1 shipped two of: it renders, and only a number tells. Box
+    The third defect in the family this subsystem shipped three of: it renders, and only a number tells. Box
     projection is the right default for `surface_material` in general (it exists for un-UV'd props);
     a swept limb is precisely the case that carries real UVs and needs them.
     """
@@ -1144,16 +1144,16 @@ def _tree_materials(ng, params):
 def _atlas_set(params):
     """The atlas set this build will actually read: the one asked for, else the shipped block-out one.
 
-    The fallback is not politeness, and the ASYMMETRY WITH BARK is the whole point (F6). A species
+    The fallback is not politeness, and the ASYMMETRY WITH BARK is the whole point (the wood shaping). A species
     preset naming a set that no pack provides is a documented STATE rather than a mistake
     (docs/FOLIAGE.md 4.4) -- `conifer` asks for `bark_conifer`, and before anyone generates it the
     trunk is a solid tint, which is the block-out convention everywhere in the suite.
 
     A CARD has no such graceful floor. Its material is the surface master with a white tint so the
     atlas reads at face value, and its cutout comes from the set; with no set there is no cutout and
-    no albedo, so every leaf renders as an opaque WHITE RECTANGLE. Measured on the first F6 run with
+    no albedo, so every leaf renders as an opaque WHITE RECTANGLE. Measured on the first wood-shaping run with
     a generated atlas the resolver could not see: a whole canopy of white quads, which reads exactly
-    like the translucency bug F4 documents and is nothing of the kind.
+    like the documented translucency bug and is nothing of the kind.
 
     So the two slots differ because their failures differ. A missing bark set costs a texture; a
     missing atlas costs the silhouette. `_atlas_grid` resolves through here too, or a build would
@@ -1169,7 +1169,7 @@ DEFAULT_ATLAS_GRID = (2, 2)   # the placeholder atlas's own layout, and the floo
 def _atlas_grid(params):
     """(cols, rows) for the atlas this build reads: the explicit params, else the SET's own sidecar.
 
-    The [F3] open question in docs/FOLIAGE.md 6, answered here and in `assets.atlas_grid`. F2's
+    The open question in docs/FOLIAGE.md 6, answered here and in `assets.atlas_grid`. the card work's
     interim answer was these two params alone, which works and does not scale: an artist assigning a
     generated 4x4 atlas has to know to change two numbers, and a card reading 2x2 off a 4x4 atlas
     samples a quarter of the cell it wanted plus slices of three neighbours -- which renders as
@@ -1194,7 +1194,7 @@ def _env_wind(params):
     of the panel -- a tree grown over MCP into a scene that is already blowing comes out blowing.
     It is a SEED and not the live feed: the live half is `foliage_build.apply_wind`, which the World
     applier runs on every change. Absent Firmament (a standalone .blend, the headless gate) there is
-    no world to read and the default is a still tree, which is also what keeps every F1-F3
+    no world to read and the default is a still tree, which is also what keeps every the earlier
     measurement valid at its defaults.
     """
     from ... import env as bbt_env
@@ -1236,7 +1236,7 @@ def build(ng, out, params: dict):
     add_input(ng, "Lean", "NodeSocketFloat", float(params.get("lean", 0.15)))
     add_input(ng, "Gnarl", "NodeSocketFloat", float(params.get("gnarl", 0.5)), 0.0)
     add_input(ng, "Branch Segments", "NodeSocketInt", int(params.get("branch_segments", 6)), 2, 64)
-    # The four F6 shape terms, all defaulting to INERT: `Taper Curve` 1 is the linear taper F1
+    # The four wood-shaping terms, all defaulting to INERT: `Taper Curve` 1 is the linear taper the skeleton
     # measured, and 0 flare, collar and lobe are the perfect cylinder it measured it on. A species
     # preset turns them on, which is where a shape description belongs (docs/FOLIAGE.md 2.9).
     add_input(ng, "Taper Curve", "NodeSocketFloat", float(params.get("taper_curve", 1.0)), 0.2, 5.0)
@@ -1262,14 +1262,14 @@ def build(ng, out, params: dict):
         # sags much less in absolute terms and about as much relative to itself. Negative sweeps up.
         add_input(ng, prefix + "Sag", "NodeSocketFloat",
                   float(params.get(f"l{level}_sag", sag)), -1.0, 1.0)
-    # Leaf cards (F2). Live, because a canopy is tuned by eye and none of these changes the topology
+    # Leaf cards (the cards). Live, because a canopy is tuned by eye and none of these changes the topology
     # of anything but the cards themselves. `Cards` 0 is the off switch and leaves a bare skeleton.
     add_input(ng, "Cards", "NodeSocketInt", int(params.get("cards", 5)), 0, 64)
     add_input(ng, "Card Size", "NodeSocketFloat", float(params.get("card_size", 0.70)), 0.0)
     add_input(ng, "Card Width", "NodeSocketFloat", float(params.get("card_width", 0.60)), 0.01, 4.0)
     add_input(ng, "Droop", "NodeSocketFloat", float(params.get("droop", 0.35)), 0.0, 1.0)
     add_input(ng, "Spread", "NodeSocketFloat", float(params.get("card_spread", 34.0)), 0.0, 90.0)
-    # Where the leaves are (F6, `_leafy`). Both defaults reproduce the tip-only rule exactly: level 0
+    # Where the leaves are (the wood shaping, `_leafy`). Both defaults reproduce the tip-only rule exactly: level 0
     # is every level, and Leaf Start 1 is the last point of a limb, which is its tip.
     # CLAMPED to this build's depth, and that is not defensive tidying -- it is what keeps the LOD
     # ladder from producing a bald tree. A rung is a rebuild at `levels - 1` (docs/FOLIAGE.md 2.6),
@@ -1279,14 +1279,14 @@ def build(ng, out, params: dict):
               min(int(params.get("leaf_level", 0)), levels), 0, MAX_LEVELS)
     add_input(ng, "Leaf Start", "NodeSocketFloat", float(params.get("leaf_start", 1.0)), 0.0, 1.0)
     # The atlas grid. The SET carries its own layout in a sidecar and that is the default; an
-    # explicit param still wins. See `_atlas_grid` -- this is the [F3] open question answered.
+    # explicit param still wins. See `_atlas_grid` -- this is the open question answered.
     grid_cols, grid_rows = _atlas_grid(params)
     add_input(ng, "Atlas Columns", "NodeSocketInt", grid_cols, 1, 16)
     add_input(ng, "Atlas Rows", "NodeSocketInt", grid_rows, 1, 16)
     add_input(ng, "Bark Scale", "NodeSocketFloat", float(params.get("bark_scale", 0.6)), 0.01)
-    # Wind (F4). Live, and seeded from the shared world so a tree built into a windy scene is
+    # Wind. Live, and seeded from the shared world so a tree built into a windy scene is
     # already moving; the world applier keeps both fed after that (core.foliage_build). `Wind` 0
-    # is a still tree and every F1-F3 measurement still holds at it.
+    # is a still tree and every the earlier measurement still holds at it.
     wind, wind_dir = _env_wind(params)
     add_input(ng, "Wind", "NodeSocketFloat", wind, 0.0)
     add_input(ng, "Wind Direction", "NodeSocketFloat", wind_dir, 0.0, 360.0)
@@ -1361,7 +1361,7 @@ def build(ng, out, params: dict):
         # The radius this branch starts at: the parent's ACTUAL radius where it attached, times this
         # level's ratio. `bbt_fol_rad` was stored after the parent's taper and rode here on the same
         # interpolation that carries `bbt_fol_plen`, so it is the parent's local thickness, not its
-        # base thickness. F1 used a running product of the ratios instead, which agrees with this
+        # base thickness. An early version used a running product of the ratios instead, which agrees with this
         # only while every ratio is uniform AND the parent does not taper -- and species presets vary
         # the ratios per level, which is exactly what makes the product wrong.
         base_radius = math_node(ng, "MULTIPLY",
@@ -1406,9 +1406,9 @@ def build(ng, out, params: dict):
     ng.links.new(join.outputs["Geometry"], to_mesh.inputs["Curve"])
     ng.links.new(profile_curve, to_mesh.inputs["Profile Curve"])
     # The radius has to be handed to `Scale` EXPLICITLY. Blender 4.0 gave Curve to Mesh a Scale
-    # input and stopped applying the curve's radius attribute implicitly, so F1's sweep -- which
+    # input and stopped applying the curve's radius attribute implicitly, so an early version's sweep -- which
     # only set the radius and never wired it -- came back as a uniform 1 m tube whatever Trunk
-    # Radius, Taper and the per-level ratios said. Measured: every F1 tree's trunk and every twig
+    # Radius, Taper and the per-level ratios said. Measured: every tree's trunk and every twig
     # were the same 2 m across. `bbt_fol_rad` is the tapered radius this level actually has, which
     # is the same value the next level's base radius and the bark U circumference read.
     ng.links.new(_named(ng, "bbt_fol_rad", "FLOAT", (3600, -180)), to_mesh.inputs["Scale"])

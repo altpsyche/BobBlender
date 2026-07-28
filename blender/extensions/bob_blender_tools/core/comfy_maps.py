@@ -271,7 +271,7 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
     information is its large scale. Same luminance, same box blur, the opposite side of one cutoff,
     which is the honest answer to whether the macro-heightmap family needed its own derivation module. It did not.
 
-    Two differences from the the texture family maps, and both are because a terrain tile is not a texture
+    Two differences from the texture family maps, and both are because a terrain tile is not a texture
     tile. The blur does NOT wrap (see `_box_blur`), and the result is percentile-stretched to fill
     0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering where
     0 is the basin floor and 1 is the highest ground, not as a signed displacement.

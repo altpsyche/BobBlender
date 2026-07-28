@@ -1,4 +1,4 @@
-"""Asset-pack resolver tests (P3). The `core.assets` module is bpy-free, so it runs in the
+"""Asset-pack resolver tests. The `core.assets` module is bpy-free, so it runs in the
 venv directly. Imported by path (inserting the core dir) to avoid the extension package's
 bpy-importing __init__. Covers: the bundled block-out floor, resolution from a pack root
 OUTSIDE the repo (the shippable-install case), first-hit-wins ordering, the pack.json reader,
@@ -226,7 +226,7 @@ def test_validate_biome_flags_missing_texture(assets, monkeypatch, tmp_path):
     assert any("absent_set" in w for w in warnings)
 
 
-# -- Generated model entries (R11, G3) -----------------------------------------------------------
+# -- Generated model entries (the manifest origin rule, the asset gate) -----------------------------------------------------------
 def _make_generated_pack(root, *, height_m=1.8, on_disk=True):
     """The pack `core.gen_assets` writes: ONE biome-shaped manifest named `generated`, with the
     kinds inside it. One per kind would put "rocks" and "trees" in the biome picker."""
@@ -244,7 +244,7 @@ def _make_generated_pack(root, *, height_m=1.8, on_disk=True):
 
 
 def test_norm_entries_defaults_the_generated_fields(assets, monkeypatch, tmp_path):
-    """One reader, still (R11): a v1 bare string and a v2 object both come back with height_m,
+    """One reader, still (the manifest origin rule): a v1 bare string and a v2 object both come back with height_m,
     lod, origin and faces present, so a caller never has to ask which schema it is holding."""
     pack = tmp_path / "p"
     bdir = pack / "models" / "b"
@@ -289,7 +289,7 @@ def test_a_hand_authored_models_block_is_still_inert(assets, monkeypatch, tmp_pa
     assert any("models block is ignored" in w for w in assets.validate_biome("b"))
 
 
-# -- Foliage species presets (BobFoliage F2, docs/FOLIAGE.md 6) ------------------------------
+# -- Foliage species presets (BobFoliage, docs/FOLIAGE.md 6) ------------------------------
 # Presets are DATA in a pack rather than a dict in the recipe, which is the whole point of these
 # tests: a pack can ship a species, so the reader has to survive whatever a pack ships.
 
@@ -316,7 +316,7 @@ def test_blockout_ships_the_shipped_species(assets):
 def test_a_species_owns_its_stiffness_but_not_the_weather(assets):
     """Sway and Leaf Flutter are species traits; Wind and Wind Direction are the world's.
 
-    BobFoliage F4. A spruce barely moves and grass is nearly all motion, so how stiff a plant is
+    BobFoliage. A spruce barely moves and grass is nearly all motion, so how stiff a plant is
     belongs to its preset the way its taper does -- and every shipped species sets both, or the
     knob is a knob nothing ever turns. The world's wind is the other half and must NOT be settable
     here: the world applier writes it onto every tree on every change, so a preset that carried one
@@ -401,7 +401,7 @@ def test_bad_species_files_are_warnings_not_crashes(assets, monkeypatch, tmp_pat
 
 def test_missing_generatable_sets_are_reported_apart_from_authoring_mistakes(
         assets, monkeypatch, tmp_path):
-    """A named-but-absent bark set is a STATE, not a mistake, and F3 is what made that matter.
+    """A named-but-absent bark set is a STATE, not a mistake, and the texture sets is what made that matter.
 
     No placeholder bark set ships, deliberately -- a hand-made one would hide the grain-direction
     problem generation actually has -- so the shipped tree presets name the bark they want and pick it
@@ -436,14 +436,14 @@ def test_missing_sets_report_nothing_once_the_set_exists(assets, monkeypatch, tm
 
 
 def test_shipped_tree_presets_name_the_bark_they_want(assets):
-    """The F3 wiring, as data: a species names its bark set, so generating it once dresses every
+    """The the texture sets wiring, as data: a species names its bark set, so generating it once dresses every
     tree of that species with no assignment step anywhere."""
     assert assets.foliage_species("conifer")["params"]["bark_set"] == "bark_conifer"
     assert assets.foliage_species("broadleaf")["params"]["bark_set"] == "bark_broadleaf"
 
 
 def test_atlas_grid_comes_from_the_sets_own_sidecar(assets, monkeypatch, tmp_path):
-    """The [F3] open question, answered: the SET carries its layout.
+    """The [the texture sets] open question, answered: the SET carries its layout.
 
     A card reading a 2x2 grid off a 4x4 atlas samples a quarter of the cell it wanted plus slices of
     three neighbours, which renders as foliage -- so nothing downstream catches it and the default

@@ -1,7 +1,8 @@
 """Pytest bootstrap: make the single-source heightfields compute importable.
 
 The compute now lives inside the extension (`core/heightfields`) as the sole committed copy
-(P4). Importing `_hfpath` puts that dir on sys.path so tests can `import heightfields`
+the single-compute rule: the compute lives in the extension, never copied into a venv. Importing
+`_hfpath` puts that dir on sys.path so tests can `import heightfields`
 (and `from heightfields import ...`) exactly as the shipped code does.
 """
 

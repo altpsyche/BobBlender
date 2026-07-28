@@ -1,4 +1,4 @@
-"""BobFoliage: the tree-authoring panel (docs/FOLIAGE.md 4.2, 4.3; BobFoliage F4).
+"""BobFoliage: the tree-authoring panel (docs/FOLIAGE.md 4.2, 4.3; BobFoliage).
 
 A panel of its own rather than a fold of Scatter's, and that is the count forcing it: eight trunk
 knobs plus six per level is around thirty, and burying a tree editor under the Active Layer would
@@ -27,7 +27,7 @@ it imports no ui module and reads no PropertyGroup. That is why BobFoliage adds 
 on the live-bridge-only list every curve op is on (docs/MCP.md, known gap) -- the headless gate
 builds trees through the same functions this panel does, with the addon not registered at all.
 
-**Make Variants arrived with F5**, which is the phase that owns it, and not before: a button that
+**Make Variants arrived with the variant pass**, and not before: a button that
 reports "coming soon" teaches an artist to distrust every other button beside it. It is the last
 hop of the track -- one authored tree becomes the pool a scatter layer instances -- so it closes the
 loop the Scatter panel's Grow button opened, and it reports which `BOB_Assets_<Kind>` it filled so
@@ -45,7 +45,7 @@ from . import helpers
 
 # Live knobs, grouped by the sub-panel that draws them. A name absent from this build's interface is
 # skipped by `helpers.live_knobs`, which is what lets one list serve levels=1 and levels=4.
-# `Taper Curve`, `Flare`, `Collar` and `Lobe` (F6) sit with the trunk rather than in a box of their
+# `Taper Curve`, `Flare`, `Collar` and `Lobe` (the wood shaping) sit with the trunk rather than in a box of their
 # own: they are all statements about how thick wood is where, which is what the Trunk box already is,
 # and a fifth box called Shape next to one called Trunk would be a coin toss to an artist.
 _TRUNK_KNOBS = ["Height", "Trunk Radius", "Taper", "Taper Curve", "Flare", "Collar", "Lobe",
