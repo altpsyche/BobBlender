@@ -173,7 +173,7 @@ wet-gravel layer keyed to high flow.
 ### S_WaterMaster
 
 Water-surface master for the river/stream ribbons BobSplines lays (`docs/SPLINES.md`,
-`docs/WATER-SHADER-HANDOVER.md`). It reads the ribbon's baked geometry attributes (`bbt_flow`,
+`docs/WATER.md`). It reads the ribbon's baked geometry attributes (`bbt_flow`,
 `bbt_foam`, `bbt_shore`, `bbt_depth`, `bbt_water_uv`) and produces a flowing, depth-tinted,
 foaming, transparent surface that freezes to ice below 0 C. It animates live off a frame-driven
 Value node (no bake). Beyond Base Color / Roughness / Metallic it outputs Transmission, IOR, Alpha,

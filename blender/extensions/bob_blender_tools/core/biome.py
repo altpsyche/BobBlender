@@ -1,6 +1,6 @@
 """Biome orchestration, shared by the World / Biome panel and the MCP ops.
 
-A biome is one preset that touches terrain, scatter, and the world together (docs/BIOME-SYSTEM.md).
+A biome is one preset that touches terrain, scatter, and the world together (docs/BIOMES.md).
 The manifest is read and validated in core/assets.py; this module is the layer that stands the
 biome up on a real object: it drives the shading terrain leg (core/shading), the scatter leg
 (core/scatter_build), and the world leg (the bbt_env setattr loop) through direct core calls.

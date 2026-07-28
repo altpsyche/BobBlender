@@ -5,7 +5,7 @@ the dependency graph. Like Scatter it is panel-only and in-process (no venv, no 
 op): it drives the shared shader node groups in bbmcp/materials.py directly, so a code
 change to it needs an addon re-enable, never an MCP reconnect.
 
-Native identity (docs/UX-REDESIGN.md 5.4): the panel edits the material on the ACTIVE
+Native identity (docs/CONVENTIONS.md, panel UX conventions): the panel edits the material on the ACTIVE
 object's active material slot, not a stored material_name + target pointer. Select a mesh
 and its material slots are listed; pick a slot and the sub-panels edit that material. A
 slot's kind is DETECTED from the datablock (materials.master_type): a surface BobShader, a
@@ -66,7 +66,7 @@ _WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Wave Detail", "
 _WATER_FREEZE = ["Frozen"]
 
 # Surface / terrain / stack presets live in core/shading.py so the panel operators and the MCP
-# ops share one copy (subtract-duplication; docs/UX-REDESIGN.md). Bound here for the enum items
+# ops share one copy (subtract-duplication; docs/CONVENTIONS.md). Bound here for the enum items
 # and the operator bodies that read them.
 SURFACE_PRESETS = shading.SURFACE_PRESETS
 
@@ -104,7 +104,7 @@ def _active_object(context):
 
 def _active_material(context):
     """The material on the active object's active slot: the native identity the panel edits
- (docs/UX-REDESIGN.md 5.4). Selection follows the viewport and stays in sync with the
+ (docs/CONVENTIONS.md, panel UX conventions). Selection follows the viewport and stays in sync with the
  Material Properties active slot."""
     obj = _active_object(context)
     return obj.active_material if obj is not None else None
@@ -144,7 +144,7 @@ def _editing_material(context):
  material (native identity). For a scatter layer object - whose asset sources live in an
  unlinked, unselectable collection - it is the chosen material from that asset pool
  (bbt_shaders.asset_material, defaulting to the first), so scattered assets are editable through
- the selectable layer without scene-linking their sources (docs/SCATTER-SHADING-UX.md)."""
+ the selectable layer without scene-linking their sources (docs/SCATTER.md)."""
     obj = _active_object(context)
     if obj is None:
         return None
@@ -379,7 +379,7 @@ class BBT_ShadersProps(PropertyGroup):
                     "reference workflow instead: img2img from your photo with its palette locked, "
                     "so the result is that surface rather than the model's idea of the words")
     # The Live Environment toggle folded into the one World-panel master (bbt_world.live_env);
-    # Shaders subscribes _apply_world to drive its S_EnvState feed (docs/UX-REDESIGN.md 5.4/7).
+    # Shaders subscribes _apply_world to drive its S_EnvState feed (docs/CONVENTIONS.md, panel UX conventions).
 
 
 # Identity operators: New (create a BobShader), Convert (plain -> BobShader), Select (slot).
@@ -1108,7 +1108,7 @@ class BBT_PT_shaders(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 6  # pipeline stage: Shaders (docs/UX-REDESIGN.md section 4)
+    bl_order = 6  # pipeline stage: Shaders (docs/CONVENTIONS.md, panel UX conventions)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

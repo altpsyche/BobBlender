@@ -5,7 +5,7 @@ The single committed copy of the terrain compute, living inside the extension at
 CuPy/CUDA on GPU), so it runs BOTH in-process inside Blender's bundled Python (the live
 bake) and in the venv (the golden tests), off one source with no duplicate. `auto` uses
 the GPU when a device is present and CPU otherwise; CPU is the deterministic reference.
-Kept extractable as a standalone repo later. See docs/UNIFIED-SYSTEM.md.
+Kept extractable as a standalone repo later. See docs/ROADMAP.md.
 
 Public surface: bake() evaluates a terrain op stack (generators write a base,
 filters and flow-accumulation erosion shape it -- see engine.run_stack) and writes

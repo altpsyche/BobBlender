@@ -328,3 +328,36 @@ raises `AttributeError: 'Object' object has no attribute 'bbt_curve'` there. See
   `bbt_terrain_height`, `bbt_terrain_sea`, `bbt_terrain_res`. Written by the Terrain panel's bake
   AND by a `heightmap_terrain` `build_geonodes`, so a terrain built over MCP is drapeable too — it
   was not, before, and `_has_bake` read False on a terrain that plainly had a heightmap.
+
+## 10. Invariants, each with the number that fixes it
+
+| Invariant | The number | Why it fails silently |
+|---|---|---|
+| **A dense centreline before the downhill solve.** IMPOSE roles resample to 48 points | **17% of water verts float with 4 control points, 0% with 48** | sampling only the control points lets the water float over dips, and a floating river still renders as a river |
+| **Erosion must not drop the containment banks.** After an erode, every curve is RE-IMPOSED on the eroded terrain -- re-drape, carve, rebuild the water | with GLOBAL erosion pushing the whole terrain down, **0 of 2,208 shore verts float**, mean terrain-above-water -3.5 m, the same as a clean build | an earlier design baked the carve into the heightfield and set the overlays to mask-only. That dropped the banks, so erosion lowered them with nothing re-imposing them and the fixed-level water floated. The scene still looked like a river valley |
+| **Bed and water surface meander from ONE width model.** `blocks.width_multiplier` is called by both `curve_overlay` and `curve_water` | half-width 5.8 to 7.8 at `width_var` 0.35, dead flat 6.83 to 6.89 at 0.0; containment after erosion identical to the flat baseline | two hand-matched copies drift, and a bed that no longer matches its surface reads as a gap |
+| **Carving at the curve's own Z is a WARNING, not a fallback** | it used to report "carved terrain (curve Z)", which reads like success | on rising ground it cuts a trench, on falling ground it leaves the path in the air |
+| **The band mask's UV mapping is `u = x/size + 0.5`, `v = 0.5 - y/size`** | verified to land on the curve and not mirrored | a PNG is top-row-first and Blender samples V-up, so a mirrored mask erodes the wrong corridor and looks like erosion working |
+
+## 11. Failure modes
+
+| Failure mode | What it looks like | Where it is handled |
+|---|---|---|
+| a curve draped on a terrain with no baked heightmap | a trench, or a path in mid-air | `data.warnings` says so explicitly; bake the heightfield and re-build |
+| a curve leaving the terrain footprint | a runaway trench off the edge | `_clip_xy_to_terrain` clips before the solve; the Active Path panel warns |
+| water floating above its bed after an erode | a river hanging in the air over its own valley | the re-impose loop above, and the shore-vert float count is the check |
+| a road crossing a river | the road sinks INTO the water | the junction take-lower rule, and this one is a known limitation rather than a fix: a bridge or culvert role is future work |
+| stale sockets on a cached master | a new curve channel that does nothing | `S_TerrainMaster` and `S_WaterMaster` are cached groups; a version bump rebuilds them in place, and deleting the group forces it |
+
+## 12. Open questions
+
+- **Open.** An eroded CHANNEL, with the water re-fitting to it. Today the channel is re-imposed as a
+  graded procedural embankment and the landscape around it is what erodes, which is what fixed the
+  floating water; the cost is that the banks read smooth where the surrounding terrain does not. A real
+  fix needs the water to derive its fill level from the eroded channel floor rather than from
+  `path_z - Water Depth`, which is a new water-fill model.
+- **Open, named but not scoped.** A separate sea, ocean or lake surface; bridges and culverts where a
+  road crosses a river; tributary networks and width-from-flow-accumulation beyond the simple
+  downstream ramp.
+- **Deferred, and why.** A true shared-height junction. Take-lower is measured and cheap; a shared
+  height needs a junction graph, and nothing yet needs one.

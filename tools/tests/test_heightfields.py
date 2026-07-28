@@ -528,7 +528,7 @@ def test_resolution_independence_through_erosion():
 # measures drainage concentration directly. The old below-local-mean channel-fraction
 # test was tuned to the deep-incising canyon preset; that preset was removed with the
 # Canyons family in 2026-07, and the gentler mountain presets do not separate cleanly on
-# that proxy. See docs/TERRAIN-CRITIQUE.md on why depth proxies mislead.)
+# that proxy. See docs/TERRAIN.md on why a statistic cannot assert a landform.)
 
 
 # Edge behaviour.

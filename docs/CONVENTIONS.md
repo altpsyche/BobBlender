@@ -80,8 +80,8 @@ When a geometry-node or material node group proves reusable:
 
 ## Panel UX conventions
 
-The BobBlenderTools N-panel suite follows one design language (full rationale in
-`UX-REDESIGN.md`). When adding or editing a panel, keep to it:
+The BobBlenderTools N-panel suite follows one design language. When adding or editing a panel,
+keep to it:
 
 - Order along the pipeline with `bl_order`, not registration: World 0, Biome 1, Terrain 2,
   Paths 3, Scatter 4, Shaders 5, Atmosphere 6, Advanced 7. A one-line overview at the top of
@@ -107,3 +107,40 @@ The BobBlenderTools N-panel suite follows one design language (full rationale in
 - `.blend` and texture files go through Git-LFS (see `.gitattributes`).
 - When committing a library change, note what the node does, not just
   "updated library".
+
+### Decisions inside those rules, with their reasons
+
+These came out of a whole-suite panel review and are the parts most likely to be re-litigated:
+
+- **`STRUCTURAL_ICON` only marks a datablock rebuild.** New / Convert / Add Layer / Snow Shell keep
+  their native ADD / NODE_MATERIAL / REMOVE icons on purpose: they are create, list-add and
+  material-transform affordances with clearer icons of their own, and they are already separated from
+  the live knobs. Forcing the shared marker onto them would replace a specific icon with a generic
+  one. Reload Builders is CONSOLE for the same reason -- it is a dev reload, not a rebuild, and
+  keeping it off the marker is what keeps the marker meaningful.
+- **No per-curve knob for a curve's surface look.** `apply_curve_surface` writes a real terrain layer
+  slot, so those sockets are already live and reachable in the terrain Layer Masks panel. Every
+  channel-"a" path shares ONE idempotently-reused slot, so a "this curve" knob would silently edit
+  every path. `apply_curve_wet` is likewise a MAX-accumulated shared path. The real gap here is
+  discoverability -- that a curve band IS a terrain layer -- which is a docs matter, not a knob.
+- **A greyed button that does nothing is worse than an absent one.** A control that cannot act teaches
+  an artist to distrust every control beside it, and the affordance is worth less than the trust. Ship
+  the button with the thing it does, or not at all.
+- **Open, deferred:** a few build-time engine params are not surfaced anywhere (`build_sky`
+  `sun_intensity`, voronoi jitter, dunes warp). They are `params.get()` reads at build time rather
+  than live modifier sockets, so surfacing them needs scene props threaded into the build params.
+  Bigger than socket-surfacing, and nothing is blocked on them.
+
+### How to review a panel change
+
+Do not eyeball the draw code. Register the addon in Blender 5.2 headless and run a **recording draw
+harness**: stub the layout API, capture what every panel and sub-panel actually renders, and do it
+across the states that change the layout -- an empty scene, a populated one (a Terrain mesh plus an
+emitter), live environment off, and Firmament off. Then drive the operators that populate the deep
+panels (a Surface, Terrain and Water BobShader, a scatter layer, a dirt-path curve, a river curve) and
+capture those too. Every finding worth acting on came out of that recording; none came out of reading
+the draw functions.
+
+The one trap: a stub layout has to implement every verb the panels call. A missing verb raises inside
+the harness rather than in Blender, which reads as a panel bug. Listing the verbs explicitly beats a
+`__getattr__` catch-all, which hides the next such drift.

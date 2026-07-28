@@ -46,7 +46,7 @@ _CAMERA_KNOBS = ["Camera Distance", "Camera Cone", "Cull Falloff"]
 
 # The layer-type presets, the collection/naming helpers, the structural-params builder, the
 # biome-params merge, and the two build functions live in core/scatter_build.py so the panel
-# operators and the biome/MCP path share one copy (subtract-duplication; docs/UX-REDESIGN.md).
+# operators and the biome/MCP path share one copy (subtract-duplication; docs/CONVENTIONS.md).
 # Bound here for the enum items, the UIList, and the operator bodies. edge_attr_name is re-exported
 # for ui/splines.py, which reads it to bind a Verge layer to a curve's edge ring.
 LAYER_TYPES = scatter_build.LAYER_TYPES
@@ -611,7 +611,7 @@ class BBT_PT_scatter(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 4  # pipeline stage: Scatter, after Paths (docs/UX-REDESIGN.md section 4)
+    bl_order = 4  # pipeline stage: Scatter, after Paths (docs/CONVENTIONS.md, panel UX conventions)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

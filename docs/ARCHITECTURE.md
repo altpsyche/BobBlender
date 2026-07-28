@@ -12,9 +12,9 @@ pipeline that lets an agent author Blender data over MCP. Target: Blender 5.2 LT
 - `tools/`: a Python project (`bobtools`) that runs in its own venv, not inside
   Blender: repo utilities, the ComfyUI client, and a thin `bob-mcp` launcher
   (`bobtools/mcp_launch.py`) for in-repo dev. The MCP server itself moved into the
-  extension (`mcp_agent/`, P8) so it ships with the product and runs standalone; the
-  terrain compute likewise lives in the extension at `core/heightfields/` (P4, single
-  source), which the venv reaches via `bobtools/_hfpath.py` (puts the core dir on sys.path).
+  extension (`mcp_agent/`) so it ships with the product and runs standalone; the terrain
+  compute likewise lives in the extension at `core/heightfields/` (the single-compute
+  rule: one committed source, never a venv copy), which the venv reaches via `bobtools/_hfpath.py` (puts the core dir on sys.path).
 - `blender/`: code that runs inside Blender's Python. `extensions/bob_blender_tools/`
   is the BobBlenderTools addon (World, Terrain, Scatter, Shaders, Atmosphere, and a
   collapsed Advanced/Bridge panel; see the panel-UX section below). It is the whole
@@ -102,14 +102,14 @@ builders are recipes in `blender/extensions/bob_blender_tools/core/geonodes/reci
 addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panels.
 MCP is one capability here, not the roof.
 
-Internally the three concerns are separated (P2): `ui/` holds the panels (`world`,
+Internally the three concerns are separated: `ui/` holds the panels (`world`,
 `firmament`, `scatter`, `shaders`, `splines`, and shared `helpers`), `bridge/` holds the
 live socket `server`, and `core/` is the builder library. A thin `__init__.py` does only
 register/unregister, addon prefs, and the terrain-bake operators. Every intra-package
 import is relative, so the folder is self-contained and importable under both the live
 `bl_ext.*` namespace and the headless `bob_blender_tools.*` name.
 
-### Asset packs (P3)
+### Asset packs
 
 Art lives OUTSIDE the repo, in asset packs. A pack is a plain folder with
 `models/<biome>/manifest.json` biomes and `textures/<set>/` texture sets (plus an optional
@@ -130,7 +130,7 @@ per-user extension cache. The free-text bake target is `basename`-guarded so it 
 that folder. This replaces the old hardcoded `library/_generated/`, which does not exist on an
 installed machine.
 
-### Compute delivery (P5)
+### Compute delivery
 
 The terrain bake runs the single-source compute (`core/heightfields`) IN-PROCESS. That compute
 needs scipy (CPU) and CuPy (GPU), which Blender's bundled Python does not ship. `compute.py`
@@ -149,7 +149,7 @@ artists on CUDA 13 + Steam without a venv get CPU until the cu13 CUDA wheels shi
 ### Panel UX (2026-07-20 redesign)
 
 The tab is ordered along the pipeline so the N-panel teaches the workflow (full plan and
-rationale in `UX-REDESIGN.md`): **World** (the shared `bbt_env`, promoted out of Firmament),
+rationale in `CONVENTIONS.md`, panel UX conventions): **World** (the shared `bbt_env`, promoted out of Firmament),
 **Biome** (the one-action way to stand up a whole scene), **Terrain**, **Paths** (BobSplines
 typed curves), **Scatter**, **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/
 weather), and a collapsed **Advanced** panel (the MCP Bridge, demoted from the artist's entry
@@ -196,7 +196,7 @@ redesign; the module is `ui/firmament.py`) that authors sky, clouds, fog, weathe
 particulates, and snow coverage. It still owns and registers the shared world state, but the
 world's UI (the Environment sliders) now lives in the World panel, and the scene Quality level
 and the Live Environment master moved to `bbt_world` (see the panel-UX section).
-Built in slices S1-S5 (see `FIRMAMENT.md` for the design and the slice records).
+See `FIRMAMENT.md` for the design.
 It is the base layer other capabilities read the world from, a one-way dependency, so
 the graph stays acyclic and a `BobBlenderFirmament` split stays mechanical. All bpy-only.
 
@@ -241,28 +241,28 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   surface framework alongside the cached
   Firmament volume/particulate shaders: shared shader NODE GROUPS (`S_<Effect>`) that a
   thin per-object wrapper material (`M_<Surface>`) instances, the Blender-native master +
-  instances shape. As of S1: `S_EnvState` (the world-to-shader bridge, internal Value nodes
+  instances shape. `S_EnvState` (the world-to-shader bridge, internal Value nodes
   driven once from `bbt_env`, one shared datablock feeding every material), `S_Weather`
-  (the shared weather layer, snow term in S1), `S_SurfaceMaster` (solid base colour +
+  (the shared weather layer), `S_SurfaceMaster` (solid base colour +
   per-instance variation, ending in `S_Weather`), and `surface_material()` (the `M_<name>`
   wrapper: one master group node into one Principled BSDF). Cached and get-or-create, so a
-  re-Build never wipes a wrapper's tuned inputs. As of S2, `S_TerrainMaster` (the multi-layer
+  re-Build never wipes a wrapper's tuned inputs. `S_TerrainMaster` (the multi-layer
   blend) and `terrain_material()` join them. `S_WaterMaster` and `water_material()` are the third
-  kind (BobSplines C5): flowing, foaming, freezing water read from a curve ribbon's attributes.
+  kind (see `WATER.md`): flowing, foaming, freezing water read from a curve ribbon's attributes.
   `master_type()` returns surface/terrain/water/None from the wrapper's Master group node, the
   native identity the panel keys off. The masters carry Albedo/Roughness/Metallic/AO Map input
   sockets (identity defaults, so a solid colour renders unchanged) that the Convert path routes a
   converted asset's own UV-mapped maps into; the AO socket is filled from the asset's arm map AO
   channel. Anti-tiling ships as `_macro_break` (a low-frequency world-noise macro brightness
   break-up, live `Macro Amount` / `Macro Scale`, `0` = off) plus per-instance Object Info Random.
-  A triplanar sampler and a `library/textures/<name>/` texture-set loader are the planned S3 work
+  A triplanar sampler and a `library/textures/<name>/` texture-set loader are the texture-set work
   (the folders and their `SOURCE.txt` files exist; no code samples them yet), so terrain layers
   are solid tints for now.
 - Coverage has one authority: `S_Weather` reads the `snow_cover` attribute where the
   Firmament GN pass ran (the terrain) and computes a shader-side fallback with the exact
   SYSTEMS.md formula everywhere else (scattered assets, plain meshes). A per-material Use
   Attribute input picks; default computed for the surface master, attribute for the terrain.
-- As of S2, `S_TerrainMaster` blends an ordered stack of surface layers (one shared group,
+- `S_TerrainMaster` blends an ordered stack of surface layers (one shared group,
   fixed 6 slots, the stack = the enabled ones) by the SAME masks Scatter uses (slope band,
   altitude band, world-space noise clumping, a per-layer paint attribute, and a Cycles
   Pointiness curvature term), with a HEIGHT-LERP blend so layers interlock instead of
@@ -272,7 +272,7 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   `materials.assign_material` drives a small per-material Set-Material GN modifier
   (`BBT_Material`) at the end of the stack for any object carrying a Nodes modifier; a plain
   mesh just uses the object slot. This makes "assign a material to an object" work uniformly.
-- As of S4 the weather layer carries the full term stack: snow, wetness (with the documented
+- The weather layer carries the full term stack: snow, wetness (with the documented
   `env.weather`->wetness mapping: rain/storm wet the ground), frost (below freezing, up-facing),
   and dust/moss season aging. `S_EnvState` drives four fields now (snow, wetness, temperature,
   weather). Wet-cavity pooling uses Cycles Pointiness (confirmed working). The snow accumulation
@@ -297,8 +297,8 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   One World control then weathers terrain and scattered assets alike; a Scene Preset (Winter)
   moves terrain, scatter, and props together with no rebuild. Measured budget: a 1080p Final
   full-stack frame (layered terrain + weathered scatter + clouds/fog/rain) is ~190s on the dev
-  5080. BobShaders core is S1-S5 complete.
-- Biome system (docs/BIOME-SYSTEM.md; blockout rethink 2026-07-22): a biome folder
+  5080. The BobShaders core is complete.
+- Biome system (docs/BIOMES.md; blockout rethink 2026-07-22): a biome folder
   (`library/models/<biome>/manifest.json`) is a self-describing scene, read through one normalizing
   reader `assets.biome_manifest()` that returns `{meta, models, terrain, scatter, world}` and maps a
   v1 flat manifest ({kind:[files]}) onto it (reserved keys meta/models/terrain/scatter/world; any
@@ -317,7 +317,7 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   live in an unlinked, unselectable collection, their surface materials are edited through the
   selectable scatter LAYER object: selecting a layer lists its instanced assets' materials and the
   Surface / Weather sub-panels tune the chosen one, reaching every instance
-  (docs/SCATTER-SHADING-UX.md). Names and conventions follow the UX redesign (ui/helpers, native
+  (docs/SCATTER.md). Names and conventions follow the UX redesign (ui/helpers, native
   context).
 - `Scene.bbt_shaders` holds only BobShaders' own UI state (active terrain layer, the staged
   texture-set pick, the Convert scope + collection, and the scatter asset-material name). Identity
@@ -368,6 +368,10 @@ it and stay separable. Everything is kept extract-ready so a piece can later spl
 into its own repo (BobBlenderMCP / BobBlenderHeightFields / BobBlenderScatter under
 a BobBlenderTools umbrella) with `git subtree`. Extract when the op vocabulary
 stabilises, or when a second project or a public release needs it.
+
+The constraints that keep a split mechanical, and the gaps that are still open, are in
+[ROADMAP.md](ROADMAP.md). That is the one place an unfinished thing is allowed to live, so no other
+document has to hedge.
 
 ## Daily use
 

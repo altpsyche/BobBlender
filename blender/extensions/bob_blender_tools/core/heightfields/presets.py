@@ -28,7 +28,7 @@ these plain and few.
 
 The old Canyons family (canyon, mesa, badlands, plateau) was removed in 2026-07 because the
 single noise-plus-fluvial engine could only make them look like eroded hills. All four are now back
-with real generators. See docs/TERRAIN-CRITIQUE.md for the full diagnosis.
+with real generators. See docs/TERRAIN.md, the erosion model, for why.
 """
 
 import math
@@ -61,7 +61,7 @@ STACKS = {
                    # floor, unlike the V a river cuts), overdeepened cirque bowls at the valley
                    # heads, and knife-edge aretes with sharp horns above the snowline. Stream-power
                    # fluvial can only make a rugged fluvial mountain, so this uses its OWN process
-                   # (ops_erode.glacial). See docs/TERRAIN-CRITIQUE.md.
+                   # (ops_erode.glacial). See docs/TERRAIN.md, the erosion model.
         {"kind": "noise", "ridged": 0.5, "detail_strength": 0.55, "octaves": 5, "warp": 70},
         {"kind": "glacial", "ela": 0.5, "iterations": 60, "erode": 1.6, "widen": 0.9,
          "ice_width": 8.0, "horn": 0.34, "arete_talus": 0.016},

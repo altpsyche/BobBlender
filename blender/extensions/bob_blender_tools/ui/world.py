@@ -1,4 +1,4 @@
-"""World: the shared environment, promoted to its own top panel (docs/UX-REDESIGN.md 5.1).
+"""World: the shared environment, promoted to its own top panel (docs/CONVENTIONS.md, panel UX conventions).
 
 The world (Scene.bbt_env) is read by Terrain, Scatter, Shaders, and Atmosphere, so it gets
 the top slot in the pipeline instead of being buried in a Firmament sub-panel. This panel is
@@ -345,7 +345,7 @@ class BBT_PT_world(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 0  # top of the pipeline (docs/UX-REDESIGN.md section 4)
+    bl_order = 0  # top of the pipeline (docs/CONVENTIONS.md, panel UX conventions)
 
     def draw(self, context):
         layout = self.layout

@@ -1,17 +1,17 @@
-# Scatter asset shading: make scattered assets first-class, editable BobShaders
+# Scatter: scattered assets as first-class, editable BobShaders
 
-Status: IMPLEMENTED (2026-07-20), verified headless. Follow-on to the biome system track
-(docs/BIOME-SYSTEM.md). Scope: close the gap where the Shaders panel cannot convert and then tune
-the surface look (base colour, roughness, variation, weather, AO, macro) of scattered assets. This
-is panel and pipeline behaviour plus one auto-convert step; it does NOT change any shader graph, so
-the solid and terrain render baselines stay byte-identical (confirmed: 0.0 pixel delta).
+**Shipped and verified headless.** A scattered asset is not a black box: select its layer and the
+Shaders panel edits its surface look (base colour, roughness, variation, weather, AO, macro) like any
+other BobShader. This is panel and pipeline behaviour plus one auto-convert step; it changes **no
+shader graph**, so the solid and terrain render baselines stay byte-identical — confirmed at **0.0
+pixel delta**.
 
-Implementation: `ui/shaders._editing_material` / `_asset_materials` + the top-panel scatter
-material list + `BBT_OT_shaders_select` (target="asset") + `bbt_shaders.asset_material` (P1/P2);
-`ui/world` Apply Biome `weather_assets` toggle (default on) converting each scattered kind's
-`BOB_Assets_<kind>` after the scatter step (P3); the `assets.py` docstring corrected. Verified:
-select a scatter layer, its asset materials list, Surface and Weather sub-panels edit the chosen
-one, edits reach every instance; a normal mesh still edits its own active material.
+Biomes are [BIOMES.md](BIOMES.md); the master contract is [SHADERS.md](SHADERS.md).
+
+Where it lives: `ui/shaders._editing_material` and `_asset_materials`, the top-panel scatter material
+list, `BBT_OT_shaders_select(target="asset")` and `bbt_shaders.asset_material`; plus `ui/world`'s
+Apply Biome `weather_assets` toggle (default on), which converts each scattered kind's
+`BOB_Assets_<kind>` after the scatter step.
 
 ## 1. The problem, untangled
 
@@ -87,14 +87,16 @@ to BobShaders (automatically by Apply Biome, or manually), Convert preserving th
 normals, so trees and grass weather with the ground. Drop the "opaque surface master cannot
 represent alpha" line, which Convert made obsolete.
 
-## 4. Phased plan
+## 4. The three moving parts
 
-- P1: `_editing_material` plus repointing the Surface and Weather sub-panels and their operators.
-  Smallest change that makes the Surface panel appear for an active scatter layer (defaults to the
-  first asset material).
-- P2: the assets-material list plus the select operator in the top panel.
-- P3: auto-convert on Apply Biome (`weather_assets`, default on) plus a manual "Convert assets"
-  affordance in the scatter-layer view; fix the `assets.py` docstring.
+- **`_editing_material`, and the Surface and Weather sub-panels pointed at it.** This is the smallest
+  change that makes the Surface panel appear at all for an active scatter layer; it defaults to the
+  first asset material.
+- **The asset-material list plus its select operator**, in the top panel, so a layer with four asset
+  materials is four rows and not a guess.
+- **Auto-convert on Apply Biome** (`weather_assets`, default on) plus a manual "Convert assets"
+  affordance in the scatter-layer view, so weathering reaches scattered assets without a per-asset
+  step.
 
 ## 5. Verification (headless, same discipline as prior tracks)
 

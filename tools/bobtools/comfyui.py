@@ -2,12 +2,12 @@
 
 The client lives inside the extension, at
 `blender/extensions/bob_blender_tools/core/comfy.py`, because Blender's bundled Python has no
-`httpx` and the same code has to run on both interpreters (docs/COMFYUI.md, Bob-side constraint
-1). It is stdlib only for that reason. This module exists so venv-side code can say
+`httpx` and the same code has to run on both interpreters (docs/GENERATION.md, the Bob-side
+constraints). It is stdlib only for that reason. This module exists so venv-side code can say
 `from bobtools import comfyui` and get that single source instead of a second implementation that
 drifts from it.
 
-Until G1 this file WAS that second implementation: a dormant 68-line `httpx` client, with no
+This file WAS that second implementation once: a dormant 68-line `httpx` client, with no
 caller, that polled `/history` rather than the jobs API. That is the drift the single-source rule
 exists to prevent, so it is gone, along with the `[comfyui]` extra in `pyproject.toml` that only
 it needed.

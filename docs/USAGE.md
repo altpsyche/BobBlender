@@ -225,7 +225,7 @@ Packs**.
 **Next.** Terrain, to shape the ground the biome is sitting on. Or Shaders, to open up what it
 built.
 
-For the manifest schema and how to author a biome, see [BIOME-SYSTEM.md](BIOME-SYSTEM.md).
+For the manifest schema and how to author a biome, see [BIOMES.md](BIOMES.md).
 
 ---
 
@@ -768,7 +768,7 @@ More MCP-specific cases are in [MCP.md](MCP.md).
 | Typed curves, roles, water | [SPLINES.md](SPLINES.md) |
 | BobShaders masters and node groups | [SHADERS.md](SHADERS.md) |
 | Sky, clouds, fog, weather, snow | [FIRMAMENT.md](FIRMAMENT.md) |
-| Biome manifests and authoring | [BIOME-SYSTEM.md](BIOME-SYSTEM.md) |
+| Biome manifests and authoring | [BIOMES.md](BIOMES.md) |
 | Driving Blender from an agent | [MCP.md](MCP.md) |
 | The op vocabulary, field by field | [API.md](API.md) |
 | Generation: setup, workflows, limits | [GENERATION.md](GENERATION.md) |

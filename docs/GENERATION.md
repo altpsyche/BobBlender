@@ -1196,7 +1196,7 @@ Geometry Nodes foliage generator that consumes ComfyUI textures rather than Comf
 
 - **Trunk and main limbs**: a GN sweep along a grown skeleton curve, with the generated bark texture
   set on it. Not a generated mesh: this bullet first offered that as an option on the grounds that
-  image-to-3D is good at bark, and [FOLIAGE.md](FOLIAGE.md#21-trunk-and-main-limbs) retired it.
+  image-to-3D is good at bark, and [FOLIAGE.md](FOLIAGE.md#trunk-and-main-limbs) retired it.
   Branches attach to points on a curve with a tangent and a radius; a generated blob has no
   skeleton, so nothing can grow from it. The "good at bark" claim was also extrapolated from logs
   and stumps and has never been measured on a standing trunk.

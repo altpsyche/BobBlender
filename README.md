@@ -87,14 +87,35 @@ extensions.blender.org is possible later (needs their review plus compatible tag
 cp -r projects/_template projects/<my-piece>
 ```
 
-Then follow `projects/_template/README.md`. Naming, output paths, and where
-files go are in `docs/CONVENTIONS.md`. `docs/USAGE.md` is how to actually use the
-addon, stage by stage. The overall design is in `docs/ARCHITECTURE.md`, and the
-recipe and parameter reference is in `docs/SYSTEMS.md`. Each capability has its
-own doc: `docs/TERRAIN.md` (the heightfield engine and presets),
-`docs/SHADERS.md` (BobShaders surfaces), `docs/FIRMAMENT.md` (sky, clouds, fog,
-weather, snow), `docs/SPLINES.md` (typed curves), and `docs/BIOME-SYSTEM.md`
-(whole-biome assembly).
+Then follow `projects/_template/README.md`.
+
+**The docs, by what you want.** Every document is named for a feature, never for
+the work that produced it, and `docs/CONVENTIONS.md` states that rule and the CI
+guard that keeps it.
+
+| Cross-cutting | |
+|---|---|
+| [USAGE.md](docs/USAGE.md) | an artist's path through the suite, stage by stage. The front door |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the pieces fit; the only doc that surveys everything |
+| [CONVENTIONS.md](docs/CONVENTIONS.md) | naming, panel UX, where files go, and the no-phase-labels rule |
+| [SYSTEMS.md](docs/SYSTEMS.md) | the recipe and parameter reference |
+| [API.md](docs/API.md) | the op vocabulary |
+| [MCP.md](docs/MCP.md) | the agent-facing surface |
+| [ROADMAP.md](docs/ROADMAP.md) | what is deliberately not finished, and why |
+
+| Per subsystem | |
+|---|---|
+| [TERRAIN.md](docs/TERRAIN.md) | the heightfield engine, its filter stack and presets |
+| [WATER.md](docs/WATER.md) | the river and stream surface |
+| [SHADERS.md](docs/SHADERS.md) | BobShaders: the master contract and the surface look |
+| [SPLINES.md](docs/SPLINES.md) | typed curves that drive terrain, material, scatter and water |
+| [FOLIAGE.md](docs/FOLIAGE.md) | trees from curves and cards |
+| [FIRMAMENT.md](docs/FIRMAMENT.md) | sky, clouds, fog, weather, snow |
+| [BIOMES.md](docs/BIOMES.md) | whole-biome assembly and the manifest schema |
+| [SCATTER.md](docs/SCATTER.md) | scattered assets as editable BobShaders |
+| [GENERATION.md](docs/GENERATION.md) | the local ComfyUI integration |
+| [GENERATION-BASELINES.md](docs/GENERATION-BASELINES.md) | every measured number the generation side rests on |
+| [THIRD-PARTY-MODELS.md](docs/THIRD-PARTY-MODELS.md) | licence and provenance for every model the workflows reference |
 
 ## Target
 

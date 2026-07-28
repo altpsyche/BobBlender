@@ -9,7 +9,7 @@ dependencies = ["pydantic>=2"]
 #   pip install -e '.[mcp]'      # MCP server
 #   pip install -e '.[all]'
 # There is no [comfyui] extra: the ComfyUI client is stdlib only and lives inside the extension
-# so Blender's bundled Python can run it too (docs/COMFYUI.md, Bob-side constraint 1).
+# so Blender's bundled Python can run it too (docs/GENERATION.md, the Bob-side constraints).
 # `bobtools.comfyui` re-exports it.
 [project.optional-dependencies]
 mcp = ["mcp>=1.2"]

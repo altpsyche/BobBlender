@@ -41,7 +41,7 @@ profile is symmetric.
 
 The role presets, the overlay/water/material builders, the live param sync and the MCP op handlers
 all live in core/splines_build (shared with the dispatch handlers, subtract-duplication; docs/
-UX-REDESIGN.md). This module keeps the panel: the curve list + terrain pick, the property groups,
+CONVENTIONS.md). This module keeps the panel: the curve list + terrain pick, the property groups,
 the operators (which resolve context, run the injected scatter/host-bake callbacks the pure core
 cannot, write the scene summary, self.report, and update the view layer), and the panel draw.
 """

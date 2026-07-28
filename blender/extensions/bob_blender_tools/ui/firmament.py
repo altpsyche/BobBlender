@@ -1,6 +1,6 @@
 """Firmament: the Atmosphere panel, peer to Terrain, Scatter, and Shaders.
 
-Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/UX-REDESIGN.md). It
+Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/CONVENTIONS.md, panel UX conventions). It
 authors the built subsystems: Sky, Clouds, Fog, and Weather (rain/motes/snow coverage). The
 shared world state (Scene.bbt_env) is still owned and registered here, but its UI (the
 Environment sliders), the Preview/Final Quality level, the Live Environment master, and the
@@ -285,7 +285,7 @@ class BBT_FirmamentProps(PropertyGroup):
     ground_albedo: FloatProperty(name="Ground Albedo", default=0.3, min=0.0, max=1.0)
 
     # Quality (Preview/Final) and the Live Environment master toggle moved to the World panel
-    # (bbt_world); they are scene-wide, not atmosphere-specific (docs/UX-REDESIGN.md 5.1, C).
+    # (bbt_world); they are scene-wide, not atmosphere-specific (docs/CONVENTIONS.md, panel UX conventions).
 
     # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
     cloud_object: StringProperty(name="Object", default="BOB_Clouds")
@@ -622,7 +622,7 @@ class BBT_OT_firmament_scene_preset(Operator):
 
 # Firmament is now "Atmosphere": the built sky/clouds/fog/weather subsystems. The world state
 # (bbt_env), the Quality level, the Live Environment master, and Scene Presets moved to the
-# World panel (docs/UX-REDESIGN.md 5.1/5.5). Class/operator names keep the firmament_* / BBT_*
+# World panel (docs/CONVENTIONS.md, panel UX conventions). Class/operator names keep the firmament_* / BBT_*
 # spelling per decision F.
 class BBT_PT_firmament(Panel):
     bl_label = "Atmosphere"
@@ -630,7 +630,7 @@ class BBT_PT_firmament(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 7  # after the pipeline stages (docs/UX-REDESIGN.md section 4)
+    bl_order = 7  # after the pipeline stages (docs/CONVENTIONS.md, panel UX conventions)
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

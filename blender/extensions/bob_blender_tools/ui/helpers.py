@@ -1,6 +1,7 @@
 """Shared UX helpers for the BobBlenderTools panels.
 
-One implementation of the suite's recurring UI patterns (docs/UX-REDESIGN.md), so every panel speaks the same visual language instead of each inventing its
+One implementation of the suite's recurring UI patterns (docs/CONVENTIONS.md, panel UX
+conventions), so every panel speaks the same visual language instead of each inventing its
 own idioms:
 
 - context_header: the compact "what am I acting on" line a panel opens with, read from the

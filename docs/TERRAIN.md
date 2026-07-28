@@ -376,3 +376,39 @@ hash matches the existing sidecar is a no-op that returns the cached stats.
   to `presets.FAMILIES`, then rerun `gen_panel_presets.py`.
 </content>
 </invoke>
+
+## Open questions
+
+- **Open.** The real landform generators -- strata, cap-rock, scarp retreat -- that would let canyon,
+  mesa, badlands and plateau come back as their actual landforms rather than as tunings of a fluvial
+  carver. Those preset names are free to reuse the day the generators exist. Per-family diagnostics go
+  with them: today the only landform assertion is drainage concentration on `alpine`, and a
+  below-local-mean channel-fraction proxy was **removed** because it was tuned to a deep-canyon hero
+  and the gentler mountains do not separate on it.
+- **Open, and it is the one an artist notices.** An eroded CHANNEL, so a river's banks weather. The
+  current model erodes the landscape and then RE-IMPOSES a smooth swept cross-section on it, which is
+  what stopped the water floating; the cost is that the channel is the one feature that never gets
+  eroded, so its banks read smooth against terrain that does not. A real fix needs the water to derive
+  its fill level from the eroded channel floor rather than from `path_z - Water Depth`. See
+  [SPLINES.md](SPLINES.md#12-open-questions).
+- **Open.** The slope-area gradient sign. A no-mask `alpine` bake's log-log slope-area gradient is
+  **+0.322** -- slope RISES with upstream drainage area -- with a strong fit (binned medians, r 0.86 to
+  0.89 over 30 to 3,000 upstream cells, eight-neighbour downslope gradient, a 32nd-of-width border
+  margin dropped so the outlet cannot dominate). An equilibrium fluvial landscape has a NEGATIVE
+  gradient of roughly 0.3 to 0.6 (Flint's law). A finite-iteration stream-power stack with no uplift
+  term is not an equilibrium landscape, so the answer may be "nothing to fix, write it down". Worth an
+  afternoon: if it is not expected, every mountain preset's valley profile is wrong in a way no visual
+  check has caught, and the fix is an uplift term rather than a knob. The statistic discriminates
+  cleanly whatever the sign means (masked bakes +0.414 to +0.432 beside the null's +0.322, a mask with
+  no erosion -0.143 to -0.207).
+- **Deferred, and why.** A snow line normalised to terrain height instead of a world-Z value in metres.
+  The metre value is scale-dependent across terrains, which is the objection; the alternative needs the
+  terrain bounds available generically in the shader, which they are not. Start high and let Season and
+  the knob set it.
+
+## The rule this engine is judged by
+
+**Verify with a render you look at, plus a landform diagnostic. Never assert a landform from
+statistics alone.** Every terrain defect that survived a release survived it by passing a statistic:
+four presets that "differed" on every number and looked identical; dune spikes that were within every
+tolerance. A number can only tell you that two outputs differ, not that either is a landform.

@@ -1,7 +1,8 @@
 """Put the single-source heightfields compute on sys.path for venv consumers.
 
 The compute is the ONE committed copy inside the extension
-(`blender/extensions/bob_blender_tools/core/heightfields`); there is no venv copy (P4). The
+(`blender/extensions/bob_blender_tools/core/heightfields`); there is no venv copy, which is the
+single-compute rule. The
 venv reaches it by importing from there. Its parent addon package (`bob_blender_tools`) imports
 bpy at module scope, so it cannot be imported as `bob_blender_tools.core.heightfields` in the
 venv; instead this puts the `core` dir on sys.path so `import heightfields` resolves to that one

@@ -627,7 +627,7 @@ def _stack_from_ops(hf):
 # Heightfield terrain: bake in-process (core/heightfields; dev-venv host-hop fallback), build in place here.
 class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
-    # No Material picker (docs/UX-REDESIGN.md decision D): a terrain gets its material by
+    # No Material picker (docs/CONVENTIONS.md, panel UX conventions): a terrain gets its material by
     # selecting it in the Shaders panel (New BobShader -> Terrain), the one native path.
     preset: EnumProperty(name="Preset", items=_preset_items,
                          description="A landscape family to stage; press Apply Preset to load its "
@@ -1501,7 +1501,7 @@ def _draw_comfy_service(layout):
 
 
 # Panel
-# Pipeline panel order (docs/UX-REDESIGN.md section 4, + Paths per docs/SPLINES.md 5): World=0,
+# Pipeline panel order (docs/CONVENTIONS.md, panel UX conventions, + Paths per docs/SPLINES.md 5): World=0,
 # Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via bl_order so
 # the N-panel teaches the terrain -> paths -> scatter -> shade sequence regardless of registration
 # order, driven by the World quality setting. The
