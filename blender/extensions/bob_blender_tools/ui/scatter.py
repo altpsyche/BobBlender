@@ -8,12 +8,12 @@ Data model is object-native, so each datum has one home and there is no
 panel-vs-modifier drift:
 
 - Each layer is one object in a per-emitter scatter collection. The emitter points
-  at that collection via Object.bbt_scatter_coll. Structural config (kind, assets,
-  align) lives on the layer object's Object.bbt_scatter_layer.
+ at that collection via Object.bbt_scatter_coll. Structural config (kind, assets,
+ align) lives on the layer object's Object.bbt_scatter_layer.
 - The live knobs (Density, Seed, scale, slope, path clearing) live on the layer
-  modifier's inputs (mod.properties.inputs.<id>.value in Blender 5.2, the surface
-  the modifier actually evaluates), drawn directly in the panel. Editing one is
-  live; no rebuild, no sync code.
+ modifier's inputs (mod.properties.inputs.<id>.value in Blender 5.2, the surface
+ the modifier actually evaluates), drawn directly in the panel. Editing one is
+ live; no rebuild, no sync code.
 - Scene.bbt_scatter holds only UI state (active emitter, path, active index).
 
 Structural edits (assets/align/path presence) apply on an explicit Build press,
@@ -68,7 +68,7 @@ def _apply(ops):
 # Biome-scatter enum: biomes whose manifest carries a scatter recipe, so a whole layer stack can
 # be built from one pick (parallel to the Shaders Biome Terrain enum). Cached module-side with a
 # stable id per biome (the same enum-GC / reindex guard the asset-set enum uses). Ids start at 0
-# for the first real biome so a fresh enum resolves to a real recipe, not the NONE fallback (S2).
+# for the first real biome so a fresh enum resolves to a real recipe, not the NONE fallback.
 _BIOME_SCATTER_ITEMS = [("NONE", "None", "No biome scatter recipe", "", 0)]
 _BIOME_SCATTER_IDS = {}
 
@@ -95,7 +95,7 @@ def _has_biome_scatter():
     return any(assets.biome_scatter(n) for n in assets.list_biomes())
 
 
-# Which species a scatter kind grows, cached: `draw()` runs on every redraw and resolving this
+# Which species a scatter kind grows, cached: `draw` runs on every redraw and resolving this
 # lists a directory and parses every preset in it. Cleared on register, so a fresh session (or a
 # reload) picks up a pack that was added since.
 _FOLIAGE_SPECIES_CACHE = {}
@@ -185,7 +185,7 @@ class BBT_ScatterLayer(PropertyGroup):
         name="Mask Group",
         description="Emitter vertex group that paints where this layer scatters "
                     "(blank = off); applied on Build")
-    # Curve binding (BobSplines C4). clear/keep read the terrain's baked bbt_curve_mask; along
+    # Curve binding (BobSplines, the scatter mask). clear/keep read the terrain's baked bbt_curve_mask; along
     # switches the layer to the scatter_along recipe (instances placed on the curve itself).
     curve_mode: EnumProperty(
         name="Curve",
@@ -265,8 +265,8 @@ def _generated_pack():
 
 
 def _comfy_reachable_cached():
-    """The last known ComfyUI state, never a probe: a socket call from `draw()` would freeze the
-    UI for the timeout in exactly the case the row exists to report (the G1 finding)."""
+    """The last known ComfyUI state, never a probe: a socket call from `draw` would freeze the
+ UI for the timeout in exactly the case the row exists to report (found the first time a generation blocked the UI)."""
     from .shaders import _COMFY_STATE
 
     return _COMFY_STATE
@@ -336,10 +336,10 @@ class BBT_OT_scatter_generate_asset(Operator):
         # already at its budget with UVs, so Blender has nothing to contribute in between. Nothing in
         # `generate` touches bpy; everything in `landed` does and nothing there touches the network.
         #
-        # The route is a value, not a branch: `comfy.asset_chain()` takes the kind and the control and
-        # picks the staging function, and `comfy.finish_passes()` maps whatever it staged onto the two
-        # finish callbacks, so no route needs a second operator or a widget. G3b decided the default
-        # and G7 decided which asset classes leave it.
+        # The route is a value, not a branch: `comfy.asset_chain` takes the kind and the control and
+        # picks the staging function, and `comfy.finish_passes` maps whatever it staged onto the two
+        # finish callbacks, so no route needs a second operator or a widget. The route A/B decided
+        # the default and the geometry A/B decided which asset classes leave it.
         def generate(job):
             chain = comfy.asset_chain(kind=kind, control=control, control_bbox=control_bbox)
             return chain(prompt, pack, seed=seed, tier="default",
@@ -574,8 +574,8 @@ _SEED_KNOBS = ("Seed", "Noise Seed")  # knobs that get a reshuffle button, each 
 
 def _draw_knobs(layout, obj, names, enabled=True):
     """Draw each present socket's live value, by name. Skips absent sockets. A seed knob (placement
-    Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
-    enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
+ Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
+ enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
     mod = _nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
@@ -619,7 +619,7 @@ class BBT_PT_scatter(Panel):
         layout = self.layout
         emitter = scn.emitter
 
-        # P1/P7: what we scatter on + which layer we edit, or the empty-state hint.
+        # The context header, or the empty state: what we scatter on + which layer we edit, or the empty-state hint.
         layer = _active_layer(context)
         hdr = None
         if emitter is not None:
@@ -630,7 +630,7 @@ class BBT_PT_scatter(Panel):
         layout.prop(scn, "emitter")
         layout.prop(scn, "camera")
 
-        # S5: no standalone Make Proxies here. Both scatter_add and scatter_biome_scatter call
+        # No standalone Make Proxies here. Both scatter_add and scatter_biome_scatter call
         # make_proxies themselves, so adding a layer or building a biome already creates the shared
         # BOB_Assets_* proxies. The proxy-only path stays reachable via the scatter_make_proxies
         # operator for power users; it is just not the first thing on the panel.
@@ -670,7 +670,7 @@ class BBT_PT_scatter(Panel):
         _draw_generate(layout, scn, active=context.active_object)
 
 
-# The routing note under the Generate Asset kind selector (D16 then BobFoliage F2,
+# The routing note under the Generate Asset kind selector (the dead-wood routing rule, then leaf cards,
 # docs/FOLIAGE.md 4.5). Only the kinds image-to-3D is weak at carry one: rocks is what the route is
 # for and says nothing, which keeps the row a warning rather than decoration. Trees is first because
 # it is the one an artist reaches for and the one TRELLIS.2 cannot do -- it returns a single solid
@@ -678,7 +678,7 @@ class BBT_PT_scatter(Panel):
 #
 # Each note now DIRECTS rather than refuses. The first wording said "a trunk, not a crown", which
 # invited exactly the use it meant to prevent; the second said what generation is for but left the
-# artist at a dead end. Both were held at a refusal deliberately, because until F2 landed the leaf
+# artist at a dead end. Both were held at a refusal deliberately, because until leaf cards landed the leaf
 # cards a panel that sent someone to BobFoliage for plants would have been recommending bare sticks.
 # The plants and grass notes stop being about draw distance and start being about routing, while
 # still allowing generated ground clumps as filler -- that row of the routing table is still a yes.
@@ -736,7 +736,7 @@ class BBT_OT_scatter_grow_foliage(Operator):
         # otherwise the tree just looks flat and there is nothing on screen explaining why.
         missing = ", ".join(v for _k, _label, v in assets.foliage_missing_sets(species))
         note = f"; solid tint until {missing} is generated" if missing else ""
-        # Now that F4's panel exists, the report names it. It used to point at the object's modifier
+        # Now that the Foliage panel exists, the report names it. It used to point at the object's modifier
         # stack, which was honest while there was nowhere better and is a worse answer now: the
         # modifier stack is not an authoring surface, and the artist is one panel away from the
         # thirty knobs grouped and labelled.
@@ -747,7 +747,7 @@ class BBT_OT_scatter_grow_foliage(Operator):
 
 def _draw_generate(layout, scn, active=None):
     """Generate Asset, beside the proxy and biome routes rather than in a panel of its own: it is
-    a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
+ a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
     state = _comfy_reachable_cached()
     box = layout.box()
     row = box.row()
@@ -818,13 +818,13 @@ class BBT_PT_scatter_layer(Panel):
         spec = LAYER_TYPES.get(lay.kind, LAYER_TYPES["empty"])
         layout.label(text=spec["label"], icon=spec["icon"])
 
-        # Structural group (P3): assets/align/mask/curve apply on a Build (a rebuild), not from a
+        # Structural group : assets/align/mask/curve apply on a Build (a rebuild), not from a
         # callback. Marked so the split from the live knobs below is explicit.
         box = layout.box()
         # S7: no STRUCTURAL_ICON on the caption; the structural_action button in this box already
         # carries it, so it would show twice a few pixels apart.
         box.label(text="Structural (Build to apply)")
-        # Curve binding (BobSplines C4/R5): clear/keep read the terrain's baked curve mask (all
+        # Curve binding (BobSplines: the scatter mask and the verge band): clear/keep read the terrain's baked curve mask (all
         # paths at once); along places instances along the chosen curve; verge keeps to ONE path's
         # edge ring -- it needs a curve (empty scatters nothing).
         box.prop(lay, "curve_mode")
@@ -844,7 +844,7 @@ class BBT_PT_scatter_layer(Panel):
         helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
-        # Live group (P3): the modifier's own inputs, edited in place, no rebuild.
+        # Live group : the modifier's own inputs, edited in place, no rebuild.
         if _nodes_mod(obj) is None:
             layout.label(text="No scatter modifier", icon="ERROR")
             return

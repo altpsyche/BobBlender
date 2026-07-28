@@ -103,7 +103,7 @@ def _unique_object_name(base):
 
 
 def edge_attr_name(curve):
-    """The per-curve edge-ring attribute a Verge layer reads for ONE path (BobSplines R5). The
+    """The per-curve edge-ring attribute a Verge layer reads for ONE path (BobSplines, the verge band). The
     curve overlay writes the same name; both derive it from the curve's name (resolved at build,
     like the along-curve binding), so a rename is picked up on the next build. Verge needs a curve:
     an unbound layer reads a name nothing writes, so it scatters nothing."""
@@ -182,7 +182,7 @@ def _build_params(obj, scn):
         params["assets_exclude"] = excluded
     if lay.vgroup:
         params["vgroup"] = lay.vgroup
-    # clear/keep/verge read a terrain curve mask the overlay baked (BobSplines C4/R5); no proximity.
+    # clear/keep/verge read a terrain curve mask the overlay baked (BobSplines, the scatter mask/the per-role surfaces); no proximity.
     # verge keeps to ONE path's edge ring, so it needs a curve; with none bound it reads a name
     # nothing writes, so the layer scatters nothing (pick a path) rather than covering every verge.
     if lay.curve_mode in ("clear", "keep", "verge"):

@@ -14,7 +14,7 @@ tags = ["Pipeline", "Development"]
 
 # The Bob procedural suite in Blender: World, Biome, Terrain, Paths, Scatter, Shaders,
 # Atmosphere, and a collapsed Advanced/MCP-bridge panel, all in one BobBlenderTools tab.
-# Self-contained (P0-P2): the builders (core/), panels (ui/), live bridge (bridge/), and the
+# Self-contained: the builders (core/), panels (ui/), live bridge (bridge/), and the
 # terrain compute (core/heightfields/) all live inside this folder, imported relatively, so the
 # folder is the shippable product. Dev-install by symlinking it into Blender's extensions dir
 # (`bob-setup`); ship by building the zip (tools/scripts/build_extension.py).

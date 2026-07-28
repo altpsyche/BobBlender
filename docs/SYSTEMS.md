@@ -234,7 +234,7 @@ re-solving proximity. With `curve_mode` `clear`, the mask multiplies the Density
 Factor by `(1 - mask)`, so density drops to zero along the trail; `keep` scatters
 only within the band. `curve_attr` picks which baked attribute to read: the whole
 band (`bbt_curve_mask`) or the shoulder ring (`bbt_curve_edge`, for a verge). The
-mask is written by the `curve_overlay` modifier on the terrain (BobSplines C4), so
+mask is written by the `curve_overlay` modifier on the terrain (BobSplines, the scatter mask), so
 one curve grades the ground and clears the scatter together. The Scatter panel adds
 `verge` (reads the edge ring) and `along` (uses the `scatter_along` recipe) modes on
 top of these. See `docs/SPLINES.md`.
@@ -318,7 +318,7 @@ and restores the same surface across a rebuild.
 A procedural tree, shrub or grass tuft: a trunk grown as a curve, branch levels
 grown off it, the whole skeleton swept to a mesh in one pass, and leaf cards
 instanced on its tips, deflected by the world's wind in one pass. BobFoliage,
-F1 to F5 — see [FOLIAGE.md](FOLIAGE.md) for why the geometry is procedural rather
+see [FOLIAGE.md](FOLIAGE.md) for why the geometry is procedural rather
 than generated and how it reaches a scatter layer.
 
 Level 0 is a vertical line resampled to `segments`, bent by a noise field whose
@@ -399,7 +399,7 @@ a convincing tree (`tools/scripts/headless_foliage.py`):
   and stays coincident with the parent point it grew from. A tree whose bases
   drifted renders perfectly as a cloud of floating sticks.
 - `bbt_fol_rad` — it feeds `Curve to Mesh`'s `Scale`. Blender 4.0 stopped applying
-  the curve radius implicitly, and until F2 wired this the sweep ignored every
+  the curve radius implicitly, and until this was wired explicitly the sweep ignored every
   radius knob and came out a uniform 1 m tube.
 - `bbt_fol_leaf` — the card faces, whose base edges must sit exactly on a tip.
 
@@ -468,7 +468,7 @@ panel has a Wind Drift toggle plus a Use Env Wind button that copies the Environ
 (`bbt_env`) wind onto the clouds. The panel also groups the knobs (Shape, Layer, Wind)
 and has a Randomize Cloud Seed button.
 
-Live Environment (S5; toggle moved to the World panel in the 2026-07-20 redesign): the one
+Live Environment (the toggle moved to the World panel in the 2026-07-20 redesign): the one
 Live Environment master (default on, on `bbt_world`) drives Wind Direction / Wind Speed of the
 clouds, fog, and particulates, the
 cloud layer's Coverage (from `env.cloud_cover`), and the snow-coverage Snow input (from
@@ -480,7 +480,7 @@ regenerates the node-group socket identifiers.
 
 ### Fog (`volumetrics` modes `height_fog`, `noise_fog`, `ground_fog`)
 
-Bounded domain fog, the aerial-perspective path the S1 uniform world haze could not
+Bounded domain fog, the aerial-perspective path a uniform world haze could not
 give (a world volume has infinite optical depth and blacks the frame; a bounded box
 does not). The same one-box pattern as clouds, but with its own material (a Principled
 Volume). Density is a height profile (raised to a Falloff power) times a noise
@@ -605,7 +605,7 @@ follow domain. The Preview/Final quality toggle scales the particle Count throug
 Quality Scale input (preview 0.35, final 1.0) at every build and when the toggle flips,
 so the viewport stays light and a final render restores the full count.
 
-Main-panel controls (S5; relocated to the World panel in the 2026-07-20 redesign): the World
+Main-panel controls (relocated to the World panel in the 2026-07-20 redesign): the World
 panel carries the Preview/Final quality level, the one Live Environment master, and the Scene
 Preset menu (Clear Day, Golden Hour, Overcast, Storm, Foggy Dawn, Dust Storm, Winter) that sets
 the `bbt_env` context and seeds each subsystem in one pick, building any that are missing. The
@@ -665,7 +665,7 @@ falling-snow look is the `particulates` Falling Snow mote preset.
 
 ## snow_shell (recipe: `snow_shell`)
 
-The snow accumulation shell (BobShaders S4): gives snow real thickness and silhouette, not
+The snow accumulation shell (BobShaders): gives snow real thickness and silhouette, not
 just a white shading. It runs as a modifier ON the surface AFTER the `snow` coverage pass
 (so `snow_cover` exists), reads that same attribute, blurs it (Blur Attribute) for rounded
 drifts, and displaces the surface along its normal by `snow_cover * Thickness`. Because it

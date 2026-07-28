@@ -1,4 +1,4 @@
-"""GPU/CPU compute delivery for the terrain bake (P5).
+"""GPU/CPU compute delivery for the terrain bake.
 
 The terrain compute (`core/heightfields`) needs scipy on CPU and CuPy on GPU; Blender's bundled
 Python ships neither. This module detects the machine's GPU and CUDA line and installs the
@@ -124,7 +124,7 @@ def verify_gpu():
 
     The JIT step is essential: `cupy.arange().sum()` uses precompiled kernels and passes even when
     NVRTC cannot find libnvrtc-builtins (the exact failure inside a Steam sandbox on CUDA 13). Only
-    compiling a kernel exercises the path the bake needs, so this is the honest P5 acceptance check."""
+    compiling a kernel exercises the path the bake needs, so this is the honest acceptance check."""
     importlib.invalidate_caches()
     try:
         import cupy  # noqa: PLC0415

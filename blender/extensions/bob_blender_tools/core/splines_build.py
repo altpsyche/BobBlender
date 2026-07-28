@@ -35,7 +35,7 @@ _WATER_TUCK = 0.15
 # Curve overlay modifiers are named per curve so a terrain can carry several, and so removing a
 # curve finds and drops exactly its modifier.
 _OVERLAY_PREFIX = "BOB_Curve_"
-# A river/stream's water-surface ribbon is its own object, one per curve (BobSplines C5.2).
+# A river/stream's water-surface ribbon is its own object, one per curve (BobSplines, the water ribbon).
 _WATER_PREFIX = "BOB_Water_"
 
 # Subdivisions per segment the curve evaluates to (Curve to Mesh honours resolution_u). High so the
@@ -46,7 +46,7 @@ _CURVE_RES = 128
 # Roles: a typed curve preset. Each carries the SHAPE defaults (seeded onto bbt_curve at Add / role
 # change, then scene-owned and live) plus STRUCTURAL keys that only apply on Build: family ("impose"
 # = river/stream, carve DOWN to a descending water centreline; absent = follow-terrain), drape (the
-# monotonic downhill solve for rivers), surface* (the C3 material band), wet* (the C5 damp bed).
+# monotonic downhill solve for rivers), surface* (the material band material band), wet* (the water channel damp bed).
 #
 # The shape defaults are in REAL units: `width` is the full channel width (1:1), `depth` the channel
 # depth, `water_level` the fill fraction (0..1) of the channel. bbt_curve owns these live and the
@@ -148,7 +148,7 @@ def _unique_object_name(base):
 
 
 def _edge_attr_name(curve):
-    """The per-curve edge-ring attribute a Verge scatter layer reads for ONE path (BobSplines R5).
+    """The per-curve edge-ring attribute a Verge scatter layer reads for ONE path (BobSplines, the verge band).
     The overlay writes the same name; both derive it from the curve name so a rename is picked up on
     the next build. Mirrors ui.scatter.edge_attr_name (kept in sync by the shared derivation; the
     scatter panel owns the reader side, so the one-line format is duplicated rather than cross-imported
@@ -310,7 +310,7 @@ def _build_curve_overlay(terrain, curve, carve=True):
 
 # -- Material helpers ------------------------------------------------------------------------
 def _apply_curve_material(terrain, role):
-    """Configure the terrain material from the role's Material channel (BobSplines C3 / C5.4).
+    """Configure the terrain material from the role's Material channel (BobSplines, the material band / the damp bed).
 
     Follow family (path/road): a curve-surface layer keyed to the curve mask (apply_curve_surface).
     Impose family (river/stream): the damp-bed wetness path (apply_curve_wet), so the carved bed and

@@ -7,7 +7,7 @@ GPU) inside Blender's own Python, and this recipe just reads the result.
 Params: heightmap (absolute image path), size, resolution, height, sea_level.
 
 Path grading is no longer inline here. A curve now carves the terrain through the
-standalone curve_overlay modifier (docs/SPLINES.md 4.3, BobSplines C2), stacked on
+standalone curve_overlay modifier (docs/SPLINES.md 4.3, BobSplines, the terrain overlay), stacked on
 the terrain object, so a network of paths composes and downstream effects read the
 overlay's baked mask attribute rather than this recipe re-solving proximity.
 """

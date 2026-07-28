@@ -118,7 +118,7 @@ class Render(BaseModel):
     camera: str | None = None  # camera object name, else the current scene camera
     device: Literal["GPU", "CPU"] = "GPU"  # Cycles only; EEVEE ignores it
     file_format: str = "PNG"
-    # Drop Blender's render buffers and orphan datablocks after the frame is written (D15). On by
+    # Drop Blender's render buffers and orphan datablocks after the frame is written (the VRAM-handback rule). On by
     # default because an agent that generates and renders in one session is the normal case and the
     # two halves fight over one card; False keeps them warm for a second render.
     release_gpu: bool = True
@@ -219,7 +219,7 @@ class ImportGenerated(BaseModel):
     # thread to split the finish and the import across the way the panel does.
     staged: dict | None = None
     name: str | None = None
-    height_m: float = 2.0  # the real-world height; mandatory in the manifest for a reason (R11)
+    height_m: float = 2.0  # the real-world height; mandatory in the manifest for a reason (the manifest origin rule)
     faces: int = 4000
     lods: list[float] | None = None  # LOD decimate ratios, else the shipped (0.5, 0.15)
     hero: bool = False  # 2K bake and 2048 texture rather than 1K/1024

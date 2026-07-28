@@ -22,10 +22,10 @@ def surface_master_group():
     brightness so scattered copies differ), ending in S_Weather. Outputs the weathered
     Base Color, Roughness, Metallic for the wrapper's Principled BSDF.
 
-    S1 is solid-colour only. Base Color is authored as the TINT it will become at S3: today
+    The master is solid-colour only until a texture set is assigned. Base Color is authored as the TINT a texture set multiplies into: today
     it is the albedo directly; when a texture set lands the albedo is Base Color * map, so
     the same colour drives both looks and switching solid<->textured loses no tuned value.
-    Triplanar, anti-tiling, and the texture-set loader are S3, once library/textures/ has
+    Triplanar, anti-tiling, and the texture-set loader all arrived once library/textures/ has
     real maps to project (the plan's recommended texture timing)."""
     g, _fresh = _cached_group(SURFACE_MASTER)
     if not _fresh:
@@ -34,13 +34,13 @@ def surface_master_group():
     _gin(g, "Roughness", "NodeSocketFloat", 0.5, 0.0, 1.0)
     _gin(g, "Metallic", "NodeSocketFloat", 0.0, 0.0, 1.0)
     _gin(g, "Variation", "NodeSocketFloat", 0.0, 0.0, 1.0)
-    # Texture-set maps (S3). Default to the multiplicative identity so a solid-colour surface
+    # Texture-set maps. Default to the multiplicative identity so a solid-colour surface
     # is unchanged: white albedo (tint * white = tint) and 1.0 scalars. The wrapper links a
     # texture set into these when one is assigned; the same colour drives both looks.
     _gin(g, "Albedo Map", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gin(g, "Roughness Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Metallic Map", "NodeSocketFloat", 1.0, 0.0, 1.0)
-    # AO Map (S4/the texture sets): a scalar occlusion map multiplied into the albedo, identity 1.0 = off. The
+    # AO Map: a scalar occlusion map multiplied into the albedo, identity 1.0 = off. The
     # convert path feeds this with the arm map's AO (R) channel (glTF drops occlusionTexture, so
     # the packed AO would otherwise go unused); the texture-set path folds AO into its albedo
     # instead, so it leaves this at 1.0 (no double-darkening). A solid-colour surface keeps 1.0.
@@ -149,7 +149,7 @@ def bobshade_material(mat, variation=0.15):
     # Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so
     # the crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
     #
-    # DELIBERATE ASSUMPTION (audit finding C2, kept as-is): this treats the metallicRoughness R
+    # DELIBERATE ASSUMPTION (a deliberate audit finding, kept as-is): this treats the metallicRoughness R
     # channel as occlusion, which is true for ORM/"arm" packs (Poly Haven, our shipped biome
     # assets -- verified to render correctly) but UNDEFINED per the glTF spec for a plain
     # metallicRoughness texture. A non-ORM asset whose R is 0 would multiply albedo to black, and
@@ -223,7 +223,7 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=Fal
     """A single-surface wrapper (S_SurfaceMaster): a solid-tint BobShader whose look comes from
     the master's procedural terms (colour/roughness/metallic + the weather layer).
 
-    With a texture set assigned (S3) the set's albedo, with AO folded in, and its roughness feed
+    With a texture set assigned, the set's albedo, with AO folded in, and its roughness feed
     the master's map inputs, and its height drives a Bump into the Principled Normal. Base Color
     stays the TINT it was authored as, so switching solid <-> textured loses no tuned value.
     texset_name "" clears the set; both arguments default to what the material already records.
@@ -287,7 +287,7 @@ def _wire_cutout(nt, maps, coord, bsdf, box):
     """Drive the Principled Alpha from a set's cutout. Returns the socket wired, or None.
 
     Two sources, in order: a dedicated `opacity` map (what the atlas job emits), else the
-    basecolor image's own alpha channel (what a matted `mesh_subject` subject already carries, measured at G3 as
+    basecolor image's own alpha channel (what a matted `mesh_subject` subject already carries, measured as
     a real 0.000-1.000 range). Preferring the dedicated map means a generated set can carry one without touching
     this, and falling back means the card work's placeholder RGBA atlas works with no extra file.
     """

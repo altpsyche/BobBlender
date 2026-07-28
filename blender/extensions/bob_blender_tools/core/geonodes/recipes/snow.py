@@ -1,4 +1,4 @@
-"""snow: the GN-authored snow pass (S4).
+"""snow: the GN-authored snow pass.
 
 Runs as a modifier ON the terrain object (after the terrain modifier, so it sees the
 displaced surface), passes the geometry through unchanged, and writes two POINT float

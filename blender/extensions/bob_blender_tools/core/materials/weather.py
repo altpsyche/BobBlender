@@ -11,7 +11,7 @@ from .shared import _cached_group, _gin, _gout, _lerp, _mixcol, _mmath, _mplug, 
 
 
 
-# BobShaders surface masters (S1). Unlike everything above (Firmament's volume and
+# BobShaders surface masters. Unlike everything above (Firmament's volume and
 # particulate materials, which shade one effect) these are the artist-facing surface
 # framework: shared shader NODE GROUPS (S_<Effect>) that a thin per-object wrapper
 # material (M_<Surface>) instances, the Blender-native equivalent of an Unreal master
@@ -21,14 +21,14 @@ from .shared import _cached_group, _gin, _gout, _lerp, _mixcol, _mmath, _mplug, 
 # The stack, top to bottom:
 #   M_<Surface>       one S_SurfaceMaster group node -> one Principled BSDF -> Output
 #   S_SurfaceMaster   solid base colour + per-instance variation, ending in S_Weather
-#   S_Weather         the shared weather layer (S1: the snow term only)
+#   S_Weather         the shared weather layer (the snow term, plus the later dust/moss/frost terms)
 #   S_EnvState        the world-to-shader bridge: internal Value nodes driven once from
 #                     scene.bbt_env and shared by every material that instances the group
 ENV_STATE = "S_EnvState"
 
 WEATHER = "S_Weather"
 
-# The leaf-card season layer (BobFoliage F4, docs/FOLIAGE.md 2.4). Its own group rather than a new
+# The leaf-card season layer (BobFoliage, docs/FOLIAGE.md). Its own group rather than a new
 # output on S_EnvState, and that is a decision rather than a convenience: S_EnvState is EMBEDDED by
 # S_Weather and by S_WaterMaster, a rebuild gives its sockets fresh identifiers, and every embedder
 # left un-rebuilt keeps stale links to them -- which is why the item-3 and snow-line changes each
@@ -84,7 +84,7 @@ _SNOW_ALBEDO = (0.90, 0.93, 0.97, 1.0)
 
 _SNOW_ROUGHNESS = 0.6
 
-# S4 weather-term tints: warm dust, dark moss, cool frost.
+# Weather-term tints: warm dust, dark moss, cool frost.
 _DUST_COLOR = (0.55, 0.47, 0.33, 1.0)
 
 _MOSS_COLOR = (0.12, 0.22, 0.06, 1.0)
@@ -279,7 +279,7 @@ def leaf_season_group():
 
 
 def weather_group():
-    """The shared weather layer, ending every master. S1 carries the snow term only.
+    """The shared weather layer, ending every master.
 
     Coverage has ONE authority now: the shader computes it, identically on every surface
     (terrain, scattered assets, plain meshes). There is no attribute switch and no
@@ -314,7 +314,7 @@ def weather_group():
     # surfaces); the asset-convert path raises it so snow/frost/dust also hold on the upper
     # bounding box of a near-vertical instance (a tree trunk + cone canopy caught almost none).
     _gin(g, "Canopy Snow", "NodeSocketFloat", 0.0, 0.0, 1.0)
-    # S4 weather terms, each gated by a strength/amount (0 = off).
+    # Weather terms, each gated by a strength/amount (0 = off).
     _gin(g, "Wetness Strength", "NodeSocketFloat", 1.0, 0.0, 1.0)
     _gin(g, "Wet Pooling", "NodeSocketFloat", 0.0, 0.0, 1.0)
     # Terrain-driven wetness (a baked flow/wetness map, fed only by the terrain master; 0 for

@@ -1,4 +1,4 @@
-"""scatter_along: instance assets ALONG a curve, sitting on the terrain (BobSplines C4).
+"""scatter_along: instance assets ALONG a curve, sitting on the terrain (BobSplines, the scatter mask).
 
 The distribution counterpart to the surface `scatter` recipe: instead of Poisson points across the
 terrain, it places instances evenly along a curve centreline (fence posts, cobbles, boulders lining

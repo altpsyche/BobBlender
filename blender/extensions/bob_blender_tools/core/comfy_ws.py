@@ -1,6 +1,6 @@
 """A minimal websocket reader for ComfyUI's `/ws` progress stream. Stdlib only.
 
-Why this exists at all: until G6 the only progress a caller could report was the job's own status
+Why this exists at all: until the agent-surface gate the only progress a caller could report was the job's own status
 string, polled at 1 Hz, so a 200 s mesh job showed "in_progress" two hundred times. ComfyUI
 publishes per-node progress on `/ws` (`{"type": "progress", "data": {"value": 3, "max": 20}}`),
 which is the difference between a spinner and a bar.

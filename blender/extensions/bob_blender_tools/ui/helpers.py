@@ -1,23 +1,22 @@
 """Shared UX helpers for the BobBlenderTools panels.
 
-One implementation of the suite's recurring UI patterns (docs/UX-REDESIGN.md, the P1-P7
-principles), so every panel speaks the same visual language instead of each inventing its
+One implementation of the suite's recurring UI patterns (docs/UX-REDESIGN.md), so every panel speaks the same visual language instead of each inventing its
 own idioms:
 
 - context_header: the compact "what am I acting on" line a panel opens with, read from the
-  active thing (not panel-local state), with a consistent one-line empty-state hint (P1, P7).
+ active thing (not panel-local state), with a consistent one-line empty-state hint (the context header and the empty state).
 - structural_action: a button for a STRUCTURAL action (one that builds or rebuilds a
-  datablock) marked with a shared icon and a short "rebuilds: ..." note, so a structural
-  press always reads differently from an instant live knob (P3).
+ datablock) marked with a shared icon and a short "rebuilds: ..." note, so a structural
+ press always reads differently from an instant live knob .
 - preset_row: the one preset control (operator_menu_enum with per-item label + description),
-  used for every preset in the suite (P4).
+ used for every preset in the suite .
 
 Pure draw helpers: no properties, operators, or registration. Panels import and call these;
 nothing here holds state, so a Reload Builders or addon re-enable needs no special handling.
 """
 
 # The shared marker for a STRUCTURAL action (builds or rebuilds a datablock), distinct from
-# an instant live knob. One icon everywhere so "this control rebuilds" becomes learnable (P3).
+# an instant live knob. One icon everywhere so "this control rebuilds" becomes learnable .
 # FILE_REFRESH already reads as "rebuild" where the suite uses it today.
 STRUCTURAL_ICON = "FILE_REFRESH"
 
@@ -27,15 +26,15 @@ SEED_ICON = "RNDCURVE"
 
 
 def context_header(layout, label, value, icon="NONE", empty=None):
-    """Draw the "what am I acting on" header (P1), or the empty-state hint (P7).
+    """Draw the "what am I acting on" header , or the empty-state hint .
 
-    label: the role being acted on ("Active mesh", "Emitter", "Terrain").
-    value: the active thing's name, or a falsy value when nothing is in scope.
-    empty: the one-line "what to do next" hint shown when value is falsy.
+ label: the role being acted on ("Active mesh", "Emitter", "Terrain").
+ value: the active thing's name, or a falsy value when nothing is in scope.
+ empty: the one-line "what to do next" hint shown when value is falsy.
 
-    Returns True when something is in scope (caller draws the rest), False on the empty
-    state (caller can return after this).
-    """
+ Returns True when something is in scope (caller draws the rest), False on the empty
+ state (caller can return after this).
+ """
     if value:
         layout.label(text=f"{label}: {value}", icon=icon)
         return True
@@ -46,13 +45,13 @@ def context_header(layout, label, value, icon="NONE", empty=None):
 
 def structural_action(layout, op_idname, text=None, note=None, icon=STRUCTURAL_ICON,
                       enabled=True):
-    """Draw a STRUCTURAL action button (P3): the shared marker icon, and below it a small
-    de-emphasised note ("rebuilds: the terrain", "builds: falling snow + coverage") so the
-    press reads as structural, not a live edit.
+    """Draw a STRUCTURAL action button : the shared marker icon, and below it a small
+ de-emphasised note ("rebuilds: the terrain", "builds: falling snow + coverage") so the
+ press reads as structural, not a live edit.
 
-    Returns the operator's properties object, so the caller can set fields on it (op.index,
-    op.preset, ...). text=None uses the operator's own label.
-    """
+ Returns the operator's properties object, so the caller can set fields on it (op.index,
+ op.preset, ...). text=None uses the operator's own label.
+ """
     col = layout.column(align=True)
     col.enabled = enabled
     op = col.operator(op_idname, text=text, icon=icon) if text is not None \
@@ -65,19 +64,19 @@ def structural_action(layout, op_idname, text=None, note=None, icon=STRUCTURAL_I
 
 
 def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET", current=None):
-    """The INSTANT preset idiom (P4): an operator_menu_enum showing the operator enum's per-item
-    label + description, firing on the pick. Same control and wording for every light preset in
-    the suite (terrain, scatter layer, cloud, fog, rain, mote, surface, stack).
+    """The INSTANT preset idiom : an operator_menu_enum showing the operator enum's per-item
+ label + description, firing on the pick. Same control and wording for every light preset in
+ the suite (terrain, scatter layer, cloud, fog, rain, mote, surface, stack).
 
-    operator_menu_enum never shows the current pick in its own label, so pass `current` (the raw
-    enum value) to fold it into the button text ("Preset: Canyon") instead of a separate caption.
+ operator_menu_enum never shows the current pick in its own label, so pass `current` (the raw
+ enum value) to fold it into the button text ("Preset: Canyon") instead of a separate caption.
 
-    The one rule (A6), so the two idioms never diverge again:
-    - preset_row (instant, this): a LIGHT look preset that only sets values, reversible, no
-      rebuild. It must not have a heavy side effect on the pick; gate it behind Build if the
-      subsystem it tunes may not exist yet, so picking it never silently builds.
-    - staged_preset_row (stage-then-Apply): reserved for the genuinely HEAVY rebuilds that stand
-      up or replace subsystems (Sky Look, Build Biome, Biome World)."""
+ The one rule (the instant-preset rule), so the two idioms never diverge again:
+ - preset_row (instant, this): a LIGHT look preset that only sets values, reversible, no
+ rebuild. It must not have a heavy side effect on the pick; gate it behind Build if the
+ subsystem it tunes may not exist yet, so picking it never silently builds.
+ - staged_preset_row (stage-then-Apply): reserved for the genuinely HEAVY rebuilds that stand
+ up or replace subsystems (Sky Look, Build Biome, Biome World)."""
     if current:
         text = f"{text}: {current.replace('_', ' ').title()}"
     return layout.operator_menu_enum(op_idname, prop, text=text, icon=icon)
@@ -85,14 +84,14 @@ def preset_row(layout, op_idname, prop="preset", text="Preset", icon="PRESET", c
 
 def staged_preset_row(layout, data, prop, op_idname, text="Preset", note=None,
                       icon=STRUCTURAL_ICON, apply_text=None):
-    """A stage-then-Apply preset (P3/P4): a dropdown that only STAGES the choice on `data.prop`,
-    and a separate Apply button that commits it. The honest idiom for a heavy preset (one that
-    rebuilds subsystems), so nothing fires on the pick alone: pick, then press Apply.
+    """A stage-then-Apply preset : a dropdown that only STAGES the choice on `data.prop`,
+ and a separate Apply button that commits it. The honest idiom for a heavy preset (one that
+ rebuilds subsystems), so nothing fires on the pick alone: pick, then press Apply.
 
-    Contrast preset_row (operator_menu_enum), which fires instantly on the pick. The operator
-    reads the staged value from `data.prop` itself, so it takes no enum argument here.
-    apply_text overrides the button label (defaults to "Apply <text>").
-    """
+ Contrast preset_row (operator_menu_enum), which fires instantly on the pick. The operator
+ reads the staged value from `data.prop` itself, so it takes no enum argument here.
+ apply_text overrides the button label (defaults to "Apply <text>").
+ """
     col = layout.column(align=True)
     col.prop(data, prop, text=text)
     op = col.operator(op_idname, text=apply_text or f"Apply {text}", icon=icon)
@@ -105,10 +104,10 @@ def staged_preset_row(layout, data, prop, op_idname, text="Preset", note=None,
 
 def select_row(layout, op_idname, text, selected, op_props=None, radio=True):
     """One "pick this item" row (S6): an operator button that shows its selected state, the shared
-    idiom for every radio list in the suite (Shaders material slots, scatter-asset materials,
-    terrain layer slots). radio adds the RADIOBUT_ON/OFF marker; pass radio=False for a bare
-    depressed button (the terrain layer rows, which carry a colour swatch instead of the marker).
-    op_props sets the operator's fields (e.g. {"target": "slot", "index": i})."""
+ idiom for every radio list in the suite (Shaders material slots, scatter-asset materials,
+ terrain layer slots). radio adds the RADIOBUT_ON/OFF marker; pass radio=False for a bare
+ depressed button (the terrain layer rows, which carry a colour swatch instead of the marker).
+ op_props sets the operator's fields (e.g. {"target": "slot", "index": i})."""
     kw = {"text": text, "depress": selected}
     if radio:
         kw["icon"] = "RADIOBUT_ON" if selected else "RADIOBUT_OFF"
@@ -120,21 +119,21 @@ def select_row(layout, op_idname, text, selected, op_props=None, radio=True):
 
 
 def live_knobs(layout, obj, names, enabled=True, seed_op=None, seed_names=()):
-    """Draw a Geometry Nodes modifier's LIVE inputs by socket name (P3: the instant half).
+    """Draw a Geometry Nodes modifier's LIVE inputs by socket name (the instant half of the live-vs-structural split).
 
-    A socket that does not exist on this build is skipped rather than drawn dead, which is what
-    lets one name list serve a recipe whose interface changes with its params. Values are read from
-    `mod.properties.inputs.<identifier>.value` -- the surface a Blender 5.2 Nodes modifier actually
-    evaluates. Not `mod[identifier]` (a Nodes modifier has no IDProperties and raises TypeError) and
-    not the interface `default_value`, which only seeds a fresh bind: drawing that would show and
-    edit a number the modifier is not using.
+ A socket that does not exist on this build is skipped rather than drawn dead, which is what
+ lets one name list serve a recipe whose interface changes with its params. Values are read from
+ `mod.properties.inputs.<identifier>.value` -- the surface a Blender 5.2 Nodes modifier actually
+ evaluates. Not `mod[identifier]` (a Nodes modifier has no IDProperties and raises TypeError) and
+ not the interface `default_value`, which only seeds a fresh bind: drawing that would show and
+ edit a number the modifier is not using.
 
-    `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its
-    reshuffle button; the operator is passed `{"socket": <name>}`.
+ `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its
+ reshuffle button; the operator is passed `{"socket": <name>}`.
 
-    Scatter and Firmament each grew their own copy of this before it existed here. New panels use
-    this one; folding those two into it is a subtraction pass of its own, not a side effect of one.
-    """
+ Scatter and Firmament each grew their own copy of this before it existed here. New panels use
+ this one; folding those two into it is a subtraction pass of its own, not a side effect of one.
+ """
     mod = next((m for m in obj.modifiers if m.type == "NODES"), None) if obj is not None else None
     if mod is None or mod.node_group is None:
         return
@@ -155,13 +154,13 @@ def live_knobs(layout, obj, names, enabled=True, seed_op=None, seed_names=()):
 
 def seed_row(layout, data, prop, op_idname, text="Seed", op_props=None):
     """The one seed idiom: the seed value and a reshuffle button on one row, marked with
-    SEED_ICON so a reshuffle reads distinctly from a structural rebuild.
+ SEED_ICON so a reshuffle reads distinctly from a structural rebuild.
 
-    data / prop: the thing holding the seed and the property name to draw. A modifier input
-    socket passes (socket, "value"); a scene/PropertyGroup passes (props, "seed"). Generalised
-    from a hardcoded `.value` socket so both a scene IntProperty and a socket route through here.
-    op_props: fields to set on the reshuffle operator (e.g. {"object_name": name}).
-    """
+ data / prop: the thing holding the seed and the property name to draw. A modifier input
+ socket passes (socket, "value"); a scene/PropertyGroup passes (props, "seed"). Generalised
+ from a hardcoded `.value` socket so both a scene IntProperty and a socket route through here.
+ op_props: fields to set on the reshuffle operator (e.g. {"object_name": name}).
+ """
     row = layout.row(align=True)
     row.prop(data, prop, text=text)
     op = row.operator(op_idname, text="", icon=SEED_ICON)

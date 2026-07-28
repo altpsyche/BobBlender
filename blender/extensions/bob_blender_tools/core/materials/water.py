@@ -1,5 +1,5 @@
 """S_WaterMaster and the water wrapper: flowing, foaming, freezing water read from a
-curve ribbon's attributes (BobSplines C5), ending in the shared weather layer."""
+curve ribbon's attributes (BobSplines, the water channel), ending in the shared weather layer."""
 
 import os
 
@@ -22,7 +22,7 @@ _ICE_ROUGHNESS = 0.32                     # frosted-glassy ice (vs the near-mirr
 
 
 def set_water_render_flags(mat):
-    """Make a water material actually read as water in EEVEE-Next (W1): raytraced refraction so the
+    """Make a water material actually read as water in EEVEE-Next (EEVEE refraction): raytraced refraction so the
     0.92 Transmission bends what is behind the surface instead of reading flat grey. These are 5.2
     material datablock flags (probed live, not guessed): use_raytrace_refraction is the EEVEE-Next
     name (use_screen_refraction is the retained 4.x alias, set too for safety); show_transparent_back
@@ -45,7 +45,7 @@ def set_water_render_flags(mat):
 
 
 def enable_eevee_refraction(scene):
-    """Turn on the scene-level EEVEE-Next ray tracing that raytraced refraction needs to show (W1).
+    """Turn on the scene-level EEVEE-Next ray tracing that raytraced refraction needs to show (EEVEE refraction).
     A no-op unless the active engine is EEVEE, and it only ever switches the toggle ON (never off, so
     it will not fight a user who wants it off). Cycles needs nothing here. Kept out of the material
     builder because it mutates the scene; the addon calls it when it builds/assigns water."""
@@ -61,14 +61,14 @@ def enable_eevee_refraction(scene):
 def water_master_group():
     """The water-surface master (see the section comment). The surface animates live off a
     frame-driven Value node, no bake:
-      - Waves (W2): three flow-advected noise octaves (a slow swell, the main ripple, a fine chop)
+      - Waves (the multi-scale waves): three flow-advected noise octaves (a slow swell, the main ripple, a fine chop)
         chained into one normal. Each octave is sampled at TWO phases half a cycle apart and blended
         by a triangle wave, the flow-map trick, so the advection resets without a visible pop even
         where bbt_flow diverges (banks vs mid-channel, rapids). All three fade out as it freezes.
-      - Foam (W3): bbt_foam (banks + rapids) is lifted by a shore term (shallow water near the banks,
+      - Foam (the foam): bbt_foam (banks + rapids) is lifted by a shore term (shallow water near the banks,
         from bbt_shore), broken up by a flow-scrolled noise, and thresholded to crisp lines whose
         sharpness is Foam Crispness -- not a flat white wash. Foam also roughens the surface.
-      - Freeze (W4): a manual Frozen input OR the env below-0 term freezes the water: the flow normal
+      - Freeze (the freeze term): a manual Frozen input OR the env below-0 term freezes the water: the flow normal
         collapses to glassy-flat, cracked-ice detail fades in (a Voronoi distance-to-edge bump),
         transmission drops to opaque, and (manual path) the albedo tints icy blue-white. The shared
         S_Weather frost term adds the winter sheen on the env-cold path.
@@ -80,7 +80,7 @@ def water_master_group():
     _gin(g, "Shallow Color", "NodeSocketColor", _WATER_SHALLOW)
     _gin(g, "Deep Color", "NodeSocketColor", _WATER_DEEP)
     _gin(g, "Depth", "NodeSocketFloat", 1.5, 0.0)
-    # W5 depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of water column):
+    # the depth interaction depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of water column):
     # Absorption is the Beer-Lambert extinction per metre (deep water reads darker/deeper-coloured),
     # Depth Opacity fades the transmission out with depth (deep = more opaque, so the bed hides),
     # Shoreline Fade is the metres of water column over which the edge dissolves to transparent (a
@@ -89,7 +89,7 @@ def water_master_group():
     _gin(g, "Depth Opacity", "NodeSocketFloat", 0.5, 0.0, 1.0)
     # Shoreline Fade: fraction of the half-width (from the bank inward) over which the surface fades to
     # transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present, so a
-    # pre-W5 ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon vanish).
+    # a pre-depth ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon vanish).
     _gin(g, "Shoreline Fade", "NodeSocketFloat", 0.15, 0.0, 1.0)
     _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
     _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
@@ -151,7 +151,7 @@ def water_master_group():
     flow = _geo_attr("bbt_flow", 380)
     foam_a = _geo_attr("bbt_foam", 240)
     shore_a = _geo_attr("bbt_shore", 100)
-    depth_a = _geo_attr("bbt_depth", -40)  # metres of water column (W5); 0 on pre-W5 ribbons
+    depth_a = _geo_attr("bbt_depth", -40)  # metres of water column (the depth interaction); 0 on a pre-depth ribbon
 
     # Beer-Lambert depth extinction: depth_fac 0 at the shoreline (bbt_depth 0) rising toward 1 in
     # deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity below.
@@ -283,9 +283,9 @@ def water_master_group():
     ice_str = _mmath(g, "MULTIPLY", frozen, 0.35, (500, 40))
     normal = _wave_bump(voro.outputs["Distance"], ice_str, n_fine, (680, 200))
 
-    # Depth colour: shallow near the shoreline, deep in the body. On a W5 ribbon the driver is the
+    # Depth colour: shallow near the shoreline, deep in the body. On a the depth interaction ribbon the driver is the
     # real Beer-Lambert depth_fac (metres of column); the old shore proxy (1-shore)*Depth is kept as a
-    # floor so a pre-W5 ribbon (bbt_depth 0 everywhere) still reads with the shore gradient it had.
+    # floor so a a pre-depth ribbon (bbt_depth 0 everywhere) still reads with the shore gradient it had.
     shore_deep = g.nodes.new("ShaderNodeMath")
     shore_deep.operation = "MULTIPLY"
     shore_deep.use_clamp = True
@@ -295,7 +295,7 @@ def water_master_group():
     deepness = _mmath(g, "MAXIMUM", depth_fac, shore_deep.outputs["Value"], (-820, -260))
     col = _mixcol(g, deepness, I["Shallow Color"], I["Deep Color"], (-620, -300))
 
-    # Foam (W3). Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise breaks
+    # Foam (the foam). Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise breaks
     # it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam Crispness.
     foam_wash = _mmath(g, "MULTIPLY", foam_a.outputs["Fac"], I["Foam Amount"], (-1000, -480))
     shore_shallow = _mrange(g, shore_a.outputs["Fac"], 0.6, 1.0, 0.0, 1.0, (-1000, -640))
@@ -362,9 +362,9 @@ def water_master_group():
                       _mmath(g, "MULTIPLY", I["Depth Opacity"], depth_fac, (800, -1120)), (980, -1120))
     trans = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", I["Transmission"], depth_op, (1160, -1120)),
                    liquid, (1340, -1120))
-    # Alpha: a soft shoreline (W5) fades the surface to transparent over the outer Shoreline Fade
+    # Alpha: a soft shoreline (the depth interaction) fades the surface to transparent over the outer Shoreline Fade
     # fraction of the half-width (shore 1 = bank), so the waterline dissolves into the bank instead of
-    # cutting a hard line. Keyed to bbt_shore so a pre-W5 ribbon stays visible. The old lateral Edge
+    # cutting a hard line. Keyed to bbt_shore so a a pre-depth ribbon stays visible. The old lateral Edge
     # Fade still composes. Frozen ice is fully opaque.
     shore_fade = _mrange(g, shore_a.outputs["Fac"],
                          _mmath(g, "SUBTRACT", 1.0, I["Shoreline Fade"], (800, -1300)), 1.0,
@@ -387,11 +387,11 @@ def water_master_group():
 
 
 def water_material(mat_name):
-    """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines C5.3). The
+    """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines, the water channel.3). The
     widened _build_wrapper drives the master's Transmission / IOR / Alpha / Normal into the
     Principled BSDF on top of the usual Base Color / Roughness / Metallic. get-or-create, so a
     re-Build keeps tuned inputs. The material's EEVEE refraction/transparency flags are set here so
-    the Transmission actually refracts (W1); the scene-level ray tracing toggle is the addon's job."""
+    the Transmission actually refracts (EEVEE refraction); the scene-level ray tracing toggle is the addon's job."""
     mat = _build_wrapper(mat_name, water_master_group(), "water", None)
     set_water_render_flags(mat)
     return mat

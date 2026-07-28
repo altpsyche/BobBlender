@@ -7,20 +7,20 @@ Small rules that keep the repo navigable as it grows.
 The rule, and it is enforced by `tools/scripts/check_no_phase_labels.py` in CI:
 
 - **No letter-number labels** anywhere a reader will meet them: docs, headings, comments,
-  docstrings, filenames, gate keys, check labels. Not `F4`, not `G4c`, not `W9b`, not `D16`,
-  not `R11`, not `P0`. They index the repo by a private chronology, and a reader who was not
-  present cannot follow one.
-- **A measurement keeps its number and loses its phase.** `eighty times F2's attachment residual`
-  becomes `eighty times the card-attachment residual`. Dropping the figure is the one edit that is
-  never allowed; the figures are why these docs are trustworthy.
+  docstrings, filenames, gate keys, check labels. A capital letter plus one or two digits, with or
+  without a lowercase sub-letter, is a phase label whatever it names. They index the repo by a
+  private chronology, and a reader who was not present cannot follow one.
+- **A measurement keeps its number and loses its phase.** "eighty times the attachment residual the
+  card work measured" becomes "eighty times the card-attachment residual". Dropping the figure is the
+  one edit that is never allowed; the figures are why these docs are trustworthy.
 - **"Phase X shipped/found Y" becomes the invariant plus its check.** The history is spent; the
   rule is still true. State the rule, then name the check that catches its violation.
 - **A numbered decision becomes a named rule** — `the dead-wood routing rule`, `the heightfield
   bit-depth floor`, `the single-compute rule`. Names cross-reference as well as numbers do and
   carry their meaning with them.
 - **Track names stay.** `BobFoliage`, `BobSplines`, `BobShaders`, `BobFirmament` are product
-  names, not phases. `BobFoliage F4` becomes `BobFoliage`. Panel labels stay plain nouns
-  (`Foliage`, `Paths`, `Scatter`).
+  names, not phases; a phase label appended to one is still a phase label and still goes. Panel
+  labels stay plain nouns (`Foliage`, `Paths`, `Scatter`).
 - **Generation routes are named by their workflow file**, which is already the code identity:
   `mesh_subject`, `mesh_geom_texture`, `heightmap_macro`. Never by a `W` number.
 - What the guard's allowlist is *for*: genuine external names that happen to be letter-number

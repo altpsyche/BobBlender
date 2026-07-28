@@ -1,6 +1,6 @@
 """curve_water: a flat water-surface ribbon along a river curve, in harmony with the carved bed.
 
-The water channel of BobSplines (docs/SPLINES.md 4.6, C5.2), following the spline-river model every
+The water channel of BobSplines (docs/SPLINES.md 4.6, the water ribbon), following the spline-river model every
 established tool uses (UE5 Water, Torque3D, EasyRoads, Waterways): the CURVE drives the water
 surface, and the terrain is carved to it -- the water is NOT projected onto the terrain.
 
@@ -133,7 +133,7 @@ def build(ng, out, params: dict):
     add_input(ng, "Water Depth", "NodeSocketFloat", float(params.get("water_depth", 0.4)), 0.0)
     # Bed Depth: the full channel depth below the rim (the overlay's Path Depth). The water COLUMN
     # thickness is (Bed Depth - Water Depth) mid-channel, thinning to 0 at the banks; stored per vertex
-    # as bbt_depth (metres) so the water shader can absorb/tint by real depth (W5) instead of a lateral
+    # as bbt_depth (metres) so the water shader can absorb/tint by real depth (the depth interaction) instead of a lateral
     # proxy. Synced from bbt_curve.depth alongside Water Depth.
     add_input(ng, "Bed Depth", "NodeSocketFloat", float(params.get("bed_depth", 1.2)), 0.0)
     # Width Variation: fraction the half-width wanders along the spline (0 = a constant-width strip,
@@ -315,7 +315,7 @@ def build(ng, out, params: dict):
 
     # Water-column depth (metres) per vertex: (Bed Depth - Water Depth) mid-channel, thinning to 0 at
     # the banks (via 1 - shore), clamped >= 0. The shader reads bbt_depth for real Beer-Lambert
-    # absorption + a soft shoreline (W5), so colour/opacity track actual depth, not just lateral
+    # absorption + a soft shoreline (the depth interaction), so colour/opacity track actual depth, not just lateral
     # position -- a wide shallow stream and a narrow deep one read differently.
     col_mid = math_node(ng, "MAXIMUM",
                         math_node(ng, "SUBTRACT", gi.outputs["Bed Depth"], gi.outputs["Water Depth"],

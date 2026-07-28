@@ -16,7 +16,7 @@ Principled Volume has infinite optical depth, so it extinguishes the Sun lamp an
 skylight (both originate at infinity) and blacks the frame at any density above
 about 0.001. Aerial perspective for the sky dome comes from the physical sky model
 itself (air_density, turbidity); scene aerial haze is a bounded fog domain, which
-is S3's job, not an unbounded world volume.
+is the fog volume's job, not an unbounded world volume.
 """
 
 import math

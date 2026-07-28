@@ -1,4 +1,4 @@
-"""particulates: wind-driven weather particles in a camera-following domain (S4).
+"""particulates: wind-driven weather particles in a camera-following domain.
 
 One recipe, two shape modes selected by the `mode` param:
 

@@ -13,13 +13,13 @@ this panel is where you then tune it. So the suite gains a panel and no duplicat
 The data model is the Scatter panel's, one capability over:
 
 - a tree is an OBJECT carrying the `foliage` modifier, stamped `bbt_foliage` and filed in the
-  BOB_Foliage collection, so the list is a `template_list` over real objects rather than a
-  CollectionProperty of pointers that goes stale when one is deleted;
+ BOB_Foliage collection, so the list is a `template_list` over real objects rather than a
+ CollectionProperty of pointers that goes stale when one is deleted;
 - the LIVE knobs (height, taper, the per-level shape, the cards, the wind) are the modifier's own
-  inputs, drawn in place -- editing one is instant, there is no sync code, and there is nothing for
-  the panel and the modifier to disagree about;
+ inputs, drawn in place -- editing one is instant, there is no sync code, and there is nothing for
+ the panel and the modifier to disagree about;
 - `Scene.bbt_foliage` holds UI state only: which tree is active, and the STRUCTURAL choices staged
-  for the next Build (levels, profile, the two texture sets, Skeleton Only).
+ for the next Build (levels, profile, the two texture sets, Skeleton Only).
 
 **No panel state reaches a recipe except as a plain param.** Every operator here resolves its
 context and calls `core/foliage_build.py`, which takes arguments and hands them to `build_geonodes`;
@@ -99,8 +99,8 @@ def _trees(context):
 
 def _active_tree(context):
     """The tree the sub-panels edit: the panel's active index, or the active object when it is a
-    tree. Reading the ACTIVE OBJECT as a fallback is what makes clicking a tree in the viewport
-    select it here too, which is the behaviour an artist expects from a per-object editor."""
+ tree. Reading the ACTIVE OBJECT as a fallback is what makes clicking a tree in the viewport
+ select it here too, which is the behaviour an artist expects from a per-object editor."""
     obj = context.active_object
     if foliage_build.is_foliage(obj):
         return obj
@@ -117,7 +117,7 @@ def _coll(context):
 
 def _structural(scn):
     """The staged structural choices, as build_geonodes params. `None` means "leave as built", so a
-    freshly added species keeps its own levels until someone changes the number."""
+ freshly added species keeps its own levels until someone changes the number."""
     out = {"levels": int(scn.levels), "profile_segments": int(scn.profile_segments),
            "skeleton": bool(scn.skeleton)}
     if scn.bark_set != "NONE":
@@ -129,7 +129,7 @@ def _structural(scn):
 
 class BBT_FoliageProps(PropertyGroup):
     """BobFoliage's UI state. Not the tree (that is the object and its modifier), not the world
-    (that is bbt_env): only which tree is active and what the next Build should be."""
+ (that is bbt_env): only which tree is active and what the next Build should be."""
 
     active: IntProperty(name="Active Tree", default=0, min=0)
     species: EnumProperty(
@@ -379,11 +379,11 @@ class BBT_OT_foliage_make_variants(Operator):
 def _generate(self, context, kind):
     """Queue a bark or leaf-atlas job on the shared ComfyUI worker, then wear the result.
 
-    The two jobs are `comfy.bark_set` and `comfy.leaf_atlas`, already MCP-exposed and gated
-    (docs/FOLIAGE.md 3), so the button is assignment plus a press and not new plumbing. The set
-    lands in the generated pack under the name the species already asks for where there is one,
-    which is what makes "generate the bark" enough with no assignment step after it.
-    """
+ The two jobs are `comfy.bark_set` and `comfy.leaf_atlas`, already MCP-exposed and gated
+ (docs/FOLIAGE.md 3), so the button is assignment plus a press and not new plumbing. The set
+ lands in the generated pack under the name the species already asks for where there is one,
+ which is what makes "generate the bark" enough with no assignment step after it.
+ """
     from ..core import comfy
     from .shaders import _COMFY_STATE, _comfy_job_running, _generated_pack, _submit
 
@@ -513,7 +513,7 @@ class BBT_PT_foliage(Panel):
         if tree is None:
             return
 
-        # Species: staged then applied (P4's heavy idiom), because loading one replaces every
+        # Species: staged then applied (the heavy-idiom convention), because loading one replaces every
         # shape param on the tree. It keeps the object, so it is not as heavy as a Build -- but it
         # is not a look tweak either, and firing it on the pick would lose a tuned tree to a
         # mis-click in a dropdown.
@@ -539,7 +539,7 @@ class BBT_PT_foliage_shape(Panel):
             layout.label(text="Add or pick a tree to edit it.", icon="INFO")
             return
 
-        # Structural group (P3): these change what is built, so they apply on a Build press and not
+        # Structural group : these change what is built, so they apply on a Build press and not
         # from a callback -- rebuilding from an update callback is the re-entrancy the Scatter panel
         # avoids the same way.
         box = layout.box()

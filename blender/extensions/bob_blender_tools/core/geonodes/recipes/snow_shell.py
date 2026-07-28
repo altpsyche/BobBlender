@@ -1,4 +1,4 @@
-"""snow_shell: the snow accumulation shell (BobShaders S4).
+"""snow_shell: the snow accumulation shell (BobShaders).
 
 Deferred here from Firmament: a geometry-node pass that gives snow real thickness and
 silhouette, not just a white shading. It runs as a modifier ON the surface AFTER the

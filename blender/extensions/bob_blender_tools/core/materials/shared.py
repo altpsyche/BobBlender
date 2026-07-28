@@ -106,9 +106,9 @@ def _vscale(g, vec, scalar, loc):
 # access, so an addon upgrade refreshes the interface instead of reusing a group that
 # lacks new sockets -- which otherwise KeyErrors when the caller wires them, or
 # silently renders the old behaviour.
-# v2 (BobSplines C5): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
+# v2 (BobSplines, the water channel): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
 # bbt_curve_wet damp-bed read, so existing cached groups must rebuild to pick both up.
-# v3 (water look pass W1-W6): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and a
+# v3 (water look pass the water look pass): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and a
 # manual Frozen -> ice path (new Shore Foam / Foam Crispness / Wave Detail / Frozen sockets), so a
 # cached v2 water group must rebuild to expose them.
 # v4 (item-3 weather fix): S_Weather gained a Canopy Snow input and S_SurfaceMaster exposes it, so
@@ -135,12 +135,12 @@ S_GROUP_VER = 6
 #   S_WaterMaster v4: geometry Gerstner waves in curve_water made the shader's low-frequency flow
 #   bump redundant -- it now carries only a subtle high-frequency detail normal (the old one combed
 #   into hair-like streaks). Graph + default change, same interface, so water-only rebuild.
-#   S_WaterMaster v5 (W5): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
+#   S_WaterMaster v5 (the depth interaction): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
 #   sockets; reads the ribbon's bbt_depth (water-column metres) for Beer-Lambert colour + opacity and
 #   a soft shoreline. New interface, so rebuild the water group (terrain/surface tuning untouched).
 #   S_WaterMaster v7: it embeds S_Weather, whose interface changed in the item-3 weather fix (the
 #   Canopy Snow term). Bumped in lockstep with the global S_GROUP_VER v4 so the water group rebuilds
-#   and re-links the weather node rather than keeping stale socket links. (v6 was the W5 depth pass.)
+#   and re-links the weather node rather than keeping stale socket links. (v6 was the depth pass.)
 #   S_WaterMaster v8: S_Weather's interface changed again in the snow-line unify (Use Attribute
 #   dropped). Bumped in lockstep with the global S_GROUP_VER v5 so the water group rebuilds and
 #   re-links the weather node rather than keeping stale links.
@@ -148,13 +148,13 @@ S_GROUP_VER = 6
 #   embeds S_EnvState directly (its freeze path reads Temperature/Cloud/Wind/Frost), so its internal
 #   links to that group's outputs go stale when the group interface is rebuilt. Bumped in lockstep
 #   with the global S_GROUP_VER v6 so the water group rebuilds and re-links.
-#   S_LeafSeason v1 (BobFoliage F4): the leaf-card season layer. Versioned on its own from the
+#   S_LeafSeason v1 (BobFoliage, the season layer): the leaf-card season layer. Versioned on its own from the
 #   start for the same reason S_TexSet is -- it embeds neither S_Weather nor S_EnvState, so it never
 #   needs the lockstep rebuild the masters do, and a future change to it must not cost every tuned
 #   terrain in the file a revert-to-default. It EXISTS at all rather than being a Season output on
 #   S_EnvState precisely to keep that cost off the masters (materials.LEAF_SEASON). The leaf wrapper
 #   folds this number into its signature, so bumping it here still rebuilds the cards that use it.
-#   S_TexSet v1 (BobShaders S3): the texture-set sampler. Versioned on its own from the start,
+#   S_TexSet v1 (BobShaders, the texture-set sampler): the texture-set sampler. Versioned on its own from the start,
 #   because it embeds neither S_Weather nor S_EnvState, so it never needs the lockstep rebuild the
 #   masters do -- and a future change to its interface must not cost every tuned terrain in the
 #   file a revert-to-default. The wrappers that instance it fold this number into their signature
@@ -193,7 +193,7 @@ def _cached_group(name):
 
 
 # Principled inputs a master group may drive BEYOND Base Color / Roughness / Metallic (the water
-# master, C5.3). Wired only when the master exposes the matching OUTPUT, so surface and terrain
+# master, the water look). Wired only when the master exposes the matching OUTPUT, so surface and terrain
 # masters (which do not) are byte-identical. The Principled transmission socket was renamed across
 # Blender versions (Transmission -> Transmission Weight in 4.x), so each master output maps to a
 # list of candidate BSDF socket names and the first that exists wins.
@@ -307,7 +307,7 @@ def _build_wrapper(mat_name, master, sig, wire):
     nt.links.new(grp.outputs["Base Color"], bsdf.inputs["Base Color"])
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
-    # Water master (C5.3): also drive Transmission / IOR / Alpha / Normal when the master exposes
+    # Water master (the water look): also drive Transmission / IOR / Alpha / Normal when the master exposes
     # them. A no-op for surface / terrain masters (their groups carry no such outputs).
     for out_name, candidates in _WRAPPER_EXTRA_OUTPUTS:
         src = grp.outputs.get(out_name)
@@ -361,7 +361,7 @@ def is_bobshader(mat):
 
 
 
-# BobShaders water master (S_WaterMaster, BobSplines C5.3). The third BobShader kind, for the river
+# BobShaders water master (S_WaterMaster, BobSplines, the water channel.3). The third BobShader kind, for the river
 # ribbons curve_water lays in a carved channel. It reads the ribbon's baked bbt_flow / bbt_foam /
 # bbt_shore attributes and produces a flowing, depth-tinted, foaming, transparent surface that
 # freezes to ice below 0 C. Like the other masters it ends in S_Weather, so it inherits the shared
@@ -372,7 +372,7 @@ WATER_MASTER = "S_WaterMaster"
 
 
 
-# BobShaders terrain master (S2). S_TerrainMaster blends an ordered stack of surface layers
+# The BobShaders terrain master. S_TerrainMaster blends an ordered stack of surface layers
 # across the ground by the SAME mask vocabulary Scatter uses (slope band, altitude band,
 # noise clumping, paint), plus a Cycles Pointiness curvature term, then hands the blended
 # base to S_Weather. Reusing the scatter masks is the deliberate glue: rock texture and rock

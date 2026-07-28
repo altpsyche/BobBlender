@@ -14,9 +14,9 @@ Modifier inputs (editable knobs):
   smooth height band on world Z; Strength 0 = off).
 - Noise mask: Noise Scale / Noise Contrast / Noise Seed / Noise Strength (procedural
   patchy density for clumping; Strength 0 = off).
-- Curve (BobSplines C4, curve_mode clear/keep): reads a terrain curve mask (written by the
+- Curve (BobSplines, the scatter mask, curve_mode clear/keep): reads a terrain curve mask (written by the
   curve overlay), curve_attr selecting which one -- bbt_curve_mask (the whole band, default) or
-  bbt_curve_edge (the shoulder/verge ring, R5, for the panel's Verge mode). clear clears the layer
+  bbt_curve_edge (the shoulder/verge ring, for the panel's Verge mode). clear clears the layer
   along it, keep scatters only within it. No scn.path proximity: the overlay solved it once, this
   just reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.
@@ -294,7 +294,7 @@ def build(ng, out, params: dict):
     factor = math_node(ng, "MULTIPLY", factor,
                        _noise_mask(ng, gi, pos, (-840, -820)), (400, -600))
 
-    # Curve band (BobSplines C4): read the terrain's baked bbt_curve_mask (0..1, 1 on a path).
+    # Curve band (BobSplines, the scatter mask): read the terrain's baked bbt_curve_mask (0..1, 1 on a path).
     # clear -> multiply by (1 - mask) so density drops to zero along the trail; keep -> multiply by
     # the mask so scatter stays only in the band (reeds along a bank). Absent attribute reads 0:
     # clear then leaves density untouched, keep correctly yields nothing (no curve, no band).

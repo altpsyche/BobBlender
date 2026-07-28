@@ -62,7 +62,7 @@ def _generation(fn, route=None):
     """Run one generation call, turning every failure into a sentence rather than a traceback.
 
     Four failures are worth telling apart and this is where they become one shape: no server at all,
-    not enough free VRAM (D15: the card is the scarce resource the moment an agent generates and
+    not enough free VRAM (the VRAM-handback rule: the card is the scarce resource the moment an agent generates and
     renders in one session), a graph that will not run (preflight: a missing model, a pack that is
     not installed, a cloud node) and anything else. The first three are the normal ones and all
     three are the artist's to fix.
@@ -113,7 +113,7 @@ def comfy_free() -> dict:
     """Ask ComfyUI to give the card back, and report honestly how much it actually gave.
 
     The tool to reach for between a generate and a Cycles render, and after a generate that failed on
-    VRAM. It is not a fix for D15 (docs/GENERATION.md) and does not pretend to be: `POST /free` only
+    VRAM. It is not a fix for the VRAM-handback rule (docs/GENERATION.md) and does not pretend to be: `POST /free` only
     drops what ComfyUI's MAIN process will release, the generation workers are separate processes
     that cannot reuse that cache, and on the measured case it recovers about 100 MiB of a 7.3 GB
     hold. When that is not enough this says so and names the thing that does work -- restarting the
@@ -296,7 +296,7 @@ def comfy_mesh(
           it for DEAD WOOD -- a stump, a fallen log, a snag, a root ball -- which is the class this
           route measures best on. A standing tree is not one of them: the crown comes back a faceted
           fan, and a generated trunk cannot carry branches because there is no curve to attach them
-          to. Live trees come from the foliage generator (docs/FOLIAGE.md, D16).
+          to. Live trees come from the foliage generator (docs/FOLIAGE.md, the dead-wood routing rule).
     height_m: the real-world height. Mandatory in spirit: every image-to-3D model emits a
           unit-cube mesh, so without it the scatter looks like a toy set.
     faces: the face budget the simplify hits. hero: 2K bake and 2048 texture.
@@ -309,7 +309,7 @@ def comfy_mesh(
           ComfyUI-folder preference) pointing at the checkout. Without it the job fails inside the
           graph with "Mesh file not found"; `control_bbox` has no such dependency.
     control_bbox: the same op's `bbox` field instead, which conditions on the block-out's three
-          proportions rather than on its surface. Cheaper and it uploads nothing; measured at G8,
+          proportions rather than on its surface. Cheaper and it uploads nothing; measured at the bbox gate,
           and which one is the default is `comfy.DEFAULT_CONTROL_MODE`. Pass one or the other.
           THE CEILING: the Omni node's widgets bound each of the three to [0.1, 3.0], so a raw
           ratio like [1, 9, 1] is rejected outright. `export_control` already divides by the longest
@@ -323,7 +323,7 @@ def comfy_mesh(
           stage entirely, so `negative` does nothing alongside it.
     route: "oneshot" (default, `mesh_subject` then `mesh_geom_texture`), "staged" (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`; the only route that
           leaves a dense mesh on disk) or "alt" (`mesh_subject`, `mesh_geom_alt`, `mesh_process`, `mesh_texture`; Hunyuan 2.1 geometry, which needs
-          no custom node pack). Leave it unset and the kind decides, which is the G7 verdict.
+          no custom node pack). Leave it unset and the kind decides, which is the geometry A/B verdict.
 
     Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}.
     """
@@ -695,7 +695,7 @@ def bake_heightfield(
     # A preset's params dict arrives with its stack ALREADY resolved, so `macro` has to be composed
     # onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
     # and is idempotent, which is why this tool passes the key straight through instead of calling
-    # `params.with_macro` here and risking a second application (docs/GENERATION.md, G5 correction 12).
+    # `params.with_macro` here and risking a second application (docs/GENERATION.md, the macro-mask gate correction 12).
 
     try:
         out_abs = str(paths.resolve_output(out_file))

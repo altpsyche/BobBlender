@@ -108,7 +108,7 @@ def collection(kind):
     has an asset of its own to put in the pool. `gen_assets.import_generated` is that caller, and the
     split is a bug fix rather than a tidy-up: importing a generated boulder into an empty scene used
     to conjure three block-out proxies beside it, so a scatter layer pointed at the pool instanced the
-    procedural blobs as well as the asset. Measured at G6, where the gate's render came back mostly
+    procedural blobs as well as the asset. Measured at the agent-surface gate, where the gate's render came back mostly
     proxies. Make Proxies is how an artist asks for proxies."""
     name = _collection_name(kind)
     found = bpy.data.collections.get(name)

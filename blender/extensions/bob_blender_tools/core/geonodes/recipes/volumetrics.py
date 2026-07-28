@@ -1,4 +1,4 @@
-"""volumetrics: procedural Cycles volumes. Clouds (S2) and fog (S3).
+"""volumetrics: procedural Cycles volumes. Clouds and fog.
 
 Every mode builds ONE domain box for the whole layer and lets the material carve
 the volume out of it. A single bounded domain (rather than a field of instanced

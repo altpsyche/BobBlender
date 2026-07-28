@@ -109,7 +109,8 @@ def with_macro(stack, path, *, weight=MACRO_WEIGHT, smooth=MACRO_SMOOTH, invert=
     character are a weighted sum, and the erosion that follows sees one field either way.
 
     Everything downstream is untouched: `fluvial`, `thermal` and `amplify` cannot tell a mask-based
-    macro from a noise-based one, which is why the macro-heightmap family needed no new erosion path (R7).
+    macro from a noise-based one, which is why the macro-heightmap family needed no new erosion path:
+    the mask is a low-frequency input, never a heightfield.
     """
     out = copy.deepcopy(list(stack))
     weight = max(0.0, min(1.0, float(weight)))

@@ -1,6 +1,6 @@
 """The BobShader / volume material builders, split into coupling-scoped submodules.
 
-Split from the former 2394-line materials.py (P2). This __init__ re-exports the full
+Split from the former 2394-line materials.py. This __init__ re-exports the full
 public surface so every caller keeps `from ..core.materials import X` and
 `materials.X` attribute access unchanged.
 """

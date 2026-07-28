@@ -408,7 +408,7 @@ def ground_fog_volume_material(image):
 
 
 
-# Particulate surface materials (S4). Unlike the volume materials above these shade
+# Particulate surface materials. Unlike the volume materials above these shade
 # real instanced geometry (rain streaks, dust/amber/snow motes), not a volume box.
 # They read the live Colour and Emission knobs the particulates recipe stores on the
 # instance domain, through Attribute nodes of type INSTANCER, the same per-instance

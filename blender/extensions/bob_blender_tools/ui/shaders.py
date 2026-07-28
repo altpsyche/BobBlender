@@ -12,13 +12,13 @@ slot's kind is DETECTED from the datablock (materials.master_type): a surface Bo
 terrain BobShader, or a plain material offered a Convert. New BobShader auto-names M_<object>.
 
 - A per-object material is a thin wrapper (M_<name>): one S_SurfaceMaster (or S_TerrainMaster)
-  group node feeding one Principled BSDF. The instance parameters are that group node's input
-  values, drawn live and edited in place (shader group inputs re-evaluate on edit, so there is
-  no rebuild to preserve, unlike the GN modifier surface Scatter draws).
+ group node feeding one Principled BSDF. The instance parameters are that group node's input
+ values, drawn live and edited in place (shader group inputs re-evaluate on edit, so there is
+ no rebuild to preserve, unlike the GN modifier surface Scatter draws).
 - S_SurfaceMaster ends in S_Weather, which reads the world through S_EnvState. The world reaches
-  the shaders via drivers on S_EnvState installed once from bbt_env. The one master Live
-  Environment toggle lives on the World panel (bbt_world); Shaders subscribes _apply_world to the
-  world applier registry so raising the world snow whitens every surface with no rebuild.
+ the shaders via drivers on S_EnvState installed once from bbt_env. The one master Live
+ Environment toggle lives on the World panel (bbt_world); Shaders subscribes _apply_world to the
+ world applier registry so raising the world snow whitens every surface with no rebuild.
 
 Two homes, no drift: the shared world is bbt_env (World panel); BobShaders' own UI state is
 bbt_shaders. Coverage has one authority: the shader computes it the same way on every surface,
@@ -57,7 +57,7 @@ _WEATHER_SEASON = ["Dust Amount", "Moss Amount"]
 _SHELL_KNOBS = ["Thickness", "Smooth"]
 SNOW_SHELL_MOD = "BOB_SnowShell"
 
-# Water master knobs (BobSplines C5.3, look pass W1-W6), split colour/optics from the flow/foam
+# Water master knobs (BobSplines, the water look, the water look pass), split colour/optics from the flow/foam
 # animation, with the freeze slider on its own so it reads as the deliberate action it is.
 _WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Depth Absorption", "Depth Opacity",
                "Shoreline Fade", "Water Roughness", "IOR", "Transmission", "Edge Fade"]
@@ -104,25 +104,25 @@ def _active_object(context):
 
 def _active_material(context):
     """The material on the active object's active slot: the native identity the panel edits
-    (docs/UX-REDESIGN.md 5.4). Selection follows the viewport and stays in sync with the
-    Material Properties active slot."""
+ (docs/UX-REDESIGN.md 5.4). Selection follows the viewport and stays in sync with the
+ Material Properties active slot."""
     obj = _active_object(context)
     return obj.active_material if obj is not None else None
 
 
 def _is_scatter_object(obj):
     """A scatter layer object: its shaded look comes from an instanced asset collection, not its
-    own material slots. New BobShader must not assign a solid material to it - assign_material
-    would add a Set-Material modifier that overrides every instance's textures. Its assets are
-    converted with Convert (Collection scope) instead."""
+ own material slots. New BobShader must not assign a solid material to it - assign_material
+ would add a Set-Material modifier that overrides every instance's textures. Its assets are
+ converted with Convert (Collection scope) instead."""
     lay = getattr(obj, "bbt_scatter_layer", None)
     return lay is not None and lay.assets is not None
 
 
 def _asset_materials(obj):
     """Unique materials across a scatter layer's instanced assets collection, in a stable order.
-    Empty when obj is not a scatter layer or its assets have no materials. Deduped by datablock:
-    editing one material reaches every instance that uses it."""
+ Empty when obj is not a scatter layer or its assets have no materials. Deduped by datablock:
+ editing one material reaches every instance that uses it."""
     lay = getattr(obj, "bbt_scatter_layer", None)
     coll = lay.assets if lay is not None else None
     if coll is None:
@@ -141,10 +141,10 @@ def _asset_materials(obj):
 
 def _editing_material(context):
     """The material the Surface / Weather sub-panels edit. For a normal mesh this is its active
-    material (native identity). For a scatter layer object - whose asset sources live in an
-    unlinked, unselectable collection - it is the chosen material from that asset pool
-    (bbt_shaders.asset_material, defaulting to the first), so scattered assets are editable through
-    the selectable layer without scene-linking their sources (docs/SCATTER-SHADING-UX.md)."""
+ material (native identity). For a scatter layer object - whose asset sources live in an
+ unlinked, unselectable collection - it is the chosen material from that asset pool
+ (bbt_shaders.asset_material, defaulting to the first), so scattered assets are editable through
+ the selectable layer without scene-linking their sources (docs/SCATTER-SHADING-UX.md)."""
     obj = _active_object(context)
     if obj is None:
         return None
@@ -163,10 +163,10 @@ _terrain_node = shading.terrain_node
 
 
 def _terrain_node_active(context):
-    """The terrain-master node of the EDITING material (C1: keyed on _editing_material like the
-    Surface / Water / Weather siblings, so on a scatter object the terrain sub-panel and its
-    operators track the same material the panel edits, not the object's own active slot). The
-    terrain sub-panel's poll guarantees that material is a terrain BobShader, so no fallback."""
+    """The terrain-master node of the EDITING material (keyed on _editing_material like the
+ Surface / Water / Weather siblings, so on a scatter object the terrain sub-panel and its
+ operators track the same material the panel edits, not the object's own active slot). The
+ terrain sub-panel's poll guarantees that material is a terrain BobShader, so no fallback."""
     return _terrain_node(_editing_material(context))
 
 
@@ -212,15 +212,15 @@ def _has_env(scene):
 
 def _env_note(context, layout):
     """The "Firmament off: no live weather" hint. S9: drawn only on the Weather sub-panel, where
-    the weather-driven knobs it warns about live. It used to also draw on the Shaders root, so a
-    user with both open saw it twice; the root copy is gone."""
+ the weather-driven knobs it warns about live. It used to also draw on the Shaders root, so a
+ user with both open saw it twice; the root copy is gone."""
     if not _has_env(context.scene):
         layout.label(text="Firmament off: no live weather", icon="INFO")
 
 
 def _live_env_on(scene):
     """The one master Live Environment toggle now lives on the World panel (bbt_world);
-    default on when World is absent (standalone verify)."""
+ default on when World is absent (standalone verify)."""
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 
@@ -295,7 +295,7 @@ def _generated_pack():
 
 def _staged_variants():
     """Absolute paths of the variants waiting for a decision, oldest first. A listdir, so it is
-    safe to call from draw(); nothing here touches a socket."""
+ safe to call from draw; nothing here touches a socket."""
     from ..core import comfy
 
     pack = _generated_pack()
@@ -305,10 +305,10 @@ def _staged_variants():
 def _staged_variant_items(self, context):
     """Enum items over the staging folder, the variant path as the identifier.
 
-    Cached on the module for the same reason the texture-set enum is: Blender does not keep a
-    reference to the strings an items callback returns. The empty-staging sentinel is "NONE", not
-    "", because Blender silently drops an empty identifier and then refuses to assign it.
-    """
+ Cached on the module for the same reason the texture-set enum is: Blender does not keep a
+ reference to the strings an items callback returns. The empty-staging sentinel is "NONE", not
+ "", because Blender silently drops an empty identifier and then refuses to assign it.
+ """
     global _STAGED_ITEMS
     items = []
     for i, path in enumerate(_staged_variants()):
@@ -331,7 +331,7 @@ def _staged_pick(scn):
 
 class BBT_ShadersProps(PropertyGroup):
     """BobShaders' own UI state (not the shared world, which is bbt_env; not the material
-    identity, which is the active object's active slot)."""
+ identity, which is the active object's active slot)."""
 
     terrain_active: IntProperty(
         name="Active Layer", default=0, min=0,
@@ -406,7 +406,7 @@ class BBT_OT_shaders_new(Operator):
             self.report({"ERROR"}, "Select a mesh first")
             return {"CANCELLED"}
         mats = _materials()
-        # A7: New creates on an empty/new slot; it never silently converts. A slot that already
+        # New never converts: New creates on an empty/new slot; it never silently converts. A slot that already
         # holds a plain material is turned into a BobShader with Convert (which keeps its textures
         # and is surfaced per-row in the panel), so New and Convert stay distinct actions.
         existing = obj.active_material
@@ -620,11 +620,11 @@ class BBT_OT_shaders_terrain_stack_preset(Operator):
 
 def _apply_texture_set(context, index, name):
     """Assign texture set `name` ("" clears it) to the editing material: a terrain layer slot
-    (`index`) or a surface material (index < 0). Returns (report_label, error), so the Apply and
-    the Generate operators share one assignment path instead of each carrying a copy.
+ (`index`) or a surface material (index < 0). Returns (report_label, error), so the Apply and
+ the Generate operators share one assignment path instead of each carrying a copy.
 
-    Context resolution only. The assignment itself is `shading.set_texture_set`, which the
-    `apply_texture_set` op calls with an object and a material resolved by name instead."""
+ Context resolution only. The assignment itself is `shading.set_texture_set`, which the
+ `apply_texture_set` op calls with an object and a material resolved by name instead."""
     mat = _editing_material(context)
     obj = _active_object(context)
     if obj is None and _materials().master_type(mat) == "terrain":
@@ -657,8 +657,8 @@ class BBT_OT_shaders_texture_set(Operator):
 
 
 # Last known ComfyUI state, so the panel row can read "not connected" without an HTTP call in
-# draw(). Refreshed by Test Connection (the Advanced panel), by Generate, and by the job ticker;
-# never in draw(), because a socket call in a draw handler freezes the UI for the timeout in
+# draw. Refreshed by Test Connection (the Advanced panel), by Generate, and by the job ticker;
+# never in draw, because a socket call in a draw handler freezes the UI for the timeout in
 # exactly the case the row exists to report.
 _COMFY_STATE = {"ok": None, "detail": "not checked"}
 
@@ -671,9 +671,9 @@ _variant_preview_key = None
 def _variant_preview(path):
     """The icon id for a staged variant's basecolor, or 0 when there is nothing to show.
 
-    0 is also what `--background` returns for a perfectly good preview (there is no icon manager
-    without a UI), which is why the panel treats it as "draw no thumbnail" rather than an error.
-    """
+ 0 is also what `--background` returns for a perfectly good preview (there is no icon manager
+ without a UI), which is why the panel treats it as "draw no thumbnail" rather than an error.
+ """
     global _variant_preview_key
     if _variant_previews is None or not path:
         return 0
@@ -694,7 +694,7 @@ def _variant_preview(path):
 
 def _redraw():
     """Tag every 3D-view side region, so a job finishing on the timer is visible without the
-    artist having to move the mouse."""
+ artist having to move the mouse."""
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == "VIEW_3D":
@@ -987,8 +987,8 @@ class BBT_OT_shaders_snow_shell_remove(Operator):
 
 def _draw_inputs(layout, node, names, labels=None):
     """Draw the wrapper Master node's input sockets by name (live, no rebuild). labels overrides
-    the row text for specific sockets, so a socket whose name collides with another node's (e.g.
-    the TexSet's Macro Amount next to the master's) can read distinctly."""
+ the row text for specific sockets, so a socket whose name collides with another node's (e.g.
+ the TexSet's Macro Amount next to the master's) can read distinctly."""
     labels = labels or {}
     col = layout.column(align=True)
     for nm in names:
@@ -1012,11 +1012,11 @@ _TEXSET_KNOBS = ("AO Amount", "Roughness Amount", "Detail Height")
 
 
 def _draw_texture_set(layout, context, mat, index=None):
-    """The texture-set block (S3), for a terrain layer slot (`index`) or a surface material
-    (index None). A staged picker plus Apply, because assigning a set rewires the graph rather
-    than setting a value (P3/P4, the staged_preset_row idiom), then the sampler's live knobs once
-    a set is actually on. One implementation for both masters: they differ only in how many slots
-    they have."""
+    """The texture-set block, for a terrain layer slot (`index`) or a surface material
+ (index None). A staged picker plus Apply, because assigning a set rewires the graph rather
+ than setting a value (the staged_preset_row idiom), then the sampler's live knobs once
+ a set is actually on. One implementation for both masters: they differ only in how many slots
+ they have."""
     mats = _materials()
     scn = context.scene.bbt_shaders
     terrain = index is not None
@@ -1052,7 +1052,7 @@ def _draw_texture_set(layout, context, mat, index=None):
                      icon=helpers.STRUCTURAL_ICON).index = slot
 
     # Staged variants: pick one, look at it, Accept or Reject. Nothing reaches the pack (and so
-    # nothing reaches the picker above) until Accept moves it there (R9).
+    # nothing reaches the picker above) until Accept moves it there, which is the iteration rule.
     staged = _staged_variants()
     if staged:
         box = layout.box()
@@ -1117,7 +1117,7 @@ class BBT_PT_shaders(Panel):
         scn = context.scene.bbt_shaders
         obj = _active_object(context)
 
-        # P1/P7: the context header, or the empty state that says what to do next.
+        # The context header, or the empty state: the context header, or the empty state that says what to do next.
         if not helpers.context_header(layout, "Active mesh", obj.name if obj else None,
                                          icon="OUTLINER_OB_MESH",
                                          empty="Select a mesh to shade its materials."):
@@ -1156,11 +1156,11 @@ class BBT_PT_shaders(Panel):
                 op = row.operator("bob_blender_tools.shaders_convert", text="Convert",
                                   icon="NODE_MATERIAL")
                 op.index = i
-        # A7: no "Convert all" button here. Whole-object convert is now the "All slots" option of
+        # New never converts: no "Convert all" button here. Whole-object convert is now the "All slots" option of
         # the scope dropdown below, so Convert lives in exactly two places: per-row (targeted) and
         # the scope dropdown (all slots / selected / collection).
 
-        # Adaptive action for the active slot (P5): New when empty, else the editing header.
+        # Adaptive action for the active slot : New when empty, else the editing header.
         active_mat = slots[active_idx].material if active_idx < len(slots) else None
         active_type = mats.master_type(active_mat)
         if active_mat is None:
@@ -1282,7 +1282,7 @@ class BBT_PT_shaders_water(Panel):
         return _materials().master_type(_editing_material(context)) == "water"
 
     def draw(self, context):
-        # A2: the root shows the depth/optics look (the default view). Flow+foam and Freeze moved
+        # Grouping: the root shows the depth/optics look (the default view). Flow+foam and Freeze moved
         # to DEFAULT_CLOSED child sub-panels below, the way Firmament splits its subsystems, so the
         # 23-knob wall is no longer one flat scroll.
         layout = self.layout
@@ -1365,7 +1365,7 @@ class BBT_PT_shaders_terrain(Panel):
                       icon="INFO")
         _draw_inputs(layout, node, _TERRAIN_GLOBAL)
 
-        # Layer slots (S3-layers/A3): draw only the ENABLED slots, not a fixed six-row stack, so
+        # Layer slots (the adaptive-slots finding): draw only the ENABLED slots, not a fixed six-row stack, so
         # the box shows the depth actually in use. One disable model: the per-row checkbox turns a
         # layer off (it drops out of the list); Add Layer below is the sole add affordance. The old
         # Remove Layer button was a second way to do the checkbox's job, so it is gone. Stacking is
@@ -1476,7 +1476,7 @@ class BBT_PT_shaders_weather(Panel):
         box.label(text="Snow Accumulation Shell", icon="MOD_SMOOTH")
         surface = _active_object(context)
         shell = _named_mod(surface, SNOW_SHELL_MOD)
-        # A4: the shell reads the surface's snow_cover pass for its thickness. Say so inline, before
+        # Empty states: the shell reads the surface's snow_cover pass for its thickness. Say so inline, before
         # the Add press, rather than only in a post-click warning, so the dependency is visible up
         # front (the coverage pass is built in Atmosphere > Snow Coverage).
         if _named_mod(surface, "BOB_Snow") is None:

@@ -5,11 +5,11 @@ the top slot in the pipeline instead of being buried in a Firmament sub-panel. T
 the single place to drive the world, which resolves the old Apply-Season confusion (several
 overlapping ways to change the world across panels).
 
-Two labelled groups make the live-vs-structural split visible (P3):
+Two labelled groups make the live-vs-structural split visible :
 - World now: time/place and the live continuous conditions (weather, temperature, wetness,
-  snow, cloud cover, wind). The conditions drive every consumer instantly via drivers.
+ snow, cloud cover, wind). The conditions drive every consumer instantly via drivers.
 - Set up a look: Season + Apply Season and Scene Presets, which are STRUCTURAL (they build or
-  rebuild subsystems).
+ rebuild subsystems).
 
 It also owns the scene-wide controls the plan moved here: Scene Quality (Preview/Final) and the
 ONE Live Environment master toggle (folding the old per-panel Shaders and Firmament toggles).
@@ -17,7 +17,7 @@ ONE Live Environment master toggle (folding the old per-panel Shaders and Firmam
 Scaling model (the reason this is its own module, not a Firmament sub-panel): a subscriber
 registry. Each consumer registers an applier fn(scene) that re-applies its response to the
 current world state (drivers on/off, quality). A world control change calls every applier.
-Adding a new world-driven subsystem later is one register_applier() call: World never imports
+Adding a new world-driven subsystem later is one register_applier call: World never imports
 its consumers, so env.py stays the acyclic root and a polyrepo split stays mechanical. The
 registry is addon-level (not bbmcp), so it survives a Reload Builders like the other UI state.
 """
@@ -50,7 +50,7 @@ def unregister_applier(fn):
 
 def apply_all(scene):
     """Re-apply every subscribed consumer to the current world state. Called when a world
-    control changes; a consumer that errors never blocks the others."""
+ control changes; a consumer that errors never blocks the others."""
     for fn in list(_appliers):
         try:
             fn(scene)
@@ -65,7 +65,7 @@ def _on_world_change(self, context):
 # Biome enums for the World panel: biomes carrying a world block (Biome World) and biomes with any
 # applicable section (Apply Biome). Cached module-side with a stable id per biome (the enum-GC /
 # reindex guard the other panels' dynamic enums use). Ids start at 0 for the first real biome so a
-# fresh property resolves to a real item, not the NONE fallback (S2: no more blank first pick). The
+# fresh property resolves to a real item, not the NONE fallback, so a fresh pick is never blank. The
 # NONE placeholder only appears when there are no biomes at all, and then it is the sole item.
 _BIOME_WORLD_ITEMS = [("NONE", "None", "No biome world", "", 0)]
 _BIOME_WORLD_IDS = {}
@@ -112,8 +112,8 @@ def _biome_apply_items(self, context):
 
 def _sky_built():
     """True when a sky+sun has been built. BobFirmament's build_sky creates the BOB_Sun
-    object (bbmcp/world.py SUN_NAME), so its presence is the "a sky exists" marker the
-    World first-build affordance and the Time-and-place caption key off."""
+ object (bbmcp/world.py SUN_NAME), so its presence is the "a sky exists" marker the
+ World first-build affordance and the Time-and-place caption key off."""
     return bpy.data.objects.get("BOB_Sun") is not None
 
 
@@ -128,7 +128,7 @@ def _has_any_biome():
 
 class BBT_WorldProps(PropertyGroup):
     """World-level UI state: the scene-wide controls that drive every consumer. The world
-    DATA is Scene.bbt_env (bbmcp/env.py); this is only the master toggles that sit above it."""
+ DATA is Scene.bbt_env (bbmcp/env.py); this is only the master toggles that sit above it."""
 
     live_env: BoolProperty(
         name="Live Environment", default=True, update=_on_world_change,
@@ -312,7 +312,7 @@ class BBT_PT_biome(Panel):
         # Scatter / Biome World are the same recipe applied one piece at a time.
         layout.label(text="A biome presets terrain + scatter + world together", icon="INFO")
 
-        # P1: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
+        # The active thing: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
         target = _apply_target(context)
         helpers.context_header(
             layout, "Active mesh", target.name if target else None,
@@ -357,7 +357,7 @@ class BBT_PT_world(Panel):
 
         # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
         # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
-        # A8: in the shipped single addon this branch never fires (firmament.register always
+        # Unreachable branch: in the shipped single addon this branch never fires (firmament.register always
         # registers bbt_env at load). It is kept deliberately for the planned polyrepo split, where
         # World can ship without Firmament and bbt_env is then genuinely absent.
         firmament_off = _env is None or _env.get_env(context.scene) is None
@@ -370,7 +370,7 @@ class BBT_PT_world(Panel):
         if firmament_off:
             layout.label(text="Firmament off: world present but no atmosphere", icon="INFO")
 
-        # First-build affordance (F2): before a sky exists, offer Build Sky here so the artist
+        # First-build affordance: before a sky exists, offer Build Sky here so the artist
         # can set the time/place (Time and place sub-panel) and build from the top panel on the
         # first pass, not hunt for it in Atmosphere. Self-limiting: it vanishes once a sky is built.
         if not firmament_off and not _sky_built():

@@ -242,7 +242,7 @@ def drape_curve(op: dict) -> dict:
     The counterpart to make_path's drape for a hand-drawn or panel-added curve: make_path
     bakes Z into points it creates, but a curve the artist drew (or moved) needs its Z
     re-sampled against the current terrain so its smooth profile follows the ground. This is
-    the C1 stand-in for the live re-drape the GN overlay does in C2 (docs/SPLINES.md 4.2): the
+    the first pass stand-in for the live re-drape the GN overlay does in the terrain overlay (docs/SPLINES.md 4.2): the
     follow-terrain roles grade a bench to the curve's own Z, so that Z must track the surface.
 
     With monotonic set (a river/stream, docs/SPLINES.md 9 #1), the sampled Z is additionally

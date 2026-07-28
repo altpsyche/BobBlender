@@ -1,31 +1,31 @@
 """Paths (BobSplines): typed curves that drive terrain and scatter, in-process over bbmcp.
 
 The fourth authored subsystem (docs/SPLINES.md). A curve gets a ROLE and the role drives a
-coordinated bundle of effects. C1 shipped the plumbing and the follow-terrain family (dirt path,
-trail, road); C2 gives terrain shape its own standalone GN overlay:
+coordinated bundle of effects. the first pass shipped the plumbing and the follow-terrain family (dirt path,
+trail, road); the terrain overlay gives terrain shape its own standalone GN overlay:
 
-- Terrain shape (C2): each curve carves a bench through the terrain via its OWN curve_overlay
-  modifier stacked on the terrain object (docs/SPLINES.md 4.3). One modifier per curve, so a
-  network of paths composes instead of the single inline path C1 used. The overlay reads the
-  incoming terrain geometry, so it works on any terrain mesh, and writes the curve mask
-  attributes (bbt_curve_mask / bbt_curve_dist) that the shader and scatter READ, so a downstream
-  effect never re-solves proximity or duplicates a knob (docs/SPLINES.md 9 #2 / #4).
-- Terrain material (C3): a surface band along the curve. Build configures a terrain-material
-  layer keyed to the overlay's bbt_curve_mask (materials.apply_curve_surface, the same shape as
-  the Flow mask keying a riverbed layer), so a road/dirt surface reads only along the path with
-  no re-solved proximity. One shared curve-surface layer for now (all paths share it); distinct
-  per-role surfaces need distinct mask attributes, a later step.
-- Scatter (C4): a curve drives scatter through the baked bbt_curve_mask, not a scn.path proximity.
-  The scatter recipe reads the mask per layer (clear a trail / keep-only along the band), so every
-  curve with an overlay is respected at once (multi-curve). A layer can also switch to the
-  scatter_along recipe to place instances ALONG a curve (fence posts), optionally aligned. The
-  Paths Scatter channel flips unbound layers to clear and rebuilds; per-layer modes live in Scatter.
-- Water (C5): the IMPOSE family (river / stream). Unlike a path, a river runs monotonically DOWNHILL
-  and the terrain conforms DOWN to it: drape_curve solves a monotonic descending centreline and the
-  overlay's impose mode carves the bed to it (docs/SPLINES.md 9 #1). A water-surface ribbon
-  (curve_water, its own BOB_Water_<curve> object) sits in the channel, shaded by the water BobShader
-  (materials.water_master: flowing, depth-tinted, foaming, transparent, freezes below 0 C). The bed
-  reads damp via bbt_curve_wet routed into the terrain wetness path (materials.apply_curve_wet).
+- Terrain shape (the terrain overlay): each curve carves a bench through the terrain via its OWN curve_overlay
+ modifier stacked on the terrain object (docs/SPLINES.md 4.3). One modifier per curve, so a
+ network of paths composes instead of the single inline path the first pass used. The overlay reads the
+ incoming terrain geometry, so it works on any terrain mesh, and writes the curve mask
+ attributes (bbt_curve_mask / bbt_curve_dist) that the shader and scatter READ, so a downstream
+ effect never re-solves proximity or duplicates a knob (docs/SPLINES.md 9 #2 / #4).
+- Terrain material (the material band): a surface band along the curve. Build configures a terrain-material
+ layer keyed to the overlay's bbt_curve_mask (materials.apply_curve_surface, the same shape as
+ the Flow mask keying a riverbed layer), so a road/dirt surface reads only along the path with
+ no re-solved proximity. One shared curve-surface layer for now (all paths share it); distinct
+ per-role surfaces need distinct mask attributes, a later step.
+- Scatter (the scatter mask): a curve drives scatter through the baked bbt_curve_mask, not a scn.path proximity.
+ The scatter recipe reads the mask per layer (clear a trail / keep-only along the band), so every
+ curve with an overlay is respected at once (multi-curve). A layer can also switch to the
+ scatter_along recipe to place instances ALONG a curve (fence posts), optionally aligned. The
+ Paths Scatter channel flips unbound layers to clear and rebuilds; per-layer modes live in Scatter.
+- Water (the water channel): the IMPOSE family (river / stream). Unlike a path, a river runs monotonically DOWNHILL
+ and the terrain conforms DOWN to it: drape_curve solves a monotonic descending centreline and the
+ overlay's impose mode carves the bed to it (docs/SPLINES.md 9 #1). A water-surface ribbon
+ (curve_water, its own BOB_Water_<curve> object) sits in the channel, shaded by the water BobShader
+ (materials.water_master: flowing, depth-tinted, foaming, transparent, freezes below 0 C). The bed
+ reads damp via bbt_curve_wet routed into the terrain wetness path (materials.apply_curve_wet).
 
 Ownership (docs/SPLINES.md section 9, confirmed): bbt_curve on the curve object holds ONLY
 structural fields (role + which channels are on). The cross-section knobs (Path Width / Falloff /
@@ -36,7 +36,7 @@ PointerProperty (section 9 #10), not by name, so it survives renames.
 At Build the curve is draped onto the terrain (when the terrain carries a baked heightmap) so its
 Z follows the ground; without a heightmap the curve's authored Z is used. Cross-section profiles
 that make road/trail structurally distinct (a road bench + shoulders, embankments) and the
-side/tangent field for them arrive with their consumers; C2 roles differ by knob defaults and the
+side/tangent field for them arrive with their consumers; the terrain overlay roles differ by knob defaults and the
 profile is symmetric.
 
 The role presets, the overlay/water/material builders, the live param sync and the MCP op handlers
@@ -102,7 +102,7 @@ def _active_curve(context):
 
 def _terrain(context):
     """The terrain mesh the curves carve and scatter on: the panel's pick, else the Scatter
-    emitter, else the active mesh (the same fall-through Apply Biome uses)."""
+ emitter, else the active mesh (the same fall-through Apply Biome uses)."""
     scn = context.scene.bbt_curves
     if scn.terrain is not None and scn.terrain.type == "MESH":
         return scn.terrain
@@ -116,11 +116,11 @@ def _terrain(context):
 
 def _clear_scatter(context):
     """Make the emitter's surface scatter avoid the paths: flip any layer still set to no curve
-    binding to "clear" (so it reads the curve mask), leave explicit keep/along/clear layers alone,
-    then rebuild the layers through the scatter panel's own build. Scatter reads the baked
-    bbt_curve_mask (BobSplines C4), so every curve with an overlay is cleared at once, no scn.path.
-    Returns True when it ran. This runs a ui operator, so it stays in the ui layer and is passed
-    into the core builders as the scatter_cb callback."""
+ binding to "clear" (so it reads the curve mask), leave explicit keep/along/clear layers alone,
+ then rebuild the layers through the scatter panel's own build. Scatter reads the baked
+ bbt_curve_mask (BobSplines, the scatter mask), so every curve with an overlay is cleared at once, no scn.path.
+ Returns True when it ran. This runs a ui operator, so it stays in the ui layer and is passed
+ into the core builders as the scatter_cb callback."""
     scn_scatter = getattr(context.scene, "bbt_scatter", None)
     emitter = getattr(scn_scatter, "emitter", None) if scn_scatter is not None else None
     coll = emitter.bbt_scatter_coll if emitter is not None else None
@@ -158,12 +158,12 @@ def _terrain_poll(self, obj):
 class BBT_Curve(PropertyGroup):
     """All per-curve config, on the curve object (docs/SPLINES.md 4.1). Two kinds:
 
-    - STRUCTURAL (role + which channels are on): applied on Build, since they rebuild the modifiers.
-    - SHAPE (width/depth/...): the single owner of the cross-section + water params. Each has an
-      update callback that live-syncs it to BOTH the terrain-carve overlay and the water ribbon
-      (_sync_cb -> core.sync_curve_params), so one set of numbers drives both and there is no
-      panel-vs-modifier drift. width is the FULL channel width (1:1); depth the channel depth;
-      water_level the fill."""
+ - STRUCTURAL (role + which channels are on): applied on Build, since they rebuild the modifiers.
+ - SHAPE (width/depth/...): the single owner of the cross-section + water params. Each has an
+ update callback that live-syncs it to BOTH the terrain-carve overlay and the water ribbon
+ (_sync_cb -> core.sync_curve_params), so one set of numbers drives both and there is no
+ panel-vs-modifier drift. width is the FULL channel width (1:1); depth the channel depth;
+ water_level the fill."""
 
     role: EnumProperty(
         name="Role",
@@ -268,14 +268,14 @@ class BBT_Curve(PropertyGroup):
 
 class BBT_CurveEntry(PropertyGroup):
     """One row in the scene curve list: a pointer to the curve object (docs/SPLINES.md section 9
-    #10, bind by pointer not name so it survives renames)."""
+ #10, bind by pointer not name so it survives renames)."""
 
     curve: PointerProperty(name="Curve", type=bpy.types.Object, poll=_curve_poll)
 
 
 class BBT_CurvesProps(PropertyGroup):
     """Scene-level UI state plus the curve list. The per-curve truth lives on the curve object's
-    bbt_curve; this is only the list, the active row, and the shared terrain pick."""
+ bbt_curve; this is only the list, the active row, and the shared terrain pick."""
 
     curves: CollectionProperty(type=BBT_CurveEntry)
     active: IntProperty(default=0)
@@ -474,7 +474,7 @@ class BBT_OT_curve_build_all(Operator):
             if built_any:  # push the shape params onto the freshly built modifiers (live thereafter)
                 sync_curve_params(terrain, curve)
         # Material: for the follow family, one surface layer per DISTINCT class among the do_material
-        # curves (R5), deduped by channel, so a paved road and a dirt trail read differently. For the
+        # curves (the per-role surfaces), deduped by channel, so a paved road and a dirt trail read differently. For the
         # impose family (river/stream) it is the damp bed (apply_curve_wet, idempotent/non-lowering),
         # so it just applies per curve. Scatter clear reads the accumulated mask, one rebuild covers all.
         extra = []
@@ -640,7 +640,7 @@ class BBT_PT_paths(Panel):
             box.prop(scn, "erode_scope")
             box.prop(scn, "erode_deposit")
             # Both are structural (they rewrite the baked heightfield), so mark them like Build
-            # All (P3) rather than as raw buttons.
+            # All rather than as raw buttons.
             helpers.structural_action(
                 box, "bob_blender_tools.curve_bake_erode",
                 note=scn.erode_summary or "erodes the landscape, re-imposes the channels (water stays put)")
@@ -675,7 +675,7 @@ class BBT_PT_paths_active(Panel):
         impose = spec.get("family") == "impose"
         layout.label(text=spec["label"], icon=spec["icon"])
 
-        # Structural group (P3): role + channels apply on a Build, not from a callback.
+        # Structural group : role + channels apply on a Build, not from a callback.
         box = layout.box()
         # S7: no STRUCTURAL_ICON on the caption; the structural_action button in this box carries
         # it, so it would show twice.

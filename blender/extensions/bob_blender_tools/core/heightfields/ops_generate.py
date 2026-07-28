@@ -130,7 +130,7 @@ def macro(h, xp, path=None, mix="replace", amount=1.0, smooth=0.02, invert=False
     -- fluvial incision, thermal relaxation, amplify -- treats the mask's landform as the macro it
     would otherwise have generated from noise.
 
-    A MASK, not a heightfield (R7). Two of these parameters are the reason that distinction holds
+    A MASK, not a heightfield (the bit-depth floor). Two of these parameters are the reason that distinction holds
     rather than being a caveat in a document:
 
       smooth   a gaussian blur as a fraction of the field width, applied AFTER the resample. It is
@@ -195,7 +195,7 @@ def voronoi(h, xp, seed=0, cells=8.0, pattern="mesa", jitter=0.85, mix="multiply
             f1 = nf1
     if pattern == "crack":
         field = xp.clip((f2 - f1) * cells * 0.5, 0.0, 1.0)   # thin borders bright
-    else:  # mesa: flat cells, sharp rims (1 - normalized F1, plateaued)
+    else:  # mesa: flat cells, sharp rims (1 - the normalised field, plateaued)
         field = xp.clip(1.0 - f1, 0.0, 1.0) ** 0.5
     if mix == "max":
         return xp.maximum(h, field)

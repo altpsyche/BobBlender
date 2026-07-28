@@ -1,10 +1,10 @@
-"""The texture-set sampler (BobShaders S3): one shared S_TexSet group that turns a
+"""The texture-set sampler (BobShaders, the texture-set sampler): one shared S_TexSet group that turns a
 `<pack>/textures/<set>/` set into the map values S_TerrainMaster and S_SurfaceMaster already
 accept, plus the wrapper-side plumbing that instances it per terrain layer.
 
 Why one shared group. A set is up to four images and a terrain carries six layer slots, so the
 naive graph is thirty image nodes plus six copies of the same fold maths, against EEVEE's
-sampler budget (docs/GENERATION.md R14). Here the fold maths lives once in S_TexSet and is
+sampler budget (docs/GENERATION.md the sampler-budget rule). Here the fold maths lives once in S_TexSet and is
 INSTANCED per layer (one node in the material, whatever the maths costs), and image texture
 nodes are created only for the layers that actually carry a set.
 
@@ -22,7 +22,7 @@ Height; the surface master carries Albedo Map / Roughness Map / Metallic Map / A
   Principled Normal. That gives a set real surface relief without either master gaining a normal
   socket, and therefore without a shared-group version bump, which would reset every tuned
   terrain in the file.
-- The normal map on disk is consequently unused in S3. Using it would need a per-layer vector
+- The normal map on disk is consequently unused. Using it would need a per-layer vector
   socket on the master (the version-bump cost above) and a tangent space that box projection
   does not have.
 
@@ -191,7 +191,7 @@ def texset_bump(nt, height, bsdf, loc=(0, 0)):
 def stored_sets(mat, count):
     """(sets, box) as recorded on a wrapper material: `count` set names ("" = none, padded and
     truncated to length) and the box-projection flag. A material with nothing recorded (a fresh
-    one, or one built before S3) reads as no sets and box projection on."""
+    one, or one built before the sampler existed) reads as no sets and box projection on."""
     raw = mat.get(TEXSETS_PROP) if mat is not None else None
     sets = [str(s) for s in raw] if raw is not None else []
     sets = (sets + [""] * count)[:count]

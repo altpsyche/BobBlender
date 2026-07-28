@@ -186,7 +186,7 @@ def asset_roots():
     raw += _PREF_ROOTS
     # generated_root(), not _GENERATED_ROOT: the env fallback has to reach the RESOLVER, or a set
     # generated in a process the addon never registered in is written into a pack that
-    # texture_set_dir cannot see (measured at G6, where the apply step failed on a set that existed).
+    # texture_set_dir cannot see (measured at the agent-surface gate, where the apply step failed on a set that existed).
     generated = generated_root()
     if generated:
         raw.append(generated)
@@ -306,7 +306,7 @@ def texture_set_maps(name):
 def texture_set_meta(name):
     """The texture set's `meta.json` sidecar, or {} when it has none or it is unreadable.
 
-    Every generated set already writes one (`comfy.write_texture_set`, R10: provenance travels with
+    Every generated set already writes one (`comfy.write_texture_set`, the provenance rule: provenance travels with
     the artifact), and a hand-authored set may. It is read for DATA a consumer needs and cannot
     otherwise know -- see `atlas_grid` -- never for anything a set must have, so a set without one
     keeps working exactly as before.
@@ -388,7 +388,7 @@ def _load_manifest(biome):
 
 
 # Defaults for the fields a GENERATED model entry carries (docs/GENERATION.md, Contracts). They are
-# defaulted here rather than read by a second loader, which is R11: `biome_manifest()` stays the
+# defaulted here rather than read by a second loader, which is the manifest origin rule: `biome_manifest()` stays the
 # one normalising reader and a caller never has to ask which schema version it is holding.
 #
 # `height_m` is the load-bearing one. Every image-to-3D model emits a unit-cube-normalised mesh, so
@@ -678,7 +678,7 @@ def validate_biome(biome):
     man = biome_manifest(biome)
     warnings = []
 
-    # Models. A GENERATED pack (meta.generated) has a real importer as of G3
+    # Models. A GENERATED pack (meta.generated) has a real importer as of the asset gate
     # (`core.gen_assets.import_generated`), so its entries are checked rather than dismissed. A
     # hand-authored biome's models block is still inert: scatter uses the block-out proxies, and
     # the note says so rather than validating a dead path as if it were live.
