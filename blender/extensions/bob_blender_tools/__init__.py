@@ -1509,19 +1509,19 @@ def _draw_comfy_service(layout):
         row.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
 
 
-# Panel Pipeline panel order (docs/CONVENTIONS.md, panel UX conventions, + Paths per docs/SPLINES.md
-# 5): World=0, Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via
-# bl_order so the N-panel teaches the terrain -> paths -> scatter -> shade sequence regardless of
-# registration order, driven by the World quality setting. The dev/agent Bridge is demoted to a
-# collapsed Advanced panel (decision B): it should not greet an artist first, but stays in the tab
-# for when an agent needs the live socket.
+# Panel order (docs/CONVENTIONS.md, panel UX conventions): World=0, Biome=1, Terrain=2, Paths=3,
+# Scatter=4, Foliage=5, Shaders=6, Atmosphere=7, Advanced=8. Set via bl_order so the N-panel teaches
+# the pipeline sequence regardless of registration order. Advanced is LAST and every other panel's
+# order is unique, because two panels sharing a bl_order fall back to registration order, which the
+# suite does not control. The dev/agent Bridge lives in this collapsed panel rather than greeting an
+# artist first, but stays in the tab for when an agent needs the live socket.
 class BBT_PT_panel(Panel):
     bl_label = "Advanced"
     bl_idname = "BBT_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 7
+    bl_order = 8
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

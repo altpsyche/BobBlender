@@ -5,10 +5,16 @@ landscape choice and five knobs into an eroded heightfield. `SYSTEMS.md` covers 
 Blender-side `heightmap_terrain` build that displaces a grid by the baked PNG; this
 covers how the PNG is made.
 
-The engine lives in the venv package `tools/core/heightfields/` (numpy on CPU,
-CuPy on GPU, no bpy), so it stays extractable as a standalone library. Blender drives
-a bake by subprocess to the venv (`python -m core.heightfields`); the panel and
-the MCP `bake_heightfield` tool are the two front doors.
+The engine is the single committed compute copy inside the extension, at
+`blender/extensions/bob_blender_tools/core/heightfields/` (numpy on CPU, CuPy on GPU, scipy
+either way, no bpy and no PIL), so it stays extractable as a standalone library and there is no
+venv duplicate to drift. That is the single-compute rule; see [ROADMAP.md](ROADMAP.md) for the
+constraints that keep it extractable.
+
+Blender bakes it **in-process**. Three front doors reach the same `pipeline.bake`: the Terrain
+panel, the MCP `bake_heightfield` tool (which bakes in the MCP process), and the CLI. A
+sandboxed Blender whose own Python cannot run the compute falls back to the dev venv by
+subprocess, which is a fallback rather than the path.
 
 ## The filter stack
 
@@ -241,11 +247,15 @@ one.
 
 ### CLI
 
+```sh
+uv run --project tools python -m bobtools.hf_cli --out /abs/height.png --knobs-file knobs.json
+uv run --project tools python -m bobtools.hf_cli --out /abs/height.png --params-file params.json
+uv run --project tools python -m bobtools.hf_cli --backends   # available backends as JSON
 ```
-python -m core.heightfields --out /abs/height.png --knobs-file knobs.json
-python -m core.heightfields --out /abs/height.png --params-file params.json
-python -m core.heightfields --backends        # print available backends as JSON
-```
+
+`bobtools.hf_cli` is the venv entry: it puts the sole compute copy on `sys.path` and then runs
+`heightfields.__main__`. With that core dir already on the path, `python -m heightfields` with the
+same flags is the same CLI.
 
 - `--knobs-file` is flat knobs (`preset` + `relief`/`detail`/`erosion`/`warp`/`seed`/
   `size`), expanded via `build_params`; a knobs file may also carry an explicit `stack`,
@@ -261,8 +271,8 @@ python -m core.heightfields --backends        # print available backends as JSON
 `View3D > N > BobBlenderTools > Terrain`. Two ways to author:
 
 1. Preset + knobs (default): pick a Landscape preset, then turn Relief / Detail /
-   Erosion / Warp / Seed under Sculpt. `Bake + Build Terrain` bakes the heightfield in
-   the venv (GPU) and builds the displaced mesh in place. Mesh Density is decoupled from
+   Erosion / Warp / Seed under Sculpt. `Bake + Build Terrain` bakes the heightfield
+   in-process and builds the displaced mesh in place. Mesh Density is decoupled from
    the bake resolution (the heightmap keeps full detail for shading; the mesh needs only
    enough vertices for the silhouette).
 2. Filter Stack (advanced): toggle "Use custom stack", "Load <preset>" to pull the
@@ -276,7 +286,8 @@ landform, not a faster path to the final. The `--preview` CLI flag and
 
 ### MCP
 
-The `bake_heightfield` tool (`tools/bobtools/mcp/mcp_server.py`) bakes in the venv:
+The `bake_heightfield` tool (`blender/extensions/bob_blender_tools/mcp_agent/server.py`) bakes in
+the MCP process, on numpy or on CuPy if the machine has it:
 
 ```
 bake_heightfield(out_file, params={size, seed, backend, preset?, relief, detail,
@@ -330,10 +341,11 @@ noise directly in nodes; it is not part of the heightfield erosion pipeline.)
 - Resolution-independent: generation is world-sampled and erosion uses physical
   stream-power exponents, so a preview and a full bake are the same landform. Author at
   low res, commit at high.
-- GPU or CPU: CuPy CUDA when present (and ROCm with a cupy-rocm build), else numpy. The
-  venv is Python 3.14, where compiled noise libraries have no wheels, so the noise is
-  hand-rolled numpy. `backend.select` honours `BOB_HF_BACKEND`, then the caller's
-  preference, then GPU-first auto order.
+- GPU or CPU: CuPy CUDA when present (and ROCm with a cupy-rocm build), else numpy. The noise is
+  hand-rolled numpy because the compute has to import under both interpreters it runs in --
+  Blender's bundled Python 3.13 and the dev venv's 3.14 -- and a compiled noise library has wheels
+  for neither. `backend.select` honours `BOB_HF_BACKEND`, then the caller's preference, then
+  GPU-first auto order.
 
 ## Cache
 
@@ -362,7 +374,7 @@ hash matches the existing sidecar is a no-op that returns the cached stats.
 | `heightfields/backend.py` | CPU/GPU backend selection |
 | `heightfields/cache.py` | resolved-recipe params hash + source fingerprint |
 | `heightfields/io.py` | 16-bit PNG read/write + sidecar |
-| `heightfields/__main__.py` | CLI entry (subprocess bake from Blender) |
+| `heightfields/__main__.py` | CLI entry (venv and scripted bakes; also the Blender subprocess fallback) |
 | `heightfields/erode.py` | legacy CPU thermal/stream-power helpers (compat shim only) |
 
 ## Extending
@@ -374,8 +386,6 @@ hash matches the existing sidecar is a no-op that returns the cached stats.
   in `SELECTORS`.
 - Add a preset: add a stack to `presets.STACKS`, a row to `presets.DISPLAY`, and its name
   to `presets.FAMILIES`, then rerun `gen_panel_presets.py`.
-</content>
-</invoke>
 
 ## Open questions
 

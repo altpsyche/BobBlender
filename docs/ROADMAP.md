@@ -14,10 +14,12 @@ Two subsystems are meant to become their own repos without a rewrite: the terrai
 and the Blender authoring side behind MCP. That stays cheap only while these hold, and each one is a
 thing to check in review rather than an aspiration:
 
-- **`core/heightfields/` imports numpy, scipy and Pillow, plus optional CuPy. No `bpy`, no MCP, no
-  config.** Absolute paths in, files out. That is the whole reason it is extractable, and it is why the
-  compute lives in the extension and is never copied into a venv: **one committed source**, shared by
-  the in-Blender path and the venv golden tests, so there is no duplicate to drift.
+- **`core/heightfields/` imports numpy and scipy, plus optional CuPy. No `bpy`, no MCP, no config,
+  and no PIL** — the 16-bit PNG codec is pure numpy plus `zlib` precisely because the compute runs
+  inside Blender's bundled Python, which ships no PIL. Absolute paths in, files out. That is the
+  whole reason it is extractable, and it is why the compute lives in the extension and is never
+  copied into a venv: **one committed source**, shared by the in-Blender path and the venv golden
+  tests, so there is no duplicate to drift.
 - **`core/` imports only `bpy`.** No MCP, no venv code.
 - **The framework (contracts, executors, bridge, MCP server) knows each subsystem only through op
   models and file artifacts**, never internals.
@@ -109,9 +111,13 @@ On a non-destructive rebuild, **restore only the knobs the op did not explicitly
 re-sends `density` wins, because the op is the intent; a knob the op leaves at its default keeps the
 artist's sidebar tweak. Without that split, re-sent params would silently no-op.
 
-The Blender 5.2 fact underneath it: **a Nodes modifier has no IDProperties at all**, so knob values
-live on the node group interface socket's `default_value` — per object, since each build owns its
-group. Snapshot and restore operate there, never on `mod[id]`.
+The Blender 5.2 fact underneath it: **a Nodes modifier has no IDProperties at all** (`mod.keys()`
+and `mod["Socket_1"]` both raise), so a knob's live value lives on the modifier's own input
+interface, `mod.properties.inputs.<identifier>.value` — per object, since each build owns its group.
+Snapshot and restore operate **there**, never on `mod[id]` and never on the node group interface
+socket's `default_value`: that default only seeds a fresh modifier bind, and editing it after the
+build does not re-evaluate. Restoring to the wrong one of the two silently drops every knob the
+artist tuned.
 
 One thing this does not remove: a **contract change still needs an MCP server reconnect**, because the
 server parses `contracts.py` at startup. That is the tools-side half of a two-sided reload.

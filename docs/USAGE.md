@@ -90,13 +90,14 @@ to a wet autumn evening, render it".
 Start the bridge in the **Advanced** panel (**Start**), click **Copy MCP Config**, paste that into
 your client, connect. Full setup in [MCP.md](MCP.md).
 
-Fourteen tools. Nine work with no ComfyUI at all:
+Eighteen tools. Ten work with no ComfyUI at all:
 
 | Tool | What it does |
 |------|--------------|
 | `build_live` | Apply a list of ops to the **open** Blender session. What you watch happen in the viewport. |
 | `build` | Apply the same ops into a headless `.blend` file instead. No Blender window needed. |
 | `render_scene` | Render the live session (or a saved `.blend`) to an image and return the path, so the agent can see its own result. |
+| `describe_scene` | Read the live session back: objects and their modifier stacks, materials and which texture maps resolve, curves, collections, the world state, the pack search path. The one tool that mutates nothing. |
 | `bake_heightfield` | Bake and erode a terrain heightfield PNG. Runs in the MCP process on numpy, or CuPy if the machine has it. |
 | `list_biomes` | Every biome on the search path and what each one builds: terrain, which scatter kinds, world. |
 | `list_library_assets` | The asset packs and biomes found, including the bundled block-out pack. |
@@ -104,7 +105,7 @@ Fourteen tools. Nine work with no ComfyUI at all:
 | `create_project` | Scaffold a new project folder. |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, which workflows are installed. Never fails. |
 
-Seven more need a local ComfyUI:
+Eight more need a local ComfyUI:
 
 | Tool | What it does |
 |------|--------------|
@@ -115,8 +116,9 @@ Seven more need a local ComfyUI:
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. **MCP only; there is no panel button for this.** |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. A pitch frame, not geometry. |
+| `comfy_free` | Ask ComfyUI to hand the card back, and report how much it actually gave. Reach for it between a generate and a Cycles render. It only drops what ComfyUI's main process will release, which on the measured case is about 100 MiB of a 7.3 GB hold, and it says so rather than pretending. |
 
-With no server the seven return `{"ok": false, "error": "...not reachable..."}` and the nine are
+With no server the eight return `{"ok": false, "error": "...not reachable..."}` and the ten are
 unaffected.
 
 Each generation tool hands back the op that consumes its result, ready to send: `comfy_mesh`

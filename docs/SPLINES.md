@@ -15,7 +15,7 @@ Homes:
   `inspect_river`).
 - Recipes: `blender/extensions/bob_blender_tools/core/geonodes/recipes/curve_overlay.py` (terrain carve + masks),
   `curve_water.py` (water ribbon), `scatter_along.py` (instances along a curve).
-- Material hooks: `blender/extensions/bob_blender_tools/core/materials.py` (`apply_curve_surface`, `apply_curve_wet`,
+- Material hooks: `blender/extensions/bob_blender_tools/core/materials/` (`apply_curve_surface`, `apply_curve_wet`,
   `water_material` / `water_master_group`, `enable_eevee_refraction`).
 
 ## 1. What a typed curve is

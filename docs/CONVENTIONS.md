@@ -84,8 +84,11 @@ The BobBlenderTools N-panel suite follows one design language. When adding or ed
 keep to it:
 
 - Order along the pipeline with `bl_order`, not registration: World 0, Biome 1, Terrain 2,
-  Paths 3, Scatter 4, Shaders 5, Atmosphere 6, Advanced 7. A one-line overview at the top of
-  World names the sequence (panel labels stay plain, no stage numbers).
+  Paths 3, Scatter 4, Foliage 5, Shaders 6, Atmosphere 7, Advanced 8. A one-line overview at the
+  top of World names the sequence (panel labels stay plain, no stage numbers). Every order is
+  unique: two panels sharing one fall back to registration order, which the suite does not control.
+  A new panel inserted mid-pipeline renumbers the ones after it, here and in the panel lists in
+  [ARCHITECTURE.md](ARCHITECTURE.md) and [API.md](API.md).
 - Native identity. Reflect the active thing (active object/material, active emitter/layer),
   never a panel-local name or duplicate target pointer.
 - Use the shared helpers in `ui/helpers.py` so the language stays consistent: `context_header`

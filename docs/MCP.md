@@ -97,6 +97,7 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `build` | Build ops into a headless `.blend`. | a resolvable Blender binary |
 | `bake_heightfield` | Generate + erode a terrain heightfield PNG. | `numpy` (CPU); CuPy on the machine for GPU |
 | `render_scene` | Render the live session (or a headless `.blend`) to an image; returns the path. | the bridge, or a Blender binary for `base_file` |
+| `describe_scene` | Read the live session back: objects, modifier stacks, materials and which maps resolve, curves, collections, world, packs. Mutates nothing. See [Reading the scene back](#reading-the-scene-back). | the bridge |
 | `comfy_status` | Is ComfyUI reachable, on what device, free VRAM, queue depth, shipped workflows. | — (reports "not reachable" rather than failing) |
 | `comfy_texture_set` | Prompt to a seamless PBR texture set in the generated pack. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_bark_set` | A bark set, measured for grain DIRECTION as well as tiling. Name it what a species preset asks for and every tree of that species wears it. | a local ComfyUI + an SDXL checkpoint |
@@ -105,6 +106,7 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. | a local ComfyUI + TRELLIS.2 |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. | a local ComfyUI + SDXL ControlNets |
+| `comfy_free` | Ask ComfyUI for the card back and report what it actually recovered (`POST /free` only drops the main process's cache: about 100 MiB of a 7.3 GB hold, measured). Names restarting the server when that is not enough. | a local ComfyUI |
 
 The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonodes`,
 `make_proxies`), shading (`shade_terrain`, `apply_shader`, `snow_shell`), biome

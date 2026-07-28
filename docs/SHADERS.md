@@ -3,8 +3,11 @@
 The authored surface-material system. It gives every object a strong, art-directable
 material and makes that material obey the shared world state (snow, wet, frost, season,
 temperature). This doc describes what the code does today. The code is the source of truth:
-`blender/extensions/bob_blender_tools/core/materials.py` (the material engine, all node-group builders) and
-`blender/extensions/bob_blender_tools/ui/shaders.py` (the Shaders N-panel).
+`blender/extensions/bob_blender_tools/core/materials/` (the material engine, all node-group
+builders; a package split on coupling seams into `shared`, `volumes`, `weather`, `water`, `terrain`,
+`surface`, `texset`, and re-exported from its `__init__` so callers keep
+`from ..core.materials import X`) and `blender/extensions/bob_blender_tools/ui/shaders.py` (the
+Shaders N-panel).
 
 Naming follows `CONVENTIONS.md`: shared shader node groups are `S_<Effect>`, wrapper
 materials are `M_<Surface>`. The auto-cached Firmament volume/particulate materials keep the

@@ -237,10 +237,11 @@ One addon, one `BobBlenderTools` N-panel tab. Names follow the umbrella brand: o
 
 ### Panels (pipeline order via `bl_order`)
 
-World (0), Biome (1), Terrain (2), Paths (3), Scatter (4), Shaders (5), Atmosphere (6), Advanced
-(7, collapsed: the MCP bridge, Reload Builders, Rescan Asset Packs). Internally: `ui/` holds the
-panels (`world`, `firmament`, `scatter`, `shaders`, `splines`, shared `helpers`), `bridge/` the
-socket `server`, `core/` the builders; `__init__.py` is thin (register, prefs, terrain-bake ops).
+World (0), Biome (1), Terrain (2), Paths (3), Scatter (4), Foliage (5), Shaders (6), Atmosphere (7),
+Advanced (8, collapsed: the MCP bridge, Reload Builders, Rescan Asset Packs). Internally: `ui/`
+holds the panels (`world`, `firmament`, `foliage`, `scatter`, `shaders`, `splines`, shared
+`helpers`), `bridge/` the socket `server`, `core/` the builders; `__init__.py` is thin (register,
+prefs, terrain-bake ops).
 
 ### Scene state (`bbt_*` PointerProperties)
 

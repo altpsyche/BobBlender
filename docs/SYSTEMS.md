@@ -98,7 +98,7 @@ the bake tool and the Blender side only.
 
 ### Baking the heightfield (tool: `bake_heightfield`)
 
-`core.heightfields`, a pure venv subpackage. A preset is a filter STACK, an
+`core.heightfields`, the extension's bpy-free compute subpackage. A preset is a filter STACK, an
 ordered op list evaluated by `engine.run_stack`: a generator (noise, dunes,
 voronoi, strata) establishes the base, later ops erode and shape it. Five curated
 global knobs (Relief, Detail, Erosion, Warp, Seed) modulate a copy of the active
@@ -123,8 +123,8 @@ on the CLI) to also emit flow and wetness sidecar PNGs; off by default.
 
 Presets are starting points: pass `"preset": "<name>"` in params and override
 fields. From a script, `core.heightfields.bake(abs_path, params, preview=...)`
-is the same entry; the CLI is `python -m core.heightfields --out X.png
---params-file p.json` (also `--knobs-file`, `--preview`, `--maps`, `--backends`).
+is the same entry; the CLI is `uv run --project tools python -m bobtools.hf_cli --out
+X.png --params-file p.json` (also `--knobs-file`, `--preview`, `--maps`, `--backends`).
 
 After a re-bake, send a `reload_image` op so the open session picks up the new
 pixels (see below), then rebuild `heightmap_terrain`.
@@ -132,9 +132,9 @@ pixels (see below), then rebuild `heightmap_terrain`.
 ### From Blender: the Terrain panel
 
 The BobBlenderTools sidebar (View3D > N > BobBlenderTools) has a "Terrain" panel
-with a Bake + Build Terrain button. It bakes in the tools venv (so Blender's own
-Python does not need numpy or CuPy), reloads the image, and builds the terrain
-object in place. The panel is part of the extension, so picking up a code change to
+with a Bake + Build Terrain button. It bakes in-process (Enable Compute installs scipy,
+and CuPy for an NVIDIA card, into Blender's own Python), reloads the image, and builds
+the terrain object in place. The panel is part of the extension, so picking up a code change to
 it means re-enabling the addon or restarting Blender, not Reload Builders.
 
 Panel features:

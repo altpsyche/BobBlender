@@ -35,19 +35,28 @@ server and executors run in the `tools/.venv` (Python 3.14). They never import
 each other; they communicate with JSON. Shared settings live in `bob.toml`,
 which both interpreters read.
 
-## BobBlenderMCP: one core, swappable executors
+## BobBlenderTools: one core, swappable executors
+
+Both halves ship inside `blender/extensions/bob_blender_tools/`. The split is not repo folders; it
+is which interpreter a module imports under. The agent side runs in whatever Python the MCP client
+spawns (Pydantic, no `bpy`); the Blender side runs in Blender's bundled Python (`bpy`, no MCP).
 
 ```
-contracts (Pydantic ops, validated in the venv)
-      |  JSON
-      v
-tools/bobtools (venv, no bpy)             blender/ (bpy, no mcp)
-  mcp/contracts.py    op vocabulary         core/            builders
-  mcp/executor.py     headless executor -->  core/heightfields/  terrain compute (single source)
-  mcp/bridge.py       live executor          runners/          headless entry
-  mcp/mcp_server.py   MCP tools              extensions/bob_blender_tools  the addon
-  bobtools/comfyui.py re-export only  ---->  core/comfy{,_jobs,_maps}.py
+agent side (no bpy)                        Blender side (bpy, no mcp)
+  mcp_agent/contracts.py   op vocabulary     core/                builders
+  mcp_agent/server.py      MCP tools         core/dispatch.py     op -> builder
+  mcp_agent/executor.py    headless exec -->  runners/             headless entry
+  mcp_agent/bridge.py      live exec     -->  bridge/server.py     the live socket
+                                             core/heightfields/   terrain compute (single source)
+                                             core/comfy{,_jobs,_maps,_ws}.py  the ComfyUI client
+
+tools/ (dev venv only, in-repo convenience)
+  bobtools/mcp_launch.py   `bob-mcp` launcher for the in-repo server
+  bobtools/hf_cli.py       venv CLI for a bake (puts the sole compute copy on sys.path)
+  bobtools/comfyui.py      re-export of core/comfy.py, never a second copy
 ```
+
+Contracts are validated on the agent side, where agent input enters, and JSON crosses to Blender.
 
 Same single-source rule as the terrain compute, for the same reason: the ComfyUI client is
 stdlib only and lives in the extension, because Blender's bundled Python has no `httpx`.
@@ -103,7 +112,7 @@ addon, one `BobBlenderTools` N-panel tab, with the capabilities as sibling panel
 MCP is one capability here, not the roof.
 
 Internally the three concerns are separated: `ui/` holds the panels (`world`,
-`firmament`, `scatter`, `shaders`, `splines`, and shared `helpers`), `bridge/` holds the
+`firmament`, `foliage`, `scatter`, `shaders`, `splines`, and shared `helpers`), `bridge/` holds the
 live socket `server`, and `core/` is the builder library. A thin `__init__.py` does only
 register/unregister, addon prefs, and the terrain-bake operators. Every intra-package
 import is relative, so the folder is self-contained and importable under both the live
@@ -151,11 +160,12 @@ artists on CUDA 13 + Steam without a venv get CPU until the cu13 CUDA wheels shi
 The tab is ordered along the pipeline so the N-panel teaches the workflow (full plan and
 rationale in `CONVENTIONS.md`, panel UX conventions): **World** (the shared `bbt_env`, promoted out of Firmament),
 **Biome** (the one-action way to stand up a whole scene), **Terrain**, **Paths** (BobSplines
-typed curves), **Scatter**, **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/
-weather), and a collapsed **Advanced** panel (the MCP Bridge, demoted from the artist's entry
-point). Order is set by `bl_order`, not registration (World 0, Biome 1, Terrain 2, Paths 3,
-Scatter 4, Shaders 5, Atmosphere 6, Advanced 7); a one-line overview at the top of World names
-the sequence.
+typed curves), **Scatter**, **Foliage** (BobFoliage, authoring right after the Scatter stage that
+routes there), **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/weather), and a
+collapsed **Advanced** panel (the MCP Bridge, demoted from the artist's entry point). Order is set
+by `bl_order`, not registration (World 0, Biome 1, Terrain 2, Paths 3, Scatter 4, Foliage 5,
+Shaders 6, Atmosphere 7, Advanced 8), and every value is unique because a tie falls back to
+registration order; a one-line overview at the top of World names the sequence.
 
 Suite-wide principles, implemented once in `ui/helpers.py` (a context-header helper, a
 structural-action marker with a shared icon + "rebuilds:" note, and a preset row):
@@ -255,9 +265,13 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   converted asset's own UV-mapped maps into; the AO socket is filled from the asset's arm map AO
   channel. Anti-tiling ships as `_macro_break` (a low-frequency world-noise macro brightness
   break-up, live `Macro Amount` / `Macro Scale`, `0` = off) plus per-instance Object Info Random.
-  A triplanar sampler and a `library/textures/<name>/` texture-set loader are the texture-set work
-  (the folders and their `SOURCE.txt` files exist; no code samples them yet), so terrain layers
-  are solid tints for now.
+  The texture-set sampler ships as `core/materials/texset.py`: one shared `S_TexSet` group,
+  INSTANCED per layer, turns a `<pack>/textures/<set>/` set into the map values the masters already
+  accept, so six textured layers cost the fold maths once rather than six times. The `Triplanar`
+  toggle is Blender's own box projection on the image node, per material rather than per layer, and
+  terrain projects from OBJECT coordinates because a GN grid has no UV layer. A layer with no set
+  assigned is still a solid tint; a set whose maps do not resolve on disk is refused rather than
+  reported as applied.
 - Coverage has one authority: `S_Weather` reads the `snow_cover` attribute where the
   Firmament GN pass ran (the terrain) and computes a shader-side fallback with the exact
   SYSTEMS.md formula everywhere else (scattered assets, plain meshes). A per-material Use
@@ -303,11 +317,11 @@ the design and slice records. All bpy-only, so a `BobBlenderShaders` split stays
   reader `assets.biome_manifest()` that returns `{meta, models, terrain, scatter, world}` and maps a
   v1 flat manifest ({kind:[files]}) onto it (reserved keys meta/models/terrain/scatter/world; any
   other top-level list is a legacy model kind). `meta` carries attribution (`source`, `license`);
-  `terrain` names the layer tints, `scatter` is a per-kind recipe, `world` a `bbt_env` preset;
-  `validate_biome()` flags the common authoring mistakes. The real-glTF import path (`import_gltf`,
-  `populate_scatter_assets`, `biome_models`) and the `verdant_trail` biome were removed, so the
-  `models` section is back-compat only and never loaded, and terrain layers are solid tints (no
-  texture-set feature). The canonical biome is a procedural block-out (`library/models/blockout`,
+  `terrain` names each layer's preset plus an optional texture set, `scatter` is a per-kind recipe,
+  `world` a `bbt_env` preset; `validate_biome()` flags the common authoring mistakes. The real-glTF
+  import path (`import_gltf`, `populate_scatter_assets`, `biome_models`) and the `verdant_trail`
+  biome were removed, so the `models` section is back-compat only and never loaded; a layer that
+  names no texture set is a solid tint. The canonical biome is a procedural block-out (`library/models/blockout`,
   `meta.proxy=true`): proxy props from `core.proxies`, solid terrain, no external files. Whole-biome
   assembly is its own top-level **Biome** panel, driven by `world_apply_biome` (button "Build
   Biome"), which composes existing builders in order and stops on a cancelled step: terrain
