@@ -1,6 +1,6 @@
 """Albedo to texture-set maps, in numpy, plus the PNG IO the round trip needs.
 
-Map derivation is Bob's, not the graph's (docs/COMFYUI.md, track A): deterministic, tunable, no
+Map derivation is Bob's, not the graph's (docs/GENERATION.md, the texture family): deterministic, tunable, no
 submodule, and it reuses the numpy that `core/heightfields` already depends on. This module is
 bpy-free and imports nothing but the stdlib and numpy, so the venv, the headless scripts, and a
 future MCP tool all drive the same code.
@@ -19,11 +19,11 @@ master reads a cavity file, so writing one would be work nothing loads. Metallic
 shipped set has one and
 nature surfaces are dielectric). The normal map IS written even though neither master carries a
 normal socket today (BobFirmament drives relief from a bump instead, see core/materials/texset.py): it is
-part of the texture-set contract and track B needs it, and an unread file costs 0.1 s.
+part of the texture-set contract and the mesh-texturing family needs it, and an unread file costs 0.1 s.
 
 The macro-mask gate added one derivation that is not part of a texture set: `macro_field` / `macro_from`, the terrain
-macro mask (track E). It reuses the luminance and the box blur the five maps already share and takes
-the LOW side of the same cutoff, which is why track E needed no module of its own.
+macro mask (the macro-heightmap family). It reuses the luminance and the box blur the five maps already share and takes
+the LOW side of the same cutoff, which is why the macro-heightmap family needed no module of its own.
 
 BobFoliage added two more that are not derivations at all. `grain_report` MEASURES the dominant
 gradient axis, because bark needs a direction and `seam_report` only measures continuity. And the
@@ -65,7 +65,7 @@ HEIGHT_LOWPASS_FRACTION = 1.0 / 32.0
 # Cavity is the same idea at a much smaller radius: the crevice, not the boulder.
 CAVITY_FRACTION = 1.0 / 128.0
 
-# The macro mask (track E) is the SAME split read from the other side: keep the low frequency and
+# The macro mask (the macro-heightmap family) is the SAME split read from the other side: keep the low frequency and
 # throw the detail away. A twelfth of the image is the coarsest cutoff that still resolves a
 # separate massif and a separate basin in one frame; anything finer starts handing the erosion stack
 # structure it would rather generate itself (the bit-depth floor).
@@ -198,8 +198,8 @@ def _box_blur(a, radius, wrap=True):
     radius.
 
     `wrap=True` wraps at both edges, so blurring a seamless tile leaves it seamless, and it is the
-    default because every track A map is a tile. `wrap=False` replicates the edge instead, for the
-    one signal that is NOT a tile: a terrain macro mask (track E), where wrapping would bleed the
+    default because every the texture family map is a tile. `wrap=False` replicates the edge instead, for the
+    one signal that is NOT a tile: a terrain macro mask (the macro-heightmap family), where wrapping would bleed the
     far side of the landform into this one and put a phantom massif on the opposite border.
     """
     if radius < 1:
@@ -269,9 +269,9 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
     This is `relief()`'s other half and not a new idea: relief keeps `lum - lowpass(lum)` because a
     texture's information is its detail, and this keeps `lowpass(lum)` because a landform's
     information is its large scale. Same luminance, same box blur, the opposite side of one cutoff,
-    which is the honest answer to whether track E needed its own derivation module. It did not.
+    which is the honest answer to whether the macro-heightmap family needed its own derivation module. It did not.
 
-    Two differences from the track A maps, and both are because a terrain tile is not a texture
+    Two differences from the the texture family maps, and both are because a terrain tile is not a texture
     tile. The blur does NOT wrap (see `_box_blur`), and the result is percentile-stretched to fill
     0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering where
     0 is the basin floor and 1 is the highest ground, not as a signed displacement.

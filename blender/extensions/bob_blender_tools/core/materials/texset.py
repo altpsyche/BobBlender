@@ -4,7 +4,7 @@ accept, plus the wrapper-side plumbing that instances it per terrain layer.
 
 Why one shared group. A set is up to four images and a terrain carries six layer slots, so the
 naive graph is thirty image nodes plus six copies of the same fold maths, against EEVEE's
-sampler budget (docs/COMFYUI.md R14). Here the fold maths lives once in S_TexSet and is
+sampler budget (docs/GENERATION.md R14). Here the fold maths lives once in S_TexSet and is
 INSTANCED per layer (one node in the material, whatever the maths costs), and image texture
 nodes are created only for the layers that actually carry a set.
 

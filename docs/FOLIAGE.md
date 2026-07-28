@@ -17,7 +17,7 @@ shot hides a trunk behind four hundred others and every defect F6 fixed lives in
 tree.
 
 **Origin.** Raised out of
-[COMFYUI.md's Foliage section](COMFYUI.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
+[GENERATION.md's Foliage section](GENERATION.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
 which was written after the redwood-scene run of 2026-07-27 put the foliage limit in front of a
 camera instead of in a gate table. That section is the evidence; this is the answer to it. D16
 closed the near-term half (say out loud that generation makes trunks, not crowns) and left the
@@ -1140,7 +1140,7 @@ cannot survive. The writer therefore swaps in plain Principleds built from the s
 (`gen_assets.baked_material`, split out of `apply_baked_material` for this caller), which is both
 the fix and the honest thing: it is what the export would have flattened to anyway, said out loud.
 A gate that crashes AFTER printing its verdict reads as a clean run to an exit code, which is how
-the G2 gate hid a crash for two phases ([COMFYUI.md](COMFYUI.md)), so this is not a workaround.
+the G2 gate hid a crash for two phases ([GENERATION.md](GENERATION.md)), so this is not a workaround.
 
 ## 5. Phases
 

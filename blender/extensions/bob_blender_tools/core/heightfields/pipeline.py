@@ -28,7 +28,7 @@ from .params import AMPLIFY_PREVIEW, PREVIEW_SIZE
 def _stack_for(params: dict) -> list:
     """The op stack to run: an explicit `stack`, else resolve `preset` + global knobs.
 
-    A `macro` entry (a prompted macro mask, docs/COMFYUI.md track E) composes onto EITHER, because
+    A `macro` entry (a prompted macro mask, docs/GENERATION.md, the macro heightmap) composes onto EITHER, because
     this is the one place a bake resolves its stack and the alternative is a silent no-op: a caller
     that hands over both a resolved stack and a macro -- which is what the MCP tool does, since
     `presets.get()` returns a params dict with the stack already in it -- would otherwise have its

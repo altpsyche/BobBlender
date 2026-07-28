@@ -11,7 +11,7 @@ mcp_agent/__main__.py; the Advanced panel's "Copy MCP Config" button prints the 
 
 Tools cover reading asset packs, listing and creating projects, building geometry
 (headless, or into the open Blender session), and the ComfyUI generation surface
-(docs/COMFYUI.md). Keep any destructive operation behind an explicit, obvious name.
+(docs/GENERATION.md). Keep any destructive operation behind an explicit, obvious name.
 
 The `comfy_*` tools run HERE rather than crossing the bridge, because generation needs no bpy: they
 are HTTP against a local ComfyUI, and only the step that applies a result to a scene is an op. Every
@@ -38,7 +38,7 @@ def _slugify(name: str) -> str:
     return slug
 
 
-# -- The ComfyUI half (docs/COMFYUI.md) ------------------------------------------------------
+# -- The ComfyUI half (docs/GENERATION.md) ------------------------------------------------------
 def _comfy():
     """The stdlib ComfyUI client from the extension's `core/`, imported lazily.
 
@@ -113,7 +113,7 @@ def comfy_free() -> dict:
     """Ask ComfyUI to give the card back, and report honestly how much it actually gave.
 
     The tool to reach for between a generate and a Cycles render, and after a generate that failed on
-    VRAM. It is not a fix for D15 (docs/COMFYUI.md) and does not pretend to be: `POST /free` only
+    VRAM. It is not a fix for D15 (docs/GENERATION.md) and does not pretend to be: `POST /free` only
     drops what ComfyUI's MAIN process will release, the generation workers are separate processes
     that cannot reuse that cache, and on the measured case it recovers about 100 MiB of a 7.3 GB
     hold. When that is not enough this says so and names the thing that does work -- restarting the
@@ -377,7 +377,7 @@ def comfy_paint_mesh(
     texture_size: int = 1024,
     subject: str | None = None,
 ) -> dict:
-    """Texture a mesh you already have, in its own UVs (track B, the PBR route).
+    """Texture a mesh you already have, in its own UVs (the mesh-texturing family, the PBR route).
 
     Takes a local mesh file (GLB / OBJ / PLY / STL), uploads it, generates a reference image from the
     prompt unless you pass one, and returns a textured GLB with base colour, roughness, metallic and
@@ -695,7 +695,7 @@ def bake_heightfield(
     # A preset's params dict arrives with its stack ALREADY resolved, so `macro` has to be composed
     # onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
     # and is idempotent, which is why this tool passes the key straight through instead of calling
-    # `params.with_macro` here and risking a second application (docs/COMFYUI.md, G5 correction 12).
+    # `params.with_macro` here and risking a second application (docs/GENERATION.md, G5 correction 12).
 
     try:
         out_abs = str(paths.resolve_output(out_file))

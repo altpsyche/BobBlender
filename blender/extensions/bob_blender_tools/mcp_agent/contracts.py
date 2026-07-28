@@ -189,7 +189,7 @@ class SnowShell(BaseModel):
     object: str  # the surface to shell (needs a snow_cover pass to read thickness)
 
 
-# Generation, the Blender half (docs/COMFYUI.md, Ops and MCP). The ComfyUI half needs no bpy and is
+# Generation, the Blender half (docs/GENERATION.md, Ops and MCP). The ComfyUI half needs no bpy and is
 # the comfy_* TOOLS in server.py, which talk HTTP directly; these three ops are the steps that do
 # need Blender. The terrain macro mask deliberately has no op: it reaches a bake as the `macro` key
 # of bake_heightfield's params, which every bake path already takes.

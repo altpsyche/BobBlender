@@ -662,8 +662,8 @@ asset joins.
   The only main-thread cost is the bpy part of a press: one glTF write for a block-out, one render
   for Stylise.
 
-Setup, model downloads and licensing are in [COMFYUI.md](COMFYUI.md), the phase-by-phase measurement
-record is in [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md), and the per-model terms are in
+Setup, model downloads and licensing are in [GENERATION.md](GENERATION.md), the phase-by-phase measurement
+record is in [GENERATION-BASELINES.md](GENERATION-BASELINES.md), and the per-model terms are in
 [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md). Licensing is worth reading before you download
 20 GB of weights: models are your download, output licensing follows the model, and two of the
 routes use models that are not permissive.
@@ -771,8 +771,8 @@ More MCP-specific cases are in [MCP.md](MCP.md).
 | Biome manifests and authoring | [BIOME-SYSTEM.md](BIOME-SYSTEM.md) |
 | Driving Blender from an agent | [MCP.md](MCP.md) |
 | The op vocabulary, field by field | [API.md](API.md) |
-| Generation: setup, workflows, limits | [COMFYUI.md](COMFYUI.md) |
-| Generation: the measurement record | [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md) |
+| Generation: setup, workflows, limits | [GENERATION.md](GENERATION.md) |
+| Generation: the measurement record | [GENERATION-BASELINES.md](GENERATION-BASELINES.md) |
 | Why generated trees are trunks, and the plan for crowns | [FOLIAGE.md](FOLIAGE.md) |
 | Model and node pack licensing | [THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md) |
 | How the code is organised | [ARCHITECTURE.md](ARCHITECTURE.md) |

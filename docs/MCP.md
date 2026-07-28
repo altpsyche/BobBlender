@@ -72,7 +72,7 @@ The server is repo-free and reads its locations from the environment (set them i
 | `BOB_ASSET_PACKS` | `os.pathsep`-separated asset-pack folders (models/biomes + texture sets). | add-on prefs + bundled block-out |
 | `BOB_GENERATED` | The generated pack the `comfy_*` tools write into and the Blender side reads back. Set it when generating, or the two halves can disagree about where an asset landed. | `<workdir>/packs/generated` |
 | `BOB_COMFY_URL` | The local ComfyUI server the `comfy_*` tools talk to. | `http://127.0.0.1:8188` |
-| `BOB_COMFY_DIR` | The ComfyUI checkout, so a mesh can be copied into `<comfy>/input/3d`. **Required by every tool that uploads a MESH** (`comfy_paint_mesh`, and `comfy_mesh` on the `staged` and `alt` routes): the HTTP fallback returns a relative path and the TRELLIS.2 nodes run in an isolated worker that cannot resolve one, so without it those calls fail with "Mesh file not found". Not needed by the default route, which uploads only an image, nor by `comfy_mesh(control_bbox=...)`, which uploads nothing. `control_mode="voxel"` uploads a mesh like `"point"` does and needs it too (measured at G9), so the bbox control is the ONLY block-out route that runs without it. **It also binds the local Omni weights**, so without it a block-out call keeps the graph's portable HuggingFace id and starts a 13.5 GB download instead of failing (measured at G8). | none |
+| `BOB_COMFY_DIR` | The ComfyUI checkout, so a mesh can be copied into `<comfy>/input/3d`. **Required by every tool that uploads a MESH** (`comfy_paint_mesh`, and `comfy_mesh` on the `staged` and `alt` routes): the HTTP fallback returns a relative path and the TRELLIS.2 nodes run in an isolated worker that cannot resolve one, so without it those calls fail with "Mesh file not found". Not needed by the default route, which uploads only an image, nor by `comfy_mesh(control_bbox=...)`, which uploads nothing. `control_mode="voxel"` uploads a mesh like `"point"` does and needs it too (measured by the voxel gate), so the bbox control is the ONLY block-out route that runs without it. **It also binds the local Omni weights**, so without it a block-out call keeps the graph's portable HuggingFace id and starts a 13.5 GB download instead of failing (measured by the bbox gate). | none |
 | `BOB_BLENDER` | Blender executable for the headless `build`. | known install locations, then PATH |
 | `BOB_BRIDGE_HOST` / `BOB_BRIDGE_PORT` | Live bridge socket. | `127.0.0.1` / `9876` |
 
@@ -259,7 +259,7 @@ the far end. Both are single flags:
 
 ## A prompted scene over MCP (generation)
 
-Needs a local ComfyUI (see [COMFYUI.md](COMFYUI.md)); with none of it, every other example above
+Needs a local ComfyUI (see [GENERATION.md](GENERATION.md)); with none of it, every other example above
 still works. Check `comfy_status()` first. Two flows, and both are measured end to end in
 `tools/scripts/headless_gen_agent_surface.py`.
 
@@ -322,12 +322,12 @@ Two more notes:
   generated asset keeps the silhouette and footprint of the object you placed.
 - **The same op also returns `bbox`, and that is the weaker control.** `comfy_mesh(control_bbox=...)`
   conditions on the proxy's three proportions instead of its surface, uploads nothing and saves about
-  7 s. G8 measured it against the mesh control on three block-outs: footprint IoU **0.5766** against
+  7 s. Measured against the mesh control on three block-outs: footprint IoU **0.5766** against
   **0.9200**, so use the path unless you cannot. Where you cannot is the case worth knowing: with no
   `BOB_COMFY_DIR` set, the mesh control fails at the node and the bbox control still works.
 - **There are three control modes and the mesh path serves two of them.** `control_mode` picks which:
   `"point"` samples the proxy's surface (the default, and the best ground plan) and `"voxel"`
-  quantises it to a 16-cubed occupancy grid. Measured over G8 and G9 on the same three block-outs,
+  quantises it to a 16-cubed occupancy grid. Measured on the same three block-outs,
   footprint IoU is **point 0.9106, voxel 0.8507, bbox 0.5766**. Voxel is worth naming when the call
   is time-bound and the proxy is COMPACT: it runs 19% faster (29.0 s warm against 36.0 s) and matches
   the point route on a boulder-shaped block-out, while losing ground on a thin one, because a cell is
@@ -344,7 +344,7 @@ independently:
 - **Op-contract change** (a new op, or new fields in `mcp_agent/contracts.py`) — reconnect the
   MCP server: `/mcp reconnect bobblendermcp`, or restart the client. Restarting Blender alone does
   not reload the contract; `build_live` will reject the new op tag until the server reconnects.
-- **Tool-signature change** (a new argument on a `comfy_*` tool, such as G9's `control_mode`) --
+- **Tool-signature change** (a new argument on a `comfy_*` tool, such as `control_mode` when the voxel mode arrived) --
   reconnect for the same reason: the client caches the tool schema it was given, so a new argument
   is invisible until it asks again. No Blender-side reload, because nothing in the extension moved.
 

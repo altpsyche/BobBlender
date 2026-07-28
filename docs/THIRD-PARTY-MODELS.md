@@ -8,7 +8,7 @@ non-commercial.
 **BobBlenderTools ships no weights and no node code.** The extension zip contains workflows
 (`assets/workflows/*.json`) and Python; every model here is downloaded by the artist, into their own
 ComfyUI install, from the source named below. That is what keeps every model licence out of Bob's
-distribution question entirely (docs/COMFYUI.md, Licensing obligations, item 1).
+distribution question entirely (docs/GENERATION.md, Licensing obligations, item 1).
 
 **Output licensing follows the model that produced it.** A texture set's `SOURCE.txt` and a generated
 mesh's sidecar JSON both record the model and its licence, so when a generated pack is shared the
@@ -22,7 +22,7 @@ names the upstream source to confirm it against; those are marked **upstream**.
 
 ## Models
 
-Sizes are apparent size on disk. "Route" names the workflows (docs/COMFYUI.md, the workflow
+Sizes are apparent size on disk. "Route" names the workflows (docs/GENERATION.md, the workflow
 catalogue) that reference the model, so a licence term can be traced to the feature that carries it.
 
 | Model | Source | Licence | Size | Route |
@@ -31,7 +31,7 @@ catalogue) that reference the model, so a licence term can be traced to the feat
 | **TRELLIS-image-large** (sparse-structure decoder only) | `microsoft/TRELLIS-image-large` | MIT (**upstream**) | inside the 15 GB above | pulled by `pipeline.json` as one component of the TRELLIS.2 pipeline |
 | **BiRefNet** | `ZhengPeng7/BiRefNet` | MIT (**upstream**) | 424 MB | `mesh_subject`'s background cutout (`Trellis2RemoveBackground`) |
 | **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | `mesh_geom_ctrl`, **`mesh_geom_bbox`** and **`mesh_geom_voxel`**, the three block-out control routes (point cloud, bounding box, occupancy grid). One checkpoint serves all three: the mode is a conditioning branch inside `OmniEncoder`, not a separate download |
-| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | `mesh_geom`, the zero-install geometry smoke test; **`mesh_geom_alt`**, the `alt` geometry route measured at G7 |
+| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | `mesh_geom`, the zero-install geometry smoke test; **`mesh_geom_alt`**, the `alt` geometry route measured by the geometry A/B |
 | **Hunyuan3D-2mv** | `hunyuan3d-dit-v2-mv_fp16.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 4.6 GB | `mesh_geom_mv`, multi-view geometry |
 | **RealVisXL V5.0** (fp16) | `SG161222/RealVisXL_V5.0` | OpenRAIL++ (**upstream**) | 6.5 GB | every raster route: `tex_tileable`, `tex_tileable_ref`, `tex_upres`, `mesh_subject`'s reference image, `stylize_render`, `stylize_render_est`, `mesh_paint_views`, `heightmap_macro` |
 | **CLIP-ViT-H-14-laion2B-s32B-b79K** | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` | MIT (**upstream**) | 2.4 GB | `tex_tileable_ref` and `mesh_paint_views`, as the IPAdapter vision encoder |
@@ -61,14 +61,14 @@ catalogue) that reference the model, so a licence term can be traced to the feat
 
    Where this lands: **`mesh_geom_ctrl` and `mesh_geom_bbox` (block-out control), `mesh_geom` (smoke test), `mesh_geom_mv` (multi-view) and `mesh_geom_alt` (the
    `alt` geometry route)**. Nothing else, and none of the five is a default. That is now a decision with
-   numbers rather than a happy accident: G7 measured Hunyuan 2.1 as **2.1x faster on solids** and the
+   numbers rather than a happy accident: the geometry A/B measured Hunyuan 2.1 as **2.1x faster on solids** and the
    only one of the two that closes every shell, and the default still did not move, because a default
    an artist in the EU, the UK or South Korea may not use is worth more than 46 seconds an asset
-   (docs/COMFYUI-MEASUREMENTS.md, G7). TRELLIS.2 is MIT and stays primary, so every default route in
+   (docs/GENERATION-BASELINES.md, the geometry A/B). TRELLIS.2 is MIT and stays primary, so every default route in
    this integration is usable in those territories.
 
 2. **Depth Anything V2 Large is CC-BY-NC-4.0: non-commercial.** It is used by **`stylize_render_est` alone**, the
-   estimated stylise route. G4 measured that the estimated route and the real-passes route are within
+   estimated stylise route. The stylise gate measured that the estimated route and the real-passes route are within
    the estimator's own error of each other, which cuts both ways: `stylize_render_est` is a genuine alternative, and
    it is also genuinely skippable. A commercial project should use **`stylize_render`** (Bob's own depth and
    normal passes, which are Blender output and carry no model licence at all) and never load `stylize_render_est`.
@@ -105,12 +105,12 @@ Three things about that table are worth stating rather than leaving in a cell.
 **`ComfyUI-Hy3D-Omni` ships no licence at all.** No `LICENSE`, no `COPYING`, no licence field in a
 `pyproject.toml`. So its terms are unstated, which under copyright means **no licence is granted**,
 not that it is public domain. It is also the least maintained dependency in the integration and the
-one that shipped with the control signal silently random (docs/COMFYUI-MEASUREMENTS.md, G4c). It is used by `mesh_geom_ctrl`,
+one that shipped with the control signal silently random (docs/GENERATION-BASELINES.md, the control gate). It is used by `mesh_geom_ctrl`,
 `mesh_geom_bbox` and `mesh_geom_voxel` and by nothing else. Treat all three as in-house tools until upstream states a licence.
-G8 read the same pack again while adding `mesh_geom_bbox` and **G9 read it a third time while adding `mesh_geom_voxel`**: still
+The bbox gate read the same pack again while adding `mesh_geom_bbox` and **the voxel gate read it a third time while adding `mesh_geom_voxel`**: still
 no `LICENSE`, no `COPYING`, no licence field, same commit `e513cd0`, and no push since 2025-10-03.
 Three of Bob's routes now sit on an unlicensed wrapper, which is worth stating plainly rather than
-letting the count grow quietly: G9 added the third and the entry says so, because "the pack already
+letting the count grow quietly: the voxel gate added the third and the entry says so, because "the pack already
 carries two" is not a reason it should carry three.
 
 **`ComfyUI-GeometryPack` is GPL-3.0, and the plan said otherwise.** Revision 13's licensing section

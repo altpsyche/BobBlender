@@ -1,6 +1,6 @@
 """One worker thread, one timer tick, and a job registry that does not outlive a file load.
 
-A texture set is tens of seconds and a mesh plus paint is minutes (docs/COMFYUI.md, Bob-side
+A texture set is tens of seconds and a mesh plus paint is minutes (docs/GENERATION.md, Bob-side
 constraint 2), so the generation call cannot sit on the UI thread. The shape here is the one that
 survives Blender's threading model rather than the one that looks concurrent:
 

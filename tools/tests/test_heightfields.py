@@ -627,7 +627,7 @@ def test_gpu_bake_deterministic(tmp_path):
     assert np.array_equal(a, b)
 
 
-# The macro mask (docs/COMFYUI.md track E): an image as the stack's first input.
+# The macro mask (docs/GENERATION.md, the macro heightmap): an image as the stack's first input.
 
 def _mask_png(path, n=256, seed=1, bits=8):
     """A synthetic macro mask: one broad dome, written the way the shipped route writes one."""

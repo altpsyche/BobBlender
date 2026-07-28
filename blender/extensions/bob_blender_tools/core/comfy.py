@@ -1,6 +1,6 @@
 """Stdlib-only ComfyUI client, preflight, and the texture-set recipe that uses them.
 
-Two Python worlds share this file (docs/COMFYUI.md, Bob-side constraint 1): `bpy` runs on
+Two Python worlds share this file (docs/GENERATION.md, Bob-side constraint 1): `bpy` runs on
 Blender's bundled interpreter, which has no `httpx`, and the tools venv has its own. So the client
 is `urllib.request` and `json` only and lives HERE, inside the extension, as the single source --
 the same shape `core/heightfields` already uses. Nothing in this module imports `bpy`, so the
@@ -467,7 +467,7 @@ def preflight_vram(route="mesh", url=None, free_first=True):
         return result["after"]
     raise ComfyError(
         f"not enough free VRAM for the {route} route: {result['after']} MiB free, {need} MiB "
-        f"needed. This is the VRAM-handback rule (docs/COMFYUI.md): generation and rendering in one session deadlock "
+        f"needed. This is the VRAM-handback rule (docs/GENERATION.md): generation and rendering in one session deadlock "
         f"on a card neither gives back. {result['advice']}".strip())
 
 
@@ -1484,7 +1484,7 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
     return set_name, info
 
 
-# -- Generated meshes (track C, ComfyUI half) --------------------------------------------------
+# -- Generated meshes (the mesh-generation family, ComfyUI half) --------------------------------------------------
 # Everything below runs on the worker thread and touches no bpy. It gets a raw generated GLB into
 # `<pack>/_staging/<variant>/`; turning that into a scattered BobShader asset is `core.gen_assets`,
 # which needs Blender and owns pipeline steps 6 to 8.
@@ -1668,7 +1668,7 @@ def mesh_geom_texture(image_path, out_path, *, seed=0, tier="default", faces=400
     `Trellis2RasterizePBR` bakes the PBR into the budget mesh's own charts.
 
     What it does NOT produce is a dense mesh, so there is no high-poly surface left to bake a detail
-    normal or AO from. That is the whole trade the route A/B measured; the numbers are in docs/COMFYUI.md.
+    normal or AO from. That is the whole trade the route A/B measured; the numbers are in docs/GENERATION.md.
     """
     graph, prov = load_workflow(workflow)
     resolution = MESH_TIERS.get(tier, tier)
@@ -1756,7 +1756,7 @@ def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, s
                    on_progress=None, on_queued=None, preflight_graph=True):
     """`mesh_geom_ctrl`: a block-out proxy plus a reference image to a mesh that keeps the block-out's shape.
 
-    The one route in track C whose input is a mesh Bob already has rather than a picture of one, and
+    The one route in the mesh-generation family whose input is a mesh Bob already has rather than a picture of one, and
     the only one whose OUTPUT ORIENTATION means anything, so two Bob-side rules travel with it:
 
     - `control_path` MUST be unit-normalised. `core.gen_assets.export_control` is that round trip.
@@ -1903,7 +1903,7 @@ MESH_CONTROL_MODES = ("point", "voxel")
 # The default is measured rather than assumed, and the control-ordering question's answer is no: eight corners do not replace
 # 8,192 points. The bbox gate ran both on the same three block-outs the control gate used, off the same conditioning image,
 # scored with no rotation search against each block-out's own self-agreement ceiling. Full numbers in
-# docs/COMFYUI.md; the short version:
+# docs/GENERATION.md; the short version:
 #
 #   footprint IoU, which is what "drops into a layout" reduces to: point 0.9200 against bbox 0.5766,
 #     i.e. 98.8% to 101.0% of each ceiling against 50.1% to 70.8%. The bbox route saves 7 s an asset.
@@ -2226,7 +2226,7 @@ def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4
 #   "alt"     `mesh_subject` -> `mesh_geom_alt` -> `mesh_process` -> `mesh_texture`. The same shape with Hunyuan 2.1 as the geometry model.
 #
 # The route A/B measured both on ten prompts and the one-shot route won, which is why it is the default. Short
-# version, full numbers in docs/COMFYUI.md: a wash on wall clock (593 s against 584 s for all ten),
+# version, full numbers in docs/GENERATION.md: a wash on wall clock (593 s against 584 s for all ten),
 # both 10/10 inside the face budget with the same UV quality, a lower VRAM peak, and two things that
 # decided it. It returns a far cleaner mesh (10 to 662 boundary edges against 1,467 to 3,050 on the
 # same prompts, with foliage openness and thinness preserved to within 1%), and it cannot hit the
@@ -2235,7 +2235,7 @@ def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4
 # the baked normal at a 4,000-face budget, which is what the plan assumed it was for.
 #
 # "staged" stays wired and is not dead code: it is the only route that leaves a dense mesh on disk
-# for a future higher-budget or hero path, and `mesh_texture` on its own is still track B, texturing a mesh Bob
+# for a future higher-budget or hero path, and `mesh_texture` on its own is still the mesh-texturing family, texturing a mesh Bob
 # already has. `mesh_geom_texture` can only texture geometry it generated itself.
 #
 # "alt" is the geometry A/B grid's challenger and it stays wired for the same kind of reason: it is the only
@@ -2252,7 +2252,7 @@ DEFAULT_ASSET_ROUTE = "oneshot"
 #
 # It is EMPTY, and that is a decision with numbers behind it rather than an unfinished table. The geometry A/B ran
 # ten prompts through both models off one shared subject each, with `Trellis2ProcessMesh` and its
-# `remesh` setting identical on both sides. Full numbers in docs/COMFYUI.md; the short version:
+# `remesh` setting identical on both sides. Full numbers in docs/GENERATION.md; the short version:
 #
 #   foliage (5 prompts, remesh off): TRELLIS.2, decisively. Median 15.0 s against 31.3 s, peak
 #     4,964 MiB against 9,620, and 2.9x the boundary edges (median 984 against 344) because the
@@ -2377,13 +2377,13 @@ def stage_exports(staged):
     return {"raw": base, "simplified": base + 1, "textured": base + 2}
 
 
-# -- Stylised renders and painted meshes (track D, and track B stylised) -------------------------
+# -- Stylised renders and painted meshes (the look-dev stylise family, and the mesh-texturing family stylised) -------------------------
 # One graph shape serves both, which is why `stylize_render` is built first and `mesh_paint_views` grows out of it: a per-view
 # restyle IS a stylised render that happens to be one of six. The difference is the IPAdapter
 # reference `mesh_paint_views` carries so the views agree on a palette, and the lower denoise that keeps the real
 # render dominant (the projection-route finding).
 #
-# Two hint routes, and the whole point of track D is that the first one exists:
+# Two hint routes, and the whole point of the look-dev stylise family is that the first one exists:
 #   "passes"    `stylize_render`, Blender's TRUE depth and normal passes, exported by core.gen_views
 #   "estimated" `stylize_render_est`, Depth Anything V2 plus NormalBAE reading the render itself
 # The estimated route is not a fallback nobody wants: it is the control the real-passes claim is
@@ -2552,7 +2552,7 @@ def texture_chain(route=None):
     return paint_views if (route or DEFAULT_TEXTURE_ROUTE) == "stylised" else mesh_texture
 
 
-# -- Terrain macro mask (track E) -------------------------------------------------------------
+# -- Terrain macro mask (the macro-heightmap family) -------------------------------------------------------------
 # `heightmap_macro`'s prompt suffix, and the same argument as PROMPT_SUFFIX and SUBJECT_SUFFIX: the failure mode
 # is silent and costs a whole generation, so the clause that prevents it is not the artist's job to
 # remember. Here the failure is a picture OF a mountain instead of a plan view of one.
@@ -2589,8 +2589,8 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
                     on_progress=None, on_queued=None, invert=False, keep_source=False):
     """Generate one terrain macro mask and write it to `out_path`. Returns info.
 
-    The whole Bob half of track E is these twenty lines plus one op, because the mask is derived by
-    the SAME normalise-then-write path track A's height channel takes (`comfy_maps`): a generated
+    The whole Bob half of the macro-heightmap family is these twenty lines plus one op, because the mask is derived by
+    the SAME normalise-then-write path the texture family's height channel takes (`comfy_maps`): a generated
     image, one cutoff of its luminance, one 8-bit PNG. What differs is which side of the cutoff is
     kept, and that is one constant (`comfy_maps.MACRO_LOWPASS_FRACTION`).
 

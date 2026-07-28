@@ -82,7 +82,7 @@ finish callbacks), so swapping the four-graph chain for the one-shot one was a c
 same shape carries the texturing decision (`comfy.texture_chain()`: native PBR or the stylised paint
 route). The split matters for threading as much as for tidiness: the whole ComfyUI chain runs on
 the worker in one job, and the Blender half runs once in that job's main-thread callback, so a
-five-minute generation never blocks a frame. Full plan and measurements: `docs/COMFYUI.md`.
+five-minute generation never blocks a frame. Full plan and measurements: `docs/GENERATION.md`.
 
 - The op vocabulary (`contracts.py`) is validated where agent input enters, so
   the Blender side trusts clean JSON and needs no extra deps.

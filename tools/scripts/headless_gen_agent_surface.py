@@ -312,7 +312,7 @@ def part_c(args, reachable: bool) -> dict:
         return {}
 
     # The bake takes the mask through the `macro` key the tool handed back, which is the whole reason
-    # track E needed no new op.
+    # the macro-heightmap family needed no new op.
     t0 = time.time()
     baked = server.bake_heightfield(rel(OUT / "c_terrain.png"), params={
         "preset": "alpine", "size": 768, "seed": SEED, **macro["bake_params"]}, force=True)

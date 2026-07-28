@@ -761,7 +761,7 @@ class BBT_OT_shaders_generate_set(Operator):
             return {"CANCELLED"}
 
         # Everything below the closure runs on the worker thread: no bpy, no context, only the
-        # values captured here (docs/COMFYUI.md, Bob-side constraint 2).
+        # values captured here (docs/GENERATION.md, Bob-side constraint 2).
         def work(job):
             def variant_done(i, total, info):
                 job.report(f"variant {i}/{total}, seam {info['seam']['ratio']:.2f}")
@@ -1031,7 +1031,7 @@ def _draw_texture_set(layout, context, mat, index=None):
                                    note="rebuilds: this material's sampler nodes")
     op.index = index if terrain else -1
 
-    # Generate a set instead of picking one (docs/COMFYUI.md, track A). Same slot, same
+    # Generate a set instead of picking one (docs/GENERATION.md, the texture family). Same slot, same
     # assignment path, so a generated set is a texture set like any other from here on.
     slot = index if terrain else -1
     gen = layout.column(align=True)

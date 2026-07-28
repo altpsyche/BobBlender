@@ -124,7 +124,7 @@ def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.9
 def macro(h, xp, path=None, mix="replace", amount=1.0, smooth=0.02, invert=False, seed=0):
     """An IMAGE as the stack's macro base: read a mask PNG, resample it to the field, blur it, mix.
 
-    This is what a prompted macro mask enters the stack as (docs/COMFYUI.md track E). It is a
+    This is what a prompted macro mask enters the stack as (docs/GENERATION.md, the macro heightmap). It is a
     generator like the others, which is the whole point: the engine starts every stack from a zero
     field, so "feeding the op stack's first input" is exactly "being op 0", and everything after it
     -- fluvial incision, thermal relaxation, amplify -- treats the mask's landform as the macro it

@@ -98,7 +98,7 @@ def read_png(path):
 
     8 or 16 bits per sample, grey or RGB(A). Both depths, because the two things a heightfield reads
     are not the same file: a baked terrain is Bob's own 16-bit grey (`to_png16`), and a macro mask
-    (docs/COMFYUI.md track E) is whatever a diffusion model saved, which is 8-bit RGB. Alpha is
+    (docs/GENERATION.md, the macro heightmap) is whatever a diffusion model saved, which is 8-bit RGB. Alpha is
     dropped rather than composited: a mask has no background to composite over.
     """
     with open(path, "rb") as fh:

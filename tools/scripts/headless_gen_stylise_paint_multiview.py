@@ -557,7 +557,7 @@ def probe_image(graph, image_path, out_path, label):
     return out_path
 
 
-# -- Part A: track D ----------------------------------------------------------------------------
+# -- Part A: the look-dev stylise family ----------------------------------------------------------------------------
 def normal_convention(args):
     """The normal channel convention, checked on a sphere where the right answer is known.
 
@@ -616,11 +616,11 @@ def normal_convention(args):
 
 
 def part_a(args, reachable):
-    section("A. Track D: a Bob render, stylised under real passes against estimated ones")
+    section("A. The look-dev stylise family: a Bob render, stylised under real passes against estimated ones")
     normal_convention(args)
     scene = build_render_scene()
     started = time.time()
-    # transparent=False on purpose: track D makes a PITCH frame, so the sky belongs in it, and a
+    # transparent=False on purpose: the look-dev stylise family makes a PITCH frame, so the sky belongs in it, and a
     # silhouette test against an empty background would be trivially passed by black staying black.
     shot = gen_views.render_passes(GEN, "scene", camera=scene["camera"], resolution=RESOLUTION,
                                   samples=48, engine="BLENDER_EEVEE", transparent=False)
@@ -748,9 +748,9 @@ def part_a(args, reachable):
                   fh, indent=2, sort_keys=True, default=str)
 
 
-# -- Part B: track B stylised --------------------------------------------------------------------
+# -- Part B: the mesh-texturing family stylised --------------------------------------------------------------------
 def part_b(args, reachable):
-    section("B. Track B stylised: a turntable painted through mesh_paint_views, with seam and drift measured")
+    section("B. The mesh-texturing family stylised: a turntable painted through mesh_paint_views, with seam and drift measured")
     obj, source = paint_target()
     note("paint target", f"{obj.name} from {source}, {gen_assets.face_count(obj)} faces")
     views_dir = os.path.join(GEN, "views")

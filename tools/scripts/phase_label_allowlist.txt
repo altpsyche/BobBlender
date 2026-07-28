@@ -10,3 +10,4 @@
 # hide a future real hit that happens to sit on the same line.
 
 P3-SAM                  # Hunyuan3D-Part's segmentation model, an upstream name
+Direct3D-S2             # Microsoft's high-resolution SDF geometry model, an upstream name

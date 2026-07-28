@@ -1,4 +1,4 @@
-"""ComfyUI client and map-derivation tests (G1, docs/COMFYUI.md).
+"""ComfyUI client and map-derivation tests (G1, docs/GENERATION.md).
 
 Both modules are bpy-free, so they run in the venv directly, imported by path (inserting the core
 dir) to avoid the extension package's bpy-importing __init__ -- the same shape test_assets.py and
@@ -1135,7 +1135,7 @@ def test_converter_expands_a_dynamic_combo_into_its_selected_branch(converter):
                                      "target_face_count": 500000, "weld_digits": 4}
 
 
-# -- Tracks D and B stylised, plus multi-view (G4) ------------------------------------------------
+# -- The look-dev stylise family and B stylised, plus multi-view (G4) ------------------------------------------------
 def test_drop_node_removes_the_lora_and_rewires_its_consumers(mods):
     """The reason a LoRA is a graph EDIT and not a zero strength: `LoraLoader` still has to name an
     installed file, and no shipped default can know what is installed on this machine (R6)."""
@@ -1621,9 +1621,9 @@ def test_free_vram_survives_an_empty_two_hundred(mods, fake_server):
     assert "/free" in _Fake.calls
 
 
-# -- Track E: the terrain macro mask (`heightmap_macro`) ---------------------------------------------------
+# -- The macro-heightmap family: the terrain macro mask (`heightmap_macro`) ---------------------------------------------------
 def test_the_macro_mask_is_the_low_band_of_the_same_cutoff(mods):
-    """Track E needed no derivation module, and this is the reason: it is `relief()` read from the
+    """The macro-heightmap family needed no derivation module, and this is the reason: it is `relief()` read from the
     other side. Same luminance, same box blur, the opposite half of one split."""
     _comfy, maps = mods
     n = 192
@@ -1694,7 +1694,7 @@ def test_the_macro_route_is_a_value_and_the_open_one_drops_the_tiling(mods):
 
 
 def test_heightmap_macro_writes_an_eight_bit_mask_and_its_provenance(mods, monkeypatch, tmp_path):
-    """The whole Bob half of track E: one graph, one cutoff, one 8-bit PNG, one sidecar. 8-bit is the
+    """The whole Bob half of the macro-heightmap family: one graph, one cutoff, one 8-bit PNG, one sidecar. 8-bit is the
     decision R7 asked for and G5 measured, so the sidecar records the cutoff that makes it a mask."""
     comfy, maps = mods
     seen = {}

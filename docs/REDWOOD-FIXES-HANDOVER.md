@@ -3,7 +3,7 @@
 ## Where this picks up
 
 Repo `/home/siva/dev/BobBlender`, branch `main`. A previous session worked through the thirteen
-defects the redwood-scene run exposed (docs/COMFYUI.md, "What the redwood-scene run found
+defects the redwood-scene run exposed (docs/GENERATION.md, "What the redwood-scene run found
 (2026-07-27)"). Ten are landed and verified; three generation-track items, all the documentation
 moves, and the new foliage plan are not.
 
@@ -29,7 +29,7 @@ Verified green at handover: 23/23 checks in the headless probe, 213/213 in `tool
 
 ## What landed, and what the fix actually turned out to be
 
-Read this section for the root causes, because in four cases the diagnosis in COMFYUI.md named a
+Read this section for the root causes, because in four cases the diagnosis in GENERATION.md named a
 symptom whose cause was somewhere else.
 
 1. **Generated texture sets unreachable (item 3 in the doc's numbering).** Two stacked bugs.
@@ -103,7 +103,7 @@ the known gap below), which `headless_texset.py` does not do.
 
 ## Task 2: items 11 to 13, the generation track
 
-These are the three that did not land. All three stay in docs/COMFYUI.md.
+These are the three that did not land. All three stay in docs/GENERATION.md.
 
 - **D16, the foliage guardrail.** Three edits, all named in the doc's Foliage section: a one-line
   info row under the Scatter panel's `kind` selector (trees: "generates a trunk, not a crown"; the
@@ -126,7 +126,7 @@ These are the three that did not land. All three stay in docs/COMFYUI.md.
 
 ## Task 3: move items 1 to 9 to their owners' docs
 
-They are written up inside docs/COMFYUI.md, which is the wrong home — they belong to MCP.md,
+They are written up inside docs/GENERATION.md, which is the wrong home — they belong to MCP.md,
 SPLINES.md and the scatter docs. Move each one as a short note on the fixed behaviour (not as a
 defect report), and leave the generation-track ones (D15, D16, and items 12 and 13) where they are.
 Specifically:
@@ -142,7 +142,7 @@ Specifically:
 
 ## Task 4: docs/FOLIAGE.md, the new track
 
-Raised from docs/COMFYUI.md's "Foliage: what image-to-3D is for, and what it is not for". Write it
+Raised from docs/GENERATION.md's "Foliage: what image-to-3D is for, and what it is not for". Write it
 as its own plan document with that section as its origin. The shape, from that section:
 
 - **Trunk and main limbs**: a generated mesh (image-to-3D is good at bark) or a GN sweep along

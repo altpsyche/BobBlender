@@ -5,7 +5,7 @@ silhouette still OWNS the landform after Bob's erosion stack has run, and whethe
 landform at all rather than a blurred picture with slopes painted on it. So nothing here is scored
 by eye:
 
-  A. **The arithmetic, offline.** The derivation is one cutoff of the same luminance track A uses;
+  A. **The arithmetic, offline.** The derivation is one cutoff of the same luminance the texture family uses;
      the composition demotes the preset's own generator instead of being overwritten by it; the bake
      cache notices when a mask file changes under a name it has already seen; and the 8-bit budget is
      stated in levels and in metres before anything is generated. No server, always runs.

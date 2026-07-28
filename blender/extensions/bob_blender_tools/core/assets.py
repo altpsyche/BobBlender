@@ -88,7 +88,7 @@ _PREF_ROOTS = []
 
 # The generated-output pack (`<output>/packs/generated`), pushed in the same way and for the same
 # reason: the output folder is an addon preference and this module is bpy-free. Registered as a
-# search root so anything a generator writes (the ComfyUI track, docs/COMFYUI.md) shows up in the
+# search root so anything a generator writes (the ComfyUI track, docs/GENERATION.md) shows up in the
 # biome and texture-set pickers with no configuration step.
 _GENERATED_ROOT = None
 
@@ -253,7 +253,7 @@ def texture_set_dir(name):
 
 
 # A texture set names its files `<set>_<role>.<ext>`, which is what the Poly Haven sets on disk
-# already use and what the generated pack writes (docs/COMFYUI.md, Contracts). Roles are listed
+# already use and what the generated pack writes (docs/GENERATION.md, Contracts). Roles are listed
 # in no particular order; the sampler picks the ones it consumes.
 # `opacity` is the cutout matte a leaf atlas needs (BobFoliage F2/F3). It is resolved here rather
 # than in the sampler because it never reaches S_TexSet: alpha goes straight to the Principled, so
@@ -387,7 +387,7 @@ def _load_manifest(biome):
     return data if isinstance(data, dict) else {}
 
 
-# Defaults for the fields a GENERATED model entry carries (docs/COMFYUI.md, Contracts). They are
+# Defaults for the fields a GENERATED model entry carries (docs/GENERATION.md, Contracts). They are
 # defaulted here rather than read by a second loader, which is R11: `biome_manifest()` stays the
 # one normalising reader and a caller never has to ask which schema version it is holding.
 #

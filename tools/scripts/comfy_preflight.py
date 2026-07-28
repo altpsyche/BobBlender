@@ -1,4 +1,4 @@
-"""Preflight every shipped workflow against a ComfyUI server (docs/COMFYUI.md, Testing).
+"""Preflight every shipped workflow against a ComfyUI server (docs/GENERATION.md, Testing).
 
 The check that keeps local-only true over time rather than by intention: a graph pasted in
 from a community workflow can reach for a `comfy_api_nodes` class by accident, and the only place

@@ -1,6 +1,6 @@
 """Pipeline steps 6 to 8: what Blender does to a generated mesh to make it a Bob asset.
 
-ComfyUI generates. Blender retopologises, unwraps, bakes, LODs, scales, and packs (docs/COMFYUI.md
+ComfyUI generates. Blender retopologises, unwraps, bakes, LODs, scales, and packs (docs/GENERATION.md
 The division of labour). The division is not a preference: a generated mesh is a dense unit-cube-normalised triangle
 soup, and every property that makes it usable in a world -- a real height, an origin on the ground,
 a face budget, a UV layout something can be baked into, a BobShader -- is added here.
@@ -256,7 +256,7 @@ def import_glb(path, name=None, orient=None):
 def unit_normalise_export(obj, path):
     """Export a COPY of `obj` normalised into the unit cube, and return what the trip back needs.
 
-    This is the mandatory half of track B that the pack install found the hard way. `Trellis2EncodeMesh`
+    This is the mandatory half of the mesh-texturing family that the pack install found the hard way. `Trellis2EncodeMesh`
     voxelises in unit-cube space; a 4.7 m block-out proxy lands entirely outside the grid, the
     encoder sees nothing, and the result is a fully black albedo with no error anywhere.
 
@@ -307,7 +307,7 @@ def unit_normalise_export(obj, path):
 #    degrees away from its target. Nothing errors: a misaligned bake still writes a non-flat normal
 #    map, which is why the asset gate asset checks passed over it. `prepare_low` now brings both into one
 #    frame, and the route A/B's "the dense mesh bought no measurable normal detail" is a conclusion that has to
-#    be re-measured before it is trusted (docs/COMFYUI.md, the control gate).
+#    be re-measured before it is trusted (docs/GENERATION.md, the control gate).
 EXPORT_TURN = ("X", 90.0)
 
 
@@ -1367,7 +1367,7 @@ def export_control_op(op: dict) -> dict:
     The one op in this group whose output is an INPUT to generation: an agent exports a proxy it
     placed, then passes the returned path to `comfy_mesh(control=...)`, and the generated asset keeps
     the silhouette and footprint the layout was composed around (the control gate). No new exporter is involved --
-    it is the same unit-cube round trip track B already owned -- so the whole op is a path and a
+    it is the same unit-cube round trip the mesh-texturing family already owned -- so the whole op is a path and a
     height.
 
     It also returns `bbox`, the proxy's three proportions, which is the OTHER control mode's whole

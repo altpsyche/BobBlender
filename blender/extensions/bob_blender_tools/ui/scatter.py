@@ -217,7 +217,7 @@ class BBT_ScatterProps(PropertyGroup):
     active: IntProperty(default=0)
     summary: StringProperty(default="")
 
-    # Generate Asset (docs/COMFYUI.md track C). Scatter-grade by default and the panel says so;
+    # Generate Asset (docs/GENERATION.md, mesh generation). Scatter-grade by default and the panel says so;
     # `gen_hero` swaps Decimate for Quadriflow and doubles the bake resolution.
     gen_prompt: StringProperty(
         name="Prompt", default="",

@@ -477,7 +477,7 @@ def _export_materials(copy, params, stem):
     is the Mix Shader chain (`_wire_translucency` mattes a Translucent against a Transparent and
     mixes that into the Principled) that the exporter's tree walk cannot survive. A gate that
     crashed after printing its verdict would read as a clean run to an exit code, which is exactly
-    how the G2 gate hid a crash for two phases (docs/COMFYUI.md), so this is a fix and not a
+    how the G2 gate hid a crash for two phases (docs/GENERATION.md), so this is a fix and not a
     workaround.
 
     Slots are replaced IN PLACE and slot 0 (the base mesh's empty implicit slot, which no face

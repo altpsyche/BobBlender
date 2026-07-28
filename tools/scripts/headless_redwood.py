@@ -1,4 +1,4 @@
-"""Headless gate for the thirteen defects the redwood-scene run exposed (docs/COMFYUI.md).
+"""Headless gate for the thirteen defects the redwood-scene run exposed (docs/GENERATION.md).
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/headless_redwood.py

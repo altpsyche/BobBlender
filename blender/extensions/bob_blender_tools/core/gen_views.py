@@ -1,9 +1,9 @@
 """Renders that carry their own geometry: a beauty frame plus TRUE depth and normal passes.
 
-This is the half of tracks D and B that only Blender can do (docs/COMFYUI.md, the retopology tier rule/the projection-route finding). A depth
+This is the half of the look-dev stylise family and B that only Blender can do (docs/GENERATION.md, the retopology tier rule/the projection-route finding). A depth
 estimator guesses a relative depth from pixels; Blender already knows the metric one, and it knows
 the surface normal exactly rather than inferring it from shading. Handing ComfyUI those two passes
-is the entire reason track D exists, and `mesh_paint_views`'s per-view restyle rests on the same three files.
+is the entire reason the look-dev stylise family exists, and `mesh_paint_views`'s per-view restyle rests on the same three files.
 
 **Not the compositor.** Blender 5.2 replaced `Scene.node_tree` with a compositing NODE GROUP, and
 its `CompositorNodeOutputFile` writes one multilayer EXR whatever the per-item format says, which
@@ -400,7 +400,7 @@ def frame_radius(obj, lens, sensor_width, fill=0.82):
 def _flat_world(strength=1.6):
     """A uniform white environment: the closest a render gets to lit-by-nothing.
 
-    The same argument `tex_tileable`'s flat-lighting prompt suffix makes (docs/COMFYUI.md, family 1): a colour
+    The same argument `tex_tileable`'s flat-lighting prompt suffix makes (docs/GENERATION.md, the texture family): a colour
     map with baked lighting is unusable and no amount of Bob-side maths removes it. A projection
     paint takes the render's PIXELS as albedo, so a sun's terminator would be painted into the
     texture and lit a second time at render.

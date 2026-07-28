@@ -199,7 +199,7 @@ class BBT_AddonPreferences(AddonPreferences):
         col.prop(self, "comfy_repo")
         col.prop(self, "comfy_reserve_vram")
         # The licensing obligation, at the point an artist decides to download 20 GB of weights
-        # (docs/COMFYUI.md, Licensing obligations item 2). BobBlenderTools ships no weights, so the
+        # (docs/GENERATION.md, Licensing obligations item 2). BobBlenderTools ships no weights, so the
         # terms are the artist's; the two that are not permissive are named here rather than left in
         # a file nobody opens. Full table in docs/THIRD-PARTY-MODELS.md.
         note = col.column(align=True)
@@ -265,7 +265,7 @@ def _output_dir():
 
 def _generated_pack_dir():
     """`<output>/packs/generated`, the asset pack generated data is written into: texture sets
-    under `textures/<set>/`, meshes under `models/<kind>/` (docs/COMFYUI.md, Bob-side constraint
+    under `textures/<set>/`, meshes under `models/<kind>/` (docs/GENERATION.md, Bob-side constraint
     4). Created with its `pack.json` on register rather than on first write, so it is a real,
     discoverable pack from the start and accepted output shows up in the pickers with no
     configuration step."""
@@ -689,7 +689,7 @@ class BBT_HeightfieldProps(PropertyGroup):
     ops: CollectionProperty(type=BBT_TerrainOp)
     active_op: IntProperty(name="Active op", default=0)
 
-    # Generate Base (docs/COMFYUI.md track E): a prompted low-frequency MACRO MASK as the op
+    # Generate Base (docs/GENERATION.md, the macro heightmap): a prompted low-frequency MACRO MASK as the op
     # stack's first input. Not a terrain generator, and the panel says so in those words: the mask
     # decides where the massif and the basin are, and the erosion stack still makes every slope.
     macro_prompt: StringProperty(
@@ -1206,7 +1206,7 @@ class BBT_UL_terrain_ops(UIList):
                  icon="CHECKBOX_HLT" if item.enabled else "CHECKBOX_DEHLT")
 
 
-# ComfyUI service surface (docs/COMFYUI.md, UI placement). Lives in the collapsed Advanced panel
+# ComfyUI service surface (docs/GENERATION.md, UI placement). Lives in the collapsed Advanced panel
 # beside the MCP Bridge rather than in a top-level panel of its own: it is plumbing, and an artist
 # who never generates anything should not have to scroll past it.
 #
@@ -1300,7 +1300,7 @@ class BBT_OT_comfy_start(Operator):
         venv = os.path.join(repo, "venv", "bin", "python")
         python = venv if os.path.isfile(venv) else "python3"
         # No `--disable-dynamic-vram` here, deliberately. That flag does fix the copied-VAE segfault
-        # this fork has (docs/COMFYUI.md, G6 and D14), but it costs the whole install its dynamic
+        # this fork has (docs/GENERATION.md, G6 and D14), but it costs the whole install its dynamic
         # weight staging, which is what lets a 16 GB card hold a model larger than its free VRAM.
         # Bob avoids the crash at its own end instead, by asking for circular padding IN PLACE and
         # undoing it before anything that must not wrap (`comfy.TILING_COPY_MODE`,
@@ -1353,7 +1353,7 @@ class BBT_OT_comfy_stop(Operator):
 
 
 class BBT_StyliseProps(PropertyGroup):
-    """The three things a stylised look-dev frame needs (docs/COMFYUI.md track D).
+    """The three things a stylised look-dev frame needs (docs/GENERATION.md, look-dev stylise).
 
     Three, not ten: the ControlNet strengths, the sampler and the negative prompt are values in
     `core/comfy.py` because they have measured defaults, and Strength is the one knob that genuinely
@@ -1480,7 +1480,7 @@ def _draw_comfy_service(layout):
     row.operator("bob_blender_tools.comfy_start", icon="PLAY")
     row.operator("bob_blender_tools.comfy_stop", icon="PAUSE")
 
-    # Track D lives here rather than in a panel of its own: it makes a pitch frame, not scene data,
+    # The look-dev stylise family lives here rather than in a panel of its own: it makes a pitch frame, not scene data,
     # so nothing downstream in the suite reads it and no pipeline stage owns it.
     stylise = bpy.context.scene.bbt_stylise
     col = layout.column(align=True)
@@ -1546,7 +1546,7 @@ class BBT_PT_panel(Panel):
 def _draw_generate_base(layout, hf):
     """Generate Base, inside the Terrain panel rather than in a panel of its own: it is an INPUT to
     the bake below it, and the caption says mask because a row labelled "generate terrain" beside a
-    terrain generator would be read as a competing one (docs/COMFYUI.md track E, R7)."""
+    terrain generator would be read as a competing one (docs/GENERATION.md, the macro heightmap, R7)."""
     from .ui.scatter import _comfy_reachable_cached
 
     state = _comfy_reachable_cached()

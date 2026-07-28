@@ -1,8 +1,9 @@
 """Projection painting: N stylised views back into one UV texture, and the numbers that say so.
 
-The Blender half of the `mesh_paint_views` style-control paint route (docs/COMFYUI.md family 3, the retopology tier rule/the projection-route finding). ComfyUI
-restyles each turntable view; everything here is Bob's, because Blender already rasterises and
-projects better than a bundled CUDA rasteriser would, which is the projection-route finding's whole argument.
+The Blender half of the `mesh_paint_views` style-control paint route (docs/GENERATION.md, mesh
+painting and finishing). ComfyUI restyles each turntable view; everything here is Bob's, because
+Blender already rasterises and projects better than a bundled CUDA rasteriser would, which is the
+projection-route finding's whole argument.
 
 Three steps, all numpy:
 
@@ -337,7 +338,7 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
     """Project `images` (one per view) onto `obj`'s UVs and write a texture set into `out_dir`.
 
     Returns {"maps": {role: path}, "report": {...}}. Roughness, normal, height and AO come from the
-    same numpy derivation track A uses, which is honest for a stylised nature asset: the paint model
+    same numpy derivation the texture family uses, which is honest for a stylised nature asset: the paint model
     returns a colour, not a PBR set, and metallic is zero on everything this makes.
     """
     gbuf = uv_gbuffer(obj, size=size)
