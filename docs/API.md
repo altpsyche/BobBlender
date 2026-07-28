@@ -84,6 +84,14 @@ caller set, and **`None` means "not asked for"** — the Blender side skips it r
 zero. Values out of range are clamped by the property definitions. See
 [SPLINES.md](SPLINES.md#8-driving-from-mcp) for what each one shapes.
 
+**`location` and `collection` are `params`, not op fields.** Every recipe accepts them and
+`build_geonodes` acts on them itself, on a rebuild as well as a first build:
+`{"params": {"location": [-5, 29, -4.1]}}` stands the build somewhere, and
+`{"params": {"collection": "BOB_Assets_Trees"}}` puts it in a scatter pool instead of the scene.
+They live in `params` rather than in the contract so a recipe that needs neither is unaffected, and
+so an agent gains both without a reconnect. See
+[SYSTEMS.md](SYSTEMS.md#where-a-build-lands-location-and-collection).
+
 **The one read-only op is `describe_scene`.** Everything else mutates. Its result is entirely in
 `data`, and it is the way to read a scene back rather than guessing and rendering a probe frame:
 see [MCP.md](MCP.md#reading-the-scene-back).
@@ -154,7 +162,11 @@ re-exported from `__init__` so callers keep `from ..core.materials import X`.
 - Recipe contract: a `build(ng, out, params)` function registered with `@recipe("name")`, imported
   in `recipes/__init__.py` so its decorator runs. `recipes.names()` lists them, `recipes.get(name)`
   fetches one. Recipes: `wave_grid`, `heightmap_terrain`, `terrain`, `scatter`, `scatter_along`,
-  `curve_overlay`, `curve_water`, `volumetrics`, `particulates`, `snow`, `snow_shell`.
+  `curve_overlay`, `curve_water`, `volumetrics`, `particulates`, `snow`, `snow_shell`, `foliage`.
+- `place(ng, name, target, mark_asset, location, collection)` — the object half. `location` puts the
+  build somewhere other than the origin; `collection` names the collection it joins, CREATING IT
+  UNLINKED if it does not exist, which is what fills an off-scene scatter pool. Both are read by
+  `build_geonodes` out of `params` (see below).
 
 ### Terrain compute (`core.heightfields`, bpy-free)
 

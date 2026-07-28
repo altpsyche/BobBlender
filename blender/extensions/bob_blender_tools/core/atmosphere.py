@@ -436,11 +436,36 @@ def build_clouds_object(scene, *, name="BOB_Clouds", cloud_shadows=True):
     return obj
 
 
+def _terrain_drape(heightmap):
+    """{terrain_size, terrain_height, sea_level} read off the terrain built from this heightmap.
+
+    Ground fog samples the heightmap to decide where the ground is, so it needs the same four
+    numbers the terrain was displaced with; its own defaults are 60 m / 14 m / 0.3, which describe a
+    different terrain. Read off the object rather than passed in, exactly as `drape_curve` reads
+    them (docs/MCP.md, "What a terrain was built from"): `build_geonodes` stamps `bbt_heightmap` and
+    `bbt_terrain_size` / `_height` / `_sea` on every heightmap_terrain build, so the agreement is
+    automatic and there is nothing for a caller to restate and get wrong.
+
+    Measured, on a 90 m by 9 m terrain with the fog left on its own defaults: the mist's idea of the
+    ground sat metres off the real surface, so the profile that should hug it filled the air instead
+    and the lower half of the frame washed out solid. Density did not fix it -- 0.02 and 0.8 render
+    identically once the domain is saturated, which is what made it look like a broken volume rather
+    than a mismatched one.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or obj.get("bbt_heightmap") != heightmap:
+            continue
+        return {"terrain_size": float(obj.get("bbt_terrain_size", 90.0)),
+                "terrain_height": float(obj.get("bbt_terrain_height", 22.0)),
+                "sea_level": float(obj.get("bbt_terrain_sea", 0.22))}
+    return {}
+
+
 def build_fog_object(scene, *, name="BOB_Fog", mode="height_fog", heightmap=""):
     """Build a procedural volumetric fog domain in the given mode (height_fog / noise_fog /
     ground_fog), seeded from the world wind, at the current quality, with the wind drivers.
-    A ground_fog heightmap (an absolute path) drapes the mist over the terrain. Returns the
-    fog object (or None)."""
+    A ground_fog heightmap (an absolute path) drapes the mist over the terrain, whose scale is
+    read off the terrain object (see `_terrain_drape`). Returns the fog object (or None)."""
     env = _env.get_env(scene)
     params = {"mode": mode}
     if env is not None:  # seed the wind knobs from the shared world state
@@ -448,6 +473,7 @@ def build_fog_object(scene, *, name="BOB_Fog", mode="height_fog", heightmap=""):
         params["wind_speed"] = env.wind_strength
     if mode == "ground_fog" and heightmap:
         params["heightmap"] = heightmap
+        params.update(_terrain_drape(heightmap))
     geonodes.build_geonodes({"op": "build_geonodes", "recipe": "volumetrics",
                              "name": name, "params": params})
     _apply_quality(scene)

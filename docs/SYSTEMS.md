@@ -47,7 +47,37 @@ height, and the only recovery found was deleting the object and shading it again
 **A `heightmap_terrain` build stamps what it built from.** `bbt_heightmap` and
 `bbt_terrain_size` / `_height` / `_sea` land on the object, the same custom props
 the Terrain panel's bake writes. Everything downstream reads them off the object
-rather than being told them: see [SPLINES.md](SPLINES.md#4-the-drape-and-the-shared-field).
+rather than being told them: see [SPLINES.md](SPLINES.md#4-the-drape-and-the-shared-field),
+and `atmosphere._terrain_drape`, which is how ground fog finds the terrain it is
+draping over.
+
+### Where a build lands: `location` and `collection`
+
+Two `params` every recipe accepts, read by `build_geonodes` rather than by the
+recipe, and both honoured on a rebuild as well as a first build:
+
+- `location`: `[x, y, z]` for the object. Every recipe builds around its object's
+  origin, so without this the only place a build could land was `(0, 0, 0)` —
+  right for a terrain, which is authored centred, and useless for anything meant
+  to stand in a particular spot.
+- `collection`: the collection the object joins instead of the scene's. **A name
+  that does not resolve is created and left UNLINKED**, which is what makes this
+  the way to fill a scatter pool: `BOB_Assets_<Kind>` is an off-scene collection
+  whose members are instanced rather than rendered directly, so a tree built into
+  it is a scatter source and not a tree standing on the origin. An existing
+  collection is used as it is, so this never changes whether a pool is in the scene.
+
+Together they are the whole difference between a stand of trees and one tree standing on the origin:
+
+```json
+{"op": "build_geonodes", "recipe": "foliage", "name": "Conifer_0",
+ "params": {"height": 17.5, "seed": 11, "collection": "BOB_Assets_Trees"}}
+{"op": "build_geonodes", "recipe": "foliage", "name": "Hero_0",
+ "params": {"height": 17.5, "seed": 61, "location": [-6.8, -13.5, 1.2]}}
+```
+
+The first is a scatter source in an off-scene pool; the second is a tree standing at a spot you
+picked. Neither was expressible before.
 
 ### reload_image
 

@@ -170,6 +170,12 @@ def build_geonodes(op: dict) -> dict:
     name = op.get("name") or recipe_name
     target = op.get("target", "new_object")
     reset = op.get("reset", False)
+    # Where the object goes, and which collection it joins. Both live in `params` rather than being
+    # op fields so they need no contract change, and both are honoured on a rebuild as well as on a
+    # first build: an op list that says where a barn stands has to put it there every time it is
+    # replayed, or the second run quietly keeps wherever the first one left it. See `place`.
+    location = params.get("location")
+    collection = params.get("collection")
 
     # Rebuild in place: if a named object with a Nodes modifier already exists,
     # refill its group instead of respawning. The object, its transform, and
@@ -210,6 +216,8 @@ def build_geonodes(op: dict) -> dict:
             # behind the Set-Material modifier. Put that back at the end or the rebuild renders grey.
             _keep_set_material_last(obj)
             _stamp_terrain_params(obj, recipe_name, params)
+            if location is not None:
+                obj.location = tuple(location)
             obj.update_tag()
             info = recipe_name + (" (in place, reset)" if reset else " (in place)")
             # De-dup: the object and its node group usually share a name, so return
@@ -220,7 +228,8 @@ def build_geonodes(op: dict) -> dict:
 
     ng, out = new_group(name)
     build(ng, out, params)
-    created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False))
+    created = place(ng, name, target=target, mark_asset=op.get("mark_asset", False),
+                    location=location, collection=collection)
     _stamp_terrain_params(bpy.data.objects.get(name), recipe_name, params)
     return _result(created, recipe_name)
 

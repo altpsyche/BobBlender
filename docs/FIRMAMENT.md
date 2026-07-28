@@ -161,6 +161,16 @@ Strength), `sky_altitude` (mapped to the `altitude` param), `air`, `ozone`,
 `turbidity` (default 2.2), `ground_albedo`. The sun override props carry an update
 callback (`_on_sun_override_change`) that repositions the sun live.
 
+**A sun override survives only until the next world re-apply, so build the sky
+LAST.** `use_override` lives in the `build_sky` op's params and nowhere in the
+scene. Every world re-apply — `set_env`, `apply_world`, `build_fog`, an artist
+moving a World slider — recomputes the sun from `bbt_env`'s clock through the solar
+model and writes it to both the lamp and the sky node. At a night `time_of_day` the
+real sun is below the horizon, where `_place_sun` zeroes the lamp energy and the
+physical sky renders black, so an overridden moonlit sky built earlier in an op list
+is silently thrown away. The panel equivalent is `bbt_firmament.use_override`, which
+a re-apply does honour; the op params are not stored, and that asymmetry is the trap.
+
 Live sun: `_reposition_sun` aims the existing `BOB_Sun` and sets the `BOB_Sky` sun
 angle from the current world state (or the override) with no node rebuild, so
 editing time/place or a sun override moves the sun without a Build Sky press.
@@ -199,6 +209,24 @@ Modes (build-time param `mode`):
 
 Fog is built by `firmament_build_fog` (Build Fog); `fm.fog_mode` selects the mode
 and `fm.fog_heightmap` supplies the ground_fog image.
+
+**ground_fog reads the terrain's scale off the terrain.** The mode samples the
+heightmap to decide where the ground is, so it needs the same size / height /
+sea-level the terrain was displaced with; its own defaults describe a 60 m by 14 m
+terrain. `atmosphere._terrain_drape` finds the object whose `bbt_heightmap` matches
+and reads `bbt_terrain_size` / `_height` / `_sea` off it, the same way
+`drape_curve` does, so there is nothing for a caller to restate. Measured before
+that: on a 90 m by 9 m terrain the mist's idea of the ground sat metres off the
+surface, the profile that should hug it filled the air, and the lower half of the
+frame washed out solid at EVERY density from 0.004 to 1.0 — identical frames, which
+is what says a domain is saturated rather than a knob broken.
+
+**`build_fog` does not forward the domain.** It passes mode, heightmap and wind to
+the recipe and nothing else, so `Layer Size` stays at its 400 m default and a camera
+at ground level sits inside a quarter-kilometre of mist. For a mist that reads as
+lying in a hollow, drive `volumetrics` directly (`build_geonodes`) and set the
+domain: `size` about the tile width, `thickness` under 10 m, `height` just above the
+valley floor.
 
 Materials (`core/materials/`, shaders, cached by name): `cloud_volume_material`
 (`BOB_CloudVolume`), `fog_volume_material` (`BOB_FogVolume`, shared by height_fog
