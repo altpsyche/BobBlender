@@ -1,14 +1,14 @@
 {
   "_bob": {
     "id": "tex_tileable",
-    "plan": "W1, docs/COMFYUI.md track A",
+    "role": "docs/GENERATION.md, the texture family: a prompt to one seamless albedo",
     "purpose": "Prompt to one seamless albedo. Bob derives the rest of the set in numpy.",
     "derived_from": "ComfyUI-seamless-tiling/tiled_workflow.png (pack SHA 9225ed5), converted to API format by tools/scripts/comfy_ui_to_api.py",
     "deviations_from_source": [
       "OffsetImage and both PreviewImage nodes dropped; a SaveImage titled BOB_OUT added, because Bob fetches the result over /view rather than looking at it.",
-      "ckpt_name repointed from albedobaseXL_v21 to the D1 checkpoint.",
-      "sampler tuned for the D1 checkpoint: 25 steps, cfg 5.0, dpmpp_2m + karras (the source had 20 / 4.5 / normal).",
-      "a real negative prompt, because the source left it empty and baked lighting is W1's main failure mode.",
+      "ckpt_name repointed from albedobaseXL_v21 to the shipped SDXL checkpoint.",
+      "sampler tuned for that checkpoint: 25 steps, cfg 5.0, dpmpp_2m + karras (the source had 20 / 4.5 / normal).",
+      "a real negative prompt, because the source left it empty and baked lighting is tex_tileable's main failure mode.",
       "BOB_* titles added on the six templated nodes."
     ],
     "requires_nodes": ["SeamlessTile", "MakeCircularVAE"],

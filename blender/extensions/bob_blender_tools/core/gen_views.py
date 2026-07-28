@@ -3,7 +3,7 @@
 This is the half of tracks D and B that only Blender can do (docs/COMFYUI.md, R19/R20). A depth
 estimator guesses a relative depth from pixels; Blender already knows the metric one, and it knows
 the surface normal exactly rather than inferring it from shading. Handing ComfyUI those two passes
-is the entire reason track D exists, and W9's per-view restyle rests on the same three files.
+is the entire reason track D exists, and `mesh_paint_views`'s per-view restyle rests on the same three files.
 
 **Not the compositor.** Blender 5.2 replaced `Scene.node_tree` with a compositing NODE GROUP, and
 its `CompositorNodeOutputFile` writes one multilayer EXR whatever the per-item format says, which
@@ -400,7 +400,7 @@ def frame_radius(obj, lens, sensor_width, fill=0.82):
 def _flat_world(strength=1.6):
     """A uniform white environment: the closest a render gets to lit-by-nothing.
 
-    The same argument W1's flat-lighting prompt suffix makes (docs/COMFYUI.md, family 1): a colour
+    The same argument `tex_tileable`'s flat-lighting prompt suffix makes (docs/COMFYUI.md, family 1): a colour
     map with baked lighting is unusable and no amount of Bob-side maths removes it. A projection
     paint takes the render's PIXELS as albedo, so a sun's terminator would be painted into the
     texture and lit a second time at render.
@@ -427,7 +427,7 @@ def turntable_views(obj, out_dir, *, count=6, elevation=20.0, extra_elevations=(
 
     `isolate` hides every other object from the render, because a paint view has to be of the mesh
     and not of the scene it sits in. `flat_light` swaps in a uniform white world for the same reason
-    W1's prompt suffix asks for flat lighting: these pixels become an albedo map.
+    `tex_tileable`'s prompt suffix asks for flat lighting: these pixels become an albedo map.
 
     Returns a list of dicts, each carrying the three paths, the camera info, the angle, and `ring`.
     Every scene setting this touches is restored, including the per-object render visibility.

@@ -3,13 +3,13 @@
 Four questions, each answered with a number rather than a screenshot:
 
   A. **Does a Bob render come back stylised with the silhouette preserved, and is Blender's TRUE
-     depth and normal pass worth the export code?** W12 (real passes) against W12e (Depth Anything
+     depth and normal pass worth the export code?** `stylize_render` (real passes) against `stylize_render_est` (Depth Anything
      V2 plus NormalBAE on the same frame), same seed, same prompt, same denoise. Preservation is
      measured two ways: the IoU of the thresholded silhouette against the depth pass, and the
      agreement between Blender's true depth and Depth Anything V2's reading of each stylised
      output, after the affine alignment a scale-invariant estimator requires.
   B. **Does a mesh come back stylised, with the seam and the drift measured ACROSS a turntable?**
-     Six views through W9 under both ControlNets with the front view as the IPAdapter reference,
+     Six views through `mesh_paint_views` under both ControlNets with the front view as the IPAdapter reference,
      then Blender projection-bakes them: per-view mean absolute difference in the overlap regions,
      and the front-against-180-degrees drift. Plus the LoRA control the route exists for, measured
      as the difference one makes on a fixed seed.
@@ -17,8 +17,8 @@ Four questions, each answered with a number rather than a screenshot:
      One press: the render happens on the main thread (it has to), the stylise on the worker, and
      the longest main-thread tick while it ran is measured against one frame at 60 Hz.
   C. **Does multi-view geometry beat single-view on a back-facing test?** A ground-truth object
-     whose back is not inferable from the front, through W5t (front only), W6t
-     (Trellis2MultiViewImageToShape) and W6 (Hunyuan multi-view), scored against the ground truth by
+     whose back is not inferable from the front, through `mesh_geom_trellis` (front only), `mesh_geom_mv_trellis`
+     (Trellis2MultiViewImageToShape) and `mesh_geom_mv` (Hunyuan multi-view), scored against the ground truth by
      voxel IoU and Chamfer distance, whole and BACK HALF only.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
@@ -111,7 +111,7 @@ class Vram:
     """Peak VRAM across a job, sampled from a thread. Copied from `headless_comfy_g3b.py`, because
     the rule it encodes is the point: read PER PROCESS and sum over the ComfyUI family, and report
     the RISE over the stage's own baseline as well as the absolute peak, which is order-dependent
-    (W4 and W12 both leave SDXL resident at roughly 6.6 GB)."""
+    (`mesh_subject` and `stylize_render` both leave SDXL resident at roughly 6.6 GB)."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -748,7 +748,7 @@ def part_a(args, reachable):
 
 # -- Part B: track B stylised --------------------------------------------------------------------
 def part_b(args, reachable):
-    section("B. Track B stylised: a turntable painted through W9, with seam and drift measured")
+    section("B. Track B stylised: a turntable painted through mesh_paint_views, with seam and drift measured")
     obj, source = paint_target()
     note("paint target", f"{obj.name} from {source}, {gen_assets.face_count(obj)} faces")
     views_dir = os.path.join(GEN, "views")
@@ -795,7 +795,7 @@ def part_b(args, reachable):
             _stamp(out_dir, {"total_seconds": painted["total_seconds"],
                              "vram": painted["vram"]})
         runs[label] = painted
-        note(f"W9 restyle, {label}",
+        note(f"`mesh_paint_views` restyle, {label}",
              f"{len(painted['images'])} views in {painted.get('total_seconds', 0):.1f} s, peak "
              f"{painted.get('vram', {}).get('comfy_peak', 0)} MiB"
              + (", cached" if painted.get("cached") else ""))
@@ -958,7 +958,7 @@ def part_c(args, reachable):
                  f"{scores[label]['chamfer_back']:.4f} against {single['chamfer_back']:.4f}")
     if {"multi_view_trellis", "multi_view_hunyuan"} <= set(scores):
         t, h = scores["multi_view_trellis"], scores["multi_view_hunyuan"]
-        note("VERDICT, W6 Hunyuan against Trellis2MultiViewImageToShape",
+        note("VERDICT, mesh_geom_mv Hunyuan against Trellis2MultiViewImageToShape",
              f"back-half IoU {h['iou_back']:.4f} against {t['iou_back']:.4f}, whole "
              f"{h['iou']:.4f} against {t['iou']:.4f}, wall clock {h['seconds']:.1f} s against "
              f"{t['seconds']:.1f} s")

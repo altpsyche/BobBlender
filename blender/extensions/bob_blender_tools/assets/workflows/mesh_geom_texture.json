@@ -1,14 +1,14 @@
 {
   "_bob": {
     "id": "mesh_geom_texture",
-    "plan": "W9b, docs/COMFYUI.md tracks B and C, pipeline steps 2 to 5 in one graph",
-    "purpose": "One-shot geometry plus PBR from a single subject image: shape, in-graph simplify and unwrap, then the PBR rasterised into those UVs. No round trip through W9c or W9t.",
+    "role": "docs/GENERATION.md, the geometry and mesh-texturing families: pipeline steps 2 to 5 in one graph",
+    "purpose": "One-shot geometry plus PBR from a single subject image: shape, in-graph simplify and unwrap, then the PBR rasterised into those UVs. No round trip through mesh_simplify_uv or mesh_texture.",
     "derived_from": "ComfyUI-TRELLIS2/workflows/geometry_texture.json, converted by tools/scripts/comfy_ui_to_api.py",
     "deviations_from_source": [
       "MaskPreview and GeomPackPreviewMeshVTK dropped: they are GUI viewers, and Bob fetches the result over /view.",
-      "Preview3D kept and re-pointed at Trellis2ExportTrimesh's path string, which is how the written file's name reaches the job outputs. The source already ends with Trellis2ExportTrimesh rather than GeomPackSaveMesh, so W9b needs no exporter swap (W9t and W9c did).",
-      "LoadTrellis2Models.resolution raised from the source's 512 to 1024, the same default tier W5t uses, so the two routes are comparable.",
-      "Trellis2RasterizePBR.texture_size lowered from the source's 2048 to 1024, again to match W9t's default; BOB_TEXSIZE binds it and Hero raises it.",
+      "Preview3D kept and re-pointed at Trellis2ExportTrimesh's path string, which is how the written file's name reaches the job outputs. The source already ends with Trellis2ExportTrimesh rather than GeomPackSaveMesh, so mesh_geom_texture needs no exporter swap (mesh_texture and mesh_simplify_uv did).",
+      "LoadTrellis2Models.resolution raised from the source's 512 to 1024, the same default tier mesh_geom_trellis uses, so the two routes are comparable.",
+      "Trellis2RasterizePBR.texture_size lowered from the source's 2048 to 1024, again to match mesh_texture's default; BOB_TEXSIZE binds it and Hero raises it.",
       "BOB_* titles added on the templated nodes. BOB_PROCESS binds BOTH the remesh dynamic combo (open surfaces on or off) and target_face_count, because Trellis2ProcessMesh is simplify plus weld plus UV unwrap in one node: that is the whole reason this graph needs no intermediate simplify pass.",
       "Two seeds, so two titles: BOB_SEED is the shape sampler (Trellis2ImageToShape) and BOB_TEXSEED is the texture sampler (Trellis2ShapeToTexturedMesh)."
     ],
@@ -30,7 +30,7 @@
       "default": "1024",
       "hero": "1536_cascade"
     },
-    "notes": "The order inside the graph is what makes it one-shot. Trellis2ProcessMesh simplifies, welds and unwraps the shape mesh, and Trellis2RasterizePBR then bakes the voxel grid's base color, roughness, metallic and opacity into THOSE UVs, projecting through original_mesh (the pre-simplify shape) so the texture still describes the dense surface. Bind BOB_PROCESS.target_face_count to the face budget and the graph returns finished topology already textured. The alpha of BOB_IMAGE is load-bearing exactly as in W5t: LoadImage returns mask = 1 - alpha, BOB_ALPHA puts it back, and the conditioning takes the foreground."
+    "notes": "The order inside the graph is what makes it one-shot. Trellis2ProcessMesh simplifies, welds and unwraps the shape mesh, and Trellis2RasterizePBR then bakes the voxel grid's base color, roughness, metallic and opacity into THOSE UVs, projecting through original_mesh (the pre-simplify shape) so the texture still describes the dense surface. Bind BOB_PROCESS.target_face_count to the face budget and the graph returns finished topology already textured. The alpha of BOB_IMAGE is load-bearing exactly as in mesh_geom_trellis: LoadImage returns mask = 1 - alpha, BOB_ALPHA puts it back, and the conditioning takes the foreground."
   },
   "prompt": {
     "1": {

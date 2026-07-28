@@ -1,13 +1,13 @@
 {
   "_bob": {
     "id": "mesh_process",
-    "plan": "W8p, docs/COMFYUI.md track C, the shared processor the G7 grid is controlled with",
+    "role": "docs/GENERATION.md, the geometry family: the shared processor the geometry A/B is controlled with",
     "purpose": "Trellis2ProcessMesh over a mesh on disk: simplify to a face budget, drop floaters, weld and UV unwrap in one node, with the remesh branch the caller asks for. It is what puts a challenger model's raw output through the SAME processing the shipped one-shot route applies to its own.",
-    "derived_from": "mesh_simplify_uv.json (W9c) for the load-and-export skeleton, with Trellis2ProcessMesh in place of Trellis2Simplify plus Trellis2UVUnwrap",
+    "derived_from": "mesh_simplify_uv.json (mesh_simplify_uv) for the load-and-export skeleton, with Trellis2ProcessMesh in place of Trellis2Simplify plus Trellis2UVUnwrap",
     "deviations_from_source": [
-      "Trellis2Simplify plus Trellis2UVUnwrap are replaced by the single Trellis2ProcessMesh, which is what W5t and W9b already carry. That is not a preference: G3b measured the two side by side on ten prompts and the pair leaves 1,467 to 3,050 boundary edges on a mesh that is supposed to be closed where the single node leaves 10 to 146. Processing a challenger's mesh through the pair would have scored W9c's sieve as the challenger's openness.",
-      "GeomPackNormalizeMeshToBBox(1.0) runs FIRST, and it is load-bearing twice over. Hunyuan returns a mesh spanning [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and Trellis2ProcessMesh does not normalise: measured at G7, an unnormalised challenger mesh lands at [-0.55, 0.55] after processing, which is outside the unit cube Trellis2EncodeMesh voxelises in, so W9t returns a fully BLACK albedo (in-chart std 0.0064, mean 0.0001 against 0.1810 and 0.3745 normalised). It also puts both models' meshes into ONE space before processing, so remesh_band, floater_threshold and weld_digits mean the same thing on both sides of the G7 grid.",
-      "remesh is a dynamic combo, so its sub-widgets belong to the selected branch and comfy.bind_process is what binds it. The shipped values here are the on branch, matching W5t and W9b."
+      "Trellis2Simplify plus Trellis2UVUnwrap are replaced by the single Trellis2ProcessMesh, which is what mesh_geom_trellis and mesh_geom_texture already carry. That is not a preference: the two were measured side by side on ten prompts and the pair leaves 1,467 to 3,050 boundary edges on a mesh that is supposed to be closed where the single node leaves 10 to 146. Processing a challenger's mesh through the pair would have scored mesh_simplify_uv's sieve as the challenger's openness.",
+      "GeomPackNormalizeMeshToBBox(1.0) runs FIRST, and it is load-bearing twice over. Hunyuan returns a mesh spanning [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and Trellis2ProcessMesh does not normalise: measured, an unnormalised challenger mesh lands at [-0.55, 0.55] after processing, which is outside the unit cube Trellis2EncodeMesh voxelises in, so mesh_texture returns a fully BLACK albedo (in-chart std 0.0064, mean 0.0001 against 0.1810 and 0.3745 normalised). It also puts both models' meshes into ONE space before processing, so remesh_band, floater_threshold and weld_digits mean the same thing on both sides of the A/B grid.",
+      "remesh is a dynamic combo, so its sub-widgets belong to the selected branch and comfy.bind_process is what binds it. The shipped values here are the on branch, matching mesh_geom_trellis and mesh_geom_texture."
     ],
     "requires_nodes": [
       "Trellis2LoadMesh",
@@ -15,7 +15,7 @@
       "Trellis2ProcessMesh",
       "Trellis2ExportTrimesh"
     ],
-    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus its own hard requirement ComfyUI-GeometryPack (GPL-3.0), which W9t already needs",
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus its own hard requirement ComfyUI-GeometryPack (GPL-3.0), which mesh_texture already needs",
     "runtime_inputs": [
       "BOB_MESH.mesh_path"
     ],

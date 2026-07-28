@@ -1,14 +1,14 @@
 {
  "_bob": {
   "id": "mesh_geom_mv_trellis",
-  "plan": "W6t, docs/COMFYUI.md family 2 (track C). The TRELLIS.2 side of the multi-view A/B",
+  "role": "docs/GENERATION.md, the geometry family: the TRELLIS.2 side of the multi-view A/B",
   "purpose": "Four views of a subject to a UV-unwrapped mesh through Trellis2MultiViewImageToShape, so the multi-view comparison is between two real implementations rather than between Hunyuan and an assumption.",
-  "derived_from": "mesh_geom_trellis.json (W5t), with Trellis2ImageToShape and its Trellis2GetConditioning replaced by Trellis2MultiViewImageToShape, which takes the images and masks directly",
+  "derived_from": "mesh_geom_trellis.json (mesh_geom_trellis), with Trellis2ImageToShape and its Trellis2GetConditioning replaced by Trellis2MultiViewImageToShape, which takes the images and masks directly",
   "deviations_from_source": [
    "Trellis2GetConditioning is GONE. Trellis2MultiViewImageToShape takes image and mask pairs itself, so there is no separate conditioning stage to bind.",
-   "Four LoadImage and four InvertMask nodes instead of one pair. The InvertMask is load-bearing for the same reason it is in W5t: LoadImage returns mask = 1 - alpha, so the mask reaching a Trellis node has to be inverted back into a foreground mask.",
-   "front_axis stays 'z' and background_color 'black', the node's own defaults, matching what W5t's conditioning does.",
-   "Trellis2ProcessMesh, Trellis2ExportTrimesh and Preview3D are W5t's, unchanged, so the two graphs' outputs are comparable file for file."
+   "Four LoadImage and four InvertMask nodes instead of one pair. The InvertMask is load-bearing for the same reason it is in mesh_geom_trellis: LoadImage returns mask = 1 - alpha, so the mask reaching a Trellis node has to be inverted back into a foreground mask.",
+   "front_axis stays 'z' and background_color 'black', the node's own defaults, matching what mesh_geom_trellis's conditioning does.",
+   "Trellis2ProcessMesh, Trellis2ExportTrimesh and Preview3D are mesh_geom_trellis's, unchanged, so the two graphs' outputs are comparable file for file."
   ],
   "requires_nodes": [
    "LoadTrellis2Models",
@@ -23,7 +23,7 @@
    "BOB_VIEW_BACK.image",
    "BOB_VIEW_RIGHT.image"
   ],
-  "notes": "Same four cardinal views, same order, and the same alpha contract as W6, so one set of Blender renders drives both graphs and the comparison is of models rather than of framing."
+  "notes": "Same four cardinal views, same order, and the same alpha contract as mesh_geom_mv, so one set of Blender renders drives both graphs and the comparison is of models rather than of framing."
  },
  "prompt": {
   "1": {

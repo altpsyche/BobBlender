@@ -229,7 +229,7 @@ def _sprig(angle_deg, size=96, woody=False, flare=0.2):
 def test_orient_sprite_stands_a_sprig_on_its_narrow_end_from_any_angle(mods):
     """The property a card depends on: v is 0 at the attachment, so the stem must be at the bottom.
 
-    Checked at four angles because W4 returns sprays lying every way -- measured, a "stem at the
+    Checked at four angles because `mesh_subject` returns sprays lying every way -- measured, a "stem at the
     bottom of the frame" prompt produced diagonal sprays with the twig at the left.
     """
     _, maps = mods
@@ -352,7 +352,7 @@ def test_bark_and_atlas_suffixes_are_the_measured_ones(mods):
     assert comfy.BARK_SUFFIX == "vertical bark, deep furrows running top to bottom"
     assert comfy.DEFAULT_ATLAS_ROUTE == "cells"
     assert comfy.atlas_routes() == ("cells", "grid")
-    # W4's own negative forbids "multiple objects", which is right for one sprite and wrong for a
+    # `mesh_subject`'s own negative forbids "multiple objects", which is right for one sprite and wrong for a
     # grid, so the atlas route carries its own.
     assert "bunch" in comfy.ATLAS_NEGATIVE and "grid" in comfy.ATLAS_NEGATIVE
 
@@ -425,7 +425,7 @@ def test_ao_darkens_a_pit_and_leaves_a_flat_surface_alone(mods):
 
 
 def test_wrap_pad_and_blend_restore_tileability(mods):
-    """What W3 needs: an operation that pads at the border makes the two copies of each edge band
+    """What `tex_upres` needs: an operation that pads at the border makes the two copies of each edge band
     diverge, and cross-fading them puts the wrap back. Simulated with a brightness ramp applied to
     the padded image, which is exactly the kind of border artefact an upscaler leaves."""
     _, maps = mods
@@ -446,7 +446,7 @@ def test_wrap_pad_and_blend_restore_tileability(mods):
 
 # -- comfy: templating, slugs, and the client against a fake server --------------------------
 def test_shipped_workflow_is_templatable_and_local_only(mods):
-    """W1's contract: it loads, every BOB_* title is unique, and it names no cloud node."""
+    """`tex_tileable`'s contract: it loads, every BOB_* title is unique, and it names no cloud node."""
     comfy, _ = mods
     prompt, prov = comfy.load_workflow(str(WORKFLOWS / "tex_tileable.json"))
     assert prov.get("derived_from"), "a shipped graph records the template it came from (R17)"
@@ -898,7 +898,7 @@ def test_mesh_graphs_end_in_a_retrievable_output(mods):
 
 
 def test_w4_joins_the_cut_through_an_inverted_mask(mods):
-    """The sign that decides whether W4 saves the subject or the background.
+    """The sign that decides whether `mesh_subject` saves the subject or the background.
 
     Trellis2RemoveBackground returns a FOREGROUND mask; JoinImageWithAlpha computes
     alpha = 1 - mask, following ComfyUI's LoadImage convention. Wiring them directly cuts the
@@ -921,7 +921,7 @@ def test_bind_process_selects_one_branch_and_can_carry_the_face_budget(mods):
 
     A `COMFY_DYNAMICCOMBO_V3`'s sub-widgets belong to the SELECTED key, and `template()` only
     merges, so the other branch's `remesh.*` fields have to leave the graph rather than be
-    overridden. And `target_face_count` is a binding point on W9b but not on W5t: on W9b it IS the
+    overridden. And `target_face_count` is a binding point on `mesh_geom_texture` but not on `mesh_geom_trellis`: on `mesh_geom_texture` it IS the
     simplify budget, which is what makes the one-shot route one-shot.
     """
     comfy, _ = mods
@@ -942,7 +942,7 @@ def test_bind_process_selects_one_branch_and_can_carry_the_face_budget(mods):
 
 
 def test_w9b_is_a_one_shot_route_beside_the_staged_one(mods):
-    """W9b's shape, as the benchmark relies on it: one graph that conditions, generates a shape,
+    """`mesh_geom_texture`'s shape, as the benchmark relies on it: one graph that conditions, generates a shape,
     simplifies and unwraps it, textures it, and exports THAT mesh -- with the PBR rasterised into
     the simplified mesh's own charts and projected through the pre-simplify shape."""
     comfy, _ = mods
@@ -982,7 +982,7 @@ def test_the_route_is_a_value_and_maps_onto_the_finish_passes(mods):
 
 def test_the_per_class_verdict_is_one_table_and_a_control_still_wins(mods, monkeypatch):
     """G7's verdict is per asset class, so `asset_chain` takes the kind; `KIND_ROUTE` is the only
-    place that mapping exists, and a control beats all of it because neither W9b nor W8 takes one."""
+    place that mapping exists, and a control beats all of it because neither `mesh_geom_texture` nor `mesh_geom_alt` takes one."""
     comfy, _ = mods
     assert comfy.KIND_ROUTE == {} or set(comfy.KIND_ROUTE.values()) <= set(comfy.ASSET_ROUTES)
     monkeypatch.setattr(comfy, "KIND_ROUTE", {"rocks": "alt"})
@@ -1006,7 +1006,7 @@ def test_foliage_is_one_value_because_it_decides_two_stages(mods):
 
 
 def test_w8_composites_the_subject_onto_a_plate_before_the_vision_encoder(mods):
-    """The one reason W8 exists beside W5. W4 writes RGBA whose RGB is still the SDXL frame and
+    """The one reason `mesh_geom_alt` exists beside `mesh_geom`. `mesh_subject` writes RGBA whose RGB is still the SDXL frame and
     `LoadImage` drops alpha rather than compositing it, so the challenger would be conditioned on a
     background TRELLIS.2 never sees, and the G7 grid would have measured the background."""
     comfy, _ = mods
@@ -1030,8 +1030,8 @@ def test_w8_composites_the_subject_onto_a_plate_before_the_vision_encoder(mods):
 
 
 def test_w8p_normalises_before_it_processes(mods):
-    """Both halves of W8p, and both are load-bearing. Hunyuan returns [-1, 1] where TRELLIS.2
-    returns [-0.5, 0.5], so without the normalise W9t voxelises outside the unit cube and the albedo
+    """Both halves of `mesh_process`, and both are load-bearing. Hunyuan returns [-1, 1] where TRELLIS.2
+    returns [-0.5, 0.5], so without the normalise `mesh_texture` voxelises outside the unit cube and the albedo
     comes back BLACK (G7: in-chart std 0.0064 against 0.1810). It has to run BEFORE the process node
     as well, or `remesh_band` and `floater_threshold` mean different sizes on the two models."""
     comfy, _ = mods
@@ -1046,7 +1046,7 @@ def test_w8p_normalises_before_it_processes(mods):
     assert process["inputs"]["trimesh"] == [by_title["BOB_NORM"], 0]
     assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_PROCESS"], 0]
     assert prov["runtime_inputs"] == ["BOB_MESH.mesh_path"]
-    # And it takes the same binding W5t and W9b take, or the grid would not be controlled.
+    # And it takes the same binding `mesh_geom_trellis` and `mesh_geom_texture` take, or the grid would not be controlled.
     values = {}
     bound = comfy.bind_process(graph, values, remesh=False, faces=4000)
     assert values["BOB_PROCESS"] == {"remesh": "off", "remesh.fill_holes": False,
@@ -1160,7 +1160,7 @@ def test_drop_node_removes_the_lora_and_rewires_its_consumers(mods):
 
 
 def test_w12_chains_both_controlnets_with_the_union_normal_head(mods):
-    """W12's shape, and the one thing about it that is not obvious: there is no standalone SDXL
+    """`stylize_render`'s shape, and the one thing about it that is not obvious: there is no standalone SDXL
     normal ControlNet on disk, so the normal hint goes through the UNION model plus
     SetUnionControlNetType, while depth uses the dedicated depth model."""
     comfy, _ = mods
@@ -1183,7 +1183,7 @@ def test_w12_chains_both_controlnets_with_the_union_normal_head(mods):
 
 
 def test_w9_is_w12_plus_a_reference(mods):
-    """W9 grows out of W12, which is why W12 is built first: the difference is the IPAdapter that
+    """`mesh_paint_views` grows out of `stylize_render`, which is why `stylize_render` is built first: the difference is the IPAdapter that
     holds a palette across a turntable, and a lower denoise so the real render keeps dominating."""
     comfy, _ = mods
     paint, _ = comfy.load_workflow("mesh_paint_views")
@@ -1205,7 +1205,7 @@ def test_w9_is_w12_plus_a_reference(mods):
 
 def test_the_stylise_route_picks_its_graph_from_the_hints_it_is_given(mods, monkeypatch, tmp_path):
     """Real passes or estimated ones is a route, not a second operator: pass Blender's two passes and
-    W12 runs, omit them and W12e runs the estimators over the render itself."""
+    `stylize_render` runs, omit them and `stylize_render_est` runs the estimators over the render itself."""
     comfy, _ = mods
     seen = {}
 
@@ -1274,7 +1274,7 @@ def test_paint_views_reuses_the_stylised_front_as_the_reference(mods, monkeypatc
 
 
 def test_the_texture_route_is_a_value_beside_the_asset_route(mods):
-    """W9-as-a-paint-route lands in the shape G3b gave the geometry decision: one place where the
+    """`mesh_paint_views`-as-a-paint-route lands in the shape G3b gave the geometry decision: one place where the
     route becomes a decision, not a second operator."""
     comfy, _ = mods
     assert set(comfy.TEXTURE_ROUTES) == {"pbr", "stylised"}
@@ -1286,7 +1286,7 @@ def test_the_texture_route_is_a_value_beside_the_asset_route(mods):
 
 
 def test_the_two_multi_view_graphs_take_the_same_four_views(mods):
-    """W6 and W6t exist to be compared, so they have to take one set of renders: same titles, same
+    """`mesh_geom_mv` and `mesh_geom_mv_trellis` exist to be compared, so they have to take one set of renders: same titles, same
     order, same alpha contract. The order is the order Hunyuan's own sockets name."""
     comfy, _ = mods
     titles = ("BOB_VIEW_FRONT", "BOB_VIEW_LEFT", "BOB_VIEW_BACK", "BOB_VIEW_RIGHT")
@@ -1323,7 +1323,7 @@ def test_the_two_multi_view_graphs_take_the_same_four_views(mods):
 
 
 def test_w7_conditions_on_a_control_mesh_and_ends_in_a_retrievable_output(mods):
-    """W7's shape, and the three things about it that are easy to get wrong.
+    """`mesh_geom_ctrl`'s shape, and the three things about it that are easy to get wrong.
 
     The control is a MESH read by `Trellis2LoadMesh`, because the Omni pack ships no loader and its
     socket is TRELLIS.2's `TRIMESH` type; the point budget is named rather than left at the node's
@@ -1345,7 +1345,7 @@ def test_w7_conditions_on_a_control_mesh_and_ends_in_a_retrievable_output(mods):
     assert omni["inputs"]["repo_or_path"] == "tencent/Hunyuan3D-Omni"
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
-    # Same retrievable tail as W5t: the export node reports a STRING, Preview3D makes it an output.
+    # Same retrievable tail as `mesh_geom_trellis`: the export node reports a STRING, Preview3D makes it an output.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_SEED"], 0]
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
@@ -1386,7 +1386,7 @@ def test_w7_binds_the_local_weights_only_when_they_are_there(mods, monkeypatch, 
 
 
 def test_the_block_out_route_swaps_step_two_and_nothing_else(mods, monkeypatch, tmp_path):
-    """`control` is a value on the staged chain, not a fourth route: W5t becomes W7 and every stage
+    """`control` is a value on the staged chain, not a fourth route: `mesh_geom_trellis` becomes `mesh_geom_ctrl` and every stage
     after it is the same call with the same arguments."""
     comfy, _ = mods
     calls = []
@@ -1423,7 +1423,7 @@ def test_the_block_out_route_swaps_step_two_and_nothing_else(mods, monkeypatch, 
 
 
 def test_w7b_conditions_on_three_numbers_and_uploads_nothing(mods):
-    """W7b's shape. The control is not a socket at all: `Hy3DOmniBBoxGenerate` has no `control_mesh`
+    """`mesh_geom_bbox`'s shape. The control is not a socket at all: `Hy3DOmniBBoxGenerate` has no `control_mesh`
     input, so the graph has no mesh loader, which is what makes it the one Omni route that needs no
     ComfyUI folder to know (G7's mesh-transport failure). `auto_bbox` ships FALSE because the whole
     point is that Bob knows the proportions the node would otherwise estimate off the image."""
@@ -1443,19 +1443,19 @@ def test_w7b_conditions_on_three_numbers_and_uploads_nothing(mods):
     assert omni["inputs"]["repo_or_path"] == "tencent/Hunyuan3D-Omni"
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
-    # W7's tail unchanged, so the same one export turn comes back and the same undo applies.
+    # `mesh_geom_ctrl`'s tail unchanged, so the same one export turn comes back and the same undo applies.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
     assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_OMNI.repo_or_path"}
 
 
 def test_w7v_reads_the_same_control_and_does_not_turn_it(mods):
-    """W7v's shape. It is W7 with one node swapped, so the loader, the exporter and the return turn
+    """`mesh_geom_voxel`'s shape. It is `mesh_geom_ctrl` with one node swapped, so the loader, the exporter and the return turn
     are all shared and the difference is what the generator does with the same file.
 
     `apply_input_rotation` is the setting the whole graph turns on. The node defaults it to TRUE
     because upstream's `infer_voxel` turns its control and `infer_point` does not, an asymmetry that
-    belongs to two demo datasets rather than to the model. Bob's control is the file W7 already
+    belongs to two demo datasets rather than to the model. Bob's control is the file `mesh_geom_ctrl` already
     conditions on correctly, so the extra turn is a turn away from the frame that works, and it
     would have shown up as "the voxel mode is bad" rather than as an error (G9)."""
     comfy, _ = mods
@@ -1475,7 +1475,7 @@ def test_w7v_reads_the_same_control_and_does_not_turn_it(mods):
     assert omni["inputs"]["repo_or_path"] == "tencent/Hunyuan3D-Omni"
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
-    # W7's tail unchanged, so the same one export turn comes back and the same undo applies.
+    # `mesh_geom_ctrl`'s tail unchanged, so the same one export turn comes back and the same undo applies.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
     assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_CONTROL.mesh_path",
@@ -1553,8 +1553,8 @@ def test_the_bbox_route_swaps_step_two_and_carries_its_own_provenance(mods, monk
 
 
 def test_the_voxel_route_swaps_step_two_on_the_same_control_file(mods, monkeypatch, tmp_path):
-    """The third mode costs one table entry, one graph and no exporter: the mesh W7 uploads is the
-    mesh W7v uploads, so the only thing that decides between them is the named mode."""
+    """The third mode costs one table entry, one graph and no exporter: the mesh `mesh_geom_ctrl` uploads is the
+    mesh `mesh_geom_voxel` uploads, so the only thing that decides between them is the named mode."""
     comfy, _ = mods
     calls = []
 
@@ -1621,7 +1621,7 @@ def test_free_vram_survives_an_empty_two_hundred(mods, fake_server):
     assert "/free" in _Fake.calls
 
 
-# -- Track E: the terrain macro mask (W13) ---------------------------------------------------
+# -- Track E: the terrain macro mask (`heightmap_macro`) ---------------------------------------------------
 def test_the_macro_mask_is_the_low_band_of_the_same_cutoff(mods):
     """Track E needed no derivation module, and this is the reason: it is `relief()` read from the
     other side. Same luminance, same box blur, the opposite half of one split."""
@@ -1669,7 +1669,7 @@ def test_the_macro_blur_wraps_only_when_the_route_asks(mods):
 
 
 def test_the_macro_route_is_a_value_and_the_open_one_drops_the_tiling(mods):
-    """W13's tiling pair ships IN the graph so preflight covers those classes, and the route decides
+    """`heightmap_macro`'s tiling pair ships IN the graph so preflight covers those classes, and the route decides
     per press. Dropping the nodes rather than switching them to "disable" is the `BOB_LORA` argument
     (R6): a disabled node still has to name an installed pack."""
     comfy, _ = mods
@@ -1879,7 +1879,7 @@ def test_the_tiling_binding_is_a_value_in_one_place(mods):
     on, off = comfy.tiling_values(True), comfy.tiling_values(False)
     assert on[comfy.TILE_TITLE]["tiling"] == "enable"
     assert off[comfy.TILE_VAE_TITLE]["tiling"] == "disable"
-    # BOTH nodes in place, and both of them matter: W1 copies the UNet as well as the VAE, so a fix
+    # BOTH nodes in place, and both of them matter: `tex_tileable` copies the UNet as well as the VAE, so a fix
     # that only spared the VAE would still deepcopy 5 GB of SDXL and still crash.
     assert on[comfy.TILE_TITLE]["copy_model"] == comfy.TILING_COPY_MODE
     assert on[comfy.TILE_VAE_TITLE]["copy_vae"] == comfy.TILING_COPY_MODE
@@ -1906,7 +1906,7 @@ def test_a_texture_set_binds_tiling_on_and_marks_the_model_dirty(mods, monkeypat
 
 
 def test_a_subject_image_resets_the_padding_first(mods, monkeypatch, tmp_path):
-    """W4 must not wrap: it is one centred object, and a circular UNet carries its edge round the
+    """`mesh_subject` must not wrap: it is one centred object, and a circular UNet carries its edge round the
     frame. Measured at G6 without this: seam ratio 1.059, i.e. tiled, where untiled reads 3.9 to 8.5."""
     comfy, _ = mods
     order = []
@@ -2117,7 +2117,7 @@ def test_a_mesh_not_found_failure_names_the_variable_that_causes_it(mods, monkey
 def test_the_negative_reaches_w4_and_only_w4(mods, monkeypatch, tmp_path):
     """SDXL does not honour negations in the positive prompt ("no pot, no planter" returned a
     nursery pot twice), and the subject image is the only stage any text touches: every geometry
-    graph downstream conditions on the picture. So the argument has to arrive at W4 or it does
+    graph downstream conditions on the picture. So the argument has to arrive at `mesh_subject` or it does
     nothing at all."""
     comfy, _ = mods
     seen = {}

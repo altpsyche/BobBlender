@@ -5,7 +5,7 @@ Measures rather than asserts. Seven things, in the order the gate lists them:
   1. ten sets generated and accepted in one session, per-set wall clock and drift
   2. the longest MAIN-THREAD block during a background generation, against the blocking G1 path
   3. preflight over every shipped workflow, and over five deliberately broken graphs
-  4. the 3x3 seam ratio before and after a W3 upres of the same tile
+  4. the 3x3 seam ratio before and after a `tex_upres` upres of the same tile
   5. roughness contrast, G1's global band against G2's local stretch, on the same image
   6. a job does not outlive a file load
   7. the Advanced-panel surface registers and draws without touching a socket
@@ -252,7 +252,7 @@ def ten_sets(count):
 
 
 def upres_seam():
-    section("seam through a W3 upres, same tile")
+    section("seam through a tex_upres upres, same tile")
     info = comfy.texture_variants("weathered granite with pale lichen", PACK, count=1,
                                   seed=54321)[0]
     before = info["seam"]

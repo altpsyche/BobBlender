@@ -288,14 +288,14 @@ def unit_normalise_export(obj, path):
 #
 #   file                    turns to undo   why
 #   the control Bob sent    0               Bob's own glTF export and import round trip is exact
-#   W7 output               1               one export
-#   W9c output              2               W9c loads W7's file and exports again
-#   W9t output              3               and again
+#   `mesh_geom_ctrl` output               1               one export
+#   `mesh_simplify_uv` output              2               `mesh_simplify_uv` loads `mesh_geom_ctrl`'s file and exports again
+#   `mesh_texture` output              3               and again
 #
 # The cause is in the exporter's source rather than in any model: `Trellis2ExportTrimesh` converts
 # internal Z-up to Y-up when it writes glb or gltf (`verts[1], verts[2] = verts[2], -verts[1]`) while
 # `Trellis2LoadMesh` converts NOTHING on the way in, so a graph that loads a mesh and exports one is
-# asymmetric by one turn. Hunyuan's `SaveGLB` (W5, W6) adds no turn, which is the other half of G4's
+# asymmetric by one turn. Hunyuan's `SaveGLB` (`mesh_geom`, `mesh_geom_mv`) adds no turn, which is the other half of G4's
 # finding that the two exporters disagree.
 #
 # Two consequences, and the second one is a bug this constant fixes rather than a new feature:
@@ -304,7 +304,7 @@ def unit_normalise_export(obj, path):
 #    and a footprint gate cannot search for the right one, because an asset that fits only after being
 #    turned does not fit.
 # 2. On the STAGED chain the dense mesh and the low mesh come from different hops (1 and 2, or 1 and
-#    3 once W9t has run), so `bake_high_to_low` has been transferring from a cage rotated 90 or 180
+#    3 once `mesh_texture` has run), so `bake_high_to_low` has been transferring from a cage rotated 90 or 180
 #    degrees away from its target. Nothing errors: a misaligned bake still writes a non-flat normal
 #    map, which is why the G3 asset checks passed over it. `prepare_low` now brings both into one
 #    frame, and G3b's "the dense mesh bought no measurable normal detail" is a conclusion that has to
@@ -320,7 +320,7 @@ def undo_exports(count):
 
 # One frame means one SCALE as well as one rotation, and G7 found the second half the hard way. A
 # chain can normalise its low mesh on the server without touching the dense mesh it came from:
-# W8p's `GeomPackNormalizeMeshToBBox` exists because Hunyuan returns [-1, 1] and the texture encoder
+# `mesh_process`'s `GeomPackNormalizeMeshToBBox` exists because Hunyuan returns [-1, 1] and the texture encoder
 # needs [-0.5, 0.5], so the raw mesh arrives at TWICE the low mesh's size. Nothing errors. The bake
 # cage is 2% of the low mesh's own size with a ray distance of four times that, so every ray misses,
 # and what lands on disk is a PERFECTLY FLAT normal map plus an AO of nothing -- measured at G7 as
@@ -364,7 +364,7 @@ CONTROL_POINTS = 8192
 
 
 def export_control(obj, path, *, points=CONTROL_POINTS):
-    """Export a block-out proxy as the control signal a control-conditioned graph (W7) takes.
+    """Export a block-out proxy as the control signal a control-conditioned graph (`mesh_geom_ctrl`) takes.
 
     The point worth writing down is that this needed NO new exporter. Omni normalises its control
     mesh into the unit cube exactly as `Trellis2EncodeMesh` does, so a metre-scale proxy fails the
@@ -393,7 +393,7 @@ CONTROL_BBOX_AXES = (0, 2, 1)
 
 
 def control_bbox(obj):
-    """The block-out's proportions as Omni's `[length, height, width]`: W7b's whole control signal.
+    """The block-out's proportions as Omni's `[length, height, width]`: `mesh_geom_bbox`'s whole control signal.
 
     Eight corners in place of 8,192 sampled points, and no mesh leaves Blender at all, which is what
     D12 asked and G8 measured. Normalised by the longest axis for the same reason the point route is
@@ -594,10 +594,10 @@ def basecolor_image(obj):
 #
 # - at least OPACITY_MIN_CUT of the in-chart texels below the floor, or the channel is simply
 #   "opaque" and the alpha link, the sixth channel and the transparent render method all buy
-#   nothing. Measured: every one-shot W9b asset comes back at a mean of 0.998 with 0.00% below the
+#   nothing. Measured: every one-shot `mesh_geom_texture` asset comes back at a mean of 0.998 with 0.00% below the
 #   floor, so this is the normal case, not the corner one.
 # - an in-chart MEAN of at least OPACITY_MIN_MEAN, i.e. the surface is mostly there. This is the
-#   guard the G3b measurements forced: the W9t texture pass returns an alpha whose in-chart mean
+#   guard the G3b measurements forced: the `mesh_texture` texture pass returns an alpha whose in-chart mean
 #   runs 0.07 to 0.77 with 42% to 93% of the surface below the floor, which is not a cutout, it is
 #   an unusable channel -- wiring it made a tree stump 60% transparent and a leaf 93% transparent.
 #   Only the one-shot route, where the voxel grid comes from the generation that made the mesh,
@@ -751,12 +751,12 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     # need the dense mesh; colour and roughness are the generated PBR and live wherever the texture
     # landed. Three cases, all of them real:
     #
-    #  - the dense mesh is textured (W9b, whose one file is both meshes): transfer everything.
-    #  - only the LOW mesh is textured (W7 then W9t, and any chain whose geometry graph is
+    #  - the dense mesh is textured (`mesh_geom_texture`, whose one file is both meshes): transfer everything.
+    #  - only the LOW mesh is textured (`mesh_geom_ctrl` then `mesh_texture`, and any chain whose geometry graph is
     #    geometry-only): the colour is ALREADY in the low mesh's own UVs, so it is a self-bake with
     #    no cage. Measured at G4c: Omni returns geometry with no material at all, so without this the
-    #    block-out route shipped an asset with W9t's albedo silently dropped.
-    #  - neither is textured (W5t alone): skip the colour roles. A DIFFUSE bake would write a solid
+    #    block-out route shipped an asset with `mesh_texture`'s albedo silently dropped.
+    #  - neither is textured (`mesh_geom_trellis` alone): skip the colour roles. A DIFFUSE bake would write a solid
     #    black basecolor and a ROUGHNESS bake the Principled default, and both are worse than absent
     #    because the material wiring would then read a map that says "this object is black".
     colour_from_low = has_textures(low) and not has_textures(high)
@@ -976,14 +976,14 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
                 keep_source_uv=False, low_glb=None, report=None, on_progress=None,
                 fill_pinholes=True, simplified_glb=None, exports=None):
     """Steps 3 and 4 on the main thread: import the dense mesh, make the low one, unwrap it, and
-    optionally export the low as a unit-scale GLB for the W9t texture pass to consume.
+    optionally export the low as a unit-scale GLB for the `mesh_texture` texture pass to consume.
 
     Split out of `finish_asset` because the texture pass is an HTTP call that has to happen on the
     worker thread while every `bpy` touch stays here. The operator chain is
-    prepare_low -> submit W9t -> finish_asset(textured_glb=...), and a headless script that owns
+    prepare_low -> submit `mesh_texture` -> finish_asset(textured_glb=...), and a headless script that owns
     the whole process just calls `finish_asset` with a `texture_pass` callback instead.
 
-    Returns (high, low). The low mesh is still unit-scale, which is exactly what W9t needs.
+    Returns (high, low). The low mesh is still unit-scale, which is exactly what `mesh_texture` needs.
 
     `exports` names how many `Trellis2ExportTrimesh` writes each incoming file has been through, so
     both meshes land in ONE frame before the bake reads across them: see `undo_exports`.
@@ -999,7 +999,7 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
     report["source_dimensions"] = [round(d, 4) for d in dimensions(high)]
 
     if simplified_glb:
-        # Steps 3 and 4 already happened, on the ComfyUI side (W9c). Nothing to decimate and
+        # Steps 3 and 4 already happened, on the ComfyUI side (`mesh_simplify_uv`). Nothing to decimate and
         # nothing to unwrap; the mesh arrives at its budget with a chart layout already on it.
         low = import_glb(simplified_glb, name=name,
                          orient=undo_exports(exports.get("simplified")))
@@ -1069,11 +1069,11 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
     Two of the stages are callbacks, because they are HTTP calls and this function is main-thread
     bpy code:
 
-    `simplify_pass(raw_glb) -> simplified_glb` is pipeline steps 3 and 4 done by W9c
+    `simplify_pass(raw_glb) -> simplified_glb` is pipeline steps 3 and 4 done by `mesh_simplify_uv`
     (`Trellis2Simplify` plus `Trellis2UVUnwrap`). Passing None does them in Blender instead, which
     is the other side of the A/B.
 
-    `texture_pass(low_glb) -> textured_glb` is pipeline step 5, W9t. Passing None gives a
+    `texture_pass(low_glb) -> textured_glb` is pipeline step 5, `mesh_texture`. Passing None gives a
     geometry-only asset whose basecolor and roughness are simply absent rather than baked black,
     since a mesh with no material has no surface to transfer.
 
@@ -1363,7 +1363,7 @@ def import_generated_op(op: dict) -> dict:
 
 
 def export_control_op(op: dict) -> dict:
-    """MCP op: write a block-out proxy out as the control mesh W7 conditions geometry on.
+    """MCP op: write a block-out proxy out as the control mesh `mesh_geom_ctrl` conditions geometry on.
 
     The one op in this group whose output is an INPUT to generation: an agent exports a proxy it
     placed, then passes the returned path to `comfy_mesh(control=...)`, and the generated asset keeps
@@ -1372,7 +1372,7 @@ def export_control_op(op: dict) -> dict:
     height.
 
     It also returns `bbox`, the proxy's three proportions, which is the OTHER control mode's whole
-    signal (`comfy_mesh(control_bbox=...)`, W7b, measured at G8). Both come out of one call because
+    signal (`comfy_mesh(control_bbox=...)`, `mesh_geom_bbox`, measured at G8). Both come out of one call because
     the bbox costs nothing once the object is in hand, so an agent never re-exports to change mode.
     """
     from . import comfy

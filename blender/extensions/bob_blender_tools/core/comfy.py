@@ -92,12 +92,12 @@ def comfy_dir():
 WORKFLOW_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "assets", "workflows")
 
-# W1's prompt suffix. A generated albedo with baked lighting is unusable and no amount of Bob-side
+# `tex_tileable`'s prompt suffix. A generated albedo with baked lighting is unusable and no amount of Bob-side
 # maths removes it, so the flat-lighting clause is not the artist's job to remember.
 PROMPT_SUFFIX = ("seamless tileable texture, orthographic top view, flat even lighting, "
                  "no shadows, no vignette, no highlights")
 
-# W4's prompt suffix, and the same argument as PROMPT_SUFFIX: the geometry model's failure mode on
+# `mesh_subject`'s prompt suffix, and the same argument as PROMPT_SUFFIX: the geometry model's failure mode on
 # a cropped, grouped or busy reference is silent and costs a whole 87 s generation, so the clause
 # that prevents it is not the artist's job to remember.
 SUBJECT_SUFFIX = ("single object, centred in frame, full view, not cropped, plain background, "
@@ -129,7 +129,7 @@ SUBJECT_SUFFIX = ("single object, centred in frame, full view, not cropped, plai
 #
 # What in place costs, and it is real: it mutates the SESSION's shared model, so the next graph on the
 # same checkpoint inherits circular padding unless it is undone. G1 named that hazard and G6 measured
-# it -- a W4 subject image came back at seam ratio 1.059, i.e. wrapped, where an untiled frame is
+# it -- a `mesh_subject` subject image came back at seam ratio 1.059, i.e. wrapped, where an untiled frame is
 # 3.9 to 8.5. `ensure_untiled()` is the other half of this decision and every non-tiling SDXL entry
 # point calls it. Revisit on a fork update: if `host_buffer.__del__` is fixed upstream, this becomes
 # "Make a copy" again, `ensure_untiled` becomes a no-op, and both halves can go.
@@ -159,7 +159,7 @@ def mark_tiling_applied(url=None, dirty=True):
 def reset_tiling(url=None, timeout=120):
     """Put the server's shared model and VAE back to ordinary padding. Returns the seconds it took.
 
-    Reuses W1 itself at 64 px and one step rather than shipping a reset graph, so there is no second
+    Reuses `tex_tileable` itself at 64 px and one step rather than shipping a reset graph, so there is no second
     copy of the tiling wiring to drift out of sync with the real one. The sample is throwaway; what
     matters is that both padding nodes execute, which they only do if an output depends on them.
     """
@@ -181,8 +181,8 @@ def reset_tiling(url=None, timeout=120):
 def ensure_untiled(url=None, on_progress=None):
     """Reset the shared model if a tiling graph has run, before a graph that must NOT tile.
 
-    Called by every non-tiling SDXL entry point: W4's subject image, the stylise and paint routes, and
-    W13's OPEN route, which drops the padding nodes and would otherwise inherit whatever the last
+    Called by every non-tiling SDXL entry point: `mesh_subject`'s subject image, the stylise and paint routes, and
+    `heightmap_macro`'s OPEN route, which drops the padding nodes and would otherwise inherit whatever the last
     texture set left on the model -- and a tiling macro mask is measurably the wrong thing (G5: seam
     ratio 0.80 tiled against 86.18 open, i.e. the tiled one really does repeat the landform).
 
@@ -477,7 +477,7 @@ def upload_image(path, url=None, subfolder="", overwrite=True, timeout=120):
 
     Multipart by hand, because the client is stdlib only. The endpoint writes raw bytes with a
     `commonpath` traversal guard and no image-specific handling, which is what makes it the mesh
-    transport in G3 as well as the reference-photo transport for W2.
+    transport in G3 as well as the reference-photo transport for `tex_tileable_ref`.
     """
     name = os.path.basename(path)
     with open(path, "rb") as fh:
@@ -547,7 +547,7 @@ def job(prompt_id, url=None, jobs_api=True):
 def _mesh_transport_hint(detail):
     """The sentence to append when a job died because the mesh never arrived, else "".
 
-    "Mesh file not found: input/3d/x.glb" is what every mesh-uploading graph (W9t, W9c, W7, W8p)
+    "Mesh file not found: input/3d/x.glb" is what every mesh-uploading graph (`mesh_texture`, `mesh_simplify_uv`, `mesh_geom_ctrl`, `mesh_process`)
     says when `$BOB_COMFY_DIR` is unset, and on its own it names neither the variable nor the reason.
     The redwood run hit it on the block-out route and read it as a bad control mesh. Naming it here
     rather than setting the variable in the repo's own `.mcp.json`, because a packaged install has no
@@ -666,7 +666,7 @@ def view(image, url=None, timeout=120):
 # `Preview3D` takes that string and emits a real `{filename, type, subfolder, mediaType}` entry.
 # So every mesh graph is export-then-preview, and the preview node is load-bearing plumbing rather
 # than a viewer. `SaveGLB` (the Hunyuan route) is a core output node and reports itself, which is
-# why W5 needs no Preview3D.
+# why `mesh_geom` needs no Preview3D.
 def meshes(outputs):
     """[{"filename", "subfolder", "type"}, ...] over every mesh file in a job's outputs.
 
@@ -713,7 +713,7 @@ def upload_mesh(path, url=None, subfolder="3d"):
     fork it does not actually work: the upload lands correctly, but `Trellis2LoadMesh` runs inside a
     comfy-env pixi worker whose working directory is not the ComfyUI root, so a relative path fails
     with "Mesh file not found: input/3d/...". Route 1 is therefore effectively required for every
-    mesh-uploading graph (W9t, W9c, W7, W8p), which is why `comfy_dir` takes `$BOB_COMFY_DIR` as
+    mesh-uploading graph (`mesh_texture`, `mesh_simplify_uv`, `mesh_geom_ctrl`, `mesh_process`), which is why `comfy_dir` takes `$BOB_COMFY_DIR` as
     well as the addon preference: the MCP server is not the addon and cannot read a preference.
 
     NOT `GeomPackLoadMesh`: its `file_path` is a COMBO whose options are a directory listing, and
@@ -984,7 +984,7 @@ def generate_image(workflow, values, *, url=None, timeout=600, on_progress=None,
 
 
 def _texture_values(prompt_text, *, seed, size, negative, checkpoint, prov):
-    """The BOB_* bindings W1, W2 and W3 all share."""
+    """The BOB_* bindings `tex_tileable`, `tex_tileable_ref` and `tex_upres` all share."""
     full = ", ".join(p for p in ((prompt_text or "").strip(), PROMPT_SUFFIX) if p)
     values = {"BOB_PROMPT": {"text": full},
               "BOB_SEED": {"seed": int(seed)},
@@ -1031,7 +1031,7 @@ def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, c
                     timeout=600, on_progress=None, on_queued=None, preflight_graph=True):
     """Generate ONE seamless texture set into `out_dir` (which is created), returning info.
 
-    `reference` is a local image path: passing one switches the default workflow to W2, uploads
+    `reference` is a local image path: passing one switches the default workflow to `tex_tileable_ref`, uploads
     the file, and runs img2img at `denoise` with the reference's palette locked by IPAdapter.
     """
     if reference and workflow == "tex_tileable":
@@ -1163,7 +1163,7 @@ def reject_variant(variant_dir):
     return False
 
 
-# How much of the opposite edge is wrapped around a tile before it is sent to W3, in pixels at
+# How much of the opposite edge is wrapped around a tile before it is sent to `tex_upres`, in pixels at
 # input resolution. Measured, not guessed: without it the upscale comes back at seam ratio 3.43
 # from an input measuring 0.94, because UltimateSDUpscale's ESRGAN pass and its per-tile crops
 # both pad at the image border and a circular-padded UNet never sees the wrap. 128 is one
@@ -1174,7 +1174,7 @@ UPRES_WRAP_PAD = 128
 def upres_variant(variant_dir, *, scale=2.0, url=None, workflow="tex_upres", denoise=0.2,
                   checkpoint=None, timeout=1200, on_progress=None, on_queued=None,
                   wrap_pad=UPRES_WRAP_PAD):
-    """Upscale a staged variant's basecolor through W3 and re-derive its maps in place.
+    """Upscale a staged variant's basecolor through `tex_upres` and re-derive its maps in place.
 
     Runs on the STAGED copy on purpose: an upres is another iteration, so it belongs in front of
     Accept rather than behind it.
@@ -1204,7 +1204,7 @@ def upres_variant(variant_dir, *, scale=2.0, url=None, workflow="tex_upres", den
     values, full_prompt, ckpt = _texture_values(meta.get("artist_prompt", ""),
                                                 seed=meta.get("seed", 0), size=1024,
                                                 negative=None, checkpoint=checkpoint, prov=prov)
-    values.pop("BOB_SIZE", None)  # W3's size comes from the image, not an empty latent
+    values.pop("BOB_SIZE", None)  # `tex_upres`'s size comes from the image, not an empty latent
     values["BOB_IMAGE"] = {"image": upload_image(send, url=url, subfolder="bob")}
     values["BOB_SEED"].update(denoise=float(denoise), upscale_by=float(scale))
 
@@ -1255,15 +1255,15 @@ def texture_set_from_prompt(prompt_text, pack_dir, *, seed=0, size=1024, negativ
     return name, info
 
 
-# -- BobFoliage's two texture jobs (F3, docs/FOLIAGE.md 3) -----------------------------------
-# Neither needs a new workflow or a new model. The leaf atlas is W4 (`mesh_subject`) with its alpha
-# kept and the grid composed Bob-side; bark is W1 through the ordinary `texture_variant`, with one
-# prompt clause and one new measurement. What each needs instead is a clause the artist should not
-# have to remember, for the same reason `PROMPT_SUFFIX` and `SUBJECT_SUFFIX` exist.
+# -- BobFoliage's two texture jobs (docs/FOLIAGE.md, the texture sets) -----------------------------
+# Neither needs a new workflow or a new model. The leaf atlas is `mesh_subject` with its alpha kept
+# and the grid composed Bob-side; bark is `tex_tileable` through the ordinary `texture_variant`, with
+# one prompt clause and one new measurement. What each needs instead is a clause the artist should
+# not have to remember, for the same reason `PROMPT_SUFFIX` and `SUBJECT_SUFFIX` exist.
 
 # Bark's clause, and it is MEASURED rather than chosen. Bark grain is directional and a tileable SDXL
-# pass has no reason to keep an axis, so F3 tried four wordings across two species and two seeds and
-# took the only one that held (worst case, degrees off vertical):
+# pass has no reason to keep an axis, so four wordings were tried across two species and two seeds
+# and only one held (worst case, degrees off vertical):
 #
 #   "vertical bark, deep furrows running top to bottom"            17.6   <- this one
 #   "vertical grain running straight up and down"                  71.3
@@ -1283,7 +1283,7 @@ BARK_SUFFIX = "vertical bark, deep furrows running top to bottom"
 ATLAS_SPRITE_SUFFIX = ("a single sprig, the cut end of its stem at the bottom of the frame, "
                        "foliage fanning upward, flat lay")
 
-# W4's own negative is written for a solid: it forbids "multiple objects, group, collection", which
+# `mesh_subject`'s own negative is written for a solid: it forbids "multiple objects, group, collection", which
 # is right for a boulder and right for one sprite, and it also forbids a ground plane and a cast
 # shadow, which a matte-and-composite route particularly wants gone.
 ATLAS_NEGATIVE = ("multiple sprigs, bunch, bouquet, arrangement, grid, collage, whole tree, trunk, "
@@ -1292,7 +1292,7 @@ ATLAS_NEGATIVE = ("multiple sprigs, bunch, bouquet, arrangement, grid, collage, 
 
 # How the cells of an atlas are produced. "cells" is the default and the route the gate measures.
 #
-# **A diffusion model cannot be asked for a grid.** Measured at F3: W4 with "a 2 by 2 grid of four
+# **A diffusion model cannot be asked for a grid.** Measured at F3: `mesh_subject` with "a 2 by 2 grid of four
 # separate pine needle sprays, one spray per quadrant, each growing upward from the bottom of its
 # quadrant" returned FIVE sprays arranged in a ring, straddling every cell boundary, each pointing a
 # different way, none touching a cell's bottom edge. Per-cell coverage passed anyway (8 to 11% opaque
@@ -1379,7 +1379,7 @@ def bark_set(prompt_text, pack_dir, *, name=None, seed=0, size=1024, url=None, n
 
 def atlas_sprite(prompt_text, out_path, *, seed=0, size=512, negative=None, url=None,
                  timeout=600, on_progress=None, preflight_graph=True):
-    """One atlas cell's sprite: W4 with the sprig clause and a real cutout. Returns info."""
+    """One atlas cell's sprite: `mesh_subject` with the sprig clause and a real cutout. Returns info."""
     full = ", ".join(p for p in ((prompt_text or "").strip(), ATLAS_SPRITE_SUFFIX) if p)
     return subject_image(full, out_path, seed=seed, size=size,
                          negative=negative or ATLAS_NEGATIVE, url=url, timeout=timeout,
@@ -1466,7 +1466,7 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
             "opaque_fraction": float((alpha > 0.95).mean()),
             "prompt_ids": [s.get("prompt_id") for s in sources]}
     source_text = (
-        f"basecolor + opacity: generated by ComfyUI, workflow mesh_subject (W4), "
+        f"basecolor + opacity: generated by ComfyUI, workflow mesh_subject, "
         f"{len(sources)} frame(s), seed {int(seed)}, composed by BobBlenderTools into a "
         f"{cols}x{rows} atlas ({route} route).\n"
         f"prompt: {prompt_text}\n"
@@ -1495,14 +1495,14 @@ MESH_TIERS = {"preview": "512", "default": "1024", "hero": "1536_cascade"}
 
 
 def subject_prompt(prompt_text):
-    """The artist's prompt with W4's single-subject clause appended."""
+    """The artist's prompt with `mesh_subject`'s single-subject clause appended."""
     return ", ".join(p for p in ((prompt_text or "").strip(), SUBJECT_SUFFIX) if p)
 
 
 def subject_image(prompt_text, out_path, *, seed=0, size=1024, negative=None, checkpoint=None,
                   url=None, workflow="mesh_subject", timeout=600, on_progress=None,
                   on_queued=None, preflight_graph=True):
-    """W4: prompt to one single-subject RGBA reference PNG at `out_path`. Returns info.
+    """`mesh_subject`: prompt to one single-subject RGBA reference PNG at `out_path`. Returns info.
 
     The alpha is the contract, not the white background. The geometry graphs feed `LoadImage`'s
     (inverted) mask into `Trellis2GetConditioning`, so an opaque PNG makes the whole square frame
@@ -1558,10 +1558,10 @@ def bind_process(graph, values, *, remesh=True, faces=None):
 
     Separate from `template()` because a dynamic combo cannot simply be merged into: the selected
     key owns its sub-widgets, so the OTHER branch's `remesh.*` fields have to be dropped from the
-    graph rather than overridden. Shared by W5t and W9b, which both carry the node.
+    graph rather than overridden. Shared by `mesh_geom_trellis` and `mesh_geom_texture`, which both carry the node.
 
-    `faces` binds `target_face_count`. On W5t that stays at the graph's 500000, because Bob's
-    simplify budget is applied later; on W9b it IS the budget, because `Trellis2ProcessMesh` is
+    `faces` binds `target_face_count`. On `mesh_geom_trellis` that stays at the graph's 500000, because Bob's
+    simplify budget is applied later; on `mesh_geom_texture` it IS the budget, because `Trellis2ProcessMesh` is
     simplify plus weld plus unwrap in one node and that is what makes the one-shot route one-shot.
     """
     nid = titles(graph).get("BOB_PROCESS")
@@ -1579,7 +1579,7 @@ def bind_process(graph, values, *, remesh=True, faces=None):
 def mesh_geometry(image_path, out_path, *, seed=0, tier="default", url=None, remesh=True,
                   workflow="mesh_geom_trellis", timeout=1800, on_progress=None, on_queued=None,
                   preflight_graph=True):
-    """W5t: a subject PNG with alpha to a dense UV-unwrapped GLB at `out_path`. Returns info.
+    """`mesh_geom_trellis`: a subject PNG with alpha to a dense UV-unwrapped GLB at `out_path`. Returns info.
 
     `remesh=False` keeps open surfaces; see `process_mesh_values`. It is the difference between a
     leaf and a leaf-shaped bag.
@@ -1603,7 +1603,7 @@ def mesh_geometry(image_path, out_path, *, seed=0, tier="default", url=None, rem
 def mesh_geom_alt(image_path, out_path, *, seed=0, url=None, workflow="mesh_geom_alt",
                   checkpoint=None, size=1024, timeout=1800, on_progress=None, on_queued=None,
                   preflight_graph=True):
-    """W8: the same subject PNG to a mesh through the CHALLENGER model, Hunyuan3D 2.1.
+    """`mesh_geom_alt`: the same subject PNG to a mesh through the CHALLENGER model, Hunyuan3D 2.1.
 
     Same inputs and the same output contract as `mesh_geometry`, which is what makes the geometry
     A/B a config change rather than a rewrite. Two differences are structural rather than settings,
@@ -1611,10 +1611,10 @@ def mesh_geom_alt(image_path, out_path, *, seed=0, url=None, workflow="mesh_geom
 
     - the output is watertight whatever the caller wants, because `VoxelToMesh` extracts an
       isosurface, so there is no `remesh` argument here to turn open surfaces on with;
-    - it carries no texture and no UVs at all, so the challenger route runs `mesh_process` (W8p)
-      and then `mesh_texture` (W9t) behind it. `generate_asset_alt` is that chain.
+    - it carries no texture and no UVs at all, so the challenger route runs `mesh_process` (`mesh_process`)
+      and then `mesh_texture` (`mesh_texture`) behind it. `generate_asset_alt` is that chain.
 
-    `size` is the plain plate the subject is composited onto through its own alpha. W4's RGB is
+    `size` is the plain plate the subject is composited onto through its own alpha. `mesh_subject`'s RGB is
     still the SDXL frame behind the cutout and `LoadImage` drops alpha rather than compositing it,
     so without the plate this model would be conditioned on a background TRELLIS.2 never sees.
     """
@@ -1637,7 +1637,7 @@ def mesh_geom_alt(image_path, out_path, *, seed=0, url=None, workflow="mesh_geom
 def mesh_texture(mesh_path, image_path, out_path, *, seed=0, texture_size=1024, url=None,
                  workflow="mesh_texture", timeout=1800, on_progress=None, on_queued=None,
                  preflight_graph=True):
-    """W9t: PBR-texture an existing mesh in its own UVs, writing the textured GLB to `out_path`.
+    """`mesh_texture`: PBR-texture an existing mesh in its own UVs, writing the textured GLB to `out_path`.
 
     `mesh_path` MUST already be unit-normalised. `Trellis2EncodeMesh` voxelises in unit-cube space,
     so a metre-scale mesh lands outside the grid, the encoder sees nothing, and the albedo comes
@@ -1661,9 +1661,9 @@ def mesh_texture(mesh_path, image_path, out_path, *, seed=0, texture_size=1024, 
 def mesh_geom_texture(image_path, out_path, *, seed=0, tier="default", faces=4000,
                       texture_size=1024, remesh=True, url=None, workflow="mesh_geom_texture",
                       timeout=1800, on_progress=None, on_queued=None, preflight_graph=True):
-    """W9b: a subject PNG with alpha to a simplified, unwrapped, PBR-TEXTURED GLB in one job.
+    """`mesh_geom_texture`: a subject PNG with alpha to a simplified, unwrapped, PBR-TEXTURED GLB in one job.
 
-    The one-shot alternative to W5t plus W9c plus W9t, and it is one graph rather than three
+    The one-shot alternative to `mesh_geom_trellis` plus `mesh_simplify_uv` plus `mesh_texture`, and it is one graph rather than three
     because `Trellis2ProcessMesh` already simplifies, welds and unwraps: bind `faces` and
     `Trellis2RasterizePBR` bakes the PBR into the budget mesh's own charts.
 
@@ -1691,7 +1691,7 @@ def mesh_geom_texture(image_path, out_path, *, seed=0, tier="default", faces=400
 
 def mesh_geom_mv(view_paths, out_path, *, seed=0, url=None, workflow="mesh_geom_mv",
                  timeout=1800, on_progress=None, on_queued=None, preflight_graph=True):
-    """W6: four cardinal views to a watertight GLB through Hunyuan3D multi-view conditioning.
+    """`mesh_geom_mv`: four cardinal views to a watertight GLB through Hunyuan3D multi-view conditioning.
 
     `view_paths` is (front, left, back, right) in that order, which is the order
     `Hunyuan3Dv2ConditioningMultiView`'s own sockets name. Views come from Blender when a block-out
@@ -1715,10 +1715,10 @@ def mesh_geom_mv(view_paths, out_path, *, seed=0, url=None, workflow="mesh_geom_
 def mesh_geom_mv_trellis(view_paths, out_path, *, seed=0, tier="default", remesh=True, faces=None,
                          url=None, workflow="mesh_geom_mv_trellis", timeout=1800, on_progress=None,
                          on_queued=None, preflight_graph=True):
-    """W6t: the same four views through `Trellis2MultiViewImageToShape`, the TRELLIS.2 challenger.
+    """`mesh_geom_mv_trellis`: the same four views through `Trellis2MultiViewImageToShape`, the TRELLIS.2 challenger.
 
     Same inputs and the same output contract as `mesh_geom_mv`, so the multi-view A/B is a config
-    change rather than two pipelines (R21's G7 slot, brought forward because W4's framing turned out
+    change rather than two pipelines (R21's G7 slot, brought forward because `mesh_subject`'s framing turned out
     to be what decides an asset's shape).
     """
     graph, prov = load_workflow(workflow)
@@ -1743,7 +1743,7 @@ def mesh_geom_mv_trellis(view_paths, out_path, *, seed=0, tier="default", remesh
 
 def omni_model_dir():
     """`<comfy>/models/hunyuan3d-omni` when the ComfyUI folder preference points at a checkout that
-    has it, else None, which leaves W7's shipped HuggingFace repo id in place (R6)."""
+    has it, else None, which leaves `mesh_geom_ctrl`'s shipped HuggingFace repo id in place (R6)."""
     base = comfy_dir()
     if base is None:
         return None
@@ -1754,7 +1754,7 @@ def omni_model_dir():
 def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, steps=50,
                    guidance=4.5, octree=256, url=None, workflow="mesh_geom_ctrl", timeout=1800,
                    on_progress=None, on_queued=None, preflight_graph=True):
-    """W7: a block-out proxy plus a reference image to a mesh that keeps the block-out's shape.
+    """`mesh_geom_ctrl`: a block-out proxy plus a reference image to a mesh that keeps the block-out's shape.
 
     The one route in track C whose input is a mesh Bob already has rather than a picture of one, and
     the only one whose OUTPUT ORIENTATION means anything, so two Bob-side rules travel with it:
@@ -1798,14 +1798,14 @@ CONTROL_BBOX_RANGE = (0.1, 3.0)
 def mesh_geom_bbox(dims, image_path, out_path, *, seed=0, steps=50, guidance=4.5, octree=256,
                    url=None, workflow="mesh_geom_bbox", timeout=1800, on_progress=None,
                    on_queued=None, preflight_graph=True):
-    """W7b: the same block-out conditioning as W7 with the control reduced to three numbers.
+    """`mesh_geom_bbox`: the same block-out conditioning as `mesh_geom_ctrl` with the control reduced to three numbers.
 
     `dims` is `[length, height, width]` in the control glb's frame, which is NOT Blender's;
     `core.gen_assets.control_bbox` is the one place that mapping lives. Pass None for the node's own
     estimate from the image, which is the null G8 scores Bob's numbers against rather than a mode
     anyone should choose: it reads a silhouette Bob already knows the answer to.
 
-    Two things W7 has to worry about and this does not. Nothing is uploaded, so the mesh-transport
+    Two things `mesh_geom_ctrl` has to worry about and this does not. Nothing is uploaded, so the mesh-transport
     failure that made every other Omni route depend on `$BOB_COMFY_DIR` cannot occur here. And there
     is no unit-normalise round trip to forget, because a proportion has no scale. What does carry
     over unchanged is the return turn: same exporter, one glb write, so
@@ -1842,7 +1842,7 @@ def mesh_geom_bbox(dims, image_path, out_path, *, seed=0, steps=50, guidance=4.5
 # `infer_point`, and the wrapper reproduces both faithfully. That asymmetry belongs to the two demo
 # datasets' frames rather than to the model: `OmniEncoder.forward` reads point and voxel through the
 # same Fourier embedder in the same [-1, 1] cube, and the only difference between the branches is
-# the quantiser and the conditioning token. Bob's control glb is the file W7 already conditions on
+# the quantiser and the conditioning token. Bob's control glb is the file `mesh_geom_ctrl` already conditions on
 # correctly, measured over all 24 axis-aligned rotations at G4c, so the extra turn is a turn away
 # from the frame that works. Measured at G9 on the asymmetric block-out, both ways.
 VOXEL_INPUT_ROTATION = False
@@ -1852,10 +1852,10 @@ def mesh_geom_voxel(control_path, image_path, out_path, *, seed=0, samples=81920
                     guidance=4.5, octree=256, rotate_input=None, url=None,
                     workflow="mesh_geom_voxel", timeout=1800, on_progress=None, on_queued=None,
                     preflight_graph=True):
-    """W7v: W7's block-out control read as a coarse occupancy grid rather than as a point cloud.
+    """`mesh_geom_voxel`: `mesh_geom_ctrl`'s block-out control read as a coarse occupancy grid rather than as a point cloud.
 
     Same control file, same loader, same `core.gen_assets.export_control` round trip and the same
-    `gen_assets.CONTROL_RETURN_TURN` on the way back, so everything Bob-side is shared with W7 and
+    `gen_assets.CONTROL_RETURN_TURN` on the way back, so everything Bob-side is shared with `mesh_geom_ctrl` and
     the difference is one node. What that node does with the control is not shared: it area-samples
     `samples` points and `OmniEncoder.generate_voxel` quantises them onto a 16-cubed grid, keeping
     each occupied cell's centre once. So `samples` is a FILLING budget rather than a detail budget --
@@ -1889,9 +1889,9 @@ def mesh_geom_voxel(control_path, image_path, out_path, *, seed=0, samples=81920
 # Which Omni control mode a block-out uses, and the one place that decision lives. Every mode ends at
 # the same exporter and the same `gen_assets.CONTROL_RETURN_TURN`, so nothing downstream differs.
 #
-#   "point" W7,  an area-sampled point cloud from the proxy's surface (8,192 points by default).
-#   "bbox"  W7b, the proxy's three proportions, which the encoder turns into eight corners.
-#   "voxel" W7v, the proxy's surface quantised to a 16-cubed occupancy grid.
+#   "point" `mesh_geom_ctrl`,  an area-sampled point cloud from the proxy's surface (8,192 points by default).
+#   "bbox"  `mesh_geom_bbox`, the proxy's three proportions, which the encoder turns into eight corners.
+#   "voxel" `mesh_geom_voxel`, the proxy's surface quantised to a 16-cubed occupancy grid.
 #
 CONTROL_MODES = ("point", "bbox", "voxel")
 CONTROL_WORKFLOWS = {"point": "mesh_geom_ctrl", "bbox": "mesh_geom_bbox",
@@ -1917,8 +1917,8 @@ MESH_CONTROL_MODES = ("point", "voxel")
 #     big", which the image already said.
 #
 # "bbox" stays wired for a reason G8 was not looking for. It uploads nothing, so it is the only Omni
-# route that runs in a process with no ComfyUI folder: measured with `comfy_dir()` forced away, W7
-# fails at the node with "Mesh file not found" and W7b completes. That makes it the block-out route's
+# route that runs in a process with no ComfyUI folder: measured with `comfy_dir()` forced away, `mesh_geom_ctrl`
+# fails at the node with "Mesh file not found" and `mesh_geom_bbox` completes. That makes it the block-out route's
 # fallback wherever mesh transport is unavailable, which is worth more than the seconds.
 DEFAULT_CONTROL_MODE = "point"
 
@@ -1930,7 +1930,7 @@ def control_route(mode=None, control=None, control_bbox=None):
     `DEFAULT_CONTROL_MODE` when it holds both. Callers pass what they have rather than deciding, the
     same rule `asset_chain` follows.
 
-    Two modes share the mesh form. W7 and W7v take the SAME control file, so a mesh alone cannot say
+    Two modes share the mesh form. `mesh_geom_ctrl` and `mesh_geom_voxel` take the SAME control file, so a mesh alone cannot say
     which of them was meant and the inferred answer is `DEFAULT_CONTROL_MODE`; "voxel" is reachable
     by naming it, which is what a challenger mode should cost. An unknown name raises rather than
     falling through to an unconditioned generation, because on this route a control that does not
@@ -1953,7 +1953,7 @@ def control_route(mode=None, control=None, control_bbox=None):
 
 def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mesh_simplify_uv",
                      timeout=900, on_progress=None, on_queued=None, preflight_graph=True):
-    """W9c: `Trellis2Simplify` then `Trellis2UVUnwrap`, the ComfyUI side of the steps 3 and 4 A/B.
+    """`mesh_simplify_uv`: `Trellis2Simplify` then `Trellis2UVUnwrap`, the ComfyUI side of the steps 3 and 4 A/B.
     No model is loaded, so the wall clock here is the algorithm and not a checkpoint read."""
     graph, prov = load_workflow(workflow)
     values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)},
@@ -1969,17 +1969,17 @@ def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mes
 def mesh_process(mesh_path, out_path, *, faces=4000, remesh=True, url=None,
                  workflow="mesh_process", timeout=900, on_progress=None, on_queued=None,
                  preflight_graph=True):
-    """W8p: normalise into the unit cube, then `Trellis2ProcessMesh`, i.e. steps 3 and 4 in ONE node.
+    """`mesh_process`: normalise into the unit cube, then `Trellis2ProcessMesh`, i.e. steps 3 and 4 in ONE node.
 
-    W9c's replacement on any route that did not generate its own topology. It exists because a
+    `mesh_simplify_uv`'s replacement on any route that did not generate its own topology. It exists because a
     challenger model has to be scored through the same processing the shipped route applies to its
     own output: same face budget, same weld, same chart parameters, same `remesh` branch. G3b
-    measured what using W9c instead would have cost, and it is not small (1,467 to 3,050 boundary
+    measured what using `mesh_simplify_uv` instead would have cost, and it is not small (1,467 to 3,050 boundary
     edges against 10 to 146 on the same prompts), so processing the two halves of a grid through
     different nodes would score the node rather than the model.
 
     The normalise is not tidiness. Hunyuan returns [-1, 1] where TRELLIS.2 returns [-0.5, 0.5] and
-    `Trellis2ProcessMesh` rescales neither, so without it every W9t texture on this route comes back
+    `Trellis2ProcessMesh` rescales neither, so without it every `mesh_texture` texture on this route comes back
     BLACK (G7: in-chart albedo std 0.0064 against 0.1810), and the two models' meshes would meet the
     same `remesh_band` at different sizes.
 
@@ -2034,14 +2034,14 @@ def _stage_dir(prompt_text, pack_dir, seed):
 
 def _stage_subject(prompt_text, out_dir, *, seed=0, size=1024, checkpoint=None, url=None,
                    subject=None, negative=None, on_progress=None, on_queued=None):
-    """Pipeline step 1 for whichever chain is running: W4, or the image the artist already has.
+    """Pipeline step 1 for whichever chain is running: `mesh_subject`, or the image the artist already has.
 
-    `subject` skips W4 entirely and is reported as costing nothing, which is true and is what makes
+    `subject` skips `mesh_subject` entirely and is reported as costing nothing, which is true and is what makes
     a benchmark able to hand every route the SAME reference image.
 
-    `negative` reaches W4's BOB_NEG and nothing else, because the subject image is the ONLY stage a
+    `negative` reaches `mesh_subject`'s BOB_NEG and nothing else, because the subject image is the ONLY stage a
     text prompt touches: every geometry graph downstream conditions on the picture, so anything not
-    said here cannot be said later. It is threaded through every chain rather than being W4's
+    said here cannot be said later. It is threaded through every chain rather than being `mesh_subject`'s
     private argument for that reason.
     """
     if subject:
@@ -2058,19 +2058,19 @@ def generate_asset_source(prompt_text, pack_dir, *, seed=0, tier="default", size
                           checkpoint=None, url=None, timeout=1800, on_progress=None,
                           on_queued=None, subject=None, negative=None, remesh=True, control=None,
                           points=8192, control_bbox=None, control_mode=None):
-    """W4 then W5t into a fresh `<pack>/_staging/<variant>/`, returning that variant's info.
+    """`mesh_subject` then `mesh_geom_trellis` into a fresh `<pack>/_staging/<variant>/`, returning that variant's info.
 
-    The ComfyUI half of Generate Asset, whole. `subject` is a local image path that SKIPS W4, for
+    The ComfyUI half of Generate Asset, whole. `subject` is a local image path that SKIPS `mesh_subject`, for
     the artist who already has the reference they want; it still has to carry alpha.
 
-    A control swaps step 2 from W5t to the Omni route: same reference image, same output contract,
+    A control swaps step 2 from `mesh_geom_trellis` to the Omni route: same reference image, same output contract,
     geometry conditioned on a shape the layout was composed around. It is a value here rather than a
-    separate staging function because everything downstream (W9c, W9t, and all of `finish_asset`) is
+    separate staging function because everything downstream (`mesh_simplify_uv`, `mesh_texture`, and all of `finish_asset`) is
     identical -- which is also why the block-out route runs the STAGED chain and not the one-shot
-    one: W9b generates its own geometry and takes no control.
+    one: `mesh_geom_texture` generates its own geometry and takes no control.
 
     Two forms of it, and `control_route` decides which: `control` is a unit-normalised block-out
-    proxy for W7, `control_bbox` is that proxy's three proportions for W7b. `core.gen_assets`
+    proxy for `mesh_geom_ctrl`, `control_bbox` is that proxy's three proportions for `mesh_geom_bbox`. `core.gen_assets`
     produces either from the same object.
     """
     out_dir, name = _stage_dir(prompt_text, pack_dir, seed)
@@ -2120,10 +2120,10 @@ def generate_asset_chain(prompt_text, pack_dir, *, seed=0, tier="default", faces
                          on_progress=None, on_queued=None, subject=None, negative=None,
                          remesh=True, control=None, points=8192, control_bbox=None,
                          control_mode=None):
-    """Every ComfyUI stage of one asset, in order, on ONE thread: W4, W5t, W9c, W9t.
+    """Every ComfyUI stage of one asset, in order, on ONE thread: `mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`.
 
     This is the shape the panel uses, and the ordering is why it works. Steps 3 and 4 are done by
-    W9c on the server, so its output IS the low mesh W9t textures, and Blender has nothing to do
+    `mesh_simplify_uv` on the server, so its output IS the low mesh `mesh_texture` textures, and Blender has nothing to do
     between them. That makes the whole ComfyUI half a single worker job with no main-thread work
     in the middle, which is the only arrangement that keeps a five-minute run off the UI thread.
 
@@ -2166,14 +2166,14 @@ def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4
                        texture_size=1024, checkpoint=None, url=None, timeout=1800,
                        on_progress=None, on_queued=None, subject=None, negative=None, remesh=True,
                        size=1024):
-    """Every ComfyUI stage of one asset through the CHALLENGER geometry model: W4, W8, W8p, W9t.
+    """Every ComfyUI stage of one asset through the CHALLENGER geometry model: `mesh_subject`, `mesh_geom_alt`, `mesh_process`, `mesh_texture`.
 
-    `generate_asset_chain`'s shape with Hunyuan 2.1 in place of W5t and the shared
-    `Trellis2ProcessMesh` (W8p) in place of W9c, so it stages the same three files and every
+    `generate_asset_chain`'s shape with Hunyuan 2.1 in place of `mesh_geom_trellis` and the shared
+    `Trellis2ProcessMesh` (`mesh_process`) in place of `mesh_simplify_uv`, so it stages the same three files and every
     consumer stays route-agnostic. `tier` is accepted and unused: Hunyuan has no resolution tier,
     which is one of the things the caller does not have to know.
 
-    `remesh=False` reaches W8p and nothing else. The geometry is watertight before it gets there,
+    `remesh=False` reaches `mesh_process` and nothing else. The geometry is watertight before it gets there,
     because `VoxelToMesh` extracts an isosurface, so this route cannot make an open surface at all
     and asking it to is not an error. That is the structural half of the G7 verdict.
     """
@@ -2222,22 +2222,22 @@ def generate_asset_alt(prompt_text, pack_dir, *, seed=0, tier="default", faces=4
 # Which ComfyUI chain Generate Asset runs. A route, not a rewrite: every function below stages the
 # same paths and `core.gen_assets.finish_asset` consumes any of them.
 #
-#   "oneshot" W4 -> W9b. Two jobs, one model load, no mesh round trip, and no dense mesh.
-#   "staged"  W4 -> W5t -> W9c -> W9t. Four jobs, and the one that keeps a DENSE mesh on disk.
-#   "alt"     W4 -> W8 -> W8p -> W9t. The same shape with Hunyuan 2.1 as the geometry model.
+#   "oneshot" `mesh_subject` -> `mesh_geom_texture`. Two jobs, one model load, no mesh round trip, and no dense mesh.
+#   "staged"  `mesh_subject` -> `mesh_geom_trellis` -> `mesh_simplify_uv` -> `mesh_texture`. Four jobs, and the one that keeps a DENSE mesh on disk.
+#   "alt"     `mesh_subject` -> `mesh_geom_alt` -> `mesh_process` -> `mesh_texture`. The same shape with Hunyuan 2.1 as the geometry model.
 #
 # G3b measured both on ten prompts and the one-shot route won, which is why it is the default. Short
 # version, full numbers in docs/COMFYUI.md: a wash on wall clock (593 s against 584 s for all ten),
 # both 10/10 inside the face budget with the same UV quality, a lower VRAM peak, and two things that
 # decided it. It returns a far cleaner mesh (10 to 662 boundary edges against 1,467 to 3,050 on the
 # same prompts, with foliage openness and thinness preserved to within 1%), and it cannot hit the
-# black-albedo trap, because it never re-encodes a mesh: the staged route's W9t returned one fully
+# black-albedo trap, because it never re-encodes a mesh: the staged route's `mesh_texture` returned one fully
 # black texture in ten. The dense mesh the one-shot route gives up bought no measurable detail in
 # the baked normal at a 4,000-face budget, which is what the plan assumed it was for.
 #
 # "staged" stays wired and is not dead code: it is the only route that leaves a dense mesh on disk
-# for a future higher-budget or hero path, and W9t on its own is still track B, texturing a mesh Bob
-# already has. W9b can only texture geometry it generated itself.
+# for a future higher-budget or hero path, and `mesh_texture` on its own is still track B, texturing a mesh Bob
+# already has. `mesh_geom_texture` can only texture geometry it generated itself.
 #
 # "alt" is the G7 grid's challenger and it stays wired for the same kind of reason: it is the only
 # route whose geometry model needs no custom pack at all, so it is what still generates an asset on
@@ -2263,13 +2263,13 @@ DEFAULT_ASSET_ROUTE = "oneshot"
 #     faster (median 40.4 s against 86.1 s) and returns properly closed shells (median 0 boundary
 #     edges against 116, and nothing downstream closes those on either route). It costs 3.7 GB more
 #     VRAM (9,688 MiB against 5,958), returns a flatter albedo (median std 0.1259 against 0.1555),
-#     hit the black-albedo trap once in ten where W9b cannot hit it at all, and carries a
+#     hit the black-albedo trap once in ten where `mesh_geom_texture` cannot hit it at all, and carries a
 #     non-permissive licence with a territorial exclusion where TRELLIS.2 is MIT. Two wins on speed
 #     and cleanliness do not buy a DEFAULT that an artist in the EU, the UK or South Korea may not
 #     use, so solids stay on the default route and "alt" stays an explicit, documented choice.
-#   block-out: Hunyuan, but through Omni and W7 rather than through this route, decided at G4c on
+#   block-out: Hunyuan, but through Omni and `mesh_geom_ctrl` rather than through this route, decided at G4c on
 #     footprint IoU (0.9079 mean against the multi-view baseline's 0.6748). `asset_chain` routes a
-#     control to the staged chain, which is where W7 lives.
+#     control to the staged chain, which is where `mesh_geom_ctrl` lives.
 KIND_ROUTE = {}
 
 # Which scatter kinds are FOLIAGE, which decides two stages at once and was a literal in three
@@ -2319,7 +2319,7 @@ def asset_chain(route=None, kind=None, control=None, control_bbox=None):
 
     Three inputs, in priority order, and every caller passes what it knows rather than deciding:
 
-    - a control of EITHER form forces the staged chain, because W9b generates its own geometry from
+    - a control of EITHER form forces the staged chain, because `mesh_geom_texture` generates its own geometry from
       the image and takes no control, and the challenger's Hunyuan graph takes none either. There is
       no one-shot version of the block-out route to choose. Which Omni mode runs is a separate
       decision and it lives in `control_route`, not here.
@@ -2337,7 +2337,7 @@ def finish_passes(staged):
     """(simplify_pass, texture_pass) for `core.gen_assets.finish_asset`, from either route's staging.
 
     The routes differ by exactly this, and putting it here keeps every caller route-agnostic. The
-    staged route hands over three files, so steps 3 and 4 come from W9c and step 5 from W9t. The
+    staged route hands over three files, so steps 3 and 4 come from `mesh_simplify_uv` and step 5 from `mesh_texture`. The
     one-shot route hands over ONE file that is already simplified, unwrapped and textured, so it
     goes in as the simplified mesh with no texture pass at all: passing it as `texture_pass` instead
     would make Blender decimate and unwrap a mesh it is about to throw away.
@@ -2360,32 +2360,32 @@ def stage_exports(staged):
     everything, so the raw mesh's own turn is undone as well and the finished asset lands facing the
     way the block-out did.
 
-    EITHER control form, and that is not a formality. W7b uploads no mesh, so a rule written as "is
+    EITHER control form, and that is not a formality. `mesh_geom_bbox` uploads no mesh, so a rule written as "is
     there a control file" reads the bbox route as uncontrolled and leaves its asset lying on its
     side: the turn comes from the exporter, which both Omni routes end at, not from the control.
 
     The "alt" chain needs no case of its own, and that is arithmetic rather than luck: Hunyuan's
-    `SaveGLB` adds no turn where W5t's `Trellis2ExportTrimesh` adds one, and every later hop on both
+    `SaveGLB` adds no turn where `mesh_geom_trellis`'s `Trellis2ExportTrimesh` adds one, and every later hop on both
     chains is a Trellis export, so the two differ by a constant that a relative correction cancels.
     """
     meta = staged.get("meta") or {}
     base = 1 if (meta.get("control") or meta.get("control_bbox")) else 0
     if not staged.get("simplified_mesh"):
-        # The one-shot route: W9b returns ONE file that is both the raw and the low mesh, and it
+        # The one-shot route: `mesh_geom_texture` returns ONE file that is both the raw and the low mesh, and it
         # takes no control, so there is nothing to bring into line and nothing to face.
         return {"raw": base, "simplified": base}
     return {"raw": base, "simplified": base + 1, "textured": base + 2}
 
 
 # -- Stylised renders and painted meshes (track D, and track B stylised) -------------------------
-# One graph shape serves both, which is why W12 is built first and W9 grows out of it: a per-view
+# One graph shape serves both, which is why `stylize_render` is built first and `mesh_paint_views` grows out of it: a per-view
 # restyle IS a stylised render that happens to be one of six. The difference is the IPAdapter
-# reference W9 carries so the views agree on a palette, and the lower denoise that keeps the real
+# reference `mesh_paint_views` carries so the views agree on a palette, and the lower denoise that keeps the real
 # render dominant (R20).
 #
 # Two hint routes, and the whole point of track D is that the first one exists:
-#   "passes"    W12, Blender's TRUE depth and normal passes, exported by core.gen_views
-#   "estimated" W12e, Depth Anything V2 plus NormalBAE reading the render itself
+#   "passes"    `stylize_render`, Blender's TRUE depth and normal passes, exported by core.gen_views
+#   "estimated" `stylize_render_est`, Depth Anything V2 plus NormalBAE reading the render itself
 # The estimated route is not a fallback nobody wants: it is the control the real-passes claim is
 # measured against, and the only route available for an image Bob did not render.
 STYLISE_WORKFLOWS = {"passes": "stylize_render", "estimated": "stylize_render_est"}
@@ -2396,7 +2396,7 @@ DEFAULT_STYLISE_ROUTE = "passes"
 STYLISE_DENOISE = 0.55
 PAINT_DENOISE = 0.40
 
-# A style prompt has the same problem W1's did: the artist types the look and forgets the framing
+# A style prompt has the same problem `tex_tileable`'s did: the artist types the look and forgets the framing
 # clause that keeps the result usable as a restyle rather than a new picture.
 STYLISE_SUFFIX = "same composition, same camera, same layout, coherent lighting"
 
@@ -2422,12 +2422,12 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
                    lora=None, lora_strength=0.8, depth_strength=None, normal_strength=None,
                    reference=None, url=None, workflow=None, timeout=900, on_progress=None,
                    on_queued=None, preflight_graph=True):
-    """W12 (or W9, or W12e): one image restyled under depth and normal ControlNet, written to
+    """`stylize_render` (or `mesh_paint_views`, or `stylize_render_est`): one image restyled under depth and normal ControlNet, written to
     `out_path`. Returns info.
 
-    Pass `depth` and `normal` (Bob's real passes) for the W12 route; omit both and the estimated
+    Pass `depth` and `normal` (Bob's real passes) for the `stylize_render` route; omit both and the estimated
     route runs instead, which is the same graph with two preprocessors in place of the two loads.
-    `reference` selects W9, whose IPAdapter locks the palette across a turntable.
+    `reference` selects `mesh_paint_views`, whose IPAdapter locks the palette across a turntable.
 
     `lora` is a filename from the server's own LoRA enum. None DROPS the LoraLoader from the graph
     rather than running it at strength 0, because a placeholder filename fails the validator on a
@@ -2470,7 +2470,7 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
         graph = drop_node(graph, "BOB_LORA", {0: "model", 1: "clip"})
 
     # A stylised frame holds a real composition, so wrapping it round the border is nonsense. Same
-    # shared model as W1, so the same reset. Cheap here: it is one 64 px sample in front of a
+    # shared model as `tex_tileable`, so the same reset. Cheap here: it is one 64 px sample in front of a
     # multi-second restyle, and the paint route only pays it on its first view.
     ensure_untiled(url, on_progress=on_progress)
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
@@ -2492,7 +2492,7 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
 def paint_views(views, out_dir, prompt_text, *, seed=0, denoise=PAINT_DENOISE, size=1024,
                 negative=None, checkpoint=None, lora=None, lora_strength=0.8, url=None,
                 workflow="mesh_paint_views", timeout=900, on_progress=None, on_queued=None):
-    """W9's ComfyUI half: restyle every turntable view in ONE worker job. Returns info.
+    """`mesh_paint_views`'s ComfyUI half: restyle every turntable view in ONE worker job. Returns info.
 
     `views` is what `core.gen_views.turntable_views` produced, so each entry already carries its
     beauty, depth and normal paths. The FRONT view goes first and is its own reference; every later
@@ -2530,8 +2530,8 @@ def paint_views(views, out_dir, prompt_text, *, seed=0, denoise=PAINT_DENOISE, s
 # file per view or per mesh that `core.gen_paint` or `core.gen_assets` then consumes, so the choice
 # is a value in one place -- the same shape `asset_chain` gave the geometry decision at G3b.
 #
-#   "pbr"      W9t, Trellis2TextureMesh: plausible native PBR, no style control, one job.
-#   "stylised" W9, this module's paint_views plus core.gen_paint: LoRA and prompt style control,
+#   "pbr"      `mesh_texture`, Trellis2TextureMesh: plausible native PBR, no style control, one job.
+#   "stylised" `mesh_paint_views`, this module's paint_views plus core.gen_paint: LoRA and prompt style control,
 #              N jobs, and a colour map rather than a PBR set.
 #
 # "pbr" stays the default because a plausible material is what a scatter prop needs; "stylised" is
@@ -2553,14 +2553,14 @@ def texture_chain(route=None):
 
 
 # -- Terrain macro mask (track E) -------------------------------------------------------------
-# W13's prompt suffix, and the same argument as PROMPT_SUFFIX and SUBJECT_SUFFIX: the failure mode
+# `heightmap_macro`'s prompt suffix, and the same argument as PROMPT_SUFFIX and SUBJECT_SUFFIX: the failure mode
 # is silent and costs a whole generation, so the clause that prevents it is not the artist's job to
 # remember. Here the failure is a picture OF a mountain instead of a plan view of one.
 MACRO_SUFFIX = ("top-down orthographic aerial elevation map, greyscale, white is the highest ground "
                 "and black is the lowest, one large-scale landform, smooth broad gradients, "
                 "no texture detail, no contour lines")
 
-# Whether W13's circular padding stays in the graph. A route is a value in one place, beside
+# Whether `heightmap_macro`'s circular padding stays in the graph. A route is a value in one place, beside
 # `asset_chain()` and `texture_chain()`.
 #
 # "open" is the default and it is a measured decision rather than an inherited one. Circular padding
@@ -2573,7 +2573,7 @@ DEFAULT_MACRO_ROUTE = "open"
 
 
 def macro_tiling(route=None):
-    """True when W13 keeps its two circular-padding nodes. The one place THAT route is decided."""
+    """True when `heightmap_macro` keeps its two circular-padding nodes. The one place THAT route is decided."""
     route = route or DEFAULT_MACRO_ROUTE
     if route not in MACRO_ROUTES:
         raise ComfyError(f"unknown macro route {route!r} (have: {', '.join(MACRO_ROUTES)})")
@@ -2665,11 +2665,11 @@ def generate_asset_oneshot(prompt_text, pack_dir, *, seed=0, tier="default", fac
                            texture_size=1024, checkpoint=None, url=None, timeout=1800,
                            on_progress=None, on_queued=None, subject=None, negative=None,
                            remesh=True, size=1024):
-    """Every ComfyUI stage of one asset through the ONE-SHOT route: W4 then W9b.
+    """Every ComfyUI stage of one asset through the ONE-SHOT route: `mesh_subject` then `mesh_geom_texture`.
 
     `generate_asset_chain`'s twin, staging the same keys so `core.gen_assets.finish_asset` takes
     either. The one difference a caller has to know about is that `raw_mesh` and `textured_mesh` are
-    the SAME file: W9b returns budget topology already textured, so there is no dense mesh and no
+    the SAME file: `mesh_geom_texture` returns budget topology already textured, so there is no dense mesh and no
     intermediate simplify. Pass it as `simplify_pass` with no `texture_pass` and Blender skips both
     its own decimate and its own unwrap, which is the point.
     """

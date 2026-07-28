@@ -1,6 +1,6 @@
 """Projection painting: N stylised views back into one UV texture, and the numbers that say so.
 
-The Blender half of the W9 style-control paint route (docs/COMFYUI.md family 3, R19/R20). ComfyUI
+The Blender half of the `mesh_paint_views` style-control paint route (docs/COMFYUI.md family 3, R19/R20). ComfyUI
 restyles each turntable view; everything here is Bob's, because Blender already rasterises and
 projects better than a bundled CUDA rasteriser would, which is R20's whole argument.
 
@@ -363,7 +363,7 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
 
 
 def paint_object(obj, views, images, out_dir, stem, *, size=1024, material_name=None):
-    """`paint_maps`, wired onto the object as a material. The whole Blender half of the W9 route.
+    """`paint_maps`, wired onto the object as a material. The whole Blender half of the `mesh_paint_views` route.
 
     Reuses `gen_assets.apply_baked_material`, so a painted asset carries the same graph shape a
     baked one does and stays a BobShader candidate rather than a special case.

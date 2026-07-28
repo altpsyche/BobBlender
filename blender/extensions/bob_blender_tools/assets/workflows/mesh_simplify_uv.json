@@ -1,13 +1,13 @@
 {
   "_bob": {
     "id": "mesh_simplify_uv",
-    "plan": "W9c, docs/COMFYUI.md pipeline steps 3 and 4, the A/B against Blender",
+    "role": "docs/GENERATION.md, the geometry family: pipeline steps 3 and 4, the A/B against Blender",
     "purpose": "Trellis2Simplify and Trellis2UVUnwrap as their own graph, so steps 3 and 4 can be measured against Blender Decimate / Quadriflow / Smart UV Project without touching the other stages.",
     "derived_from": "ComfyUI-TRELLIS2/workflows/refinement.json for the load-and-export skeleton, with Trellis2Simplify and Trellis2UVUnwrap in place of Trellis2RefineMesh",
     "deviations_from_source": [
       "Trellis2RefineMesh, Trellis2EncodeMesh, Trellis2GetConditioning, LoadImage and LoadTrellis2Models are all dropped. Refinement needs the 4B model loaded; simplify and unwrap do not, so this graph runs with no model resident at all, which is what makes it a fair timing comparison against Blender.",
       "mesh_audit.json was named as a second source in the plan and is NOT usable: it is built on PulseMeshAudit, from a pack that is not installed and is not a declared dependency of ComfyUI-TRELLIS2.",
-      "GeomPackLoadMesh replaced by Trellis2LoadMesh for the free-form path, same reason as W9t.",
+      "GeomPackLoadMesh replaced by Trellis2LoadMesh for the free-form path, same reason as mesh_texture.",
       "Trellis2ExportTrimesh plus Preview3D for the retrievable output."
     ],
     "requires_nodes": ["Trellis2LoadMesh", "Trellis2Simplify", "Trellis2UVUnwrap", "Trellis2ExportTrimesh"],

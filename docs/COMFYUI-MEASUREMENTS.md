@@ -44,7 +44,7 @@ confirmed on a leaf: **83,292 boundary edges**, thinnest/longest axis 0.059, non
 
 ## G1
 
-**The vertical spike: W1, the stdlib client, one blocking job, one written set, applied to one
+**The vertical spike: `tex_tileable`, the stdlib client, one blocking job, one written set, applied to one
 terrain layer.**
 
 Passed with room. **7.6 s** prompt to a rendered terrain layer against a 60 s gate (generate 5.0,
@@ -56,18 +56,18 @@ the UNet and the VAE separately. Ten corrections to the plan came out of this ph
 
 ## G2
 
-**Generalise: `comfy_jobs`, preflight, variants and Accept, W2 and W3, real `comfy_maps`, the
+**Generalise: `comfy_jobs`, preflight, variants and Accept, `tex_tileable_ref` and `tex_upres`, real `comfy_maps`, the
 Advanced panel.**
 
 Passed. Ten sets generated and accepted in one session at a mean of **5.55 to 5.59 s** with drift
 of -0.15 to -0.19 s, i.e. no leak. Longest main-thread block **16.5 ms** against the blocking path's
 5,563 ms, measured with a stand-in event loop. Preflight catches all five failure classes, one test
-each. Seam after a W3 upres 1.03 / 1.10 from 1.05 before. Roughness contrast **+55% std** (25.8 to
+each. Seam after a `tex_upres` upres 1.03 / 1.10 from 1.05 before. Roughness contrast **+55% std** (25.8 to
 40.0) with the mean off the ceiling (187.8 to 156.8). 33 tests in `test_comfy.py`.
 
 ## G3
 
-**Tracks C and B together: W4, W5t, W9t, W9c, plus W5 Hunyuan as the plumbing smoke test.
+**Tracks C and B together: `mesh_subject`, `mesh_geom_trellis`, `mesh_texture`, `mesh_simplify_uv`, plus `mesh_geom` Hunyuan as the plumbing smoke test.
 `core/gen_assets.py` steps 6 to 8, the generated manifest, and Scatter's Generate Asset.**
 
 Passed, with two parts named as partial. Prompt to a scattered, correctly scaled, UV'd, PBR-textured,
@@ -87,15 +87,15 @@ closed blob.
 
 ## G3b
 
-**W9b one-shot `geometry_texture` against the W5t plus W9c plus W9t staged chain, ten prompts, one
-shared W4 subject each. Plus the opacity channel, G3's named partial.**
+**`mesh_geom_texture` one-shot `geometry_texture` against the `mesh_geom_trellis` plus `mesh_simplify_uv` plus `mesh_texture` staged chain, ten prompts, one
+shared `mesh_subject` subject each. Plus the opacity channel, G3's named partial.**
 
-Passed, and it changed the default to one-shot. W9b fits 16 GB with 61% of the card free (peak
+Passed, and it changed the default to one-shot. `mesh_geom_texture` fits 16 GB with 61% of the card free (peak
 **6,276 MiB** summed across the three ComfyUI processes) against the staged route's **8,586 MiB**.
 Wall clock is a wash: 593.1 s against 584.1 s for all ten. Both routes 10/10 inside the 4,000 budget
-with UV overlap at most 0.0001. W9b returns a far cleaner mesh (**10 to 662 boundary edges** against
+with UV overlap at most 0.0001. `mesh_geom_texture` returns a far cleaner mesh (**10 to 662 boundary edges** against
 1,467 to 3,050) while preserving foliage openness (4 of 4 open on both, thin ratios within 1.5%),
-and it cannot hit the black-albedo trap that returned one fully black W9t texture in ten. The dense
+and it cannot hit the black-albedo trap that returned one fully black `mesh_texture` texture in ten. The dense
 mesh it gives up bought **no measurable normal detail** at this budget.
 
 Opacity: present in both routes and declared away as `alphaMode: OPAQUE`, so importers ignore it.
@@ -106,8 +106,8 @@ have turned into a 60%-transparent stump.
 
 ## G4
 
-**Tracks D then B-stylised, in that order because they share a graph: W12 and W12e stylise (render
-plus true depth and normal export), then W9 as the style-control paint route. Plus W6 and W6t
+**Tracks D then B-stylised, in that order because they share a graph: `stylize_render` and `stylize_render_est` stylise (render
+plus true depth and normal export), then `mesh_paint_views` as the style-control paint route. Plus `mesh_geom_mv` and `mesh_geom_mv_trellis`
 multi-view geometry.**
 
 Passed, with one of its own claims disproved and named as such. A Bob render comes back stylised at
@@ -116,17 +116,17 @@ summed over the ComfyUI family.
 
 **The real-passes claim failed on quality.** The differences against Depth Anything V2 plus NormalBAE
 are smaller than the estimator's own error on the source frame (r 0.7957, MAE 0.1224). The honest
-case for keeping the export is 2.5 s per frame plus the fact that W9 needs the same three files.
+case for keeping the export is 2.5 s per frame plus the fact that `mesh_paint_views` needs the same three files.
 
 Paint route: **92.6%** of chart texels painted from 8 views, adjacent-view seam 22.3 to 26.5 of 255,
 front-to-back drift 30.1. Multi-view beats single-view six-fold on the back-facing test: back-half
-IoU 0.2637 (W6t) and 0.2140 (W6) against 0.0439, against a 0.7110 self-agreement ceiling; W6 is 5x
+IoU 0.2637 (`mesh_geom_mv_trellis`) and 0.2140 (`mesh_geom_mv`) against 0.0439, against a 0.7110 self-agreement ceiling; `mesh_geom_mv` is 5x
 faster at 24.4 s. The panel press costs 0.63 to 1.00 s of main thread (the render itself) and the
 longest tick during the job is 0.14 ms.
 
 ## G4c
 
-**Omni: model set 3, W7, `export_control`, the Asset-from-Block-out entry, and the orientation
+**Omni: model set 3, `mesh_geom_ctrl`, `export_control`, the Asset-from-Block-out entry, and the orientation
 convention pinned per exporter.**
 
 Passed, and it changed a decision the plan had already made. A block-out proxy conditions generation
@@ -134,8 +134,8 @@ and the result keeps its shape where it landed, scored with **no** rotation sear
 0.8136 to 0.9787 against per-block-out ceilings of 0.8403 to 0.9920, proportions held to 2%, and
 **0.8100 on the finished asset** after simplify, texture, bake, scale, LODs and BobShade.
 
-W7 beat the W6t multi-view baseline **3 of 3 on every measure at once**: mean footprint IoU 0.9079
-against 0.6748, 35.8 s against 164.9 s, 2 GB less VRAM. It still wins after W6t is allowed its best
+`mesh_geom_ctrl` beat the `mesh_geom_mv_trellis` multi-view baseline **3 of 3 on every measure at once**: mean footprint IoU 0.9079
+against 0.6748, 35.8 s against 164.9 s, 2 GB less VRAM. It still wins after `mesh_geom_mv_trellis` is allowed its best
 axis map, so the plan's intended fallback was not the honest answer.
 
 The wrapper is the least maintained dependency in the track and **shipped with the control signal
@@ -146,7 +146,7 @@ degree rotation since G3, which put a G3b conclusion back in question (re-answer
 
 ## G5
 
-**Track E: W13, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and Generate Base
+**Track E: `heightmap_macro`, `comfy_maps.macro_field`, the `macro` op and `params.with_macro`, and Generate Base
 in the Terrain panel.**
 
 Passed, and it answered R7 in the negative. A prompted silhouette survives an erosion pass at
@@ -182,13 +182,13 @@ on the same job, with termination still decided by the jobs API so a dead socket
 **The finding:** this fork's `comfy-aimdo` dynamic-VRAM staging segfaults the server on the second
 copied-model decode of a session, which is every tiling graph Bob ships. Five candidates measured;
 the shipped fix keeps the staging feature by applying circular padding **in place** plus a lazy
-`ensure_untiled`, giving ten texture sets in one session (seam 0.83 to 1.18, drift -0.01 s) with W4
-at seam 8.466 and W13's open route at 10.086, i.e. verified untiled. Still open upstream as D14.
+`ensure_untiled`, giving ten texture sets in one session (seam 0.83 to 1.18, drift -0.01 s) with `mesh_subject`
+at seam 8.466 and `heightmap_macro`'s open route at 10.086, i.e. verified untiled. Still open upstream as D14.
 
 ## G7
 
-**The geometry A/B: W8 (Hunyuan 2.1 on a plate) and W8p (the shared processor), ten fixed prompts,
-five of them foliage, one shared W4 subject each, `remesh` controlled for on both sides.**
+**The geometry A/B: `mesh_geom_alt` (Hunyuan 2.1 on a plate) and `mesh_process` (the shared processor), ten fixed prompts,
+five of them foliage, one shared `mesh_subject` subject each, `remesh` controlled for on both sides.**
 
 Passed, with a verdict per asset class rather than a winner.
 
@@ -198,16 +198,16 @@ Passed, with a verdict per asset class rather than a winner.
 - **Solids: the challenger wins two columns and loses three.** Hunyuan is 2.1x faster (40.4 s
   against 86.1 s) and returns a closed shell (median 0 boundary edges against 116, unrepaired
   downstream on either route), against 3.7 GB more VRAM, a flatter albedo (0.1259 against 0.1555),
-  one black texture in ten where W9b cannot hit the trap at all, and a licence with a territorial
+  one black texture in ten where `mesh_geom_texture` cannot hit the trap at all, and a licence with a territorial
   exclusion where TRELLIS.2 is MIT. Default holds; `route="alt"` is an explicit choice.
-- **Block-out: Hunyuan through Omni and W7**, decided at G4c. W8 takes no control, so the grid has
+- **Block-out: Hunyuan through Omni and `mesh_geom_ctrl`**, decided at G4c. `mesh_geom_alt` takes no control, so the grid has
   no cell for it.
 
 Both models 10/10 inside the 4,000 budget, worst UV overlap 0.00047, three of ten carried through
 steps 6 to 8 on both models with every G3 asset check passing.
 
 **Two silent defects found.** The challenger route returned a fully black albedo on **every** asset
-until W8p gained a normalise (Hunyuan is [-1, 1] where TRELLIS.2 is [-0.5, 0.5]); the finished asset
+until `mesh_process` gained a normalise (Hunyuan is [-1, 1] where TRELLIS.2 is [-0.5, 0.5]); the finished asset
 then baked a **perfectly flat normal** because that normalise moved the low mesh and not the cage
 (detail 0.00000 against 0.01750 fixed). That also proved this suite's "baked normal is non-flat"
 check could not fail, since a flat normal reads std 0.2357 against a 0.01 threshold.
@@ -218,9 +218,9 @@ the fern), and the dense mesh still buys nothing at this budget (1 of 4 better t
 
 ## G8
 
-**D12's first half: W7b (`mesh_geom_bbox`, Omni's bounding-box control), the control mode as a value
-(`CONTROL_MODES`, `control_route`, `DEFAULT_CONTROL_MODE`), and the scope decision that declined W14,
-W11 and batch generation.**
+**D12's first half: `mesh_geom_bbox` (`mesh_geom_bbox`, Omni's bounding-box control), the control mode as a value
+(`CONTROL_MODES`, `control_route`, `DEFAULT_CONTROL_MODE`), and the scope decision that declined `sky_equirect`,
+`mesh_part` and batch generation.**
 
 Passed, and D12's answer is no. Eight corners do not replace 8,192 points: footprint IoU **0.5766**
 against the point route's **0.9200** on the same three block-outs, same image, same no-rotation-search
@@ -233,9 +233,9 @@ on aspect error (0.205 / 0.051 / 0.015 against 0.504 / 1.352 / 0.183) and only 1
 The gain scales with how distinctive the box is: 3x over the null on a tall thin tree, a **loss** on
 a near-cubic rock.
 
-W7b stays wired for a different reason than it was built for: it uploads nothing, so with
-`comfy_dir()` forced away W7 fails in 4 ms with `Mesh file not found` where W7b completes. One
-finished asset through W7b, W9c, W9t and steps 6 to 8 passes every G3 check (3,902 faces, UV overlap
+`mesh_geom_bbox` stays wired for a different reason than it was built for: it uploads nothing, so with
+`comfy_dir()` forced away `mesh_geom_ctrl` fails in 4 ms with `Mesh file not found` where `mesh_geom_bbox` completes. One
+finished asset through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8 passes every G3 check (3,902 faces, UV overlap
 0.0, LODs [3902, 1951, 585], `bake_rescale` 1.0, normal detail 0.00372).
 
 **Three silent traps found:** `auto_bbox` defaults TRUE so the obvious wiring never sees the
@@ -245,7 +245,7 @@ its side; and `omni_model_dir` is derived from `comfy_dir`, so a process without
 
 ## G9
 
-**D12's remainder and its close: W7v (`mesh_geom_voxel`, Omni's voxel control),
+**D12's remainder and its close: `mesh_geom_voxel` (`mesh_geom_voxel`, Omni's voxel control),
 `comfy.VOXEL_INPUT_ROTATION` pinned by measurement, `control_route`'s refusal of an unknown mode,
 `comfy_mesh(control_mode=...)`, and the swapped-control null.**
 
@@ -260,8 +260,8 @@ The control reaches the model 3 of 3 against a swapped-control null that scores 
 another block-out's control follows **that** one, 0.8960 against the block-out it was conditioned on
 and 0.2168 against the one it was pictured as. The node's own `apply_input_rotation` default costs
 43% of the ground plan and errors nowhere. Finished asset: 3,914 faces of 4,000, UV overlap 0.0,
-LODs [3914, 1957, 587], normal detail 0.00398, footprint 0.7723 against the raw mesh's 0.7739. W7v
-uploads a mesh, so W7b keeps the no-ComfyUI-folder fallback alone.
+LODs [3914, 1957, 587], normal detail 0.00398, footprint 0.7723 against the raw mesh's 0.7739. `mesh_geom_voxel`
+uploads a mesh, so `mesh_geom_bbox` keeps the no-ComfyUI-folder fallback alone.
 
 ---
 
@@ -308,8 +308,8 @@ the fixes are most of what the track became.
   binding constraint, and then as a first pass upscaled through SDXL rather than a swap.
 - **D2 Further challengers (Direct3D-S2, Hi3DGen). Answered at G7: no, and the condition is what
   answers it.** D2 was conditional on TRELLIS.2 versus Hunyuan landing close. It did not, in either
-  direction: G4 split by capability, G7 split the same way but wider. What stays is the **slot** (W8
-  plus W8p), so a future challenger costs one graph and no rewrite. Reopen with a specific gap, not
+  direction: G4 split by capability, G7 split the same way but wider. What stays is the **slot** (`mesh_geom_alt`
+  plus `mesh_process`), so a future challenger costs one graph and no rewrite. Reopen with a specific gap, not
   for coverage.
 - **D3 Retopology route. Answered.** Official retopology is cloud-only, so Blender does it:
   Decimate-collapse for scatter-grade, Quadriflow for hero, tiered by intent (R19). Open ML
@@ -398,7 +398,7 @@ one-command suite exists to prevent.
   **Shipped at G1** as `tools/tests/test_comfy.py` (13 tests, no server contacted): the fake covers
   `/system_stats`, `/prompt`, the pending -> in_progress -> completed poll, cancel, `/view` and a
   canned `/object_info` combo, and asserts the client polls the jobs API rather than `/history`.
-  It also asserts W1 itself loads, has unique `BOB_*` titles, names no cloud node, records its
+  It also asserts `tex_tileable` itself loads, has unique `BOB_*` titles, names no cloud node, records its
   upstream template, and is not mutated by templating. **G2 took it to 33 tests**: a multipart
   upload against the fake, one test per preflight failure class (unknown class, cloud node,
   missing model in BOTH combo shapes, duplicate and missing `BOB_*` title, UUID subgraph, plus a
@@ -431,7 +431,7 @@ one-command suite exists to prevent.
 - `tools/scripts/headless_comfy_g2.py`, the G2 gate: ten generate-and-accept cycles with the drift
   reported, the longest main-thread block during a background job measured against the blocking
   path, preflight over the shipped graphs and over five deliberately broken ones, the seam before
-  and after a W3 upres, roughness contrast G1 against G2 on the same image, and the `load_post`
+  and after a `tex_upres` upres, roughness contrast G1 against G2 on the same image, and the `load_post`
   reset. Reachability-gated for the half that needs a server; the preflight, maps and scheduler
   half always runs.
 - Headless track A: apply a fixture set to a terrain layer, assert image nodes are wired into the
@@ -458,11 +458,11 @@ one-command suite exists to prevent.
   reports **wired** on the leaf.
 - `tools/scripts/headless_comfy_g4.py`, the G4 gate, in four parts (`--part a,b,c,d`) because they
   cost very different amounts of GPU time. **A**: the normal convention on a sphere and the depth
-  linearity against the analytic answer, then W12 against W12e at two denoise levels with silhouette
+  linearity against the analytic answer, then `stylize_render` against `stylize_render_est` at two denoise levels with silhouette
   IoU, edge IoU, and Depth Anything V2's reading of each output against Blender's true depth after an
-  affine alignment. **B**: an eight-view turntable, W9 with and without a LoRA, the projection bake,
+  affine alignment. **B**: an eight-view turntable, `mesh_paint_views` with and without a LoRA, the projection bake,
   and the per-pair overlap MAD plus the front-to-back drift. **C**: a purpose-built ground truth
-  whose back cannot be inferred from its front, through W5t, W6t and W6, scored by surface-voxel IoU
+  whose back cannot be inferred from its front, through `mesh_geom_trellis`, `mesh_geom_mv_trellis` and `mesh_geom_mv`, scored by surface-voxel IoU
   and Chamfer best-over-rotation, whole and back-half, against a self-agreement ceiling. **D**: the
   Advanced-panel operator through the real job queue, with the main-thread tick measured. Every
   generated file caches WITH its timing and VRAM beside it, so a rerun reports what the generating run
@@ -472,13 +472,13 @@ one-command suite exists to prevent.
   **A**: `export_control`'s round trip, then the ORIENTATION convention, measured over all 24
   axis-aligned rotations on an asymmetric block-out so a mirror cannot pass for a rotation, and the
   assertion that `gen_assets.CONTROL_RETURN_TURN` undoes the exporter's turn. It needs a server but no
-  model, so it costs a second. **B**: W7 against the W6t baseline on three block-outs, two of them the
+  model, so it costs a second. **B**: `mesh_geom_ctrl` against the `mesh_geom_mv_trellis` baseline on three block-outs, two of them the
   shipped `core.proxies`, scored WITHOUT a rotation search: voxel IoU, Chamfer, the XY-projected
   footprint IoU, and the bbox aspect ratio, each against that block-out's own self-agreement ceiling.
-  **C**: one block-out all the way through W7, W9c, W9t and steps 6 to 8, against the G3 asset checks
+  **C**: one block-out all the way through `mesh_geom_ctrl`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the G3 asset checks
   it inherits, plus the footprint measured again on the FINISHED asset. **D**: whether Omni can be
   resident alongside SDXL, which on a 16.3 GB card is a real question rather than a formality.
-  `--no-baseline` drops W6t, the slow half. Reachability-gated twice over: no server, or no Omni pack
+  `--no-baseline` drops `mesh_geom_mv_trellis`, the slow half. Reachability-gated twice over: no server, or no Omni pack
   or weights, prints SKIP and exits 0.
 - `tools/scripts/headless_comfy_g5.py`, the G5 gate, in five parts (`--part a,b,c,d,e`).
   **A**: the derivation against `relief()` on one image, the tiled and open seam ratios, the
@@ -522,7 +522,7 @@ one-command suite exists to prevent.
   MODEL-MAJOR so each model loads once and its VRAM is attributable rather than a statement about
   swapping, with wall clock, per-process peak VRAM sampled from a thread, faces, boundary edges after
   a weld, thin ratio, UV overlap, chart coverage and in-chart albedo std against the 0.02 black-albedo
-  floor; plus the plate control, which is the same subject through W5 (no composite) so the Hunyuan
+  floor; plus the plate control, which is the same subject through `mesh_geom` (no composite) so the Hunyuan
   column cannot be dismissed as a measurement of the background. **C**: three of the ten through
   steps 6 to 8 on BOTH models against the G3 asset checks. **D**: D11, the dense mesh re-measured with
   the bake alignment fixed, on the same four assets G3b used, read straight from the G3b cache so it
@@ -533,18 +533,18 @@ one-command suite exists to prevent.
   no-GPU half of the gate.
 - `tools/scripts/headless_comfy_g8.py`, the G8 gate, in four parts (`--part a,b,c,d`), inside
   Blender. **A**: preflight over every shipped graph offline against the committed dump, the
-  `api_node` assertion on W7b, the control mode as a value in one place (`control_route`'s whole
+  `api_node` assertion on `mesh_geom_bbox`, the control mode as a value in one place (`control_route`'s whole
   truth table, `CONTROL_WORKFLOWS`, `asset_chain` on either control form), the frame mapping checked
   against a control glb's own POSITION accessor extents rather than against the code that wrote
-  them, W7b's `auto_bbox` binding both ways, and D14's tripwire (the installed `comfy-aimdo` version
+  them, `mesh_geom_bbox`'s `auto_bbox` binding both ways, and D14's tripwire (the installed `comfy-aimdo` version
   against the one G6 measured). No server, always runs, costs a second. **B**: the grid, the same
-  three block-outs and the same conditioning image G4c used, three control columns (W7 point, W7b
-  from Bob's proportions, W7b `auto_bbox` as the null), scored with NO rotation search against each
+  three block-outs and the same conditioning image G4c used, three control columns (`mesh_geom_ctrl` point, `mesh_geom_bbox`
+  from Bob's proportions, `mesh_geom_bbox` `auto_bbox` as the null), scored with NO rotation search against each
   block-out's own self-agreement ceiling, with the decision rule PRINTED before the table so the
-  verdict cannot be chosen after seeing it. **C**: one block-out through W7b, W9c, W9t and steps 6 to
+  verdict cannot be chosen after seeing it. **C**: one block-out through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to
   8 against the G3 asset checks, with the footprint checked against this route's own raw mesh rather
   than against the adopted mode's absolute bar. **D**: the transport claim, with `comfy_dir()` forced
-  to None and the weights held fixed, so W7 failing and W7b completing is one variable and not two.
+  to None and the weights held fixed, so `mesh_geom_ctrl` failing and `mesh_geom_bbox` completing is one variable and not two.
   Meshes cache WITH their timing and VRAM under `_generated/comfy_g8_check/gen/`, so `--no-gen`
   re-scores in about a minute and `--fresh` regenerates. It imports the G4c gate's shape maths,
   block-outs and VRAM sampler rather than copying them, so the two phases' figures are the same
@@ -552,25 +552,25 @@ one-command suite exists to prevent.
   exits 0. `--fast` is `--part a`.
 - `tools/scripts/headless_comfy_g9.py`, the G9 gate, in four parts (`--part a,b,c,d`), inside
   Blender. **A**: preflight over every shipped graph offline against the committed dump, the
-  `api_node` assertion on W7v, the third mode as a value (`control_route`'s extended truth table
+  `api_node` assertion on `mesh_geom_voxel`, the third mode as a value (`control_route`'s extended truth table
   including its REFUSAL of an unknown name, `MESH_CONTROL_MODES`, `CONTROL_WORKFLOWS`,
   `stage_exports` on the mesh form), the shipped graph's `apply_input_rotation` against
   `comfy.VOXEL_INPUT_ROTATION`, one exporter serving two modes, and D14's tripwire again. No server,
   always runs. **B**: the input-rotation probe FIRST, both settings on the asymmetric block-out, then
-  the grid, four columns in ONE session (W7 point, W7v voxel, W7v with a swapped control, W7b bbox),
+  the grid, four columns in ONE session (`mesh_geom_ctrl` point, `mesh_geom_voxel` voxel, `mesh_geom_voxel` with a swapped control, `mesh_geom_bbox` bbox),
   scored with no rotation search against each block-out's own ceiling, with both decision rules
   printed before the table. The swapped-control null is the part worth reusing: each run sees its own
   block-out's image and a different one's control, and it is scored against BOTH, so "the control
   reached the model" is a measurement rather than an inference from a good score. **C**: one
-  block-out through W7v, W9c, W9t and steps 6 to 8 against the G3 asset checks, footprint checked
+  block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8 against the G3 asset checks, footprint checked
   against this route's own raw mesh. **D**: transport, `comfy_dir()` forced to None with the weights
-  held fixed, which is where W7v's one claimed advantage over W7 turned out not to exist. Meshes
+  held fixed, which is where `mesh_geom_voxel`'s one claimed advantage over `mesh_geom_ctrl` turned out not to exist. Meshes
   cache with their timing and VRAM under `_generated/comfy_g9_check/gen/`; `--no-gen` re-scores,
   `--fresh` regenerates, `--no-bbox` drops the column G8 already measured. Imports G4c's shape maths,
   block-outs, VRAM sampler and caching and G3's normal-detail read rather than copying any of them.
   Reachability-gated twice over. `--fast` is `--part a`.
 - `tools/scripts/headless_comfy_g3b.py`, the G3b gate: ten prompts through both routes off ONE
-  shared W4 subject each, with wall clock, per-process VRAM sampled from a thread at the queue
+  shared `mesh_subject` subject each, with wall clock, per-process VRAM sampled from a thread at the queue
   moment and at the peak, face count, boundary edges after a weld, UV overlap, chart coverage and
   in-chart albedo and alpha statistics; then four of them through steps 6 to 8 on both routes with
   the baked normal's std AND its high-frequency content; then Blender's Decimate floor on the dense

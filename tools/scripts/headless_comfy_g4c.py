@@ -1,4 +1,4 @@
-"""Headless measurement of the G4c gate (docs/COMFYUI.md): Omni, W7, and `export_control`.
+"""Headless measurement of the G4c gate (docs/COMFYUI.md): Omni, `mesh_geom_ctrl`, and `export_control`.
 
 The question the phase exists to answer is narrow and it is not "does it generate": it is **does a
 block-out proxy still recognisably own the result**. So every figure here is scored against the
@@ -9,13 +9,13 @@ does not fit the layout.
      with no model in it, on an asymmetric block-out, over all 24 axis-aligned rotations. That pins
      `gen_assets.CONTROL_RETURN_TURN` by measurement rather than by reading the exporter's source,
      and it is cheap enough to run every time.
-  B. **W7 against W6t on the same block-outs.** Three proxies, one of them asymmetric front-to-back,
-     each conditioning Omni on its shape (W7) and TRELLIS.2 on four Blender-rendered views of it
-     (W6t, the measured baseline from G4). Scored WITHOUT the rotation search: voxel IoU, Chamfer,
+  B. **`mesh_geom_ctrl` against `mesh_geom_mv_trellis` on the same block-outs.** Three proxies, one of them asymmetric front-to-back,
+     each conditioning Omni on its shape (`mesh_geom_ctrl`) and TRELLIS.2 on four Blender-rendered views of it
+     (`mesh_geom_mv_trellis`, the measured baseline from G4). Scored WITHOUT the rotation search: voxel IoU, Chamfer,
      the XY-projected footprint IoU that is what "drops into a layout" actually means, and the bbox
      aspect ratio against the proxy's. Wall clock and per-process VRAM beside each.
   C. **Does the finished asset still pass the checks it inherits from G3?** One block-out through
-     W7, W9c and W9t and then all of steps 6 to 8: face budget, UV overlap, height, origin, LODs,
+     `mesh_geom_ctrl`, `mesh_simplify_uv` and `mesh_texture` and then all of steps 6 to 8: face budget, UV overlap, height, origin, LODs,
      BobShader.
   D. **Can the Omni wrapper share a session with SDXL?** The card is 16.3 GB and G4 measured the
      stylise route peaking at 14.2 of it, so this is a residency question with a yes or no answer.
@@ -66,7 +66,7 @@ FACES = 4000
 GRID = 48
 SAMPLES = 8000
 
-# Every class W7 needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP, not FAIL.
+# Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate")
 
 
@@ -451,7 +451,7 @@ def part_a(args, reachable):
                                          "local_map": local_map, "ceiling": ceiling})
 
 
-# -- Part B: W7 against the W6t baseline ----------------------------------------------------------
+# -- Part B: `mesh_geom_ctrl` against the `mesh_geom_mv_trellis` baseline ----------------------------------------------------------
 def views_of(obj, out_dir):
     """Four cardinal views at a low elevation, in the order both multi-view graphs' sockets name."""
     views = gen_views.turntable_views(obj, out_dir, count=4, elevation=10.0, extra_elevations=(),
@@ -477,7 +477,7 @@ def generate_cached(target, run, fresh):
 
 
 def part_b(args, reachable, ready):
-    section("B. W7 against the W6t baseline, on three block-outs, scored where it landed")
+    section("B. mesh_geom_ctrl against the mesh_geom_mv_trellis baseline, on three block-outs, scored where it landed")
     if not reachable or not ready:
         print("[SKIP] part B needs a server with the Omni pack and its weights")
         return
@@ -495,12 +495,12 @@ def part_b(args, reachable, ready):
                         f"ceiling IoU {ceiling['iou']:.4f} / footprint "
                         f"{ceiling['footprint_iou']:.4f}, four views rendered")
 
-        runs = {"W7": (os.path.join(GEN, f"{kind}_w7.glb"),
+        runs = {"mesh_geom_ctrl": (os.path.join(GEN, f"{kind}_w7.glb"),
                        lambda c=control, v=views, k=kind: comfy.mesh_geom_ctrl(
                            c, v[0], os.path.join(GEN, f"{k}_w7.glb"), seed=SEED),
                        gen_assets.CONTROL_RETURN_TURN)}
         if not args.no_baseline:
-            runs["W6t"] = (os.path.join(GEN, f"{kind}_w6t.glb"),
+            runs["mesh_geom_mv_trellis"] = (os.path.join(GEN, f"{kind}_w6t.glb"),
                            lambda v=views, k=kind: comfy.mesh_geom_mv_trellis(
                                v, os.path.join(GEN, f"{k}_w6t.glb"), seed=SEED, remesh=True),
                            None)
@@ -515,7 +515,7 @@ def part_b(args, reachable, ready):
             points = mesh_points(got, seed=2)
             agree = fixed_agreement(proxy_points, points)
             # The diagnostic that keeps the comparison fair: how the same result would score if it
-            # were allowed to be turned first. W6t was never asked to preserve an orientation, so
+            # were allowed to be turned first. `mesh_geom_mv_trellis` was never asked to preserve an orientation, so
             # without this column its score reads as a geometry failure when part of it is a frame.
             best = best_axis_map(proxy_points, points)
             at_best = fixed_agreement(proxy_points, best["points"])
@@ -554,32 +554,32 @@ def part_b(args, reachable, ready):
             print(f"| {kind} | {got['ceiling_iou']:.4f} | {got['ceiling_footprint']:.4f} |")
 
     for kind in PROMPTS:
-        w7, w6t = scores.get((kind, "W7")), scores.get((kind, "W6t"))
+        w7, w6t = scores.get((kind, "mesh_geom_ctrl")), scores.get((kind, "mesh_geom_mv_trellis"))
         if w7 and w6t:
-            note(f"{kind}, W7 against W6t",
+            note(f"{kind}, `mesh_geom_ctrl` against `mesh_geom_mv_trellis`",
                  f"IoU {w7['iou']:.4f} against {w6t['iou']:.4f}, footprint "
                  f"{w7['footprint_iou']:.4f} against {w6t['footprint_iou']:.4f}, Chamfer "
                  f"{w7['chamfer']:.4f} against {w6t['chamfer']:.4f}, "
                  f"{w7['seconds']:.1f} s against {w6t['seconds']:.1f} s")
-    w7s = [s for (_k, label), s in scores.items() if label == "W7"]
-    w6ts = [s for (_k, label), s in scores.items() if label == "W6t"]
+    w7s = [s for (_k, label), s in scores.items() if label == "mesh_geom_ctrl"]
+    w6ts = [s for (_k, label), s in scores.items() if label == "mesh_geom_mv_trellis"]
     if w7s:
-        check("every W7 result keeps most of the block-out's footprint where it landed",
+        check("every mesh_geom_ctrl result keeps most of the block-out's footprint where it landed",
               all(s["footprint_iou"] > 0.5 for s in w7s),
               "; ".join(f"{k} {s['footprint_iou']:.4f}"
-                        for (k, label), s in scores.items() if label == "W7"))
-        check("every W7 result keeps the block-out's proportions to within a third",
+                        for (k, label), s in scores.items() if label == "mesh_geom_ctrl"))
+        check("every mesh_geom_ctrl result keeps the block-out's proportions to within a third",
               all(s["aspect_error"] < 0.34 for s in w7s),
-              "; ".join(f"{k} {s['aspect']}" for (k, label), s in scores.items() if label == "W7"))
+              "; ".join(f"{k} {s['aspect']}" for (k, label), s in scores.items() if label == "mesh_geom_ctrl"))
     if w7s and w6ts:
         won = sum(1 for kind in PROMPTS
-                  if scores.get((kind, "W7")) and scores.get((kind, "W6t"))
-                  and scores[(kind, "W7")]["footprint_iou"]
-                  > scores[(kind, "W6t")]["footprint_iou"])
-        note("VERDICT, footprint IoU, W7 against W6t",
-             f"W7 wins {won} of {len(w6ts)}; means "
-             f"W7 {np.mean([s['footprint_iou'] for s in w7s]):.4f} against "
-             f"W6t {np.mean([s['footprint_iou'] for s in w6ts]):.4f}, wall clock "
+                  if scores.get((kind, "mesh_geom_ctrl")) and scores.get((kind, "mesh_geom_mv_trellis"))
+                  and scores[(kind, "mesh_geom_ctrl")]["footprint_iou"]
+                  > scores[(kind, "mesh_geom_mv_trellis")]["footprint_iou"])
+        note("VERDICT, footprint IoU, mesh_geom_ctrl against mesh_geom_mv_trellis",
+             f"`mesh_geom_ctrl` wins {won} of {len(w6ts)}; means "
+             f"`mesh_geom_ctrl` {np.mean([s['footprint_iou'] for s in w7s]):.4f} against "
+             f"`mesh_geom_mv_trellis` {np.mean([s['footprint_iou'] for s in w6ts]):.4f}, wall clock "
              f"{np.mean([s['seconds'] for s in w7s]):.1f} s against "
              f"{np.mean([s['seconds'] for s in w6ts]):.1f} s")
     with open(os.path.join(OUT, "part_b.json"), "w") as fh:
@@ -610,7 +610,7 @@ def part_c(args, reachable, ready):
         stamp = generate_cached(raw, lambda: comfy.mesh_geom_ctrl(control, views[0], raw, seed=SEED),
                                 args.fresh)
         if stamp.get("error"):
-            check("W7 generated a mesh to finish", False, stamp["error"])
+            check("mesh_geom_ctrl generated a mesh to finish", False, stamp["error"])
             return
     simp = os.path.join(staged_dir, "simp.glb")
     tex = os.path.join(staged_dir, "tex.glb")
@@ -621,9 +621,9 @@ def part_c(args, reachable, ready):
         if not os.path.isfile(tex):
             comfy.mesh_texture(simp, views[0], tex, seed=SEED, texture_size=1024)
     except comfy.ComfyError as exc:
-        check("W9c and W9t finished the block-out asset", False, str(exc)[:200])
+        check("mesh_simplify_uv and mesh_texture finished the block-out asset", False, str(exc)[:200])
         return
-    note("W9c plus W9t", f"{time.time() - t0:.1f} s")
+    note("mesh_simplify_uv plus mesh_texture", f"{time.time() - t0:.1f} s")
 
     # Through the SHIPPED function that decides the per-file turns, not a hand-written mapping, so
     # the gate fails if `stage_exports` and the chain ever disagree.
@@ -647,9 +647,9 @@ def part_c(args, reachable, ready):
           f"base {low[2]:.4f}, origin {obj_final.location[2]:.4f}")
     check("the LOD chain exists", len(report["lod_faces"]) >= 3, str(report["lod_faces"]))
     # Omni returns geometry with NO material, so the colour roles have no dense mesh to transfer
-    # from and have to come from the low mesh's own W9t texture instead. Without that they were
+    # from and have to come from the low mesh's own `mesh_texture` texture instead. Without that they were
     # silently absent and the asset shipped grey.
-    check("the W9t albedo reached the finished asset",
+    check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
     check("the material is a BobShader",
@@ -685,10 +685,10 @@ def part_d(args, reachable, ready):
         try:
             comfy.subject_image(PROMPTS["notched"], subject, seed=SEED, size=1024)
         except comfy.ComfyError as exc:
-            check("W4 ran first, leaving SDXL resident", False, str(exc)[:160])
+            check("mesh_subject ran first, leaving SDXL resident", False, str(exc)[:160])
             return
     sdxl = sampler.report()
-    note("after W4 (SDXL resident)", f"peak {sdxl['comfy_peak']} MiB, rise {sdxl['rise']}")
+    note("after mesh_subject (SDXL resident)", f"peak {sdxl['comfy_peak']} MiB, rise {sdxl['rise']}")
 
     target = os.path.join(GEN, "residency_w7.glb")
     if os.path.isfile(target):
@@ -701,19 +701,19 @@ def part_d(args, reachable, ready):
             info, failure = None, str(exc)[:300]
     shared = sampler.report()
     if failure:
-        note("W7 with SDXL still resident", f"FAILED: {failure}")
+        note("mesh_geom_ctrl with SDXL still resident", f"FAILED: {failure}")
         comfy.free()
         time.sleep(6.0)
         with Vram() as sampler:
             info = comfy.mesh_geom_ctrl(control, subject, target, seed=SEED)
         alone = sampler.report()
-        check("W7 needs a /free between stages, and one is enough", os.path.isfile(target),
+        check("mesh_geom_ctrl needs a /free between stages, and one is enough", os.path.isfile(target),
               f"shared peak {shared['comfy_peak']} MiB then failed; alone "
               f"{alone['comfy_peak']} MiB in {info['seconds']:.1f} s")
         _stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "alone": alone,
                                              "resident": False})
         return
-    check("W7 is resident-safe: it runs with SDXL still loaded", os.path.isfile(target),
+    check("mesh_geom_ctrl is resident-safe: it runs with SDXL still loaded", os.path.isfile(target),
           f"peak {shared['comfy_peak']} MiB of a 16,303 MiB card, rise {shared['rise']}, "
           f"{info['seconds']:.1f} s")
 
@@ -757,7 +757,7 @@ def main():
     parser.add_argument("--part", default="a,b,c,d")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--no-baseline", action="store_true",
-                        help="skip W6t, which is the slow half of part B")
+                        help="skip mesh_geom_mv_trellis, which is the slow half of part B")
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     args = parser.parse_args(argv)
 

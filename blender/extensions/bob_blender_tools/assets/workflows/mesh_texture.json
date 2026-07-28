@@ -1,7 +1,7 @@
 {
   "_bob": {
     "id": "mesh_texture",
-    "plan": "W9t, docs/COMFYUI.md track B, pipeline step 5 (primary paint route)",
+    "role": "docs/GENERATION.md, the mesh-texturing family: pipeline step 5, the primary paint route",
     "purpose": "PBR texture an existing mesh in its own UVs. Point it at a grey block-out proxy and it comes back textured.",
     "derived_from": "ComfyUI-TRELLIS2/workflows/standalone_texturing.json, converted by tools/scripts/comfy_ui_to_api.py",
     "deviations_from_source": [
@@ -13,7 +13,7 @@
     "requires_nodes": ["LoadTrellis2Models", "Trellis2LoadMesh", "Trellis2EncodeMesh", "Trellis2TextureMesh", "GeomPackUVUnwrap", "Trellis2RasterizePBR", "Trellis2ExportTrimesh"],
     "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack",
     "runtime_inputs": ["BOB_IMAGE.image", "BOB_MESH.mesh_path"],
-    "notes": "The mesh MUST arrive unit-normalised. Trellis2EncodeMesh voxelises in unit-cube space, so a metre-scale mesh lands outside the grid, the encoder sees nothing, and the albedo comes back silently BLACK (G0.5 measured exactly this, 172 s for a black texture against 10 s for a correct one). core.gen_assets normalises on the way out and rescales on the way back, and the headless gate asserts the result is not near-constant."
+    "notes": "The mesh MUST arrive unit-normalised. Trellis2EncodeMesh voxelises in unit-cube space, so a metre-scale mesh lands outside the grid, the encoder sees nothing, and the albedo comes back silently BLACK (measured: 172 s for a black texture against 10 s for a correct one). core.gen_assets normalises on the way out and rescales on the way back, and the headless gate asserts the result is not near-constant."
   },
   "prompt": {
     "10": {

@@ -1,15 +1,15 @@
 {
   "_bob": {
     "id": "mesh_subject",
-    "plan": "W4, docs/COMFYUI.md track C, pipeline step 1",
+    "role": "docs/GENERATION.md, the geometry family: pipeline step 1, the reference image",
     "purpose": "Prompt to one clean single-subject reference image with a REAL ALPHA cutout, which is what the geometry graphs condition on.",
-    "derived_from": "tex_tileable.json (W1) for the SDXL half, plus Trellis2RemoveBackground from ComfyUI-TRELLIS2's remove_background.json",
+    "derived_from": "tex_tileable.json (tex_tileable) for the SDXL half, plus Trellis2RemoveBackground from ComfyUI-TRELLIS2's remove_background.json",
     "deviations_from_source": [
-      "The circular UNet and circular VAE of W1 are dropped. A subject is not a tile, and circular padding on a subject wraps the silhouette across the frame edge.",
-      "Trellis2RemoveBackground, an InvertMask and a JoinImageWithAlpha are added, so BOB_OUT saves RGBA rather than RGB. The alpha IS the contract: G0.5 lost a run to an opaque PNG, because the geometry graphs feed LoadImage's (inverted) mask into Trellis2GetConditioning and an opaque frame makes the whole square the subject.",
+      "The circular UNet and circular VAE of tex_tileable are dropped. A subject is not a tile, and circular padding on a subject wraps the silhouette across the frame edge.",
+      "Trellis2RemoveBackground, an InvertMask and a JoinImageWithAlpha are added, so BOB_OUT saves RGBA rather than RGB. The alpha IS the contract, and a whole run was lost to an opaque PNG before it was one, because the geometry graphs feed LoadImage's (inverted) mask into Trellis2GetConditioning and an opaque frame makes the whole square the subject.",
       "The InvertMask between the cut and the join is load-bearing and easy to get backwards. Trellis2RemoveBackground returns a FOREGROUND mask (white = object), and JoinImageWithAlpha computes alpha = 1 - mask because ComfyUI's LoadImage convention is that a mask is the inverse of alpha. Wiring the two together directly cuts out the subject and keeps the background.",
       "No square pad node. BOB_SIZE generates square, so the subject is already centred in a square frame and a pad node would be a second way to get the same result wrong.",
-      "sampler as W1: 25 steps, cfg 5.0, dpmpp_2m + karras.",
+      "sampler as tex_tileable: 25 steps, cfg 5.0, dpmpp_2m + karras.",
       "BOB_* titles added on the templated nodes."
     ],
     "requires_nodes": ["Trellis2RemoveBackground", "JoinImageWithAlpha", "InvertMask"],

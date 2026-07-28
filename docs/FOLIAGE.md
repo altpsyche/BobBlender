@@ -58,7 +58,7 @@ Two further facts decide the shape of the fix, and both are about SURFACES:
 
 - **The route is very good at surfaces.** `comfy_texture_set` is the strong half of the suite
   (measured seam ratio 1.02 to 1.11 on the redwood sets). Bark and an atlas are both surfaces.
-- **W4 already emits genuine cutout alpha** — range 0.000 to 1.000, mean 0.175 measured at G3 —
+- **`mesh_subject` already emits genuine cutout alpha** — range 0.000 to 1.000, mean 0.175 measured at G3 —
   because a subject image is matted, not voxelised. The alpha Bob cannot get out of a mesh it can
   get out of a picture, which is the whole reason cards are affordable.
 
@@ -810,13 +810,13 @@ they are geometry.
 **Delivered at F3.** Two texture jobs and one warning. Neither job needed a new model or a new
 workflow, which is what the section predicted; both needed something Bob-side that it did not.
 
-1. **The leaf atlas.** `comfy_leaf_atlas`, W4 with the alpha kept, as a set with an `opacity` role.
+1. **The leaf atlas.** `comfy_leaf_atlas`, `mesh_subject` with the alpha kept, as a set with an `opacity` role.
    The consuming side was already built and waiting: `opacity` is in `assets.TEXTURE_MAP_ROLES` and
    `materials.surface._wire_cutout` already prefers a dedicated opacity map over the basecolor's own
    alpha, so nothing downstream changed to make a generated atlas reach a card.
 
    **What was wrong in the sketch: "a grid layout prompt".** A diffusion model cannot be asked for a
-   grid. Measured — W4 with *"a 2 by 2 grid of four separate pine needle sprays, one spray per
+   grid. Measured — `mesh_subject` with *"a 2 by 2 grid of four separate pine needle sprays, one spray per
    quadrant, each growing upward from the bottom of its quadrant"* returned **five** sprays arranged
    in a ring, straddling every cell boundary, each pointing a different way, none touching a cell's
    bottom edge. Per-cell coverage passed anyway (8 to 11% opaque in all four quadrants), which is
@@ -871,7 +871,7 @@ spread under 20 degrees. The shipped clause measured 5.7 / 0.490 / 1.2 on the ga
 
 A card's v is 0 at its attachment, so a sprite has to grow from the BOTTOM EDGE of its cell — the
 property the placeholder atlas was hand-authored to have ([4.4](#44-textures-bring-your-own-or-generate)).
-W4 does not give it. Asked for *"the cut end of the twig at the bottom of the frame, needles fanning
+`mesh_subject` does not give it. Asked for *"the cut end of the twig at the bottom of the frame, needles fanning
 upward"*, it returned sprays lying diagonally with the twig at the LEFT, on which a card attaches by
 its side and reads as a leaf growing sideways out of a branch.
 
@@ -1161,8 +1161,8 @@ the other tracks use.
   until now because a tool with no leaves cannot honestly be recommended for plants. The gate is 79
   checks, and no new op, MCP tool or panel state: the cards are modifier knobs and the presets are
   `build_geonodes` params.
-- **F3 The two texture jobs. DONE.** `comfy_leaf_atlas` (W4 per cell, composed Bob-side, into the
-  generated pack as a set with an `opacity` role) and `comfy_bark_set` (W1 plus a measured grain
+- **F3 The two texture jobs. DONE.** `comfy_leaf_atlas` (`mesh_subject` per cell, composed Bob-side, into the
+  generated pack as a set with an `opacity` role) and `comfy_bark_set` (`tex_tileable` plus a measured grain
   clause), both in [3](#3-what-the-generation-track-owes-it). Neither needed a new model or a new
   workflow; both needed something Bob-side that the plan had not predicted — a grid cannot be
   prompted for, and a generated sprite has to be oriented ([3.2](#32-orienting-a-sprite-which-the-brief-did-not-ask-for-and-the-pixels-did)).

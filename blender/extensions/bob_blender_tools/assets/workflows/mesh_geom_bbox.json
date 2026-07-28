@@ -1,14 +1,14 @@
 {
  "_bob": {
   "id": "mesh_geom_bbox",
-  "plan": "W7b, docs/COMFYUI.md track C, the second Omni control mode (D12, measured at G8)",
-  "purpose": "W7 with the control signal reduced from a sampled point cloud to the block-out's three proportions, so a generated asset keeps the footprint a layout was composed around without any mesh leaving Blender.",
-  "derived_from": "mesh_geom_ctrl.json (W7), with Hy3DOmniPointGenerate replaced by Hy3DOmniBBoxGenerate and the Trellis2LoadMesh control dropped; the node defaults follow Hunyuan3D-Omni/inference.py:infer_bbox (50 steps, guidance 4.5, box_v 1.01, mc_level 0).",
+  "role": "docs/GENERATION.md, the geometry family: pipeline step 2, block-out control from three proportions",
+  "purpose": "mesh_geom_ctrl with the control signal reduced from a sampled point cloud to the block-out's three proportions, so a generated asset keeps the footprint a layout was composed around without any mesh leaving Blender.",
+  "derived_from": "mesh_geom_ctrl.json (mesh_geom_ctrl), with Hy3DOmniPointGenerate replaced by Hy3DOmniBBoxGenerate and the Trellis2LoadMesh control dropped; the node defaults follow Hunyuan3D-Omni/inference.py:infer_bbox (50 steps, guidance 4.5, box_v 1.01, mc_level 0).",
   "deviations_from_source": [
-   "auto_bbox is FALSE, which is the whole point of the graph. True makes the node estimate the proportions from the conditioning image's silhouette, which is a guess about a shape Bob already knows exactly; false takes bbox_length / bbox_height / bbox_depth, and Bob binds them from the proxy's own bounding box. The auto path is still reachable through the same title and is what G8 scores as the null.",
-   "octree_resolution is 256 rather than the node's 512, for W7's reason: 512 returns roughly 700,000 faces and Bob's next step is a 4,000-face budget either way.",
-   "No mesh loader at all. Hy3DOmniBBoxGenerate takes no control_mesh socket, so this is the one Omni route that uploads nothing, and therefore the one that cannot hit the mesh-transport failure G7 found over MCP.",
-   "Trellis2ExportTrimesh plus Preview3D is W7's tail unchanged, because the exporter is what converts the pack's internal Z-up to glTF Y-up and is the only one that reports its path in a form Bob can fetch."
+   "auto_bbox is FALSE, which is the whole point of the graph. True makes the node estimate the proportions from the conditioning image's silhouette, which is a guess about a shape Bob already knows exactly; false takes bbox_length / bbox_height / bbox_depth, and Bob binds them from the proxy's own bounding box. The auto path is still reachable through the same title and is what the bbox-control gate scores as the null.",
+   "octree_resolution is 256 rather than the node's 512, for mesh_geom_ctrl's reason: 512 returns roughly 700,000 faces and Bob's next step is a 4,000-face budget either way.",
+   "No mesh loader at all. Hy3DOmniBBoxGenerate takes no control_mesh socket, so this is the one Omni route that uploads nothing, and therefore the one that cannot hit the mesh-transport failure the geometry A/B found over MCP: a graph that uploads a mesh needs the ComfyUI input folder, and the MCP process does not always know where it is.",
+   "Trellis2ExportTrimesh plus Preview3D is mesh_geom_ctrl's tail unchanged, because the exporter is what converts the pack's internal Z-up to glTF Y-up and is the only one that reports its path in a form Bob can fetch."
   ],
   "requires_nodes": [
    "Hy3DOmniLoadPipeline",
@@ -21,7 +21,7 @@
    "BOB_IMAGE.image",
    "BOB_OMNI.repo_or_path"
   ],
-  "notes": "The three numbers are [length, height, width] in the CONTROL GLB's frame, not Blender's: the encoder turns them into eight corners spanning [-d/2, d/2] on each axis (hy3dshape/models/conditioners/omni_encoder.py:bbox_to_corners), and every other Omni route feeds that encoder a signal in glTF Y-up. core.gen_assets.control_bbox is the one place that mapping lives, measured rather than assumed. The result comes back needing gen_assets.CONTROL_RETURN_TURN, exactly as W7's does and for the same reason: same exporter, one glb write. Omni takes NO text prompt, so the artist's words reach this graph only through the reference image."
+  "notes": "The three numbers are [length, height, width] in the CONTROL GLB's frame, not Blender's: the encoder turns them into eight corners spanning [-d/2, d/2] on each axis (hy3dshape/models/conditioners/omni_encoder.py:bbox_to_corners), and every other Omni route feeds that encoder a signal in glTF Y-up. core.gen_assets.control_bbox is the one place that mapping lives, measured rather than assumed. The result comes back needing gen_assets.CONTROL_RETURN_TURN, exactly as mesh_geom_ctrl's does and for the same reason: same exporter, one glb write. Omni takes NO text prompt, so the artist's words reach this graph only through the reference image."
  },
  "prompt": {
   "1": {

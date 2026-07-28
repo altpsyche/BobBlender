@@ -1,13 +1,13 @@
 {
   "_bob": {
     "id": "mesh_geom_alt",
-    "plan": "W8, docs/COMFYUI.md track C, the geometry A/B slot decided at G7",
-    "purpose": "The challenger geometry model behind the same inputs and the same output contract as W5t, so swapping the geometry model is a config change rather than a rewrite. The slot's occupant is Hunyuan3D 2.1, which is what G7 benchmarks TRELLIS.2 against.",
-    "derived_from": "mesh_geom.json (W5), itself comfyui_workflow_templates_json/templates/3d_hunyuan3d-v2.1.json",
+    "role": "docs/GENERATION.md, the geometry family: the A/B slot, so swapping the geometry model is a config change",
+    "purpose": "The challenger geometry model behind the same inputs and the same output contract as mesh_geom_trellis, so swapping the geometry model is a config change rather than a rewrite. The slot's occupant is Hunyuan3D 2.1, which is what the geometry A/B benchmarks TRELLIS.2 against.",
+    "derived_from": "mesh_geom.json (mesh_geom), itself comfyui_workflow_templates_json/templates/3d_hunyuan3d-v2.1.json",
     "deviations_from_source": [
-      "The reference image is COMPOSITED over a plain plate through its own alpha before CLIPVisionEncode sees it, which is the whole reason this graph exists beside W5. W4 writes RGBA whose RGB is still the SDXL frame, background and all, and ComfyUI's LoadImage drops alpha rather than compositing it, so W5 hands Hunyuan the generated background while TRELLIS.2 gets a real cutout through the mask socket. Benchmarking those two against each other would have measured the background, not the model.",
-      "EmptyImage(BOB_PLATE) is the plate and it is WHITE, which is what Hunyuan3D's own preprocessing composites onto. InvertMask(BOB_ALPHA) is load-bearing and inverted from the obvious wiring for W4's reason: LoadImage returns mask = 1 - alpha, and ImageCompositeMasked applies the SOURCE where the mask is 1, so the mask has to be turned back into the alpha.",
-      "Everything downstream is W5's, unchanged: latent 4096, 30 steps, cfg 5, euler + normal, VAEDecodeHunyuan3D(8000, 256), VoxelToMesh(surface net, 0.6). Swap BOB_3D_MODEL to hunyuan3d-dit-v2_fp16 with latent 3072, 20 steps and cfg 8 for the faster 2.0 variant.",
+      "The reference image is COMPOSITED over a plain plate through its own alpha before CLIPVisionEncode sees it, which is the whole reason this graph exists beside mesh_geom. mesh_subject writes RGBA whose RGB is still the SDXL frame, background and all, and ComfyUI's LoadImage drops alpha rather than compositing it, so mesh_geom hands Hunyuan the generated background while TRELLIS.2 gets a real cutout through the mask socket. Benchmarking those two against each other would have measured the background, not the model.",
+      "EmptyImage(BOB_PLATE) is the plate and it is WHITE, which is what Hunyuan3D's own preprocessing composites onto. InvertMask(BOB_ALPHA) is load-bearing and inverted from the obvious wiring for mesh_subject's reason: LoadImage returns mask = 1 - alpha, and ImageCompositeMasked applies the SOURCE where the mask is 1, so the mask has to be turned back into the alpha.",
+      "Everything downstream is mesh_geom's, unchanged: latent 4096, 30 steps, cfg 5, euler + normal, VAEDecodeHunyuan3D(8000, 256), VoxelToMesh(surface net, 0.6). Swap BOB_3D_MODEL to hunyuan3d-dit-v2_fp16 with latent 3072, 20 steps and cfg 8 for the faster 2.0 variant.",
       "SaveGLB's filename_prefix is bob_mesh_alt, so a challenger run is identifiable in the output folder."
     ],
     "requires_nodes": [
@@ -24,7 +24,7 @@
     "runtime_inputs": [
       "BOB_IMAGE.image"
     ],
-    "notes": "Watertight SDF-voxel output, so this graph structurally cannot return an open surface: VoxelToMesh extracts an isosurface and a leaf comes back as a leaf-shaped bag whatever the caller asks for. That is the structural half of the G7 verdict rather than a defect. It also produces NO texture, which is why the challenger route runs mesh_process (W8p) and then mesh_texture (W9t): the shared Trellis2ProcessMesh is what keeps the face budget, the UV unwrap and the remesh setting identical on both sides of the grid."
+    "notes": "Watertight SDF-voxel output, so this graph structurally cannot return an open surface: VoxelToMesh extracts an isosurface and a leaf comes back as a leaf-shaped bag whatever the caller asks for. That is the structural half of the A/B verdict rather than a defect. It also produces NO texture, which is why the challenger route runs mesh_process and then mesh_texture: the shared Trellis2ProcessMesh is what keeps the face budget, the UV unwrap and the remesh setting identical on both sides of the grid."
   },
   "prompt": {
     "1": {

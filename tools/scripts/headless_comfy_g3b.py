@@ -1,9 +1,9 @@
-"""Headless measurement of the G3b gate (docs/COMFYUI.md): W9b one-shot against W5t+W9c+W9t.
+"""Headless measurement of the G3b gate (docs/COMFYUI.md): `mesh_geom_texture` one-shot against `mesh_geom_trellis`+`mesh_simplify_uv`+`mesh_texture`.
 
 Two questions, both left measurable but unanswered by G3:
 
-  1. Is the combined `geometry_texture` graph (W9b) worth having? Ten prompts, four of them
-     foliage, through BOTH routes, with the SAME W4 subject image so the reference framing is
+  1. Is the combined `geometry_texture` graph (`mesh_geom_texture`) worth having? Ten prompts, four of them
+     foliage, through BOTH routes, with the SAME `mesh_subject` subject image so the reference framing is
      controlled for and the only variable is the graph. Per prompt and route: wall clock, peak
      VRAM (per process, at the queue moment and at the peak), face count, boundary edges after a
      weld, UV overlap, UV chart coverage, and a texture number that is not "looks fine" (in-chart
@@ -184,7 +184,7 @@ def _vram_added(parts):
     """The largest single-stage RISE over its own baseline, across stages.
 
     Reported beside the absolute peak because the two answer different questions and the absolute
-    one is order-dependent: W4 leaves SDXL resident, so whichever mesh graph runs first is measured
+    one is order-dependent: `mesh_subject` leaves SDXL resident, so whichever mesh graph runs first is measured
     on top of roughly 6.6 GB that has nothing to do with it. The rise is what the graph itself
     costs; the peak is what the machine actually had to hold.
     """
@@ -217,9 +217,9 @@ def _save_stamp(key, data):
 
 
 def generate_one(subject, fresh, reachable):
-    """W4 once, then BOTH routes off that one subject image. Returns the entry or None.
+    """`mesh_subject` once, then BOTH routes off that one subject image. Returns the entry or None.
 
-    The subject is shared on purpose. G3 found that W4's framing, not the geometry model, decides
+    The subject is shared on purpose. G3 found that `mesh_subject`'s framing, not the geometry model, decides
     whether a foliage prompt comes back as a thin open blade or a bushy volume, so handing the two
     routes different reference images would have measured the reference, not the graph.
     """
@@ -408,9 +408,9 @@ def finish_route(entry, route, *, hero=False, force_opacity=False):
 
     The two routes reach `finish_asset` differently, and the difference IS the trade:
 
-    - staged: raw is the dense W5t mesh, `simplify_pass` is the W9c result and `texture_pass` the
-      W9t result, so Blender has a dense high mesh to bake a detail normal and AO from.
-    - oneshot: W9b returned budget topology already textured, so the same file is BOTH the raw and
+    - staged: raw is the dense `mesh_geom_trellis` mesh, `simplify_pass` is the `mesh_simplify_uv` result and `texture_pass` the
+      `mesh_texture` result, so Blender has a dense high mesh to bake a detail normal and AO from.
+    - oneshot: `mesh_geom_texture` returned budget topology already textured, so the same file is BOTH the raw and
       the simplified mesh and there is no dense surface left to bake from.
     """
     empty_scene()
@@ -456,7 +456,7 @@ def decimate_floor(entry):
 
 # -- reporting ----------------------------------------------------------------------------------
 def print_table(entries, cells):
-    section("W9b one-shot against W5t + W9c + W9t staged, ten prompts")
+    section("mesh_geom_texture one-shot against mesh_geom_trellis + mesh_simplify_uv + mesh_texture staged, ten prompts")
     head = (f"{'prompt':<9} {'route':<8} {'wall s':>7} {'card MiB':>9} {'comfy MiB':>10} "
             f"{'added':>7} {'faces':>6} {'bound':>6} {'overlap':>8} {'cover':>6} {'alb std':>8} "
             f"{'ranges R/G/B':>18} {'alpha mean':>10}")
@@ -626,7 +626,7 @@ def verdict(entries, cells, summary, finished, floors):
         return
     fits = b["peak_comfy_mib"] < 16303
     faster = b["median_seconds"] < a["median_seconds"]
-    note("does W9b fit 16 GB",
+    note("does mesh_geom_texture fit 16 GB",
          f"{'YES' if fits else 'NO'}: peak {b['peak_comfy_mib']} MiB across the ComfyUI processes "
          f"({b['peak_card_mib']} MiB whole card, {b['peak_added_mib']} MiB of it added by the "
          f"graph) of 16303 MiB, against the staged route's {a['peak_comfy_mib']} MiB peak and "
@@ -646,7 +646,7 @@ def verdict(entries, cells, summary, finished, floors):
         if vals:
             note(f"{route}: baked normal std", f"{[round(v, 4) for v in vals]}")
     if floors:
-        note("the third route", "keeping W9b's dense mesh and letting Blender simplify lands at "
+        note("the third route", "keeping mesh_geom_texture's dense mesh and letting Blender simplify lands at "
              + ", ".join(f"{k} {v['faces']}" for k, v in sorted(floors.items()))
              + f" faces against {FACES}")
 
@@ -689,7 +689,7 @@ def main():
                                    runtime_inputs=prov.get("runtime_inputs") or ())
         check(f"preflight {name}", not problems, "; ".join(problems))
     w9b, prov = comfy.load_workflow("mesh_geom_texture")
-    check("W9b names no cloud node",
+    check("mesh_geom_texture names no cloud node",
           not any((info.get(n["class_type"]) or {}).get("api_node") for n in w9b.values()),
           f"{len(w9b)} nodes, derived from {prov.get('derived_from', '')[:52]}")
 

@@ -1,9 +1,9 @@
 {
  "_bob": {
   "id": "stylize_render_est",
-  "plan": "W12e, docs/COMFYUI.md track D. The control W12 is measured against, and the fallback for an image Bob did not render",
-  "purpose": "W12 with ESTIMATED depth and normal instead of Blender's real passes, so the claim that real passes are worth exporting is a measurement rather than an argument. It is also the only stylise route available for an image that arrived without passes.",
-  "derived_from": "stylize_render.json (W12), with the two hint LoadImage nodes replaced by Depth Anything V2 and NormalBAE preprocessors reading the render itself",
+  "role": "docs/GENERATION.md, the look-dev stylise family: the estimated-hints control stylize_render is measured against, and the fallback for an image Bob did not render",
+  "purpose": "stylize_render with ESTIMATED depth and normal instead of Blender's real passes, so the claim that real passes are worth exporting is a measurement rather than an argument. It is also the only stylise route available for an image that arrived without passes.",
+  "derived_from": "stylize_render.json (stylize_render), with the two hint LoadImage nodes replaced by Depth Anything V2 and NormalBAE preprocessors reading the render itself",
   "deviations_from_source": [
    "BOB_DEPTH and BOB_NORMAL (LoadImage) replaced by BOB_DEPTH_EST (DepthAnythingV2Preprocessor) and BOB_NORMAL_EST (BAE-NormalMapPreprocessor), both fed from the SCALED render, so the estimator sees exactly the pixels the sampler starts from.",
    "Nothing else. Same checkpoint, same LoRA slot, same two-stage ControlNet chain, same sampler values, so the A/B is a comparison of hints and not of graphs."

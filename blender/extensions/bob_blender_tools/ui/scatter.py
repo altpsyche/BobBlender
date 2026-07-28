@@ -282,8 +282,8 @@ class BBT_OT_scatter_generate_asset(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     # One operator, two entries in the box, because the difference between them is one input. With
-    # `from_control` the ACTIVE object's shape conditions the geometry (W7) instead of the reference
-    # image alone (W9b), and the block-out's own height replaces the Height field, since a proxy that
+    # `from_control` the ACTIVE object's shape conditions the geometry (`mesh_geom_ctrl`) instead of the reference
+    # image alone (`mesh_geom_texture`), and the block-out's own height replaces the Height field, since a proxy that
     # was placed in a layout already says how big the asset is.
     from_control: BoolProperty(
         name="From Block-out", default=False, options={"SKIP_SAVE"},
@@ -331,7 +331,7 @@ class BBT_OT_scatter_generate_asset(Operator):
         # the ComfyUI remesh and Blender's pinhole fill. See comfy.FOLIAGE_KINDS.
         foliage = comfy.is_foliage(kind)
 
-        # ONE worker job for the whole ComfyUI half (W4 then W9b by default), then one main-thread
+        # ONE worker job for the whole ComfyUI half (`mesh_subject` then `mesh_geom_texture` by default), then one main-thread
         # finish. They do not interleave, because whichever route runs hands over a mesh that is
         # already at its budget with UVs, so Blender has nothing to contribute in between. Nothing in
         # `generate` touches bpy; everything in `landed` does and nothing there touches the network.
@@ -782,7 +782,7 @@ def _draw_generate(layout, scn, active=None):
     run = box.row()
     run.enabled = ready
     run.operator("bob_blender_tools.scatter_generate_asset", icon="PLAY")
-    # The block-out route (W7): the same press with the active object's shape as a second input, so
+    # The block-out route (`mesh_geom_ctrl`): the same press with the active object's shape as a second input, so
     # it is a second button and not a second panel. Shown only when there is a mesh to condition on,
     # which is the adaptive rule the rest of the suite follows.
     blockout = active if (active is not None and active.type == "MESH") else None

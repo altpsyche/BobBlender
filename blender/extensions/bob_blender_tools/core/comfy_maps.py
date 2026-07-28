@@ -437,7 +437,7 @@ def crop_wrap_blend(array, pad):
 
     `wrap_pad` alone is not enough after a non-periodic operation. The padded image's two copies
     of each edge band are processed independently and drift apart, so a plain crop just moves the
-    seam rather than removing it (measured on W3: pad-and-crop took the upscale from ratio 3.43 to
+    seam rather than removing it (measured on `tex_upres`: pad-and-crop took the upscale from ratio 3.43 to
     2.08, and no crop position does better, because a non-periodic image has no periodic window).
     Cross-fading the duplicate bands does remove it. X first on the full-height array, then Y, so
     the rows the Y pass fades are already periodic in X and the corners come out right.
@@ -563,7 +563,7 @@ def axis_spread(angles):
 # grow from its cell's BOTTOM EDGE, because the card's v is 0 at the twig it hangs from
 # (docs/FOLIAGE.md 2.3, 4.4).
 #
-# **SDXL cannot be asked for a grid.** Measured at F3 with a 2x2 grid-layout prompt through W4: the
+# **SDXL cannot be asked for a grid.** Measured at F3 with a 2x2 grid-layout prompt through `mesh_subject`: the
 # result was FIVE sprays arranged in a ring, straddling the cell boundaries, each pointing a
 # different way and none touching a cell's bottom edge. Per-cell coverage passed (8 to 11% opaque in
 # every quadrant) and the atlas was still unusable, which is exactly the "tree-shaped is not right"
@@ -673,7 +673,7 @@ def orient_sprite(rgba, floor=0.5):
     The attaching end is found by `_woody_axis` when the sprite is a green fan on a brown stem, and
     by the principal axis's narrow end (`_mask_axis`) otherwise.
 
-    Why Bob rotates rather than the prompt asking for it: W4 was asked for "the cut end of the twig
+    Why Bob rotates rather than the prompt asking for it: `mesh_subject` was asked for "the cut end of the twig
     at the bottom of the frame, needles fanning upward" and returned sprays lying diagonally with
     the twig at the LEFT, on which a card attaches by its side and reads as a leaf growing sideways
     out of a branch. The prompt clause is kept anyway (it costs nothing and it helps), but the

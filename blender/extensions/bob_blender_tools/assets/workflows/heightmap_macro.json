@@ -1,19 +1,19 @@
 {
   "_bob": {
     "id": "heightmap_macro",
-    "plan": "W13, docs/COMFYUI.md track E",
-    "purpose": "Prompt to one low-frequency macro MASK for the terrain op stack's first input. Not a heightfield (R7): Bob's erosion stack owns every real slope, channel and rill.",
-    "derived_from": "assets/workflows/tex_tileable.json (W1), which is ComfyUI-seamless-tiling/tiled_workflow.png (pack SHA 9225ed5) converted by tools/scripts/comfy_ui_to_api.py",
+    "role": "docs/GENERATION.md, the macro-heightmap family: a prompted low-frequency mask for the terrain op stack",
+    "purpose": "Prompt to one low-frequency macro MASK for the terrain op stack's first input. Not a heightfield, and the bit-depth floor is why: an 8-bit PNG carries 256 levels, so Bob's erosion stack owns every real slope, channel and rill.",
+    "derived_from": "assets/workflows/tex_tileable.json (tex_tileable), which is ComfyUI-seamless-tiling/tiled_workflow.png (pack SHA 9225ed5) converted by tools/scripts/comfy_ui_to_api.py",
     "deviations_from_source": [
       "the prompt and negative are a top-down elevation brief rather than a material one, which is the whole difference between the two graphs; core/comfy.py appends MACRO_SUFFIX so a landform brief is not the artist's job to remember.",
-      "cfg 4.0 and 20 steps against W1's 5.0 and 25: a mask is low-frequency by construction, so the extra steps and the higher guidance only sharpen detail Bob is about to blur away.",
+      "cfg 4.0 and 20 steps against tex_tileable's 5.0 and 25: a mask is low-frequency by construction, so the extra steps and the higher guidance only sharpen detail Bob is about to blur away.",
       "sampler euler with the normal scheduler, against dpmpp_2m + karras: karras front-loads the fine-detail steps, which is the half of the schedule this route discards.",
       "the two tiling nodes are DROPPABLE rather than fixed. core/comfy.py drops SeamlessTile and MakeCircularVAE for the default 'open' route, because a tiling macro mask repeats the massif at the tile border and a single terrain tile is not a torus."
     ],
     "requires_nodes": ["SeamlessTile", "MakeCircularVAE"],
     "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0), only on the 'tiled' route",
     "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",
-    "notes": "This is W1's topology with different values, and that is the honest description: the graph earns its own file because it carries its own prompt brief, its own sampler tuning and its own provenance, not because it wires anything new. The tiling pair ships IN the graph so preflight covers the classes on the route that keeps them; comfy.macro_tiling() decides per press."
+    "notes": "This is tex_tileable's topology with different values, and that is the honest description: the graph earns its own file because it carries its own prompt brief, its own sampler tuning and its own provenance, not because it wires anything new. The tiling pair ships IN the graph so preflight covers the classes on the route that keeps them; comfy.macro_tiling() decides per press."
   },
   "prompt": {
     "1": {

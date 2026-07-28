@@ -1,7 +1,7 @@
 {
   "_bob": {
     "id": "mesh_geom_trellis",
-    "plan": "W5t, docs/COMFYUI.md track C, pipeline step 2 (primary geometry graph)",
+    "role": "docs/GENERATION.md, the geometry family: pipeline step 2, the primary geometry graph",
     "purpose": "A subject image with alpha to a dense, UV-unwrapped mesh. Open surfaces included, which is the whole reason TRELLIS.2 is primary.",
     "derived_from": "ComfyUI-TRELLIS2/workflows/geometry_only_1024.json, converted by tools/scripts/comfy_ui_to_api.py",
     "deviations_from_source": [
@@ -14,7 +14,7 @@
     "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack",
     "runtime_inputs": ["BOB_IMAGE.image"],
     "resolution_tiers": {"preview": "512", "default": "1024", "hero": "1536_cascade"},
-    "notes": "The alpha of BOB_IMAGE is what makes this work. LoadImage returns mask = 1 - alpha, InvertMask puts it back, and Trellis2GetConditioning takes the foreground. An opaque PNG therefore conditions on the whole square frame. Measured at G0.5: 1024 warm is about 87 s and peaks at 5.7 GB of 16, so no cascade is needed at 1024."
+    "notes": "The alpha of BOB_IMAGE is what makes this work. LoadImage returns mask = 1 - alpha, InvertMask puts it back, and Trellis2GetConditioning takes the foreground. An opaque PNG therefore conditions on the whole square frame. Measured: 1024 warm is about 87 s and peaks at 5.7 GB of 16, so no cascade is needed at 1024."
   },
   "prompt": {
     "1": {

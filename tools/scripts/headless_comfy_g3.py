@@ -126,7 +126,7 @@ def alpha_stats(path):
 
 # -- 0. generation ------------------------------------------------------------------------------
 def generate_sources(reachable, fresh, limit):
-    """W4 then W5t per subject into `GEN/`, reusing what is already there. Returns the ones that
+    """`mesh_subject` then `mesh_geom_trellis` per subject into `GEN/`, reusing what is already there. Returns the ones that
     exist, with their generation timings when this run produced them."""
     os.makedirs(GEN, exist_ok=True)
     have = []
@@ -134,7 +134,7 @@ def generate_sources(reachable, fresh, limit):
         raw = os.path.join(GEN, subject["key"] + "_raw.glb")
         png = os.path.join(GEN, subject["key"] + "_subject.png")
         # The generation timings are cached with the mesh. Without this a re-run reports a
-        # per-asset total that silently omits W4 and W5t, i.e. the two slowest stages, and the
+        # per-asset total that silently omits `mesh_subject` and `mesh_geom_trellis`, i.e. the two slowest stages, and the
         # five-minute budget check would be measuring the wrong thing.
         stamp = os.path.join(GEN, subject["key"] + "_gen.json")
         entry = dict(subject, raw=raw, subject_png=png, seconds={})
@@ -341,7 +341,7 @@ def measure_foliage(entry, report):
          "yes" if alpha_linked else "no (the generated basecolor is opaque)")
     if entry.get("subject_png") and os.path.isfile(entry["subject_png"]):
         mean, lo, hi = alpha_stats(entry["subject_png"])
-        check(f"{entry['key']}: the W4 reference carries a real alpha cutout",
+        check(f"{entry['key']}: the `mesh_subject` reference carries a real alpha cutout",
               lo < 0.02 and hi > 0.98 and 0.02 < mean < 0.98,
               f"alpha mean {mean:.3f}, range {lo:.3f} to {hi:.3f}")
     return result

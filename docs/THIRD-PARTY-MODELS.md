@@ -27,20 +27,20 @@ catalogue) that reference the model, so a licence term can be traced to the feat
 
 | Model | Source | Licence | Size | Route |
 |---|---|---|---|---|
-| **TRELLIS.2-4B** | `microsoft/TRELLIS.2-4B` (Hugging Face) | MIT (**upstream**) | 15 GB with its cache | W4 rembg, W5t, W9b, W9c, W9t, W6t: every geometry and mesh-texture route |
+| **TRELLIS.2-4B** | `microsoft/TRELLIS.2-4B` (Hugging Face) | MIT (**upstream**) | 15 GB with its cache | `mesh_subject` rembg, `mesh_geom_trellis`, `mesh_geom_texture`, `mesh_simplify_uv`, `mesh_texture`, `mesh_geom_mv_trellis`: every geometry and mesh-texture route |
 | **TRELLIS-image-large** (sparse-structure decoder only) | `microsoft/TRELLIS-image-large` | MIT (**upstream**) | inside the 15 GB above | pulled by `pipeline.json` as one component of the TRELLIS.2 pipeline |
-| **BiRefNet** | `ZhengPeng7/BiRefNet` | MIT (**upstream**) | 424 MB | W4's background cutout (`Trellis2RemoveBackground`) |
-| **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | W7, **W7b** and **W7v**, the three block-out control routes (point cloud, bounding box, occupancy grid). One checkpoint serves all three: the mode is a conditioning branch inside `OmniEncoder`, not a separate download |
-| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | W5, the zero-install geometry smoke test; **W8**, the `alt` geometry route measured at G7 |
-| **Hunyuan3D-2mv** | `hunyuan3d-dit-v2-mv_fp16.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 4.6 GB | W6, multi-view geometry |
-| **RealVisXL V5.0** (fp16) | `SG161222/RealVisXL_V5.0` | OpenRAIL++ (**upstream**) | 6.5 GB | every raster route: W1, W2, W3, W4's reference image, W12, W12e, W9, W13 |
-| **CLIP-ViT-H-14-laion2B-s32B-b79K** | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` | MIT (**upstream**) | 2.4 GB | W2 and W9, as the IPAdapter vision encoder |
-| **IP-Adapter SDXL (vit-h)** | `h94/IP-Adapter` | Apache-2.0 (**upstream**) | 667 MB | W2 (reference texture), W9 (palette lock across views) |
-| **ControlNet Depth SDXL 1.0** | `diffusers/controlnet-depth-sdxl-1.0` | OpenRAIL++ (**upstream**) | 2.4 GB | W12, W12e, W9 |
-| **ControlNet Union SDXL 1.0 promax** | `xinsir/controlnet-union-sdxl-1.0` | Apache-2.0 (**upstream**) | 2.4 GB | W12, W12e, W9, as the normal-map control |
-| **Depth Anything V2 Large** | `depth-anything/Depth-Anything-V2-Large` | **CC-BY-NC-4.0** (**upstream**) | 1.3 GB | W12e only, the ESTIMATED stylise route |
-| **NormalBAE** (`scannet.pt`) | `lllyasviel/Annotators` | MIT (**upstream**) | 278 MB | W12e only |
-| **4x-UltraSharp** | Kim2091, `uwg/upscaler` / OpenModelDB | **CC-BY-NC-SA-4.0** (**upstream**) | 64 MB | W3 only, the texture-set 2x upres |
+| **BiRefNet** | `ZhengPeng7/BiRefNet` | MIT (**upstream**) | 424 MB | `mesh_subject`'s background cutout (`Trellis2RemoveBackground`) |
+| **Hunyuan3D-Omni** | `tencent/Hunyuan3D-Omni` | **Tencent Hunyuan 3D Omni Community License**, `models/hunyuan3d-omni/License.txt` in the install | 13 GB | `mesh_geom_ctrl`, **`mesh_geom_bbox`** and **`mesh_geom_voxel`**, the three block-out control routes (point cloud, bounding box, occupancy grid). One checkpoint serves all three: the mode is a conditioning branch inside `OmniEncoder`, not a separate download |
+| **Hunyuan3D 2.1** | `hunyuan_3d_v2.1.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 6.9 GB | `mesh_geom`, the zero-install geometry smoke test; **`mesh_geom_alt`**, the `alt` geometry route measured at G7 |
+| **Hunyuan3D-2mv** | `hunyuan3d-dit-v2-mv_fp16.safetensors` | **Tencent Hunyuan Community License** (**upstream**) | 4.6 GB | `mesh_geom_mv`, multi-view geometry |
+| **RealVisXL V5.0** (fp16) | `SG161222/RealVisXL_V5.0` | OpenRAIL++ (**upstream**) | 6.5 GB | every raster route: `tex_tileable`, `tex_tileable_ref`, `tex_upres`, `mesh_subject`'s reference image, `stylize_render`, `stylize_render_est`, `mesh_paint_views`, `heightmap_macro` |
+| **CLIP-ViT-H-14-laion2B-s32B-b79K** | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` | MIT (**upstream**) | 2.4 GB | `tex_tileable_ref` and `mesh_paint_views`, as the IPAdapter vision encoder |
+| **IP-Adapter SDXL (vit-h)** | `h94/IP-Adapter` | Apache-2.0 (**upstream**) | 667 MB | `tex_tileable_ref` (reference texture), `mesh_paint_views` (palette lock across views) |
+| **ControlNet Depth SDXL 1.0** | `diffusers/controlnet-depth-sdxl-1.0` | OpenRAIL++ (**upstream**) | 2.4 GB | `stylize_render`, `stylize_render_est`, `mesh_paint_views` |
+| **ControlNet Union SDXL 1.0 promax** | `xinsir/controlnet-union-sdxl-1.0` | Apache-2.0 (**upstream**) | 2.4 GB | `stylize_render`, `stylize_render_est`, `mesh_paint_views`, as the normal-map control |
+| **Depth Anything V2 Large** | `depth-anything/Depth-Anything-V2-Large` | **CC-BY-NC-4.0** (**upstream**) | 1.3 GB | `stylize_render_est` only, the ESTIMATED stylise route |
+| **NormalBAE** (`scannet.pt`) | `lllyasviel/Annotators` | MIT (**upstream**) | 278 MB | `stylize_render_est` only |
+| **4x-UltraSharp** | Kim2091, `uwg/upscaler` / OpenModelDB | **CC-BY-NC-SA-4.0** (**upstream**) | 64 MB | `tex_upres` only, the texture-set 2x upres |
 
 ### The four that are not permissive, stated plainly
 
@@ -59,7 +59,7 @@ catalogue) that reference the model, so a licence term can be traced to the feat
    > may grant to You in its sole discretion, and You are not authorized to exercise any of the
    > rights under this Agreement unless or until Tencent otherwise expressly grants You such rights.
 
-   Where this lands: **W7 and W7b (block-out control), W5 (smoke test), W6 (multi-view) and W8 (the
+   Where this lands: **`mesh_geom_ctrl` and `mesh_geom_bbox` (block-out control), `mesh_geom` (smoke test), `mesh_geom_mv` (multi-view) and `mesh_geom_alt` (the
    `alt` geometry route)**. Nothing else, and none of the five is a default. That is now a decision with
    numbers rather than a happy accident: G7 measured Hunyuan 2.1 as **2.1x faster on solids** and the
    only one of the two that closes every shell, and the default still did not move, because a default
@@ -67,13 +67,13 @@ catalogue) that reference the model, so a licence term can be traced to the feat
    (docs/COMFYUI-MEASUREMENTS.md, G7). TRELLIS.2 is MIT and stays primary, so every default route in
    this integration is usable in those territories.
 
-2. **Depth Anything V2 Large is CC-BY-NC-4.0: non-commercial.** It is used by **W12e alone**, the
+2. **Depth Anything V2 Large is CC-BY-NC-4.0: non-commercial.** It is used by **`stylize_render_est` alone**, the
    estimated stylise route. G4 measured that the estimated route and the real-passes route are within
-   the estimator's own error of each other, which cuts both ways: W12e is a genuine alternative, and
-   it is also genuinely skippable. A commercial project should use **W12** (Bob's own depth and
-   normal passes, which are Blender output and carry no model licence at all) and never load W12e.
+   the estimator's own error of each other, which cuts both ways: `stylize_render_est` is a genuine alternative, and
+   it is also genuinely skippable. A commercial project should use **`stylize_render`** (Bob's own depth and
+   normal passes, which are Blender output and carry no model licence at all) and never load `stylize_render_est`.
 
-3. **4x-UltraSharp is CC-BY-NC-SA-4.0: non-commercial, and share-alike.** It is used by **W3 alone**,
+3. **4x-UltraSharp is CC-BY-NC-SA-4.0: non-commercial, and share-alike.** It is used by **`tex_upres` alone**,
    the optional `Upres 2x` button on a staged texture variant. Nothing else in the integration
    depends on it, so a commercial project can leave the upres unused, or substitute a permissively
    licensed ESRGAN model of its own: `UpscaleModelLoader.model_name` is a plain enum over
@@ -93,21 +93,21 @@ the artist's install raises no distribution question for Bob either. Licences be
 | Pack | Pinned SHA | Licence | Needed by |
 |---|---|---|---|
 | `ComfyUI-TRELLIS2` | `9b87851` | MIT (`LICENSE`) | every geometry and mesh-texture route |
-| `ComfyUI-GeometryPack` | `c67199d` | **GPL-3.0** (`LICENSE`) | required by TRELLIS2's own `node_reqs`; W9t names `GeomPackUVUnwrap` and W8p names `GeomPackNormalizeMeshToBBox` |
-| `ComfyUI-Hy3D-Omni` | `e513cd0` | **NO LICENCE FILE AT ALL** | W7, W7b and W7v only |
-| `ComfyUI-seamless-tiling` | `9225ed5` | **GPL-3.0** (`LICENSE`) | W1, W2, W3, and W13's tiled route |
-| `ComfyUI_IPAdapter_plus` | `a0f451a` | **GPL-3.0** (`LICENSE`) | W2, W9 |
-| `ComfyUI_UltimateSDUpscale` | (not a submodule in this install) | **GPL-3.0** (`LICENSE`) | W3 only |
-| `comfyui_controlnet_aux` | (not a submodule in this install) | Apache-2.0 (`LICENSE.txt`) | W12e only |
+| `ComfyUI-GeometryPack` | `c67199d` | **GPL-3.0** (`LICENSE`) | required by TRELLIS2's own `node_reqs`; `mesh_texture` names `GeomPackUVUnwrap` and `mesh_process` names `GeomPackNormalizeMeshToBBox` |
+| `ComfyUI-Hy3D-Omni` | `e513cd0` | **NO LICENCE FILE AT ALL** | `mesh_geom_ctrl`, `mesh_geom_bbox` and `mesh_geom_voxel` only |
+| `ComfyUI-seamless-tiling` | `9225ed5` | **GPL-3.0** (`LICENSE`) | `tex_tileable`, `tex_tileable_ref`, `tex_upres`, and `heightmap_macro`'s tiled route |
+| `ComfyUI_IPAdapter_plus` | `a0f451a` | **GPL-3.0** (`LICENSE`) | `tex_tileable_ref`, `mesh_paint_views` |
+| `ComfyUI_UltimateSDUpscale` | (not a submodule in this install) | **GPL-3.0** (`LICENSE`) | `tex_upres` only |
+| `comfyui_controlnet_aux` | (not a submodule in this install) | Apache-2.0 (`LICENSE.txt`) | `stylize_render_est` only |
 
 Three things about that table are worth stating rather than leaving in a cell.
 
 **`ComfyUI-Hy3D-Omni` ships no licence at all.** No `LICENSE`, no `COPYING`, no licence field in a
 `pyproject.toml`. So its terms are unstated, which under copyright means **no licence is granted**,
 not that it is public domain. It is also the least maintained dependency in the integration and the
-one that shipped with the control signal silently random (docs/COMFYUI-MEASUREMENTS.md, G4c). It is used by W7,
-W7b and W7v and by nothing else. Treat all three as in-house tools until upstream states a licence.
-G8 read the same pack again while adding W7b and **G9 read it a third time while adding W7v**: still
+one that shipped with the control signal silently random (docs/COMFYUI-MEASUREMENTS.md, G4c). It is used by `mesh_geom_ctrl`,
+`mesh_geom_bbox` and `mesh_geom_voxel` and by nothing else. Treat all three as in-house tools until upstream states a licence.
+G8 read the same pack again while adding `mesh_geom_bbox` and **G9 read it a third time while adding `mesh_geom_voxel`**: still
 no `LICENSE`, no `COPYING`, no licence field, same commit `e513cd0`, and no push since 2025-10-03.
 Three of Bob's routes now sit on an unlicensed wrapper, which is worth stating plainly rather than
 letting the count grow quietly: G9 added the third and the entry says so, because "the pack already
@@ -121,7 +121,7 @@ vendoring these packs into a closed product: real.
 
 **`ComfyUI_UltimateSDUpscale` and `comfyui_controlnet_aux` are not pinned as submodules** in the
 reference install, unlike the other five. They were already present. Each is used by exactly one
-optional workflow (W3 and W12e), which is also the pair whose models are the two non-commercial ones,
+optional workflow (`tex_upres` and `stylize_render_est`), which is also the pair whose models are the two non-commercial ones,
 so the whole non-commercial surface of this integration is those two routes and nothing else.
 
 ## What is NOT here, and why that matters
@@ -130,7 +130,7 @@ so the whole non-commercial surface of this integration is those two routes and 
   `"briaai/RMBG-2.0": "ZhengPeng7/BiRefNet"` and the weights on disk are BiRefNet's. So the plan's
   claim that dropping RMBG removes a non-commercial term is confirmed by the pack's own alias table
   rather than assumed.
-- **No LoRA is shipped or required.** `bob_placeholder.safetensors` appears in W9, W12 and W12e as a
+- **No LoRA is shipped or required.** `bob_placeholder.safetensors` appears in `mesh_paint_views`, `stylize_render` and `stylize_render_est` as a
   binding point, and with no LoRA configured the `LoraLoader` node is REMOVED from the graph rather
   than run at strength 0, because a placeholder filename fails the validator on a machine with no
   LoRAs installed. A style LoRA an artist adds carries its own terms, which Bob cannot know.

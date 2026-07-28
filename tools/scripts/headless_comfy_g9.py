@@ -3,23 +3,23 @@
 G8 answered half of D12 and named the other half as the interesting one rather than the leftover.
 Eight corners lost to 8,192 points because a box constrains EXTENT and says nothing about PLAN, and
 a ground plan is what "drops into a layout" reduces to. `Hy3DOmniVoxelGenerate` is the only Omni
-control mode left that carries one: it area-samples the same block-out mesh W7 takes and
+control mode left that carries one: it area-samples the same block-out mesh `mesh_geom_ctrl` takes and
 `OmniEncoder.generate_voxel` quantises those samples onto a 16-cubed occupancy grid. So this gate is
 the same comparison G8 ran, with a third real column and a different null.
 
   A. **The values, the frame and preflight.** Preflight over every shipped graph offline against the
-     committed dump, the `api_node` assertion on W7v, the third control mode as a value in one place
+     committed dump, the `api_node` assertion on `mesh_geom_voxel`, the third control mode as a value in one place
      (`CONTROL_MODES`, `CONTROL_WORKFLOWS`, `control_route` including its refusal of an unknown
      name), `stage_exports` on the mesh form, and the D14 tripwire. No server, always runs.
   B. **The input rotation, then the grid.** `Hy3DOmniVoxelGenerate` turns its control -90 degrees
      about X by default and `Hy3DOmniPointGenerate` does not, so the setting is measured on the
      asymmetric block-out before anything else runs and `comfy.VOXEL_INPUT_ROTATION` has to equal
      what won. Then the same three block-outs G4c and G8 used, the same conditioning image, the same
-     scoring with NO rotation search: W7 point, W7v voxel, W7v with a SWAPPED control (the null),
-     and W7b bbox for the record.
-  C. **The finished asset.** One block-out through W7v, W9c, W9t and steps 6 to 8, against the G3
+     scoring with NO rotation search: `mesh_geom_ctrl` point, `mesh_geom_voxel` voxel, `mesh_geom_voxel` with a SWAPPED control (the null),
+     and `mesh_geom_bbox` bbox for the record.
+  C. **The finished asset.** One block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the G3
      asset checks it inherits, with the footprint measured again after the finish.
-  D. **Transport.** W7v uploads a mesh, so unlike W7b it cannot be the fallback for a process with
+  D. **Transport.** `mesh_geom_voxel` uploads a mesh, so unlike `mesh_geom_bbox` it cannot be the fallback for a process with
      no ComfyUI folder. Measured rather than reasoned, with the weights held fixed.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
@@ -64,7 +64,7 @@ DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 SEED = g4c.SEED
 FACES = g4c.FACES
 
-# Every class W7v needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
+# Every class `mesh_geom_voxel` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniVoxelGenerate",
                 "Hy3DOmniBBoxGenerate")
 
@@ -75,7 +75,7 @@ OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniVoxelG
 SWAP = {"rock": "tree", "tree": "notched", "notched": "rock"}
 
 # The columns, in the order the tables read.
-COLUMNS = ("W7 point", "W7v voxel", "W7v swap", "W7b bbox")
+COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_voxel voxel", "mesh_geom_voxel swap", "mesh_geom_bbox bbox")
 
 # The decision rules, all three fixed BEFORE the run so no verdict can be chosen after the table.
 #
@@ -135,10 +135,10 @@ def part_a(args, reachable):
     graph, prov = comfy.load_workflow("mesh_geom_voxel")
     cloud = [n["class_type"] for n in graph.values()
              if info.get(n["class_type"], {}).get("api_node")]
-    check("W7v names no cloud node", not cloud, f"{len(graph)} nodes, api_node: {cloud or 'none'}")
-    check("W7v records the template it came from", bool(prov.get("derived_from")),
+    check("mesh_geom_voxel names no cloud node", not cloud, f"{len(graph)} nodes, api_node: {cloud or 'none'}")
+    check("mesh_geom_voxel records the template it came from", bool(prov.get("derived_from")),
           str(prov.get("derived_from"))[:90])
-    check("W7v reads the same control file W7 does, through the same loader",
+    check("mesh_geom_voxel reads the same control file mesh_geom_ctrl does, through the same loader",
           any(n["class_type"] == "Trellis2LoadMesh" for n in graph.values())
           and any(n["class_type"] == "Hy3DOmniVoxelGenerate" for n in graph.values()),
           "classes: " + ", ".join(sorted({n["class_type"] for n in graph.values()})))
@@ -149,7 +149,7 @@ def part_a(args, reachable):
           node["inputs"]["apply_input_rotation"] is comfy.VOXEL_INPUT_ROTATION,
           f"graph {node['inputs']['apply_input_rotation']}, constant "
           f"{comfy.VOXEL_INPUT_ROTATION}; node default is True")
-    note("W7v control density", f"{node['inputs']['sample_point_count']} samples onto a 16-cubed "
+    note("mesh_geom_voxel control density", f"{node['inputs']['sample_point_count']} samples onto a 16-cubed "
                                 f"grid, so at most 4096 cells reach the encoder")
 
     # The mode is a value in ONE place, so the truth table is the test. Two modes now share the mesh
@@ -275,7 +275,7 @@ def frame_probe(args, blocks):
     """Which way `apply_input_rotation` goes, measured on the asymmetric block-out.
 
     The node's default is True and the point node has no such flag, so this is the one setting on
-    W7v that a reasonable person would leave alone and that would silently cost the whole phase.
+    `mesh_geom_voxel` that a reasonable person would leave alone and that would silently cost the whole phase.
     """
     kind = "notched"
     block = blocks[kind]
@@ -286,7 +286,7 @@ def frame_probe(args, blocks):
             target,
             lambda t=target, r=rotate: comfy.mesh_geom_voxel(block["control"], block["view"], t,
                                                              seed=SEED, rotate_input=r),
-            args, f"{kind} W7v apply_input_rotation={rotate}")
+            args, f"{kind} `mesh_geom_voxel` apply_input_rotation={rotate}")
         if not ok:
             continue
         agree = _score(target, block["points"], f"probe_rot{int(rotate)}")
@@ -329,18 +329,18 @@ def part_b(args, reachable, ready):
     scores, rows, swap_cross = {}, [], {}
     for kind, block in blocks.items():
         runs = {
-            "W7 point": (os.path.join(GEN, f"{kind}_w7.glb"),
+            "mesh_geom_ctrl point": (os.path.join(GEN, f"{kind}_w7.glb"),
                          lambda t, b=block: comfy.mesh_geom_ctrl(b["control"], b["view"], t,
                                                                  seed=SEED)),
-            "W7v voxel": (os.path.join(GEN, f"{kind}_w7v.glb"),
+            "mesh_geom_voxel voxel": (os.path.join(GEN, f"{kind}_w7v.glb"),
                           lambda t, b=block: comfy.mesh_geom_voxel(b["control"], b["view"], t,
                                                                    seed=SEED)),
-            "W7v swap": (os.path.join(GEN, f"{kind}_w7v_swap.glb"),
+            "mesh_geom_voxel swap": (os.path.join(GEN, f"{kind}_w7v_swap.glb"),
                          lambda t, b=block, o=blocks[SWAP[kind]]:
                          comfy.mesh_geom_voxel(o["control"], b["view"], t, seed=SEED)),
         }
         if not args.no_bbox:
-            runs["W7b bbox"] = (os.path.join(GEN, f"{kind}_w7b.glb"),
+            runs["mesh_geom_bbox bbox"] = (os.path.join(GEN, f"{kind}_w7b.glb"),
                                 lambda t, b=block: comfy.mesh_geom_bbox(b["bbox"], b["view"], t,
                                                                         seed=SEED))
         for label, (target, run) in runs.items():
@@ -348,7 +348,7 @@ def part_b(args, reachable, ready):
             if not ok:
                 continue
             agree = _score(target, block["points"], f"{kind}_{label.replace(' ', '_')}")
-            if label == "W7v swap":
+            if label == "mesh_geom_voxel swap":
                 # The null's whole point: score it against the block-out whose CONTROL it got as
                 # well as against the one whose image it saw.
                 other = blocks[SWAP[kind]]
@@ -404,7 +404,7 @@ def part_b(args, reachable, ready):
     # WIRING first. A swapped control is a stronger null than an absent one: both runs load the same
     # model with the same image and the same steps, so the only difference is which block-out the
     # control came from. If the result does not move with it, the control is not reaching the model.
-    wired = [(k, scores.get((k, "W7v voxel")), scores.get((k, "W7v swap"))) for k in g4c.PROMPTS]
+    wired = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_voxel swap"))) for k in g4c.PROMPTS]
     live = [(k, v, s) for k, v, s in wired if v and s]
     if live:
         held = sum(1 for _k, v, s in live if v["footprint_iou"] > s["footprint_iou"])
@@ -420,7 +420,7 @@ def part_b(args, reachable, ready):
                            for k, c in sorted(swap_cross.items())))
 
     # Then the verdict, on the same rule shape G8 used, so the two are directly comparable.
-    pairs = [(k, scores.get((k, "W7v voxel")), scores.get((k, "W7 point"))) for k in g4c.PROMPTS]
+    pairs = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_ctrl point"))) for k in g4c.PROMPTS]
     live = [(k, v, p) for k, v, p in pairs if v and p]
     if live:
         wins = sum(1 for _k, v, p in live if v["footprint_iou"] >= p["footprint_iou"] - DRAW)
@@ -437,8 +437,8 @@ def part_b(args, reachable, ready):
         check("the shipped default is the one the rule chose",
               comfy.DEFAULT_CONTROL_MODE == verdict,
               f"shipped {comfy.DEFAULT_CONTROL_MODE!r}, rule {verdict!r}")
-        adopted = {"point": "W7 point", "voxel": "W7v voxel",
-                   "bbox": "W7b bbox"}[comfy.DEFAULT_CONTROL_MODE]
+        adopted = {"point": "mesh_geom_ctrl point", "voxel": "mesh_geom_voxel voxel",
+                   "bbox": "mesh_geom_bbox bbox"}[comfy.DEFAULT_CONTROL_MODE]
         got = column(adopted)
         if got:
             check(f"the shipped control mode ({adopted}) clears G4c's footprint bar everywhere",
@@ -466,10 +466,10 @@ def part_c(args, reachable, ready):
     raw = os.path.join(GEN, f"{kind}_w7v.glb")
     stamp, ok = _run_cached(
         raw, lambda: comfy.mesh_geom_voxel(block["control"], block["view"], raw, seed=SEED),
-        args, "W7v for the finished asset")
+        args, "mesh_geom_voxel for the finished asset")
     if not ok:
         return
-    note("W7v", f"{stamp.get('seconds', 0.0):.1f} s")
+    note("mesh_geom_voxel", f"{stamp.get('seconds', 0.0):.1f} s")
 
     staged_dir = os.path.join(GEN, "finish")
     os.makedirs(staged_dir, exist_ok=True)
@@ -482,9 +482,9 @@ def part_c(args, reachable, ready):
         if args.fresh or not os.path.isfile(tex):
             comfy.mesh_texture(simp, block["view"], tex, seed=SEED, texture_size=1024)
     except comfy.ComfyError as exc:
-        check("W9c and W9t finished the block-out asset", False, str(exc)[:200])
+        check("mesh_simplify_uv and mesh_texture finished the block-out asset", False, str(exc)[:200])
         return
-    note("W9c plus W9t", f"{time.time() - t0:.1f} s")
+    note("mesh_simplify_uv plus mesh_texture", f"{time.time() - t0:.1f} s")
 
     exports = comfy.stage_exports({"meta": {"control": block["control"], "control_bbox": None,
                                             "control_mode": "voxel"},
@@ -505,7 +505,7 @@ def part_c(args, reachable, ready):
     check("origin sits at the base", abs(low[2] - final.location[2]) < 1e-3,
           f"base {low[2]:.4f}, origin {final.location[2]:.4f}")
     check("the LOD chain exists", len(report["lod_faces"]) >= 3, str(report["lod_faces"]))
-    check("the W9t albedo reached the finished asset",
+    check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
     check("the material is a BobShader",
@@ -539,7 +539,7 @@ def _score_finished(obj, proxy_points):
 
 # -- Part D: transport -------------------------------------------------------------------------------
 def part_d(args, reachable, ready):
-    section("D. W7v uploads a mesh, so W7b keeps the no-ComfyUI-folder fallback to itself")
+    section("D. mesh_geom_voxel uploads a mesh, so mesh_geom_bbox keeps the no-ComfyUI-folder fallback to itself")
     if not (reachable and ready):
         print("[SKIP] part D needs a server with the Omni pack and its weights")
         return
@@ -567,7 +567,7 @@ def part_d(args, reachable, ready):
             error = str(exc)
         check("the voxel route fails without a ComfyUI folder, exactly as the point route does",
               error is not None, (error or "it succeeded").splitlines()[0][:160])
-        note("so the transport fallback is still W7b alone",
+        note("so the transport fallback is still mesh_geom_bbox alone",
              "one Omni mode of three uploads nothing, and it is the one that lost on footprint")
     finally:
         comfy.omni_model_dir = saved_lookup
@@ -583,7 +583,7 @@ def main():
     parser.add_argument("--no-gen", action="store_true",
                         help="score the cache only, generate nothing")
     parser.add_argument("--no-bbox", action="store_true",
-                        help="drop the W7b column, which G8 already measured")
+                        help="drop the mesh_geom_bbox column, which G8 already measured")
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     args = parser.parse_args(argv)
     os.makedirs(GEN, exist_ok=True)

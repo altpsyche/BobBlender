@@ -7,7 +7,7 @@ encoder turns them into the eight corners of a box (`omni_encoder.bbox_to_corner
 every proxy's bounding box for free. So this gate is one comparison with a null beside it.
 
   A. **The values, and the mapping that cannot be allowed to drift.** Preflight over every shipped
-     graph offline against the committed dump, the `api_node` assertion on W7b, the control mode as
+     graph offline against the committed dump, the `api_node` assertion on `mesh_geom_bbox`, the control mode as
      a value in one place (`control_route`, `CONTROL_WORKFLOWS`, `asset_chain` on either control
      form), and `gen_assets.control_bbox` checked against the control glb's OWN position extents,
      because a permuted bbox is still a valid bbox and conditions on a plausible wrong shape in
@@ -15,13 +15,13 @@ every proxy's bounding box for free. So this gate is one comparison with a null 
      measured the segfault on. No server, always runs, costs a second.
   B. **The grid.** The same three block-outs G4c used, the same conditioning image, the same
      scoring with NO rotation search, each against its own self-agreement ceiling. Three control
-     modes: W7 point (the number to beat), W7b with Bob's proportions, and W7b with `auto_bbox`,
+     modes: `mesh_geom_ctrl` point (the number to beat), `mesh_geom_bbox` with Bob's proportions, and `mesh_geom_bbox` with `auto_bbox`,
      which estimates the proportions from the image and is the NULL that says whether Bob's
      numbers added anything at all.
-  C. **The finished asset.** One block-out through W7b, W9c, W9t and steps 6 to 8, against the G3
+  C. **The finished asset.** One block-out through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the G3
      asset checks it inherits, with the footprint measured again after simplify, bake, scale, LODs
      and BobShade.
-  D. **The transport claim.** W7b uploads nothing, so it should be the one Omni route that survives
+  D. **The transport claim.** `mesh_geom_bbox` uploads nothing, so it should be the one Omni route that survives
      a process with no ComfyUI folder, which is what G7 found broken over MCP. Measured both ways
      with `comfy_dir()` forced to None, rather than asserted.
 
@@ -67,14 +67,14 @@ DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 SEED = g4c.SEED
 FACES = g4c.FACES
 
-# Every class W7b needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
+# Every class `mesh_geom_bbox` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniBBoxGenerate")
 
-# The three control modes, in the order the tables read. "auto" is not a Bob mode: it is W7b with
+# The three control modes, in the order the tables read. "auto" is not a Bob mode: it is `mesh_geom_bbox` with
 # `auto_bbox`, i.e. the node guessing the proportions off the conditioning image, and it is here as
 # the null. Without it a bbox result that merely looks reasonable cannot be told apart from the
 # model doing what it would have done from the picture alone.
-COLUMNS = ("W7 point", "W7b bbox", "W7b auto")
+COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_bbox bbox", "mesh_geom_bbox auto")
 
 # The decision rule, fixed BEFORE the run so the verdict cannot be chosen after seeing the table.
 # `DEFAULT_CONTROL_MODE` moves to "bbox" only if the bbox column wins or draws on footprint IoU on
@@ -161,15 +161,15 @@ def part_a(args, reachable):
     graph, prov = comfy.load_workflow("mesh_geom_bbox")
     cloud = [n["class_type"] for n in graph.values()
              if info.get(n["class_type"], {}).get("api_node")]
-    check("W7b names no cloud node", not cloud, f"{len(graph)} nodes, api_node: {cloud or 'none'}")
-    check("W7b records the template it came from", bool(prov.get("derived_from")),
+    check("mesh_geom_bbox names no cloud node", not cloud, f"{len(graph)} nodes, api_node: {cloud or 'none'}")
+    check("mesh_geom_bbox records the template it came from", bool(prov.get("derived_from")),
           str(prov.get("derived_from"))[:90])
-    check("W7b uploads no mesh, which is the point of it",
+    check("mesh_geom_bbox uploads no mesh, which is the point of it",
           not any(n["class_type"] == "Trellis2LoadMesh" for n in graph.values()),
           "classes: " + ", ".join(sorted({n["class_type"] for n in graph.values()})))
 
     # The mode is a value in ONE place, so the truth table is the test.
-    # G9 added a third mode that reads the SAME control file W7 does, so a mesh alone no longer
+    # G9 added a third mode that reads the SAME control file `mesh_geom_ctrl` does, so a mesh alone no longer
     # names a mode and the default breaks that tie too. Written against the constant rather than
     # against "point", or this gate fails the day the default moves for a reason G8 did not measure.
     table = [({}, None, "no control at all"),
@@ -214,7 +214,7 @@ def part_a(args, reachable):
           signal["path"] is None and signal["bbox"] == got and signal["height_m"] > 0,
           f"height {signal['height_m']:.3f} m, bbox {signal['bbox']}")
 
-    # W7b's own binding, both ways, without a server: `auto_bbox` is the difference between Bob's
+    # `mesh_geom_bbox`'s own binding, both ways, without a server: `auto_bbox` is the difference between Bob's
     # numbers and the node's guess, and it is bound from one argument being None.
     for dims, auto in (([0.3, 1.0, 0.7], False), (None, True)):
         bound = comfy.template(comfy.load_workflow("mesh_geom_bbox")[0],
@@ -224,7 +224,7 @@ def part_a(args, reachable):
                                                      "bbox_height": dims[1],
                                                      "bbox_depth": dims[2]}))})
         node = next(n for n in bound.values() if n["_meta"]["title"] == "BOB_SEED")
-        check(f"W7b binds auto_bbox={auto} for dims={dims}", node["inputs"]["auto_bbox"] is auto,
+        check(f"`mesh_geom_bbox` binds auto_bbox={auto} for dims={dims}", node["inputs"]["auto_bbox"] is auto,
               f"length {node['inputs']['bbox_length']}, height {node['inputs']['bbox_height']}, "
               f"depth {node['inputs']['bbox_depth']}")
 
@@ -244,11 +244,11 @@ def routes_for(kind, image, dims):
     """The three columns for one block-out: which graph, which control, and where it caches."""
     control = os.path.join(GEN, f"{kind}_control.glb")
     return {
-        "W7 point": (os.path.join(GEN, f"{kind}_w7.glb"),
+        "mesh_geom_ctrl point": (os.path.join(GEN, f"{kind}_w7.glb"),
                      lambda t: comfy.mesh_geom_ctrl(control, image, t, seed=SEED)),
-        "W7b bbox": (os.path.join(GEN, f"{kind}_w7b.glb"),
+        "mesh_geom_bbox bbox": (os.path.join(GEN, f"{kind}_w7b.glb"),
                      lambda t: comfy.mesh_geom_bbox(dims, image, t, seed=SEED)),
-        "W7b auto": (os.path.join(GEN, f"{kind}_w7b_auto.glb"),
+        "mesh_geom_bbox auto": (os.path.join(GEN, f"{kind}_w7b_auto.glb"),
                      lambda t: comfy.mesh_geom_bbox(None, image, t, seed=SEED)),
     }
 
@@ -341,7 +341,7 @@ def part_b(args, reachable, ready):
     # a wrapper that ignores its control and says nothing -- and it has to be separated from "the
     # control is not enough", which is a finding rather than a defect. A box can only control
     # PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
-    pairs = [(kind, scores.get((kind, "W7b bbox")), scores.get((kind, "W7b auto")))
+    pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_bbox auto")))
              for kind in g4c.PROMPTS]
     live = [(k, b, a) for k, b, a in pairs if b and a]
     if live:
@@ -356,7 +356,7 @@ def part_b(args, reachable, ready):
              + "; ".join(f"{k} {b['footprint_iou']:.4f} against {a['footprint_iou']:.4f}"
                          for k, b, a in live))
 
-    pairs = [(kind, scores.get((kind, "W7b bbox")), scores.get((kind, "W7 point")))
+    pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_ctrl point")))
              for kind in g4c.PROMPTS]
     live = [(k, b, p) for k, b, p in pairs if b and p]
     if live:
@@ -376,7 +376,7 @@ def part_b(args, reachable, ready):
               f"shipped {comfy.DEFAULT_CONTROL_MODE!r}, rule {verdict!r}")
         # The adopted mode has to clear G4c's own bar. The mode that lost does not, and holding it
         # to one would only encode a hope: what it has to do is be measured and be documented.
-        adopted = "W7b bbox" if comfy.DEFAULT_CONTROL_MODE == "bbox" else "W7 point"
+        adopted = "mesh_geom_bbox bbox" if comfy.DEFAULT_CONTROL_MODE == "bbox" else "mesh_geom_ctrl point"
         got = column(adopted)
         check(f"the shipped control mode ({adopted}) clears G4c's footprint bar on every block-out",
               all(s["footprint_iou"] > 0.5 for s in got),
@@ -406,7 +406,7 @@ def part_c(args, reachable, ready):
     stamp = g4c.generate_cached(raw, lambda: comfy.mesh_geom_bbox(dims, views[0], raw, seed=SEED),
                                 args.fresh)
     if stamp.get("error") or not os.path.isfile(raw):
-        check("W7b generated a mesh to finish", False, stamp.get("error", "no file"))
+        check("mesh_geom_bbox generated a mesh to finish", False, stamp.get("error", "no file"))
         return
 
     staged_dir = os.path.join(GEN, "finish")
@@ -420,9 +420,9 @@ def part_c(args, reachable, ready):
         if args.fresh or not os.path.isfile(tex):
             comfy.mesh_texture(simp, views[0], tex, seed=SEED, texture_size=1024)
     except comfy.ComfyError as exc:
-        check("W9c and W9t finished the block-out asset", False, str(exc)[:200])
+        check("mesh_simplify_uv and mesh_texture finished the block-out asset", False, str(exc)[:200])
         return
-    note("W9c plus W9t", f"{time.time() - t0:.1f} s")
+    note("mesh_simplify_uv plus mesh_texture", f"{time.time() - t0:.1f} s")
 
     # Through the SHIPPED function that decides the per-file turns. The bbox route uploads no
     # control, so this is also the check that `stage_exports` reads the chain and not the presence
@@ -445,7 +445,7 @@ def part_c(args, reachable, ready):
     check("origin sits at the base", abs(low[2] - final.location[2]) < 1e-3,
           f"base {low[2]:.4f}, origin {final.location[2]:.4f}")
     check("the LOD chain exists", len(report["lod_faces"]) >= 3, str(report["lod_faces"]))
-    check("the W9t albedo reached the finished asset",
+    check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
     check("the material is a BobShader",
@@ -483,7 +483,7 @@ def part_c(args, reachable, ready):
 
 # -- Part D: the transport claim --------------------------------------------------------------------
 def part_d(args, reachable, ready):
-    section("D. W7b uploads nothing, so it is the one Omni route with no ComfyUI folder to know")
+    section("D. mesh_geom_bbox uploads nothing, so it is the one Omni route with no ComfyUI folder to know")
     if not (reachable and ready):
         print("[SKIP] part D needs a server with the Omni pack and its weights")
         return

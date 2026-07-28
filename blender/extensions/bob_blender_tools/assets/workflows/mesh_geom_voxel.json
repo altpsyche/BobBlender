@@ -1,14 +1,14 @@
 {
   "_bob": {
     "id": "mesh_geom_voxel",
-    "plan": "W7v, docs/COMFYUI.md track C, pipeline step 2 (the block-out control route, voxel mode)",
+    "role": "docs/GENERATION.md, the geometry family: pipeline step 2, block-out control from an occupancy grid",
     "purpose": "A block-out proxy plus a reference image to a mesh that keeps the block-out's GROUND PLAN, quantised to Omni's 16-cubed occupancy grid, so a generated asset drops into a layout already composed.",
     "derived_from": "ComfyUI-Hy3D-Omni ships no workflow JSON, so this is built from its node schemas plus Hunyuan3D-Omni/inference.py:infer_voxel, whose defaults it follows (50 steps, guidance 4.5, normalize_scale 0.9999, 81920 samples, mc_level 0, box_v 1.01).",
     "deviations_from_source": [
-      "apply_input_rotation is false rather than the node's own true. Upstream's infer_voxel turns its control -90 degrees about X before sampling and infer_point does not, and the wrapper reproduces both faithfully; that asymmetry belongs to the two demo datasets' frames, not to the model, whose control encoder reads [-1, 1] the same way on both branches. Bob's control glb is the one W7 already conditions on correctly, so the extra turn would put every block-out on its side. Measured at G9 on the asymmetric block-out, both ways; core.comfy.VOXEL_INPUT_ROTATION is the one place it lives.",
-      "octree_resolution is 256 rather than 512, for W7's reason: Bob's next step is a 4,000-face budget either way, so the extra resolution is decoded and thrown away.",
-      "Trellis2LoadMesh reads the control, because ComfyUI-Hy3D-Omni provides no mesh loader of its own and its control_mesh socket is TRELLIS.2's TRIMESH type. Trellis2ExportTrimesh plus Preview3D is the same tail W5t and W7 use, and for the same reason.",
-      "BOB_OMNI.repo_or_path ships as the HuggingFace repo id so the graph is portable, and Bob rebinds it to <comfy>/models/hunyuan3d-omni when it knows the ComfyUI folder (R6)."
+      "apply_input_rotation is false rather than the node's own true. Upstream's infer_voxel turns its control -90 degrees about X before sampling and infer_point does not, and the wrapper reproduces both faithfully; that asymmetry belongs to the two demo datasets' frames, not to the model, whose control encoder reads [-1, 1] the same way on both branches. Bob's control glb is the one mesh_geom_ctrl already conditions on correctly, so the extra turn would put every block-out on its side. Measured on the asymmetric block-out, both ways; core.comfy.VOXEL_INPUT_ROTATION is the one place it lives.",
+      "octree_resolution is 256 rather than 512, for mesh_geom_ctrl's reason: Bob's next step is a 4,000-face budget either way, so the extra resolution is decoded and thrown away.",
+      "Trellis2LoadMesh reads the control, because ComfyUI-Hy3D-Omni provides no mesh loader of its own and its control_mesh socket is TRELLIS.2's TRIMESH type. Trellis2ExportTrimesh plus Preview3D is the same tail mesh_geom_trellis and mesh_geom_ctrl use, and for the same reason.",
+      "BOB_OMNI.repo_or_path ships as the HuggingFace repo id so the graph is portable, and Bob rebinds it to <comfy>/models/hunyuan3d-omni when it knows the ComfyUI folder, because a shipped default cannot know what is on this machine."
     ],
     "requires_nodes": [
       "Hy3DOmniLoadPipeline",
@@ -23,7 +23,7 @@
       "BOB_CONTROL.mesh_path",
       "BOB_OMNI.repo_or_path"
     ],
-    "notes": "The same control mesh W7 takes, read by the same loader and written by the same core.gen_assets.export_control round trip, so everything Bob-side is shared and the difference is one node. What the node does with it is not shared: it samples 81920 surface points and the encoder quantises them to a 16-cubed occupancy grid (omni_encoder.generate_voxel), keeping unique cell centres and throwing the rest away. So the control carries a coarse ground plan rather than a surface, which is exactly the thing D12 said a bounding box could not describe. sample_point_count is a filling budget for that grid rather than a detail budget: at most 4,096 cells survive it. The result comes back turned like every other Omni route and core.gen_assets.CONTROL_RETURN_TURN undoes it. Omni takes NO text prompt, so the artist's words reach this graph only through the W4 reference image."
+    "notes": "The same control mesh mesh_geom_ctrl takes, read by the same loader and written by the same core.gen_assets.export_control round trip, so everything Bob-side is shared and the difference is one node. What the node does with it is not shared: it samples 81920 surface points and the encoder quantises them to a 16-cubed occupancy grid (omni_encoder.generate_voxel), keeping unique cell centres and throwing the rest away. So the control carries a coarse ground plan rather than a surface, which is exactly the thing a bounding box cannot describe: a box constrains EXTENT and says nothing about PLAN. sample_point_count is a filling budget for that grid rather than a detail budget: at most 4,096 cells survive it. The result comes back turned like every other Omni route and core.gen_assets.CONTROL_RETURN_TURN undoes it. Omni takes NO text prompt, so the artist's words reach this graph only through the mesh_subject reference image."
   },
   "prompt": {
     "1": {

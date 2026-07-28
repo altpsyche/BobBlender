@@ -287,7 +287,7 @@ def _wire_cutout(nt, maps, coord, bsdf, box):
     """Drive the Principled Alpha from a set's cutout. Returns the socket wired, or None.
 
     Two sources, in order: a dedicated `opacity` map (what F3's atlas job will emit), else the
-    basecolor image's own alpha channel (what a matted W4 subject already carries, measured at G3 as
+    basecolor image's own alpha channel (what a matted `mesh_subject` subject already carries, measured at G3 as
     a real 0.000-1.000 range). Preferring the dedicated map means F3 can add one without touching
     this, and falling back means F2's placeholder RGBA atlas works with no extra file.
     """

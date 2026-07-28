@@ -90,13 +90,13 @@ forced are in [COMFYUI-MEASUREMENTS.md](COMFYUI-MEASUREMENTS.md).
 | [G1](COMFYUI-MEASUREMENTS.md#g1) | The vertical spike: prompt to a rendered terrain layer | Passed with room. **7.6 s** against a 60 s gate; seam ratio **0.83** against 3.86 untreated |
 | [G2](COMFYUI-MEASUREMENTS.md#g2) | Async jobs, preflight, variants, Accept, upres | Passed. Ten sets at a 5.55 s mean, longest main-thread block **16.5 ms** against the blocking path's 5,563 ms |
 | [G3](COMFYUI-MEASUREMENTS.md#g3) | Tracks C and B: prompt to a scattered, shaded prop | Passed with two partials. **40 to 203 s** against a 300 s gate; `Trellis2Simplify` 5 of 5 inside budget where Decimate managed 1 of 5 and Quadriflow refused every mesh |
-| [G3b](COMFYUI-MEASUREMENTS.md#g3b) | One-shot W9b against the four-graph staged chain | Passed, and it changed the default. **6,276 MiB against 8,586**, a wash on wall clock, 10 to 662 boundary edges against 1,467 to 3,050, and the dense mesh buys no normal detail |
-| [G4](COMFYUI-MEASUREMENTS.md#g4) | Stylise (W12) and the style-control paint route (W9) | Passed, with its own real-passes claim **disproved**: silhouette IoU 0.9980 against the estimator's 0.9967, and the true-pass difference is smaller than the estimator's own error |
-| [G4c](COMFYUI-MEASUREMENTS.md#g4c) | Omni block-out control (W7) | Passed, and it beat the intended fallback 3 of 3: footprint IoU **0.9079 against 0.6748**, 35.8 s against 164.9 s. Found the wrapper's control signal **silently random** |
+| [G3b](COMFYUI-MEASUREMENTS.md#g3b) | One-shot `mesh_geom_texture` against the four-graph staged chain | Passed, and it changed the default. **6,276 MiB against 8,586**, a wash on wall clock, 10 to 662 boundary edges against 1,467 to 3,050, and the dense mesh buys no normal detail |
+| [G4](COMFYUI-MEASUREMENTS.md#g4) | Stylise (`stylize_render`) and the style-control paint route (`mesh_paint_views`) | Passed, with its own real-passes claim **disproved**: silhouette IoU 0.9980 against the estimator's 0.9967, and the true-pass difference is smaller than the estimator's own error |
+| [G4c](COMFYUI-MEASUREMENTS.md#g4c) | Omni block-out control (`mesh_geom_ctrl`) | Passed, and it beat the intended fallback 3 of 3: footprint IoU **0.9079 against 0.6748**, 35.8 s against 164.9 s. Found the wrapper's control signal **silently random** |
 | [G5](COMFYUI-MEASUREMENTS.md#g5) | Track E: a prompted macro mask into the op stack | Passed, and it answered R7 in the negative. Silhouette survives erosion at correlation **0.906 to 0.923** against a 0.078 null; erosion still supplies 2.89 m of relief against the mask's 0.28 m |
 | [G6](COMFYUI-MEASUREMENTS.md#g6) | The whole surface behind MCP | Passed. Agent goes prompt to scattered asset in **102.5 s** and prompt to rendered terrain in **24.1 s**, no GUI. Found a fork segfault that was not Bob's (D14) |
 | [G7](COMFYUI-MEASUREMENTS.md#g7) | Geometry A/B against Hunyuan 2.1, ten prompts | Passed, verdict per class. **Foliage: TRELLIS.2 structurally** (15.0 s against 31.3, half the VRAM, and the challenger cannot leave a surface open). Solids: default holds on licence and VRAM |
-| [G8](COMFYUI-MEASUREMENTS.md#g8) | D12 first half: Omni's bounding-box control | Passed, answer no. Eight corners give footprint IoU **0.5766** against 8,192 points' **0.9200**. W7b stays as the no-mesh-transport fallback |
+| [G8](COMFYUI-MEASUREMENTS.md#g8) | D12 first half: Omni's bounding-box control | Passed, answer no. Eight corners give footprint IoU **0.5766** against 8,192 points' **0.9200**. `mesh_geom_bbox` stays as the no-mesh-transport fallback |
 | [G9](COMFYUI-MEASUREMENTS.md#g9) | D12's remainder: Omni's voxel control, and the close | Passed, default unchanged. Ordering measured: **point 0.9106, voxel 0.8507, bbox 0.5766**, against a swapped-control null of 0.2667 |
 
 ## Model choice: TRELLIS.2 primary, Hunyuan3D for what only it does
@@ -108,9 +108,9 @@ Both, deliberately, split by capability rather than hedged. The division:
 | Geometry with **open surfaces** (foliage, leaves, cloth, thin shells) | **TRELLIS.2** | O-Voxel represents non-watertight geometry. Hunyuan structurally cannot. Decisive for a vegetation suite. |
 | **PBR texture** on generated or existing meshes | **TRELLIS.2** | Native base color, roughness, metallic, opacity. `Trellis2TextureMesh` also textures a mesh you already have, which is track B on block-out proxies. |
 | Simplify and UV unwrap | **TRELLIS.2 or Blender**, A/B at G3 | `Trellis2Simplify` and `Trellis2UVUnwrap` exist; so do Decimate, Quadriflow, Smart UV Project. Measure, do not assume. |
-| **Multi-view conditioning** | **ANSWERED at G4: both, split by cost** | `Trellis2MultiViewImageToShape` (W6t) is the accuracy tier at back-half IoU **0.2637** in 120.4 s; `Hunyuan3Dv2ConditioningMultiView` (W6) is the preview tier at **0.2140** in **24.4 s**, 5x faster with 41% fewer faces. Either beats a single view six-fold on the half it cannot see (0.0439). Revision 5's claim that only Hunyuan could do it was wrong, and the comparison moving to G7 was too cautious: this is a track C route now. |
-| **Control from a block-out** (point cloud, voxels, bbox) | **ANSWERED at G4c: Hunyuan3D Omni, and it beat the alternative** | No TRELLIS equivalent, and W7 is now measured against the route that came closest: footprint IoU **0.908** mean against W6t's 0.675 on the same three block-outs, 4.6x faster, 2 GB less VRAM, proportions held to 2% against 23%. The one idea in this plan that turns an existing suite strength into a generation input, and the only route whose OUTPUT ORIENTATION is part of the answer. |
-| Zero-install smoke test | **Hunyuan3D native** | Already in ComfyUI core. Proves the Bob-side plumbing before any submodule exists, and since G7 it is also the only route that generates an asset at all with `ComfyUI-TRELLIS2` missing (W8 then W8p then W9t needs TRELLIS2 for the processing and texture halves, so "no custom pack" holds for the geometry only). |
+| **Multi-view conditioning** | **ANSWERED at G4: both, split by cost** | `Trellis2MultiViewImageToShape` (`mesh_geom_mv_trellis`) is the accuracy tier at back-half IoU **0.2637** in 120.4 s; `Hunyuan3Dv2ConditioningMultiView` (`mesh_geom_mv`) is the preview tier at **0.2140** in **24.4 s**, 5x faster with 41% fewer faces. Either beats a single view six-fold on the half it cannot see (0.0439). Revision 5's claim that only Hunyuan could do it was wrong, and the comparison moving to G7 was too cautious: this is a track C route now. |
+| **Control from a block-out** (point cloud, voxels, bbox) | **ANSWERED at G4c: Hunyuan3D Omni, and it beat the alternative** | No TRELLIS equivalent, and `mesh_geom_ctrl` is now measured against the route that came closest: footprint IoU **0.908** mean against `mesh_geom_mv_trellis`'s 0.675 on the same three block-outs, 4.6x faster, 2 GB less VRAM, proportions held to 2% against 23%. The one idea in this plan that turns an existing suite strength into a generation input, and the only route whose OUTPUT ORIENTATION is part of the answer. |
+| Zero-install smoke test | **Hunyuan3D native** | Already in ComfyUI core. Proves the Bob-side plumbing before any submodule exists, and since G7 it is also the only route that generates an asset at all with `ComfyUI-TRELLIS2` missing (`mesh_geom_alt` then `mesh_process` then `mesh_texture` needs TRELLIS2 for the processing and texture halves, so "no custom pack" holds for the geometry only). |
 | Watertight hard-surface props | **ANSWERED at G7: Hunyuan is better at exactly this and it still does not become the default** | The claim was right and the measurement is now on file: median **0** boundary edges against TRELLIS.2's 116 on five solids, and **2.1x faster** (40.4 s against 86.1 s). It loses on VRAM (9,688 MiB against 5,958), albedo (0.1259 against 0.1555), one black texture in ten, and a licence that excludes the EU, the UK and South Korea. So `route="alt"` is documented with its numbers rather than promoted, and `comfy.KIND_ROUTE` is empty on purpose. |
 | Foliage and any open surface | **ANSWERED at G7: TRELLIS.2, structurally** | 2.9x the boundary edges (median 984 against 344) at 2.1x the speed and half the VRAM, and the challenger's holes are its simplifier's rather than its own: `VoxelToMesh` extracts an isosurface, so a leaf is a leaf-shaped bag whatever the caller asks for. |
 
@@ -126,7 +126,7 @@ the repo source, with the weights in `ComfyUI/models/trellis2/` via a registered
 | `Trellis2RemoveBackground` | subject cut, `low_vram` toggle, so no separate rembg pack needed |
 | `Trellis2GetConditioning` | conditioning |
 | `Trellis2ImageToShape` | geometry |
-| `Trellis2ShapeToTexturedMesh` | PBR voxel grid from a shape LATENT plus the subs, so no encode step: this is what makes W9b one-shot |
+| `Trellis2ShapeToTexturedMesh` | PBR voxel grid from a shape LATENT plus the subs, so no encode step: this is what makes `mesh_geom_texture` one-shot |
 | `Trellis2LoadMesh`, `Trellis2EncodeMesh`, `Trellis2TextureMesh` | **texture an existing mesh** = track B |
 | `Trellis2RefineMesh` | detail refinement pass |
 | `Trellis2Simplify` | fill holes, DC remesh, unify, simplify |
@@ -200,7 +200,7 @@ the realistic way it would happen.
 
 ### Challengers: the slot, and why it is closed
 
-W8 exists so swapping the geometry model is a config change, not a rewrite, and **G7 ran the grid**:
+`mesh_geom_alt` exists so swapping the geometry model is a config change, not a rewrite, and **G7 ran the grid**:
 Hunyuan 2.1 against TRELLIS.2 on ten fixed prompts, five of them foliage, one shared subject each.
 The verdict is per class and it is in [What G7 measured](COMFYUI-MEASUREMENTS.md#g7).
 
@@ -209,7 +209,7 @@ The verdict is per class and it is in [What G7 measured](COMFYUI-MEASUREMENTS.md
 VRAM, and a capability difference on foliage that no amount of tuning closes. **Direct3D-S2**
 (high-resolution SDF, sharper edges), **Hi3DGen** (normal-bridged detail on rock and bark),
 **TripoSG**, **PartCrafter**, **PartPacker** and **TEXGen** are all still real models; adding one now
-would answer a question nobody has. The slot is where they go if a question appears, and W8p means
+would answer a question nobody has. The slot is where they go if a question appears, and `mesh_process` means
 half the work is already done: a new model needs its own generation graph and nothing else.
 
 Plan position: **TRELLIS.2 primary, decided by measurement per asset class at G7. Hunyuan for
@@ -238,7 +238,7 @@ non-commercial term. Hunyuan's Community License now applies only to the retaine
    found four things this section had wrong: `ComfyUI-GeometryPack` is **GPL-3.0** and is a hard
    requirement of the MIT pack that auto-clones it; `ComfyUI-Hy3D-Omni` ships **no licence file at
    all**, so its terms are unstated rather than permissive; and two models are **non-commercial** --
-   Depth Anything V2 Large (CC-BY-NC-4.0, W12e only) and 4x-UltraSharp (CC-BY-NC-SA-4.0, W3 only).
+   Depth Anything V2 Large (CC-BY-NC-4.0, `stylize_render_est` only) and 4x-UltraSharp (CC-BY-NC-SA-4.0, `tex_upres` only).
    The whole non-commercial surface of the integration is those two optional routes. The addon
    preferences carry a four-line notice naming the territorial exclusion and the two NC routes, which
    is the point an artist decides to download 20 GB.
@@ -256,40 +256,40 @@ verbatim rather than paraphrased.
 One route, all local. Pinned rather than implied, which is the correction from R3, R4, and R19.
 
 ```
-1  ComfyUI   reference        prompt -> clean single-subject image with ALPHA     (W4)
+1  ComfyUI   reference        prompt -> clean single-subject image with ALPHA     (`mesh_subject`)
               Trellis2RemoveBackground does the cut; no separate rembg pack
-            or Blender        mesh or block-out -> 4 cardinal views -> geometry   (W6t / W6)
+            or Blender        mesh or block-out -> 4 cardinal views -> geometry   (`mesh_geom_mv_trellis` / `mesh_geom_mv`)
               MEASURED AT G4 and not a curiosity: one view scores 0.044 back-half
               IoU on an object whose back it cannot see, four views score 0.264
-              (W6t, TRELLIS.2) or 0.214 (W6, Hunyuan, 5x faster). Use it whenever
+              (`mesh_geom_mv_trellis`, TRELLIS.2) or 0.214 (`mesh_geom_mv`, Hunyuan, 5x faster). Use it whenever
               the back matters and a mesh or block-out exists to render.
-            or Blender        block-out proxy -> control MESH -> geometry         (W7, Omni)
+            or Blender        block-out proxy -> control MESH -> geometry         (`mesh_geom_ctrl`, Omni)
               SHIPPED AT G4c. The one route whose input is a shape rather than a
               picture of one, and the only one whose output ORIENTATION is part of
               the answer. `gen_assets.export_control` writes the control and
               `CONTROL_RETURN_TURN` undoes the exporter's turn. Forces the staged
-              chain below, because W9b generates its own geometry.
-            or Blender        block-out proxy -> three PROPORTIONS -> geometry    (W7b, Omni)
+              chain below, because `mesh_geom_texture` generates its own geometry.
+            or Blender        block-out proxy -> three PROPORTIONS -> geometry    (`mesh_geom_bbox`, Omni)
               SHIPPED AT G8. The same route with the control reduced to eight
               corners. `comfy.DEFAULT_CONTROL_MODE` picks between the modes and
               `gen_assets.control_bbox` produces the numbers; nothing is uploaded,
               so this is the one Omni route that needs no `$BOB_COMFY_DIR`.
-            or Blender        block-out proxy -> 16-cubed OCCUPANCY -> geometry   (W7v, Omni)
-              SHIPPED AT G9, and it closes D12. W7's own control file read as a
+            or Blender        block-out proxy -> 16-cubed OCCUPANCY -> geometry   (`mesh_geom_voxel`, Omni)
+              SHIPPED AT G9, and it closes D12. `mesh_geom_ctrl`'s own control file read as a
               coarse grid instead of a surface: 0.8507 footprint IoU against
               point's 0.9106 and bbox's 0.5766, 19% faster than point, and it
               MATCHES point on a compact proxy while losing a thin one to its own
               21 cm cell. Uploads a mesh, so it needs `$BOB_COMFY_DIR` too.
-2-5 ComfyUI  geometry, simplify, UV and PBR in ONE job.  DEFAULT since G3b.       (W9b)
+2-5 ComfyUI  geometry, simplify, UV and PBR in ONE job.  DEFAULT since G3b.       (`mesh_geom_texture`)
               Trellis2ImageToShape -> Trellis2ProcessMesh(target_face_count) ->
               Trellis2RasterizePBR. Steps 2 to 5 below are the staged alternative,
               still wired: it is the only route that leaves a DENSE mesh on disk,
-              and W9t alone is track B on a mesh Bob already has.
-2  ComfyUI   geometry         Trellis2ImageToShape -> mesh, open surfaces OK      (W5t)
-3  ComfyUI   simplify         Trellis2Simplify.  DECIDED AT G3, see below.        (W9c)
-4  ComfyUI   UV               Trellis2UVUnwrap.  DECIDED AT G3, see below.        (W9c)
+              and `mesh_texture` alone is track B on a mesh Bob already has.
+2  ComfyUI   geometry         Trellis2ImageToShape -> mesh, open surfaces OK      (`mesh_geom_trellis`)
+3  ComfyUI   simplify         Trellis2Simplify.  DECIDED AT G3, see below.        (`mesh_simplify_uv`)
+4  ComfyUI   UV               Trellis2UVUnwrap.  DECIDED AT G3, see below.        (`mesh_simplify_uv`)
 5  ComfyUI   PBR texture      Trellis2TextureMesh -> base color, roughness,
-                               metallic, opacity in the mesh's UVs               (W9t)
+                               metallic, opacity in the mesh's UVs               (`mesh_texture`)
 6  Blender   bake + derive    bake dense -> low for normal and AO; accept the
                                PBR maps as authored; numpy only fills gaps
 7  Blender   finish           scale to height_m, origin to base, weighted normals,
@@ -332,7 +332,7 @@ Three findings behind those numbers, in descending order of how much they change
 So `gen_assets` shrinks to import, bake and finish, as the plan anticipated for this outcome, and
 Blender's Decimate stays only as the route that works with no TRELLIS2 pack installed. The
 consequence for the code is better than expected: with steps 3 and 4 on the server, the ENTIRE
-ComfyUI half (W4 then W9b, or W4, W5t, W9c and W9t) is one uninterrupted worker-thread job with no
+ComfyUI half (`mesh_subject` then `mesh_geom_texture`, or `mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv` and `mesh_texture`) is one uninterrupted worker-thread job with no
 Blender work in the middle, and the whole Blender half runs once in that job's main-thread callback.
 
 **G3b re-measured Blender's floor on four more meshes and it holds**: 493,779 faces in and 6,757
@@ -341,12 +341,12 @@ out on the boulder, 442,619 in and 24,327 out on the fern, 471,678 in and 12,119
 
 Two fallback paths stay wired, both cheap to keep:
 
-- **Hunyuan geometry** (W5) instead of step 2, for watertight hard-surface props and as the
+- **Hunyuan geometry** (`mesh_geom`) instead of step 2, for watertight hard-surface props and as the
   zero-install smoke test that proves the Bob-side plumbing before `ComfyUI-TRELLIS2` exists.
-- **`mesh_paint_views`** (W9) instead of step 5, when the look has to be stylised rather than
+- **`mesh_paint_views`** (`mesh_paint_views`) instead of step 5, when the look has to be stylised rather than
   plausible: Blender renders the views, SDXL plus LoRA restyles them under depth and normal
   ControlNet, Blender projection-bakes. Demoted from primary by R21 but not deleted, because it is
-  the only route with real style control. One session-planning note from G4c: once W7 has run, Omni
+  the only route with real style control. One session-planning note from G4c: once `mesh_geom_ctrl` has run, Omni
   holds 9.6 GB that `POST /free` cannot reclaim, and this route then runs about 30% slower on a
   16.3 GB card because ComfyUI offloads to fit. **Shipped and measured at G4**, and the route is a value
   beside the asset route: `comfy.TEXTURE_ROUTES` is `("pbr", "stylised")` and `comfy.texture_chain()`
@@ -368,7 +368,7 @@ Templated titles, standardised across all graphs: `BOB_PROMPT`, `BOB_NEG`, `BOB_
 `BOB_CKPT`, `BOB_VAE`, `BOB_LORA`, `BOB_3D_MODEL`, `BOB_UPSCALE_MODEL`, `BOB_TILE`,
 `BOB_TILE_VAE`, `BOB_OUT`.
 
-`BOB_TEXSEED` arrived at G3b for the one graph that samples twice: W9b's shape sampler and its
+`BOB_TEXSEED` arrived at G3b for the one graph that samples twice: `mesh_geom_texture`'s shape sampler and its
 texture sampler are two nodes, and one title binds one node.
 
 These are **binding points, not nodes** (corrected at G2). A node has one `_meta.title`, so two
@@ -385,7 +385,7 @@ change stays a diff (R17). `core.comfy.load_workflow()` returns the pair.
 
 ### Family 1: materials (track A)
 
-**W1 `tex_tileable.json`, SHIPPED at G1.** Prompt to seamless albedo. As built:
+**`tex_tileable` `tex_tileable.json`, SHIPPED at G1.** Prompt to seamless albedo. As built:
 `CheckpointLoaderSimple(BOB_CKPT)` -> `SeamlessTile(BOB_TILE, circular)` -> `KSampler(BOB_SEED,
 25 steps, cfg 5.0, dpmpp_2m + karras)`, with two `CLIPTextEncode(BOB_PROMPT / BOB_NEG)` and
 `EmptyLatentImage(BOB_SIZE)` feeding it, then `MakeCircularVAE(BOB_TILE_VAE)` ->
@@ -399,19 +399,19 @@ artist typed, because a generated albedo with baked lighting is unusable and no 
 maths removes it. The negative prompt names shadows, vignette, gradients, highlights, perspective
 and horizon for the same reason.
 
-**W2 `tex_tileable_ref.json`, SHIPPED at G2.** Reference photo to seamless set. W1 with the empty
+**`tex_tileable_ref` `tex_tileable_ref.json`, SHIPPED at G2.** Reference photo to seamless set. `tex_tileable` with the empty
 latent replaced by `LoadImage(BOB_IMAGE)` -> `ImageScale(BOB_SIZE)` -> `VAEEncode`, sampled at
 `BOB_SEED.denoise` (0.65 by default), with `IPAdapterModelLoader` + `CLIPVisionLoader` +
 `IPAdapterAdvanced` locking the palette. Fourteen nodes. The reference is encoded through the
 **circular** VAE, not the stock one: a zero-padded encode writes the photo's own edge
-discontinuity into the starting latent, which is the seam W1 exists to remove. Measured 8.2 s and
+discontinuity into the starting latent, which is the seam `tex_tileable` exists to remove. Measured 8.2 s and
 seam ratio 1.03 on a first run.
 
-**W3 `tex_upres.json`, SHIPPED at G2.** Tile to 2K or 4K. `UltimateSDUpscale` at denoise 0.2 with
+**`tex_upres` `tex_upres.json`, SHIPPED at G2.** Tile to 2K or 4K. `UltimateSDUpscale` at denoise 0.2 with
 `4x-UltraSharp` and both circular halves; `seam_fix_mode` is `None` and `force_uniform_tiles` is
 on. Nine nodes, roughly 49 s for 1024 to 2048.
 
-The seamless part of W3 is **not** in the graph, and that is the G2 correction worth carrying
+The seamless part of `tex_upres` is **not** in the graph, and that is the G2 correction worth carrying
 forward: the upscaler pads at the image border and denoises per tile, so circular padding cannot
 reach the wrap. `core.comfy.upres_variant()` wrap-pads the tile by 128 px on the way out and
 cross-fades the duplicated bands on the way back
@@ -426,8 +426,8 @@ rather than a sixth file: the roughness consumes it and no master reads a cavity
 
 Derived from shipped templates per R17, with the upstream template name recorded in each file.
 
-**W4 `mesh_subject.json`, SHIPPED at G3.** Prompt to a clean single-subject reference image with
-a REAL ALPHA cutout. W1's SDXL half without the circular padding (a subject is not a tile), then
+**`mesh_subject` `mesh_subject.json`, SHIPPED at G3.** Prompt to a clean single-subject reference image with
+a REAL ALPHA cutout. `tex_tileable`'s SDXL half without the circular padding (a subject is not a tile), then
 `Trellis2RemoveBackground` -> `InvertMask` -> `JoinImageWithAlpha` -> `SaveImage`. Ten nodes. No
 pad node: `BOB_SIZE` generates square, so the subject is already centred in a square frame.
 `comfy.SUBJECT_SUFFIX` appends "single object, centred in frame, full view, not cropped, plain
@@ -436,10 +436,10 @@ costs a whole generation.
 
 The `InvertMask` is load-bearing and inverted from the obvious wiring:
 `Trellis2RemoveBackground` returns a FOREGROUND mask and `JoinImageWithAlpha` computes
-`alpha = 1 - mask`, following ComfyUI's `LoadImage` convention. Wired directly, W4 saves the
+`alpha = 1 - mask`, following ComfyUI's `LoadImage` convention. Wired directly, `mesh_subject` saves the
 background and cuts the subject out.
 
-**W5t `mesh_geom_trellis.json`, SHIPPED at G3, the primary geometry graph.** From
+**`mesh_geom_trellis` `mesh_geom_trellis.json`, SHIPPED at G3, the primary geometry graph.** From
 `geometry_only_1024`. `LoadImage(BOB_IMAGE)` -> `InvertMask` -> `Trellis2GetConditioning`, with
 `LoadTrellis2Models(BOB_MODEL)` -> `Trellis2ImageToShape(BOB_SEED)` ->
 `Trellis2ProcessMesh(BOB_PROCESS)` -> `Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D`. Eight nodes.
@@ -453,7 +453,7 @@ and G0.5's "no cascade needed" holds for 1024 only.
 boundary edges. `core.comfy.mesh_geometry(remesh=False)` is the foliage route and Generate Asset
 picks it from the scatter kind.
 
-**W5 `mesh_geom.json`, SHIPPED at G3.** The Hunyuan fallback and smoke test, from
+**`mesh_geom` `mesh_geom.json`, SHIPPED at G3.** The Hunyuan fallback and smoke test, from
 `3d_hunyuan3d-v2.1`, single view. Zero custom packs, so it is what proves the Bob-side plumbing
 without `ComfyUI-TRELLIS2`. `SaveGLB` is a core output node and reports its own filename, so this
 is the one mesh graph that needs no `Preview3D`.
@@ -464,34 +464,34 @@ is the one mesh graph that needs no `Preview3D`.
 Defaults 2.1: latent 4096, 30 steps, cfg 5. Swap `BOB_3D_MODEL` to `hunyuan3d-dit-v2_fp16` with
 latent 3072, 20 steps, cfg 8 for the faster 2.0 variant. Zero submodules.
 
-**W6 `mesh_geom_mv.json`, SHIPPED at G4.** From `3d_hunyuan3d_multiview_to_model`, using
+**`mesh_geom_mv` `mesh_geom_mv.json`, SHIPPED at G4.** From `3d_hunyuan3d_multiview_to_model`, using
 `Hunyuan3Dv2ConditioningMultiView`, for when a single view guesses the back wrong. Sixteen nodes:
 four `LoadImage` (`BOB_VIEW_FRONT` / `LEFT` / `BACK` / `RIGHT`) into four `CLIPVisionEncode` into
 `Hunyuan3Dv2ConditioningMultiView`, then the same AuraFlow-shift, `EmptyLatentHunyuan3Dv2(3072)`,
-`KSampler(20 steps, cfg 7.5)`, `VAEDecodeHunyuan3D`, `VoxelToMesh`, `SaveGLB` skeleton W5 uses. Views
-come either from W4 with a turntable prompt or, better, **from Blender when a block-out exists**,
+`KSampler(20 steps, cfg 7.5)`, `VAEDecodeHunyuan3D`, `VoxelToMesh`, `SaveGLB` skeleton `mesh_geom` uses. Views
+come either from `mesh_subject` with a turntable prompt or, better, **from Blender when a block-out exists**,
 because then they are consistent by construction rather than by luck; `core.gen_views.turntable_views`
 is what renders them. Turbo is this graph with the `-mv-turbo` checkpoint, cfg 4, and a
 `FluxGuidance` node, and is not shipped.
 
-`CLIPVisionEncode`'s crop is **`none`** here, not the `center` W5 uses, and it is the template's own
+`CLIPVisionEncode`'s crop is **`none`** here, not the `center` `mesh_geom` uses, and it is the template's own
 choice: cropping four views independently centres each one differently and the four stop describing
-one object. Measured at G4 against the single-view route and against W6t: back-half IoU **0.2140**
-from four views against **0.0439** from one, in **24.4 s**, which is 5x faster than W6t for 19% less
+one object. Measured at G4 against the single-view route and against `mesh_geom_mv_trellis`: back-half IoU **0.2140**
+from four views against **0.0439** from one, in **24.4 s**, which is 5x faster than `mesh_geom_mv_trellis` for 19% less
 back-half accuracy.
 
-**W6t `mesh_geom_mv_trellis.json`, SHIPPED at G4.** W5t with `Trellis2ImageToShape` and its
+**`mesh_geom_mv_trellis` `mesh_geom_mv_trellis.json`, SHIPPED at G4.** `mesh_geom_trellis` with `Trellis2ImageToShape` and its
 `Trellis2GetConditioning` replaced by `Trellis2MultiViewImageToShape`, which takes the four image and
-mask pairs directly. Thirteen nodes, same four view titles as W6 so one set of Blender renders drives
+mask pairs directly. Thirteen nodes, same four view titles as `mesh_geom_mv` so one set of Blender renders drives
 both, and the same `Trellis2ProcessMesh` / `Trellis2ExportTrimesh` / `Preview3D` tail so the outputs
-are comparable file for file. The four `InvertMask` nodes are load-bearing for W5t's reason:
+are comparable file for file. The four `InvertMask` nodes are load-bearing for `mesh_geom_trellis`'s reason:
 `LoadImage` returns `mask = 1 - alpha`. **The accuracy winner at G4** (back-half IoU 0.2637,
 Chamfer 0.0283) and the slower of the two at 120.4 s.
 
-**W7 `mesh_geom_ctrl.json`, SHIPPED at G4c, the block-out control route.** Six nodes:
+**`mesh_geom_ctrl` `mesh_geom_ctrl.json`, SHIPPED at G4c, the block-out control route.** Six nodes:
 `Trellis2LoadMesh(BOB_CONTROL)` and `LoadImage(BOB_IMAGE)` into
 `Hy3DOmniPointGenerate(BOB_SEED)` fed by `Hy3DOmniLoadPipeline(BOB_OMNI)`, then the same
-`Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail W5t and W6t use, so the output is comparable
+`Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail `mesh_geom_trellis` and `mesh_geom_mv_trellis` use, so the output is comparable
 file for file with theirs. `core.comfy.mesh_geom_ctrl()` drives it and
 `core.gen_assets.export_control()` writes the control.
 
@@ -499,14 +499,14 @@ Four things the plan had wrong about this graph, corrected here:
 
 - **`BOB_POINTS` does not exist and there is no point-cloud file.** The wrapper's control socket is
   TRELLIS.2's `TRIMESH` type, so the control is a MESH that the node samples itself, and
-  `Trellis2LoadMesh` is what reads it. That is why W7 needs no exporter of its own: it reuses the
+  `Trellis2LoadMesh` is what reads it. That is why `mesh_geom_ctrl` needs no exporter of its own: it reuses the
   `unit_normalise_export` round trip track B already owns.
 - **`sample_point_count` must be set.** The node's own default of 0 means "use the control mesh's raw
   VERTICES", which is right for the scanned point clouds upstream conditions on and useless for a Bob
   block-out: `Rock_B` has 42. Bob binds 8192 and lets the node area-sample.
 - **`BOB_PROMPT` has no home here.** Omni takes no text conditioning at all -- `OmniEncoder.forward`
   takes image, surface, pose, bbox, point and voxel, and nothing else -- so the artist's words reach
-  W7 only through the W4 reference image.
+  `mesh_geom_ctrl` only through the `mesh_subject` reference image.
 - **The result comes back turned.** `Trellis2ExportTrimesh` converts internal Z-up to Y-up on glb
   output and `Trellis2LoadMesh` converts nothing on the way in, so the chain is asymmetric by exactly
   one -90 degree turn about X. `gen_assets.CONTROL_RETURN_TURN` undoes it and part A of the G4c gate
@@ -516,9 +516,9 @@ Needs `ComfyUI-Hy3D-Omni` and 13.5 GB of Omni weights, and needs
 `tools/scripts/comfy_omni_fix.py` run once against them. Absent any of that, preflight fails the
 graph by class name and every other route is unaffected.
 
-**W7b `mesh_geom_bbox.json`, SHIPPED at G8, the second control mode.** W7 with the control reduced
-from a surface to three numbers. Five nodes, and it is W7's file minus one: `LoadImage(BOB_IMAGE)`
-plus `Hy3DOmniLoadPipeline(BOB_OMNI)` into `Hy3DOmniBBoxGenerate(BOB_SEED)`, then W7's
+**`mesh_geom_bbox` `mesh_geom_bbox.json`, SHIPPED at G8, the second control mode.** `mesh_geom_ctrl` with the control reduced
+from a surface to three numbers. Five nodes, and it is `mesh_geom_ctrl`'s file minus one: `LoadImage(BOB_IMAGE)`
+plus `Hy3DOmniLoadPipeline(BOB_OMNI)` into `Hy3DOmniBBoxGenerate(BOB_SEED)`, then `mesh_geom_ctrl`'s
 `Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail. There is no `Trellis2LoadMesh`, because the
 node has no `control_mesh` socket at all: it takes `bbox_length`, `bbox_height` and `bbox_depth`, and
 `OmniEncoder.bbox_to_corners` turns those into the eight corners of a box spanning `[-d/2, d/2]` per
@@ -538,12 +538,12 @@ Three things about it that are not obvious:
   wrote it, because a permuted bbox is still a valid bbox: the model would condition on a plausible
   wrong shape and say nothing.
 - **It uploads nothing.** That makes it the one Omni route that does not need `$BOB_COMFY_DIR`, which
-  is the failure G7 found over MCP. G9 confirmed that this is W7b's alone: the voxel mode's
-  `control_mesh` input is required, so it fails the same way W7 does. It is also why the graph needs
+  is the failure G7 found over MCP. G9 confirmed that this is `mesh_geom_bbox`'s alone: the voxel mode's
+  `control_mesh` input is required, so it fails the same way `mesh_geom_ctrl` does. It is also why the graph needs
   no unit-normalise round trip: a proportion has no scale to be outside the unit cube with.
 
-**W7v `mesh_geom_voxel.json`, SHIPPED at G9, the third control mode, and the one that closes D12.**
-W7's file with `Hy3DOmniPointGenerate` swapped for `Hy3DOmniVoxelGenerate` and nothing else moved:
+**`mesh_geom_voxel` `mesh_geom_voxel.json`, SHIPPED at G9, the third control mode, and the one that closes D12.**
+`mesh_geom_ctrl`'s file with `Hy3DOmniPointGenerate` swapped for `Hy3DOmniVoxelGenerate` and nothing else moved:
 same `Trellis2LoadMesh(BOB_CONTROL)`, same `LoadImage(BOB_IMAGE)`, same `Hy3DOmniLoadPipeline`, same
 `Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D` tail, same `CONTROL_RETURN_TURN` on the way back.
 `core.comfy.mesh_geom_voxel()` drives it and `core.gen_assets.control_signal(mode="voxel")` produces
@@ -559,39 +559,39 @@ Three things about it that are not obvious:
   the longest axis, and anything thinner is not in the control.
 - **`apply_input_rotation` ships FALSE against the node's own default of true.** The node turns its
   control -90 degrees about X before sampling and the point node does not, faithfully reproducing
-  upstream's `infer_voxel` and `infer_point`. On Bob's control, which W7 already reads correctly,
+  upstream's `infer_voxel` and `infer_point`. On Bob's control, which `mesh_geom_ctrl` already reads correctly,
   that turn costs 43% of the ground plan and errors nowhere. `comfy.VOXEL_INPUT_ROTATION` is the one
   place it lives and part B of the G9 gate measures both settings before it measures anything else.
 - **It is the only mode reachable by name alone.** Point and voxel take the same file, so
   `control_route` cannot infer which was meant from a control path; the default breaks the tie and
   `control_mode="voxel"` is how a caller overrides it, over MCP as well as in-process.
 
-Same pack and same weights as W7, so the same reachability gate and the same
+Same pack and same weights as `mesh_geom_ctrl`, so the same reachability gate and the same
 `tools/scripts/comfy_omni_fix.py` requirement apply.
 
-**W8 `mesh_geom_alt.json`, SHIPPED at G7, the A/B slot.** Same inputs and the same output contract
-as W5t, challenger model inside, so swapping the geometry model is a config change rather than a
-rewrite. The occupant is **Hunyuan3D 2.1**: W5's skeleton (`ImageOnlyCheckpointLoader` through
+**`mesh_geom_alt` `mesh_geom_alt.json`, SHIPPED at G7, the A/B slot.** Same inputs and the same output contract
+as `mesh_geom_trellis`, challenger model inside, so swapping the geometry model is a config change rather than a
+rewrite. The occupant is **Hunyuan3D 2.1**: `mesh_geom`'s skeleton (`ImageOnlyCheckpointLoader` through
 `VoxelToMesh` to `SaveGLB`, latent 4096, 30 steps, cfg 5) with three nodes added at the front, and
-those three are the only reason this file exists beside W5. `EmptyImage(BOB_PLATE)` is a WHITE plate,
+those three are the only reason this file exists beside `mesh_geom`. `EmptyImage(BOB_PLATE)` is a WHITE plate,
 `InvertMask(BOB_ALPHA)` turns `LoadImage`'s mask back into the alpha, and
 `ImageCompositeMasked(BOB_SUBJECT)` puts the subject on the plate before `CLIPVisionEncode` sees it.
-Without that, the challenger is conditioned on the SDXL background: W4's RGB is still the generated
+Without that, the challenger is conditioned on the SDXL background: `mesh_subject`'s RGB is still the generated
 frame behind the cutout and ComfyUI's `LoadImage` drops alpha rather than compositing it, where
 TRELLIS.2 gets a real cutout through its mask socket. Thirteen nodes, no custom pack at all.
 
-**W8p `mesh_process.json`, SHIPPED at G7, the shared processor.** `Trellis2LoadMesh` ->
+**`mesh_process` `mesh_process.json`, SHIPPED at G7, the shared processor.** `Trellis2LoadMesh` ->
 `GeomPackNormalizeMeshToBBox(1.0)` -> `Trellis2ProcessMesh(BOB_PROCESS)` ->
 `Trellis2ExportTrimesh(BOB_OUT)` -> `Preview3D`. Five nodes, no model load, no VRAM of its own.
-It exists because the A/B has to be controlled: W9b processes its own output with
+It exists because the A/B has to be controlled: `mesh_geom_texture` processes its own output with
 `Trellis2ProcessMesh`, so the challenger's output has to go through the SAME node at the same face
-budget and the same `remesh` branch. Sending it through W9c instead would have scored W9c's sieve as
+budget and the same `remesh` branch. Sending it through `mesh_simplify_uv` instead would have scored `mesh_simplify_uv`'s sieve as
 the challenger's openness (G3b: 1,467 to 3,050 boundary edges against 10 to 146).
 
 The normalise is load-bearing twice, and it is the defect G7 found rather than a tidy-up. Hunyuan
 returns a mesh spanning [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and `Trellis2ProcessMesh` does
 not rescale: measured, the processed challenger mesh lands at [-0.55, 0.55], which is outside the
-unit cube `Trellis2EncodeMesh` voxelises in, so W9t returns a fully BLACK albedo on **every** asset
+unit cube `Trellis2EncodeMesh` voxelises in, so `mesh_texture` returns a fully BLACK albedo on **every** asset
 (in-chart std 0.0064, mean 0.0001, against 0.1810 and 0.3745 with the normalise in). That is the
 G0.5 black-albedo trap for a third time, and the third distinct cause. Running before the process
 node rather than after it is the other half: `remesh_band`, `floater_threshold` and `weld_digits` are
@@ -599,7 +599,7 @@ lengths, so at two different scales the same numbers are two different settings.
 
 ### Family 3: mesh painting and finishing (track B)
 
-**W9t `mesh_texture.json`, SHIPPED at G3, the primary route.** From `standalone_texturing`.
+**`mesh_texture` `mesh_texture.json`, SHIPPED at G3, the primary route.** From `standalone_texturing`.
 `Trellis2LoadMesh(BOB_MESH)` -> `Trellis2EncodeMesh` -> `Trellis2TextureMesh(BOB_SEED)`, with
 `GeomPackUVUnwrap` and `Trellis2RasterizePBR(BOB_TEXSIZE)` -> `Trellis2ExportTrimesh(BOB_OUT)` ->
 `Preview3D`. Eleven nodes. Point it at a grey block-out proxy and it comes back textured. Local,
@@ -610,7 +610,7 @@ whose COMBO is a cached directory listing (G0.5). `Trellis2ExportTrimesh` replac
 `GeomPackSaveMesh`, which writes through trimesh with no Z-up to Y-up conversion and no UV V-flip,
 so its GLB arrives in Blender rotated with the texture upside down. Measured 7 to 46 s per mesh.
 
-**W9b `mesh_geom_texture.json`, SHIPPED at G3b, and the DEFAULT route.** From `geometry_texture`:
+**`mesh_geom_texture` `mesh_geom_texture.json`, SHIPPED at G3b, and the DEFAULT route.** From `geometry_texture`:
 geometry plus PBR from one subject image in one job. Ten nodes.
 `LoadImage(BOB_IMAGE)` -> `InvertMask(BOB_ALPHA)` -> `Trellis2GetConditioning(BOB_COND)`, with
 `LoadTrellis2Models(BOB_MODEL)` -> `Trellis2ImageToShape(BOB_SEED)` feeding both
@@ -623,14 +623,14 @@ floaters, welds and UV unwraps, so binding `BOB_PROCESS.target_face_count` to th
 returns finished topology with charts, and `Trellis2RasterizePBR` bakes the PBR into THOSE charts
 while projecting through `original_mesh`, the pre-simplify shape, so the texture still describes the
 dense surface. No intermediate simplify pass is skipped, because there is none to skip.
-`BOB_PROCESS.remesh` is the same open-surface knob as W5t's and is bound the same way.
+`BOB_PROCESS.remesh` is the same open-surface knob as `mesh_geom_trellis`'s and is bound the same way.
 
 Two seeds, so two titles: `BOB_SEED` is the shape sampler and `BOB_TEXSEED` the texture sampler.
-Unlike W9t it cannot texture a mesh Bob already has, only geometry it generated itself, which is why
-W9t stays the track-B route. Benchmarked against W5t plus W9c plus W9t on ten prompts at G3b and it
+Unlike `mesh_texture` it cannot texture a mesh Bob already has, only geometry it generated itself, which is why
+`mesh_texture` stays the track-B route. Benchmarked against `mesh_geom_trellis` plus `mesh_simplify_uv` plus `mesh_texture` on ten prompts at G3b and it
 won; numbers and the verdict in [What G3b measured](COMFYUI-MEASUREMENTS.md#g3b).
 
-**W9c `mesh_simplify_uv.json`, SHIPPED at G3.** `Trellis2Simplify` then `Trellis2UVUnwrap` as
+**`mesh_simplify_uv` `mesh_simplify_uv.json`, SHIPPED at G3.** `Trellis2Simplify` then `Trellis2UVUnwrap` as
 their own graph. Built to be A/B'd against Blender; it WON that A/B and is now pipeline steps 3
 and 4 outright. Five nodes and no model load at all, so it runs in about 1 s per mesh and is also
 the cheapest way to smoke-test the mesh transport.
@@ -641,8 +641,8 @@ Derived from `refinement` alone. `mesh_audit`, which this plan also named as a s
 1000, and preflight does not check numeric ranges, so a smaller budget fails at the validator with
 a legible message rather than at preflight.
 
-**W9 `mesh_paint_views.json`, SHIPPED at G4, the style-control alternative.** Twenty-one nodes, and
-it is W12 plus an IPAdapter: `core.gen_views.turntable_views` renders N views of the unwrapped mesh
+**`mesh_paint_views` `mesh_paint_views.json`, SHIPPED at G4, the style-control alternative.** Twenty-one nodes, and
+it is `stylize_render` plus an IPAdapter: `core.gen_views.turntable_views` renders N views of the unwrapped mesh
 with **true** depth and normal passes, each view goes through img2img at denoise **0.40** (the middle
 of R20's 0.3 to 0.45 band) under both ControlNets, `BOB_REF` supplies the IPAdapter reference, and
 `core.gen_paint` projection-bakes the results with normal-weighted blending. Demoted from primary by
@@ -651,7 +651,7 @@ R21, kept because it is the **only** route with real LoRA style control.
 Two details that are decisions rather than settings. The FRONT view is stylised first with the front
 RENDER as its own reference, and every later view takes the **stylised front** as the reference, so
 the palette is decided once instead of drifting per view; `comfy.paint_views` owns that ordering and
-there is a test for it. And the normal ControlNet runs at 0.60 here against W12's 0.45: on a single
+there is a test for it. And the normal ControlNet runs at 0.60 here against `stylize_render`'s 0.45: on a single
 frame the normal pass mostly adds surface plausibility, and across a turntable it is what stops the
 same texel being lit differently per view.
 
@@ -659,13 +659,13 @@ Measured at G4, eight views of a 3,910-face boulder in 50.9 s: **92.6%** of char
 directly, adjacent-view seam **22.3 to 26.5 of 255**, front-against-180-degrees drift **30.1**. The
 route works; the drift is the honest limit, and MV-Adapter is the known fix with a number to beat.
 
-**W11 `mesh_part.json`** Hunyuan3D-Part / P3-SAM part segmentation for part-swap variation. G8.
+**`mesh_part` `mesh_part.json`** Hunyuan3D-Part / P3-SAM part segmentation for part-swap variation. G8.
 
-`W10` (the Hunyuan 2.1 paint wrapper) is **deleted**, superseded by W9t.
+`W10` (the Hunyuan 2.1 paint wrapper) is **deleted**, superseded by `mesh_texture`.
 
 ### Family 4: rendering and terrain (tracks D, E, F)
 
-**W12 `stylize_render.json`, SHIPPED at G4.** Bob render plus Bob depth plus Bob normal into a
+**`stylize_render` `stylize_render.json`, SHIPPED at G4.** Bob render plus Bob depth plus Bob normal into a
 two-stage SDXL ControlNet img2img. Seventeen nodes:
 `CheckpointLoaderSimple(BOB_CKPT)` -> `LoraLoader(BOB_LORA)` -> two `CLIPTextEncode`, with
 `LoadImage(BOB_IMAGE)` -> `ImageScale(BOB_SIZE)` -> `VAEEncode`, and the conditioning passing through
@@ -679,20 +679,20 @@ Two things about it are not obvious. The normal hint goes through the **union pr
 uses the dedicated depth model. And `BOB_LORA` is REMOVED from the graph when no style LoRA is asked
 for (`comfy.drop_node`), because a `LoraLoader` at strength 0 still has to name an installed file.
 
-**W12e `stylize_render_est.json`, SHIPPED at G4.** W12 with the two hint loads replaced by
+**`stylize_render_est` `stylize_render_est.json`, SHIPPED at G4.** `stylize_render` with the two hint loads replaced by
 `DepthAnythingV2Preprocessor` and `BAE-NormalMapPreprocessor` reading the scaled render itself. It is
 the control the real-passes claim was measured against, and the only stylise route available for an
 image Bob did not render. **The measurement came back against the real passes on quality and for them
 on speed**: see [What G4 measured](COMFYUI-MEASUREMENTS.md#g4).
 
-W12 shares almost all of its graph with W9, which is why it was built first and W9 grown out of it.
-No upscale stage: W3 already exists and an upres of a pitch frame is a second press, not a second
+`stylize_render` shares almost all of its graph with `mesh_paint_views`, which is why it was built first and `mesh_paint_views` grown out of it.
+No upscale stage: `tex_upres` already exists and an upres of a pitch frame is a second press, not a second
 graph.
 
-**W13 `heightmap_macro.json`, SHIPPED at G5.** Prompt to a low-frequency macro mask. Deliberately
+**`heightmap_macro` `heightmap_macro.json`, SHIPPED at G5.** Prompt to a low-frequency macro mask. Deliberately
 soft and deliberately 8-bit-tolerant per R7, because it is a mask, not a heightfield.
 
-**It is W1's nine nodes, and the file exists for its values rather than its wiring**, which is
+**It is `tex_tileable`'s nine nodes, and the file exists for its values rather than its wiring**, which is
 recorded in its own `_bob.notes` so nobody looks for a difference that is not there. What differs:
 the prompt brief and negative are a top-down elevation map instead of a material; 20 steps at cfg 4.0
 against 25 at 5.0; `euler` with the normal scheduler against `dpmpp_2m` plus `karras`, because karras
@@ -705,7 +705,7 @@ in numpy (`comfy_maps.macro_field`, one cutoff of the same luminance track A's h
 and the terrain engine reads it as the `macro` op, which is op 0 of the stack. Verdicts and the
 twelve corrections are in [What G5 measured](COMFYUI-MEASUREMENTS.md#g5).
 
-**W14 `sky_equirect.json`** panorama for track F. Last, and only if the procedural sky is ever
+**`sky_equirect` `sky_equirect.json`** panorama for track F. Last, and only if the procedural sky is ever
 insufficient.
 
 ### Deriving from the shipped templates
@@ -754,12 +754,12 @@ Pinned per the fork's convention, each with a `FORK_README.md` row.
 
 | Pack | For | Risk |
 |---|---|---|
-| **`ComfyUI-TRELLIS2`** (PozzettiAndrea) | **The one required pack**: W5t, W9t, W9b, W9c. MIT, pinned at `9b878516`. | **Retired by G0.5.** Installed and running; 24 nodes. `comfy-env` is mandatory, not optional, but it installs prebuilt CUDA wheels rather than compiling. The one gotcha, `comfy-kitchen` missing inside the isolated pixi env, is written up in [What G0.5 measured](COMFYUI-MEASUREMENTS.md#g05) and in the fork's `FORK_README.md`. `visualbruno/ComfyUI-Trellis2` was never needed. |
+| **`ComfyUI-TRELLIS2`** (PozzettiAndrea) | **The one required pack**: `mesh_geom_trellis`, `mesh_texture`, `mesh_geom_texture`, `mesh_simplify_uv`. MIT, pinned at `9b878516`. | **Retired by G0.5.** Installed and running; 24 nodes. `comfy-env` is mandatory, not optional, but it installs prebuilt CUDA wheels rather than compiling. The one gotcha, `comfy-kitchen` missing inside the isolated pixi env, is written up in [What G0.5 measured](COMFYUI-MEASUREMENTS.md#g05) and in the fork's `FORK_README.md`. `visualbruno/ComfyUI-Trellis2` was never needed. |
 | **`ComfyUI-GeometryPack`** (PozzettiAndrea) | **Also required**, declared in TRELLIS2's `node_reqs`. 125 mesh nodes: load/save, decimate, remesh, the `GeomPackUV_*` unwrapper family, preview. MIT, pinned at `c67199d`. | Low. Auto-cloned by comfy-env; pinned explicitly so a fresh clone is reproducible. Its `GeomPackLoadMesh` COMBO caches its directory listing, so Bob must use `GeomPackLoadMeshPath`. |
-| **`ComfyUI-seamless-tiling`** (spinagon) | **Required for W1 and W3.** `SeamlessTile` (UNet) and `MakeCircularVAE` (VAE decoder). **GPL-3.0**, pinned `9225ed5`. | **Retired by G1.** Installed and working; pure Python, no dependencies, nothing to compile. Two things to know: **do not use its `CircularVAEDecode`**, which segfaults the server on the second decode of a session, and GPL-3.0 rather than MIT (harmless, ComfyUI is GPL and this extension is `GPL-3.0-or-later`, and Bob ships no node code). The WAS `Image Seamless Texture` alternative was measured and rejected: D4. |
-| **`ComfyUI-Hy3D-Omni`** (Rizzlord, **no license file**) | **W7**, the block-out control route. Five nodes: `Hy3DOmniLoadPipeline` plus a Point / Voxel / BBox / Pose generator. Pinned at `e513cd08`. | **Retired by G4c, and it was the real risk in this plan.** It is the ONLY ComfyUI wrapper for Omni that exists (3 stars, 0 forks, no license, last push 2025-10-03, and the better-advertised `PozzettiAndrea/ComfyUI-HunyuanX` is a 404), and it ships with the control signal broken: a vendored rename of `OmniEncoder.linear` to `self.liner` makes the checkpoint's three control-projection tensors load as MISSING under `strict=False`, so generation ignores the control and says nothing. Measured 0.010 voxel IoU before the fix and 0.53 after. `tools/scripts/comfy_omni_fix.py` is the fix; the whole write-up is in [What G4c measured](COMFYUI-MEASUREMENTS.md#g4c) and in the fork's `FORK_README.md`. |
+| **`ComfyUI-seamless-tiling`** (spinagon) | **Required for `tex_tileable` and `tex_upres`.** `SeamlessTile` (UNet) and `MakeCircularVAE` (VAE decoder). **GPL-3.0**, pinned `9225ed5`. | **Retired by G1.** Installed and working; pure Python, no dependencies, nothing to compile. Two things to know: **do not use its `CircularVAEDecode`**, which segfaults the server on the second decode of a session, and GPL-3.0 rather than MIT (harmless, ComfyUI is GPL and this extension is `GPL-3.0-or-later`, and Bob ships no node code). The WAS `Image Seamless Texture` alternative was measured and rejected: D4. |
+| **`ComfyUI-Hy3D-Omni`** (Rizzlord, **no license file**) | **`mesh_geom_ctrl`**, the block-out control route. Five nodes: `Hy3DOmniLoadPipeline` plus a Point / Voxel / BBox / Pose generator. Pinned at `e513cd08`. | **Retired by G4c, and it was the real risk in this plan.** It is the ONLY ComfyUI wrapper for Omni that exists (3 stars, 0 forks, no license, last push 2025-10-03, and the better-advertised `PozzettiAndrea/ComfyUI-HunyuanX` is a 404), and it ships with the control signal broken: a vendored rename of `OmniEncoder.linear` to `self.liner` makes the checkpoint's three control-projection tensors load as MISSING under `strict=False`, so generation ignores the control and says nothing. Measured 0.010 voxel IoU before the fix and 0.53 after. `tools/scripts/comfy_omni_fix.py` is the fix; the whole write-up is in [What G4c measured](COMFYUI-MEASUREMENTS.md#g4c) and in the fork's `FORK_README.md`. |
 | KJNodes and an image-filter pack | image utility across all graphs | Low. |
-| MV-Adapter | W9 style-control route only | Low, but **now optional** rather than required (R21). |
+| MV-Adapter | `mesh_paint_views` style-control route only | Low, but **now optional** rather than required (R21). |
 | 16-bit / EXR save | only if R7 is ever revisited | **Measured unnecessary at G5**: 8 bits leaves no terracing, and neither does 5. Deferred on evidence. |
 | Hunyuan3D paint wrapper (kijai) | **dropped** | Superseded by `Trellis2TextureMesh`. It was the compile-from-source risk; deleting it is the single biggest risk reduction in revision 5. |
 | Background removal (RMBG / BiRefNet) | **not needed** | `Trellis2RemoveBackground` ships in the TRELLIS2 pack, which also sidesteps RMBG-2.0's non-commercial terms. |
@@ -774,10 +774,10 @@ download time.
 |---|---|---|---|
 | **Set 0, DONE at G0.5** | `microsoft/TRELLIS.2-4B`. **No quant choice to make**: `pipeline.json` names `*_fp16`/`*_bf16` safetensors and the pack pulls them itself on the first run of `LoadTrellis2Models`. Precision is a runtime combo (`auto`/`bf16`/`fp16`/`fp32`), not a build. | **`models/trellis2/`** (registered via `folder_paths`; also pulls a DINOv3 encoder into `models/dinov3/`) | **~15 GB measured**, not the 4 to 9 GB estimated |
 | **Set 1, images, DONE at G1** | **`RealVisXL_V5.0_fp16.safetensors`** (`SG161222/RealVisXL_V5.0`, OpenRAIL++). D1 answered: SDXL, because circular-padding tiling needs a conv UNet. SDXL base itself is not needed; tileable LoRAs are optional and none was required to hit ratio 0.83. | `checkpoints/` | **6.9 GB measured** |
-| Set 1, **DONE at G4** | Depth Anything V2 and NormalBAE, auto-pulled by `comfyui_controlnet_aux` on first run. Needed by **W12e** (the estimated-hints control) rather than by W12, which is the point of track D. Also on disk and load-bearing for both stylise graphs: `controlnet-depth-sdxl-1.0` and the **union promax** SDXL ControlNet, which is where the normal head comes from, plus `ip-adapter_sdxl_vit-h` and `CLIP-ViT-H-14` for W9's reference | its own cache, `controlnet/SDXL/` | about 1.5 GB plus the 4.7 GB ControlNet set already there |
-| Set 2, Hunyuan, **DONE at G4** | `hunyuan_3d_v2.1.safetensors` from `Comfy-Org/hunyuan3D_2.1_repackaged` for the smoke test (G3), plus **`hunyuan3d-dit-v2-mv_fp16.safetensors`** from `Comfy-Org/hunyuan3D_2.0_repackaged` `split_files/` for W6 (G4). Ungated, no token needed. The multi-view A/B is a comparison rather than a gap, and G4 measured it | **`checkpoints/`** (loaded by `ImageOnlyCheckpointLoader`) | **4.93 GB measured** for the mv checkpoint |
-| Set 3, control, **DONE at G4c** | `tencent/Hunyuan3D-Omni`, for **W7**. Skip `*_ema.bin` (the wrapper's `variant: default` never reads it) and the repo assets, which halves the download. Not safetensors: three `.bin` pickles, and `torch.load` reads them with `weights_only=True` on torch 2.13 without complaint. Needs `tools/scripts/comfy_omni_fix.py` run once, or the control does nothing | **`models/hunyuan3d-omni/`**, bound at runtime by `comfy.omni_model_dir()` | **13.5 GB measured** (12.2 model + 1.3 VAE), against the 5 to 10 GB estimated; 25.7 GB if the EMA copy is not skipped |
-| Set 4, optional | MV-Adapter, only for the W9 style-control route | per pack | 2 to 4 GB |
+| Set 1, **DONE at G4** | Depth Anything V2 and NormalBAE, auto-pulled by `comfyui_controlnet_aux` on first run. Needed by **`stylize_render_est`** (the estimated-hints control) rather than by `stylize_render`, which is the point of track D. Also on disk and load-bearing for both stylise graphs: `controlnet-depth-sdxl-1.0` and the **union promax** SDXL ControlNet, which is where the normal head comes from, plus `ip-adapter_sdxl_vit-h` and `CLIP-ViT-H-14` for `mesh_paint_views`'s reference | its own cache, `controlnet/SDXL/` | about 1.5 GB plus the 4.7 GB ControlNet set already there |
+| Set 2, Hunyuan, **DONE at G4** | `hunyuan_3d_v2.1.safetensors` from `Comfy-Org/hunyuan3D_2.1_repackaged` for the smoke test (G3), plus **`hunyuan3d-dit-v2-mv_fp16.safetensors`** from `Comfy-Org/hunyuan3D_2.0_repackaged` `split_files/` for `mesh_geom_mv` (G4). Ungated, no token needed. The multi-view A/B is a comparison rather than a gap, and G4 measured it | **`checkpoints/`** (loaded by `ImageOnlyCheckpointLoader`) | **4.93 GB measured** for the mv checkpoint |
+| Set 3, control, **DONE at G4c** | `tencent/Hunyuan3D-Omni`, for **`mesh_geom_ctrl`**. Skip `*_ema.bin` (the wrapper's `variant: default` never reads it) and the repo assets, which halves the download. Not safetensors: three `.bin` pickles, and `torch.load` reads them with `weights_only=True` on torch 2.13 without complaint. Needs `tools/scripts/comfy_omni_fix.py` run once, or the control does nothing | **`models/hunyuan3d-omni/`**, bound at runtime by `comfy.omni_model_dir()` | **13.5 GB measured** (12.2 model + 1.3 VAE), against the 5 to 10 GB estimated; 25.7 GB if the EMA copy is not skipped |
+| Set 4, optional | MV-Adapter, only for the `mesh_paint_views` style-control route | per pack | 2 to 4 GB |
 | Set 5, A/B | a further challenger (Direct3D-S2, Hi3DGen) only if G7 is close | per pack | 5 to 8 GB |
 
 Background-removal weights are no longer a separate download: `Trellis2RemoveBackground` ships with
@@ -831,7 +831,7 @@ core/comfy.py         EXTENDED G6. `tiling_values` / `TILING_COPY_MODE` (circula
                       `ensure_untiled`, the lazy reset that undoes it before any graph on the same
                       checkpoint that must not wrap. Plus `CLIENT_ID` per process, because ComfyUI
                       keys progress sockets by client id
-core/comfy.py         EXTENDED G7. `mesh_geom_alt` (W8) and `mesh_process` (W8p), the
+core/comfy.py         EXTENDED G7. `mesh_geom_alt` (`mesh_geom_alt`) and `mesh_process` (`mesh_process`), the
                       `generate_asset_alt` chain built out of them, and the per-asset-class
                       verdict as a value: `KIND_ROUTE` beside `DEFAULT_ASSET_ROUTE`, read by
                       `asset_chain(route, kind, control)`, which also absorbed the "a control
@@ -862,21 +862,21 @@ core/gen_assets.py    SHIPPED G3. glTF import, weld, pinhole fill, Decimate (Qua
                       height_m, origin to base, weighted normals, LOD chain, BobShader convert,
                       generated-pack write with a provenance sidecar. bpy-side, and the reason
                       the ComfyUI half is one worker job
-core/gen_assets.py    EXTENDED G4c. `export_control` (a block-out proxy out as the control W7
+core/gen_assets.py    EXTENDED G4c. `export_control` (a block-out proxy out as the control `mesh_geom_ctrl`
                       conditions on, which turned out to need NO new exporter: it is the same
                       unit-cube round trip track B already owned), `footprint_ratio`, and
                       `undo_exports` plus `turn`, which put every file a chain hands over into
                       one frame. See `EXPORT_TURN` for why that is two bug fixes and not one
 core/gen_assets.py    EXTENDED G7. `match_frame` and the `bake_rescale` report: a bake reads
                       across SCALE as well as rotation, and a chain that normalises its low mesh
-                      on the server (W8p) leaves the dense mesh at twice the size, which makes
+                      on the server (`mesh_process`) leaves the dense mesh at twice the size, which makes
                       every cage ray miss and writes a perfectly flat normal map. G4c put the two
                       meshes in one rotation; this puts them in one frame
 core/gen_views.py     SHIPPED G4. bpy-side. A beauty frame plus TRUE depth and normal passes
                       through a view-layer MATERIAL OVERRIDE (not the compositor, which in
                       Blender 5.2 cannot hand a pass back), the geometry-derived depth range,
                       the camera metadata the projection needs, and the isolated flat-lit
-                      turntable W9 renders from
+                      turntable `mesh_paint_views` renders from
 core/gen_paint.py     SHIPPED G4. bpy-side. The UV g-buffer (world position and normal per
                       texel, from the same triangle raster gen_assets.uv_counts uses), the
                       per-view projection with a texel-space z-buffer for visibility, the
@@ -904,9 +904,9 @@ raising on the lot at once; `queue()`; `job(id)`; `cancel(id)`; `free()`; `view(
 highest-value function in the module, because a missing model is the normal failure.
 
 Since G3b it also owns the asset ROUTE, in one place, and G7 widened that one place rather than
-adding a second: `asset_chain(route, kind, control)` returns `generate_asset_oneshot` (W4 then W9b,
-the default), `generate_asset_chain` (W4, W5t, W9c, W9t, and the only chain that takes a control) or
-`generate_asset_alt` (W4, W8, W8p, W9t, the challenger), deciding from three inputs in priority
+adding a second: `asset_chain(route, kind, control)` returns `generate_asset_oneshot` (`mesh_subject` then `mesh_geom_texture`,
+the default), `generate_asset_chain` (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`, and the only chain that takes a control) or
+`generate_asset_alt` (`mesh_subject`, `mesh_geom_alt`, `mesh_process`, `mesh_texture`, the challenger), deciding from three inputs in priority
 order: a control forces the staged chain, an explicit route wins next, and `KIND_ROUTE` carries the
 per-asset-class verdict. `finish_passes(staged)` maps whatever any of them staged onto
 `finish_asset`'s `simplify_pass` and `texture_pass`. `bind_process()` is the shared `Trellis2ProcessMesh` binding, which cannot go
@@ -919,7 +919,7 @@ graph. It returns a bool rather than a function because the two routes are one g
 dropped, not two chains.
 
 G4c added two members to that same family rather than a third route. `control=` is a value on the
-staged chain that swaps step 2 from W5t to W7 and changes nothing else, so the block-out path is one
+staged chain that swaps step 2 from `mesh_geom_trellis` to `mesh_geom_ctrl` and changes nothing else, so the block-out path is one
 keyword and not a parallel pipeline; and `stage_exports(staged)` sits beside `finish_passes(staged)`,
 reading the same staged dict and returning how many `Trellis2ExportTrimesh` turns `finish_asset` has
 to undo on each file it is handed.
@@ -968,19 +968,19 @@ Tools: `comfy_status()`, `comfy_texture_set()`, `comfy_bark_set()`, `comfy_leaf_
 before it queues and degrading to a clear "not reachable" sentence rather than a stack trace
 (measured: all of them, against a dead port). The two foliage tools are BobFoliage F3's
 ([FOLIAGE.md](FOLIAGE.md#3-what-the-generation-track-owes-it)) and share the existing graphs: bark is
-W1 with a measured grain clause, and a leaf atlas is W4 per cell with the grid composed in numpy.
+`tex_tileable` with a measured grain clause, and a leaf atlas is `mesh_subject` per cell with the grid composed in numpy.
 Each also returns the OP that consumes its result, ready to send: `comfy_mesh` an `import_op`,
 `comfy_texture_set` an `apply_op`, `comfy_heightmap` the `bake_params` fragment. An agent that has to
 assemble those itself will get one wrong and stop using the feature.
 
-`comfy_paint_mesh` serves the PBR route only (W9t). The stylised route renders turntable views, which
+`comfy_paint_mesh` serves the PBR route only (`mesh_texture`). The stylised route renders turntable views, which
 needs Blender, so it stays a panel action; `texture_chain()` already documents that asymmetry and
 hiding it behind one tool would hide the fact that one route needs Blender in the middle.
 
 Three ops, one batched contract change: `apply_texture_set` (a set name plus a terrain layer index, or
 a material by name), `import_generated` (either `staged` from `comfy_mesh`, which runs pipeline steps 6
 to 8 and then imports, or `name` alone to import what the pack already holds), `export_control` (a
-block-out proxy out as the control MESH W7 conditions on). Plus one addition the plan had not foreseen:
+block-out proxy out as the control MESH `mesh_geom_ctrl` conditions on). Plus one addition the plan had not foreseen:
 **`OpResult.data`**, because `export_control` produces a path the next call needs and
 `import_generated` produces the face count, UV overlap, height and origin a caller has to check, and
 both were otherwise going to be parsed out of an English sentence.
@@ -1012,7 +1012,7 @@ landed. A live session's own output-folder preference still wins, which is why e
   both passes on the MAIN thread (0.63 to 1.00 s: `bpy.ops.render.render` is bpy) and stylises on the
   worker, which is what the caption says.
 - **Shaders**, in the texture-set block: **shipped at G1, finished at G2**. A prompt field, an
-  optional reference photo (which switches generation to W2), a seed, a variant count, and one
+  optional reference photo (which switches generation to `tex_tileable_ref`), a seed, a variant count, and one
   `Generate` that runs in the background with a live progress row and a cancel. Staged variants
   appear as a thumbnail plus a picker with `Accept`, `Reject`, `Upres 2x` and `Reject All`; Accept
   moves the variant into the pack and assigns it through `_apply_texture_set`, the same path the
@@ -1158,7 +1158,7 @@ Where the line falls, from the numbers rather than from taste:
 | Dead wood: stumps, fallen logs, snags, root balls | **Yes.** Same case as rocks — a solid with no skeleton needed. | G3/G7 solids, as above |
 | A standing tree, or any crown of foliage | **No.** Not the trunk either. Grow it (docs/FOLIAGE.md). | G3 broadleaf sprig: 15 boundary edges, i.e. a closed blob; redwood run: crowns are fans, and a generated trunk carries no curve for branches to attach to |
 | Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. Bark goes through `comfy_bark_set`, which adds the one thing tiling does not cover. | measured seam ratio 1.02 to 1.11 on the redwood sets; F3 bark 5.7 deg off vertical at seam ratio 0.987 |
-| A leaf or needle ATLAS on transparent | **Yes** — `comfy_leaf_atlas`, one sprite per cell composed Bob-side. Not one prompt asking for a grid. | F3: a 2x2-grid prompt returned five sprays in a ring straddling every cell; per-sprite W4 alpha is a real 0.000-1.000 cutout |
+| A leaf or needle ATLAS on transparent | **Yes** — `comfy_leaf_atlas`, one sprite per cell composed Bob-side. Not one prompt asking for a grid. | F3: a 2x2-grid prompt returned five sprays in a ring straddling every cell; per-sprite `mesh_subject` alpha is a real 0.000-1.000 cutout |
 
 **The UX guardrail (near-term, in this track).** Three places have to say the same thing, because
 the artist and the agent arrive from different doors:
@@ -1188,7 +1188,7 @@ Geometry Nodes foliage generator that consumes ComfyUI textures rather than Comf
   level, which is exactly what the existing recipe scaffold and the BobSplines curve vocabulary
   already do for paths.
 - **Foliage**: alpha CARDS instanced on the branch tips, sampled from a generated needle-spray or
-  leaf atlas. W4 already emits a genuine cutout alpha (range 0.000 to 1.000, mean 0.175 measured at
+  leaf atlas. `mesh_subject` already emits a genuine cutout alpha (range 0.000 to 1.000, mean 0.175 measured at
   G3), so the atlas is a tileable-adjacent workflow rather than new model work.
 - **Wind and season**: the cards read `S_EnvState` like every other BobShader, so wind and autumn
   colour come for free from the shared env.

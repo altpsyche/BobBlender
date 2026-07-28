@@ -28,7 +28,7 @@ rules, the second and third of which G3 had to add because the TRELLIS.2 nodes b
         [--url http://127.0.0.1:8188] [--object-info cached.json]
 
 A PNG input is read for its embedded `workflow` text chunk, which is how a pack ships a reference
-graph (the seamless-tiling pack's `tiled_workflow.png` is where W1 comes from).
+graph (the seamless-tiling pack's `tiled_workflow.png` is where `tex_tileable` comes from).
 
 The result is the bare API prompt dict. Bob's shipped files wrap it as
 `{"_bob": {provenance}, "prompt": {...}}`; adding that wrapper, the `_meta.title` templating

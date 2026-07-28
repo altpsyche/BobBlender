@@ -229,7 +229,7 @@ class ImportGenerated(BaseModel):
 
 class ExportControl(BaseModel):
     op: Literal["export_control"] = "export_control"
-    object: str  # the block-out proxy whose shape should condition generation (W7)
+    object: str  # the block-out proxy whose shape should condition generation (`mesh_geom_ctrl`)
     out_file: str | None = None  # else a unique name in the generated pack's _staging/
     points: int = 8192  # how densely Omni samples the control mesh
     pack_dir: str | None = None

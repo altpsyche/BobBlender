@@ -1,13 +1,13 @@
 {
  "_bob": {
   "id": "mesh_paint_views",
-  "plan": "W9, docs/COMFYUI.md family 3 (track B), the style-control paint route",
+  "role": "docs/GENERATION.md, the mesh-texturing family: the style-control paint route",
   "purpose": "One turntable view of an unwrapped mesh restyled under its own TRUE depth and normal passes, with the front view locked in as an IPAdapter reference so the views agree on palette. Blender renders the views and projection-bakes the results; this graph is the per-view restyle.",
-  "derived_from": "stylize_render.json (W12), with the IPAdapter trio from tex_tileable_ref.json (W2) added back for cross-view palette agreement",
+  "derived_from": "stylize_render.json (stylize_render), with the IPAdapter trio from tex_tileable_ref.json (tex_tileable_ref) added back for cross-view palette agreement",
   "deviations_from_source": [
-   "IPAdapterModelLoader + CLIPVisionLoader + IPAdapterAdvanced patch the model between the LoRA and the sampler, taking BOB_REF as the reference. W12 has no reference because it restyles one frame; W9 runs N times and every run has to land in the same palette, which is the consistency loss R20 names.",
+   "IPAdapterModelLoader + CLIPVisionLoader + IPAdapterAdvanced patch the model between the LoRA and the sampler, taking BOB_REF as the reference. stylize_render has no reference because it restyles one frame; mesh_paint_views runs N times and every run has to land in the same palette, which is the cross-view consistency the Blender-side projection route loses.",
    "weight_type is 'style transfer' at weight 0.75: the reference carries the look, not the layout, and the layout is already held by the two ControlNets.",
-   "Denoise defaults to 0.40 rather than W12's 0.55, the middle of the 0.3 to 0.45 band R20 specifies: the real render has to keep dominating or the views drift apart faster than the projection can average them out.",
+   "Denoise defaults to 0.40 rather than stylize_render's 0.55, the middle of the measured 0.3 to 0.45 band: the real render has to keep dominating or the views drift apart faster than the projection can average them out.",
    "Normal ControlNet strength raised from 0.45 to 0.60. On a single frame the normal pass mostly adds surface plausibility; across a turntable it is what stops the same texel being lit differently per view."
   ],
   "requires_nodes": [

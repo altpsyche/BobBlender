@@ -2229,7 +2229,7 @@ def check_generation(args):
     alpha = opacity.astype(np.float32) / 255.0
     clear = float((alpha < 0.05).mean())
     # The redwood run's whole finding was that generated meshes come back opaque (mean alpha 0.998).
-    # W4's matte is the thing that is not, and this is where that claim gets re-measured per run.
+    # `mesh_subject`'s matte is the thing that is not, and this is where that claim gets re-measured per run.
     check("the generated atlas is a real cutout, not a filled square", clear > 0.35,
           f"{clear * 100:.1f}% clear, {float((alpha > 0.95).mean()) * 100:.1f}% opaque")
     cells = comfy_maps.atlas_cells(opacity, cols, rows)

@@ -321,8 +321,8 @@ def comfy_mesh(
           "bbox" needs its own signal, which is `control_bbox`.
     subject: a local image with ALPHA to use instead of generating a reference. Skips the reference
           stage entirely, so `negative` does nothing alongside it.
-    route: "oneshot" (default, W4 then W9b), "staged" (W4, W5t, W9c, W9t; the only route that
-          leaves a dense mesh on disk) or "alt" (W4, W8, W8p, W9t; Hunyuan 2.1 geometry, which needs
+    route: "oneshot" (default, `mesh_subject` then `mesh_geom_texture`), "staged" (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`; the only route that
+          leaves a dense mesh on disk) or "alt" (`mesh_subject`, `mesh_geom_alt`, `mesh_process`, `mesh_texture`; Hunyuan 2.1 geometry, which needs
           no custom node pack). Leave it unset and the kind decides, which is the G7 verdict.
 
     Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}.
@@ -488,8 +488,8 @@ def comfy_stylize(
             stem = os.path.splitext(os.path.basename(image_file))[0]
             out_abs = comfy.unique_file_name(os.path.dirname(os.path.abspath(image_file)),
                                              stem + "_styled", ".png")
-        # The route is a value in `core/comfy.py`: passing both passes selects W12 and passing
-        # neither selects W12e, so there is no workflow argument to get wrong here.
+        # The route is a value in `core/comfy.py`: passing both passes selects `stylize_render` and passing
+        # neither selects `stylize_render_est`, so there is no workflow argument to get wrong here.
         info = comfy.stylize_render(image_file, out_abs, prompt, depth=depth, normal=normal,
                                     seed=int(seed), denoise=float(strength))
         return {"path": info["path"], "seconds": round(info["seconds"], 2),

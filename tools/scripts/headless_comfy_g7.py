@@ -1,7 +1,7 @@
 """Headless measurement of the G7 gate (docs/COMFYUI.md): the geometry A/B, decided once.
 
-TRELLIS.2 (W9b, the shipped one-shot route) against Hunyuan3D 2.1 (W8 then W8p then W9t) on ten
-fixed prompts, three of them foliage, with ONE shared W4 subject image per prompt so the grid
+TRELLIS.2 (`mesh_geom_texture`, the shipped one-shot route) against Hunyuan3D 2.1 (`mesh_geom_alt` then `mesh_process` then `mesh_texture`) on ten
+fixed prompts, three of them foliage, with ONE shared `mesh_subject` subject image per prompt so the grid
 compares geometry models rather than reference images. The deliverable is a verdict per asset class
 rather than a global winner, because the two differ structurally and not by degree.
 
@@ -262,7 +262,7 @@ def stage_subject(entry, fresh, reachable):
         info = comfy.subject_image(entry["prompt"], png, seed=entry["seed"], size=1024)
     entry["seconds"]["subject"] = round(info["seconds"], 2)
     entry["vram"]["subject"] = v.report()
-    entry["subject_source"] = "W4"
+    entry["subject_source"] = "mesh_subject"
     return True
 
 
@@ -446,7 +446,7 @@ def part_a():
           and comfy.asset_chain("staged") is comfy.generate_asset_chain)
     check("a control forces the staged chain, whatever the kind says",
           comfy.asset_chain(kind="rocks", control="/tmp/x.glb") is comfy.generate_asset_chain,
-          "W9b and W8 both generate their own geometry and take no control mesh")
+          "mesh_geom_texture and mesh_geom_alt both generate their own geometry and take no control mesh")
     expected = {k: comfy.KIND_ROUTE.get(k, comfy.DEFAULT_ASSET_ROUTE)
                 for k in ("rocks", "trees", "plants", "grass")}
     check("the per-class verdict is read from KIND_ROUTE and nowhere else",
@@ -465,7 +465,7 @@ def part_a():
 
 # -- part B: the grid ------------------------------------------------------------------------
 def print_grid(entries, cells):
-    section("B. the grid: TRELLIS.2 (W9b) against Hunyuan 2.1 (W8, W8p, W9t), ten prompts")
+    section("B. the grid: TRELLIS.2 (mesh_geom_texture) against Hunyuan 2.1 (mesh_geom_alt, mesh_process, mesh_texture), ten prompts")
     print(f"{'prompt':<9} {'foliage':<7} {'model':<8} {'wall s':>7} {'comfy MiB':>10} "
           f"{'added':>7} {'faces':>6} {'bound':>6} {'thin':>7} {'overlap':>8} {'cover':>6} "
           f"{'alb std':>8} {'alb mean':>9}")
@@ -567,7 +567,7 @@ def black_albedo_report(entries, cells):
     """The trap, per model. It is a CHECK on the shipped route and a measurement on the challenger.
 
     The asymmetry is deliberate rather than convenient. "The default route never returns a black
-    texture" is an invariant W9b holds structurally, because it never re-encodes a mesh, so a failure
+    texture" is an invariant `mesh_geom_texture` holds structurally, because it never re-encodes a mesh, so a failure
     there is a regression. The challenger's rate is a property of `Trellis2EncodeMesh` on a mesh it
     did not generate, which G3b already measured at 1 in 10 on the staged route; asserting it away
     would turn a verdict input into a red suite, and asserting it holds would be asserting something
@@ -589,11 +589,11 @@ def black_albedo_report(entries, cells):
 
 
 def plate_control(entries, reachable, fresh):
-    """Does the plain plate in W8 matter, or is it ceremony?
+    """Does the plain plate in `mesh_geom_alt` matter, or is it ceremony?
 
-    W4 writes RGBA whose RGB is still the SDXL frame, and ComfyUI's LoadImage drops alpha rather
-    than compositing it, so W5 hands Hunyuan a background TRELLIS.2 never sees. This measures the
-    same subject through W5 (no plate) and reads the difference off the geometry, on one solid and
+    `mesh_subject` writes RGBA whose RGB is still the SDXL frame, and ComfyUI's LoadImage drops alpha rather
+    than compositing it, so `mesh_geom` hands Hunyuan a background TRELLIS.2 never sees. This measures the
+    same subject through `mesh_geom` (no plate) and reads the difference off the geometry, on one solid and
     one foliage prompt. It is two generations, and without it the grid's Hunyuan column would be
     open to the charge that it measured the background.
     """
@@ -616,7 +616,7 @@ def plate_control(entries, reachable, fresh):
         out[entry["key"]] = {"plate": plate, "no_plate": raw}
         note(f"{entry['key']}: with the plate",
              f"{plate['faces']} faces, thin {plate['thin_ratio']}, extent {plate['extent']}")
-        note(f"{entry['key']}: without it (W5, the smoke test)",
+        note(f"{entry['key']}: without it (`mesh_geom`, the smoke test)",
              f"{raw['faces']} faces, thin {raw['thin_ratio']}, extent {raw['extent']}")
     return out
 
@@ -630,9 +630,9 @@ def part_d(limit=len(D11_KEYS)):
     fix is `comfy.stage_exports`. Same four assets, same files, from the G3b cache, so the only
     variable is the alignment. Three finishes per asset:
 
-      staged aligned    the dense W5t mesh baked onto the W9c low mesh, in one frame
+      staged aligned    the dense `mesh_geom_trellis` mesh baked onto the `mesh_simplify_uv` low mesh, in one frame
       staged as G3b ran it   the same with no `exports`, i.e. the misaligned bake
-      one-shot          W9b's own mesh baked onto itself, which is the no-dense-mesh control
+      one-shot          `mesh_geom_texture`'s own mesh baked onto itself, which is the no-dense-mesh control
     """
     section("D. the dense mesh, re-measured with the bake alignment fixed (D11)")
     by_key = {s["key"]: s for s in SUBJECTS}
@@ -737,8 +737,8 @@ def verdict(entries, cells, summary, finished, plate):
                         "leaner": "hunyuan" if b["peak_comfy_mib"] < a["peak_comfy_mib"]
                                   else "trellis"}
     note("block-out", "no cell here and none possible: the challenger's Hunyuan graph takes no "
-                      "control mesh, so the block-out class was decided at G4c by W7 (Omni), "
-                      "footprint IoU 0.9079 mean against W6t's 0.6748")
+                      "control mesh, so the block-out class was decided at G4c by mesh_geom_ctrl (Omni), "
+                      "footprint IoU 0.9079 mean against mesh_geom_mv_trellis's 0.6748")
     return lines
 
 

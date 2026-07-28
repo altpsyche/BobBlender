@@ -1,14 +1,14 @@
 {
   "_bob": {
     "id": "tex_upres",
-    "plan": "W3, docs/COMFYUI.md track A",
-    "purpose": "A 1K tile to 2K or 4K, tiled, without reintroducing the seam W1 removed.",
-    "derived_from": "tex_tileable.json (W1) for the circular halves, plus the stock UltimateSDUpscale single-node recipe from ComfyUI_UltimateSDUpscale's README",
+    "role": "docs/GENERATION.md, the texture family: a tile to 2K or 4K",
+    "purpose": "A 1K tile to 2K or 4K, tiled, without reintroducing the seam tex_tileable removed.",
+    "derived_from": "tex_tileable.json (tex_tileable) for the circular halves, plus the stock UltimateSDUpscale single-node recipe from ComfyUI_UltimateSDUpscale's README",
     "deviations_from_source": [
-      "The model and the VAE both arrive circular-padded (SeamlessTile + MakeCircularVAE), because UltimateSDUpscale re-samples and re-decodes every tile: with a stock VAE the wrap seam comes straight back, which is the same failure the W1 measurements found.",
+      "The model and the VAE both arrive circular-padded (SeamlessTile + MakeCircularVAE), because UltimateSDUpscale re-samples and re-decodes every tile: with a stock VAE the wrap seam comes straight back, which is the same failure the tex_tileable measurements found.",
       "seam_fix_mode is None. Its seam fixer is for the seams BETWEEN internal tiles, which Linear mode plus mask_blur already handles here, and running it re-denoises bands of the image for no measured gain.",
       "force_uniform_tiles is true, so the tile grid divides the image evenly and no undersized edge tile gets a different effective denoise.",
-      "The upscale model is templated as BOB_UPSCALE_MODEL rather than hardcoded (R6)."
+      "The upscale model is templated as BOB_UPSCALE_MODEL rather than hardcoded, so the graph stays portable."
     ],
     "requires_nodes": ["UltimateSDUpscale", "SeamlessTile", "MakeCircularVAE"],
     "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0), ComfyUI_UltimateSDUpscale",

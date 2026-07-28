@@ -1,16 +1,16 @@
 {
   "_bob": {
     "id": "tex_tileable_ref",
-    "plan": "W2, docs/COMFYUI.md track A",
+    "role": "docs/GENERATION.md, the texture family: a reference photo to a seamless set",
     "purpose": "A reference photo to a seamless set: img2img at BOB_DENOISE with the reference's palette locked by IPAdapter, so the result is that surface rather than the checkpoint's idea of the words.",
-    "derived_from": "tex_tileable.json (W1), with the empty latent replaced by an encoded reference and an IPAdapter pair added",
+    "derived_from": "tex_tileable.json (tex_tileable), with the empty latent replaced by an encoded reference and an IPAdapter pair added",
     "deviations_from_source": [
       "EmptyLatentImage replaced by ImageScale(BOB_SIZE) -> VAEEncode, so the sampler starts from the reference rather than from noise. BOB_SIZE therefore binds to the resize, not to a latent.",
-      "The reference is encoded through the CIRCULAR VAE, not the stock one: a zero-padded encode writes the reference's own edge discontinuity into the starting latent, which is the seam W1 exists to avoid.",
+      "The reference is encoded through the CIRCULAR VAE, not the stock one: a zero-padded encode writes the reference's own edge discontinuity into the starting latent, which is the seam tex_tileable exists to avoid.",
       "IPAdapterModelLoader + CLIPVisionLoader + IPAdapterAdvanced patch the tiled model, so the palette survives a denoise high enough to remove the photo's lighting.",
       "The KSampler carries BOB_DENOISE as a FIELD, not as a node of its own: see denoise_is_a_field below."
     ],
-    "denoise_is_a_field": "The plan's templated-title list names BOB_DENOISE alongside BOB_SEED as if they were separate nodes. They cannot be: templating binds a node by its single _meta.title, and seed and denoise are two widgets on ONE KSampler. Bob binds {'BOB_SEED': {'seed': s, 'denoise': d}} instead. Corrected in docs/COMFYUI.md at G2.",
+    "denoise_is_a_field": "The plan's templated-title list names BOB_DENOISE alongside BOB_SEED as if they were separate nodes. They cannot be: templating binds a node by its single _meta.title, and seed and denoise are two widgets on ONE KSampler. Bob binds {'BOB_SEED': {'seed': s, 'denoise': d}} instead. docs/GENERATION.md says so.",
     "requires_nodes": ["SeamlessTile", "MakeCircularVAE", "IPAdapterAdvanced", "IPAdapterModelLoader"],
     "requires_pack": "ComfyUI-seamless-tiling (spinagon, GPL-3.0), ComfyUI_IPAdapter_plus",
     "default_checkpoint": "RealVisXL_V5.0_fp16.safetensors",

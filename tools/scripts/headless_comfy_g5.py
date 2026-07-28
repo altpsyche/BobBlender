@@ -1,4 +1,4 @@
-"""Headless measurement of the G5 gate (docs/COMFYUI.md): W13, a prompted terrain macro mask.
+"""Headless measurement of the G5 gate (docs/COMFYUI.md): `heightmap_macro`, a prompted terrain macro mask.
 
 The question is not "does it generate an image that looks like terrain". It is whether an artist's
 silhouette still OWNS the landform after Bob's erosion stack has run, and whether the result is a
@@ -19,7 +19,7 @@ by eye:
      in pixels against the renderer's own noise floor. R7 says 256 levels cannot carry a heightfield;
      this measures what 256 levels carry when the thing they carry is a mask.
   D. **Residency.** Whether this route can share a card with what is already resident, which on a
-     16.3 GB card after a W7 job is a real question (the G4c finding).
+     16.3 GB card after a `mesh_geom_ctrl` job is a real question (the G4c finding).
   E. **The panel path.** Generate Base and then Bake + Build through the real operators and the real
      job queue, with the main-thread tick measured, and the assertion that switching the mask off
      bakes the preset exactly as it always did.
@@ -738,7 +738,7 @@ def part_d(args, reachable):
                                      seed=SEED + 1)
         elapsed = time.perf_counter() - t0
     report = vram.report()
-    note("W13 with that already resident", f"{elapsed:.1f}s, peak {report['comfy_peak']} MiB, "
+    note("heightmap_macro with that already resident", f"{elapsed:.1f}s, peak {report['comfy_peak']} MiB, "
                                            f"rise {report['rise']} MiB")
     try:
         comfy.free()
@@ -748,7 +748,7 @@ def part_d(args, reachable):
     card_after, procs_after = _gpu_sample()
     held = sum(mib for pid, mib in procs_after.items() if pid not in _OURS)
     note("after POST /free", f"{card_after} MiB on the card, {held} MiB still held by the family")
-    check("W13 ran without needing the card to itself", info["path"] and elapsed < 120,
+    check("heightmap_macro ran without needing the card to itself", info["path"] and elapsed < 120,
           f"{elapsed:.1f}s at a {report['comfy_start']} MiB starting occupancy")
 
 
