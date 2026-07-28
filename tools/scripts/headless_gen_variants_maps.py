@@ -1,17 +1,17 @@
-"""Headless measurement of the G2 gate (docs/COMFYUI.md).
+"""Headless measurement: variants, preflight and the derived maps (docs/GENERATION.md).
 
 Measures rather than asserts. Seven things, in the order the gate lists them:
 
   1. ten sets generated and accepted in one session, per-set wall clock and drift
-  2. the longest MAIN-THREAD block during a background generation, against the blocking G1 path
+  2. the longest MAIN-THREAD block during a background generation, against the blocking path
   3. preflight over every shipped workflow, and over five deliberately broken graphs
   4. the 3x3 seam ratio before and after a `tex_upres` upres of the same tile
-  5. roughness contrast, G1's global band against G2's local stretch, on the same image
+  5. roughness contrast, the global band against the local stretch, on the same image
   6. a job does not outlive a file load
   7. the Advanced-panel surface registers and draws without touching a socket
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_comfy_g2.py [-- --sets 10]
+        --python tools/scripts/headless_gen_variants_maps.py [-- --sets 10]
 
 The parts that need a server are gated on reachability and SKIP cleanly; the parts that do not
 (preflight against the committed dump, the maps, the scheduler, the load_post reset) always run,
@@ -116,7 +116,7 @@ def _an_api_node(info):
 
 # -- 5. roughness contrast ---------------------------------------------------------------------
 def g1_roughness(rgb, band=(0.45, 0.95)):
-    """G1's roughness verbatim, so the comparison is against the real thing rather than a memory
+    """The global-band roughness verbatim, so the comparison is against the real thing rather than a memory
     of it: desaturate, invert, remap into the band."""
     inv = 1.0 - comfy_maps.luminance(rgb)
     lo, hi = band
@@ -127,7 +127,7 @@ def roughness_comparison(albedo):
     section("roughness contrast, same image")
     old, new = g1_roughness(albedo), comfy_maps.roughness_from(albedo)
     rows = []
-    for label, m in (("G1 global band", old), ("G2 local stretch", new)):
+    for label, m in (("global band", old), ("local stretch", new)):
         rows.append((label, int(m.min()), int(m.max()), float(m.mean()), float(m.std())))
         print(f"    {label:18s} range {m.min():3d}-{m.max():3d} of 255, "
               f"mean {m.mean():6.1f}, std {m.std():5.1f}")
@@ -171,11 +171,11 @@ def responsiveness(prompt):
     check("no main-thread block over 50 ms (three frames at 60 Hz)", worst < 0.050,
           f"{worst * 1000:.2f} ms")
 
-    # The same work on the main thread, which is what G1 shipped, for the comparison.
+    # The same work on the main thread, which is what the blocking path did, for the comparison.
     t0 = time.perf_counter()
     comfy.texture_set_from_prompt(prompt, PACK, seed=91001)
     blocking = time.perf_counter() - t0
-    print(f"    the G1 blocking path, same work: {blocking * 1000:8.1f} ms on the main thread")
+    print(f"    the blocking path, same work: {blocking * 1000:8.1f} ms on the main thread")
     print(f"    improvement: {blocking / max(worst, 1e-6):.0f}x shorter worst-case block")
     shutil.rmtree(staging, ignore_errors=True)
     return {"worst_block_ms": worst * 1000, "max_tick_ms": comfy_jobs.max_tick_seconds() * 1000,
@@ -184,7 +184,7 @@ def responsiveness(prompt):
 
 # -- 6. a job does not outlive a file load -------------------------------------------------------
 def load_post_reset():
-    section("a job does not outlive a file load (R15)")
+    section("a job does not outlive a file load")
     comfy_jobs.register()
     comfy_jobs.clear()
     gate = threading.Event()
@@ -267,7 +267,7 @@ def upres_seam():
     albedo = comfy_maps.read_png(open(up["maps"]["basecolor"], "rb").read())
     comfy_maps.write_png(os.path.join(OUT, "upres_tile3x3.png"), comfy_maps.tile3x3(
         albedo[::2, ::2]))
-    check("seam still holds after the upres (G1 band was 0.83 to 1.05)",
+    check("seam still holds after the upres (the untreated band was 0.83 to 1.05)",
           0.80 <= after["ratio"] <= 1.25, f"ratio {after['ratio']:.3f}")
     comfy.reject_variant(info["dir"])
     return {"before": before, "after": after, "seconds": secs, "size": up["size"]}
@@ -294,7 +294,7 @@ def addon_surface():
            "shaders_generate_set", "shaders_variant_accept", "shaders_variant_reject",
            "shaders_variant_upres")
     missing = [o for o in ops if not hasattr(bpy.ops.bob_blender_tools, o)]
-    check("every G2 operator registered", not missing, ", ".join(missing))
+    check("every generation operator registered", not missing, ", ".join(missing))
     check("the persistent load_post handler is installed",
           any(getattr(h, "_bpy_persistent", False) or h.__name__ == "_handler"
               for h in bpy.app.handlers.load_post))
@@ -302,10 +302,10 @@ def addon_surface():
     # The property that matters: the panel body reads cached state, so drawing it with no server
     # costs nothing. A socket call here would freeze the UI for the timeout.
     # A stand-in UILayout. It has to answer every layout verb the panel body uses, and the list grew
-    # after G2: the stylise block G4 added calls `column` and `prop`, and `enabled` is assigned on a
+    # since: the stylise block calls `column` and `prop`, and `enabled` is assigned on a
     # returned row. A stub that is missing one of them fails the gate with an AttributeError instead of
-    # a verdict, which is how this was found -- by the G6 one-command suite, not by anyone re-running
-    # G2 (docs/COMFYUI.md, G6). `__getattr__` would hide the next such drift, so the verbs are listed.
+    # a verdict, which is how this was found -- by the one-command suite, not by anyone re-running this
+    # gate. `__getattr__` would hide the next such drift, so the verbs are listed explicitly.
     class _Stub:
         enabled = True
 

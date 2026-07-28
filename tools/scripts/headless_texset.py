@@ -1,4 +1,4 @@
-"""Headless check for the BobShaders texture-set sampler (G0, docs/COMFYUI.md).
+"""Headless check for the BobShaders texture-set sampler (docs/SHADERS.md, docs/GENERATION.md).
 
 Measures rather than asserts-by-inspection: it builds a real terrain material with the shipped
 `grass` set on a layer, walks the graph to prove the image nodes actually reach the master's map
@@ -8,7 +8,9 @@ sockets, renders the plane in EEVEE and in Cycles, and fails if either render co
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/headless_texset.py
 
-Exit code 0 = every check passed. The node counts it prints are the R14 budget numbers.
+Exit code 0 = every check passed. The node counts it prints are the sampler's node budget: one
+shared sampler group per layer and image nodes only for the maps a layer actually enables, because
+six layers times five maps would otherwise be thirty image nodes in one material.
 """
 
 import os
@@ -143,7 +145,7 @@ def main():
     check("bump reads the master's blended Height",
           bump is not None and feeds(bump.inputs["Height"], master))
 
-    # 6. R14 node budget.
+    # 6. The node budget: one shared sampler group per layer, nodes only for enabled maps.
     imgs = [n for n in nt.nodes if n.bl_idname == "ShaderNodeTexImage"]
     print(f"    nodes in M_Terrain: {len(nt.nodes)} ({len(imgs)} image textures, "
           f"1 textured layer of {materials.MAX_TERRAIN_LAYERS})")

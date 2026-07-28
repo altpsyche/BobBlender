@@ -1,4 +1,4 @@
-"""Headless measurement of the G5 gate (docs/COMFYUI.md): `heightmap_macro`, a prompted terrain macro mask.
+"""Headless measurement: `heightmap_macro`, a prompted terrain macro mask (docs/GENERATION.md).
 
 The question is not "does it generate an image that looks like terrain". It is whether an artist's
 silhouette still OWNS the landform after Bob's erosion stack has run, and whether the result is a
@@ -16,16 +16,18 @@ by eye:
      VRAM beside each.
   C. **The 8-bit question, end to end.** The same mask at 8 bits, at 16 bits and deliberately
      crushed to 5, through the same stack, differenced in METRES and then RENDERED and differenced
-     in pixels against the renderer's own noise floor. R7 says 256 levels cannot carry a heightfield;
+     in pixels against the renderer's own noise floor. The bit-depth worry is that 256 levels cannot
+     carry a heightfield;
      this measures what 256 levels carry when the thing they carry is a mask.
   D. **Residency.** Whether this route can share a card with what is already resident, which on a
-     16.3 GB card after a `mesh_geom_ctrl` job is a real question (the G4c finding).
+     16.3 GB card after a `mesh_geom_ctrl` job is a real question, and the block-out control gate is
+     where that was first measured.
   E. **The panel path.** Generate Base and then Bake + Build through the real operators and the real
      job queue, with the main-thread tick measured, and the assertion that switching the mask off
      bakes the preset exactly as it always did.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
-        --python tools/scripts/headless_comfy_g5.py -- [--part a,b,c,d,e] [--fresh] [--preset alpine]
+        --python tools/scripts/headless_gen_terrain_macro.py -- [--part a,b,c,d,e] [--fresh] [--preset alpine]
 
 Reachability-gated: with no server every generation half prints SKIP and exits 0, which is itself
 the check that ComfyUI is never required. Generated masks cache WITH their timing and VRAM under
@@ -97,7 +99,7 @@ def empty_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-# -- VRAM, per process and summed over the ComfyUI family (the G3b rule) -------------------------
+# -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
 _OURS = {os.getpid()}
 
 
@@ -122,7 +124,8 @@ def _gpu_sample():
 class Vram:
     """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
     with the RISE over this stage's own baseline reported beside the absolute peak. Same class as the
-    G3b, G4 and G4c gates, because the numbers have to be comparable with theirs."""
+    one-shot-against-staged, stylise and block-out-control gates, because the numbers have to be
+    comparable with theirs."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -259,7 +262,7 @@ def slope_area(h, acc, bins=14, lo=30.0, hi=3000.0):
 
     Reported as the GRADIENT and read against the no-mask bake rather than against Flint's law. This
     engine's own gradient is positive (slope rises with drainage area), which is not what an
-    equilibrium landscape does; see the G5 write-up, because that is a finding about the terrain
+    equilibrium landscape does; see docs/GENERATION-BASELINES.md, because that is a finding about the terrain
     engine and not about the mask.
     """
     n = h.shape[0]
@@ -435,7 +438,7 @@ def part_a(args):
 # -- Part B: three prompts, each baked three ways ------------------------------------------------
 def generate_cached(name, run, fresh):
     """A generated mask with its timing and VRAM cached beside it, so a re-measured table reports
-    what the generating run measured rather than a row of zeros (the G4 pattern)."""
+    what the generating run measured rather than a row of zeros."""
     os.makedirs(GEN, exist_ok=True)
     png = os.path.join(GEN, name + ".png")
     side = os.path.join(GEN, name + ".stats.json")
@@ -587,7 +590,8 @@ def render_terrain(obj, out_path):
 
 
 def terracing(field, bins=2048):
-    """How much of the field's mass sits on discrete levels: the artefact R7 predicted, as a number.
+    """How much of the field's mass sits on discrete levels: the terracing an 8-bit write was expected
+    to cause, as a number.
 
     A terraced field has a comb histogram, so the concentration of the fullest bins over the median
     bin is the measurement. `zero_step` is the same idea in the spatial domain: the fraction of
@@ -619,7 +623,8 @@ def part_c(args, reachable, masks):
         return
     # The reference is the FLOAT derivation, not the file Bob ships. The generation is 8-bit per
     # channel, but the derivation averages three channels over a box of radius width/12, so the float
-    # mask carries far more precision than any sample in the source did. That is what makes the R7
+    # mask carries far more precision than any sample in the source did. That is what makes the
+    # terracing
     # question answerable: the question is not what the diffusion model could express, it is what the
     # last 8-bit step between the derivation and the op stack costs.
     float_mask = comfy_maps.macro_field(comfy_maps.read_png(open(source, "rb").read()))
@@ -769,7 +774,7 @@ def part_e(args, reachable):
         return
     # The ADDON's comfy_jobs, not this script's: the extension is imported under its own module
     # name, so importing it by path would give a SECOND registry the operator's job is invisible in
-    # (the G4 finding, and exactly the kind of thing a gate exists to catch).
+    # (found by the stylise gate, and exactly the kind of thing a gate exists to catch).
     import importlib
 
     comfy_jobs = importlib.import_module(ADDON + ".core.comfy_jobs")

@@ -1,6 +1,7 @@
-"""Headless measurement of the G3b gate (docs/COMFYUI.md): `mesh_geom_texture` one-shot against `mesh_geom_trellis`+`mesh_simplify_uv`+`mesh_texture`.
+"""Headless measurement: the `mesh_geom_texture` one-shot against the staged
+`mesh_geom_trellis` + `mesh_simplify_uv` + `mesh_texture` chain (docs/GENERATION.md).
 
-Two questions, both left measurable but unanswered by G3:
+Two questions the asset gate left measurable and did not answer:
 
   1. Is the combined `geometry_texture` graph (`mesh_geom_texture`) worth having? Ten prompts, four of them
      foliage, through BOTH routes, with the SAME `mesh_subject` subject image so the reference framing is
@@ -12,9 +13,9 @@ Two questions, both left measurable but unanswered by G3:
      writes, and then through `gen_assets.finish_asset` on a subset.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_comfy_g3b.py [-- --prompts N --finish N --fresh]
+        --python tools/scripts/headless_gen_oneshot_vs_staged.py [-- --prompts N --finish N --fresh]
 
-Reachability-gated for the generation half, the same shape `headless_comfy_g3.py` uses, and it
+Reachability-gated for the generation half, the same shape `headless_gen_assets.py` uses, and it
 caches every generated mesh AND its timings and VRAM figures under
 `_generated/comfy_g3b_check/gen/`, so re-running the measurement half costs seconds rather than
 another half hour. Exit 0 = nothing failed.
@@ -48,7 +49,7 @@ TEXTURE_SIZE = 1024
 
 # Ten prompts, FOUR of them foliage, because the open-surface case is the reason TRELLIS.2 is
 # primary and a benchmark run mostly on solids would answer the wrong question. The first five are
-# G3's, so those results are directly comparable with the G3 table.
+# the asset gate's, so those results are directly comparable with its table.
 SUBJECTS = [
     {"key": "boulder", "kind": "rocks", "seed": 1234, "height_m": 1.8, "foliage": False,
      "prompt": "a mossy granite boulder"},
@@ -97,7 +98,8 @@ def empty_scene():
 
 
 # -- VRAM ---------------------------------------------------------------------------------------
-# "Does it fit 16 GB" is the question, and G0.5's figures cannot answer it: they were whole-card
+# "Does it fit 16 GB" is the question, and the pack-install figures cannot answer it: they were
+# whole-card
 # readings taken with a second ComfyUI resident on the same device. Two things are needed instead.
 # The reading has to be PER PROCESS, and it has to be summed over the ComfyUI FAMILY, because
 # comfy-env runs each isolated pack in its own process: the main server, the TRELLIS2 pixi worker
@@ -219,7 +221,7 @@ def _save_stamp(key, data):
 def generate_one(subject, fresh, reachable):
     """`mesh_subject` once, then BOTH routes off that one subject image. Returns the entry or None.
 
-    The subject is shared on purpose. G3 found that `mesh_subject`'s framing, not the geometry model, decides
+    The subject is shared on purpose: `mesh_subject`'s framing, not the geometry model, decides
     whether a foliage prompt comes back as a thin open blade or a bushy volume, so handing the two
     routes different reference images would have measured the reference, not the graph.
     """
@@ -439,7 +441,7 @@ def decimate_floor(entry):
     """What Blender's Decimate reaches on this mesh, i.e. what the one-shot route would cost if it
     kept the dense mesh and let Blender do steps 3 and 4 instead of Trellis2ProcessMesh.
 
-    Measured rather than assumed from G3's five: this is the third route the verdict has to rule
+    Measured rather than assumed from the asset gate's five: this is the third route the verdict has to rule
     out, and it is free to measure because the staged route generated the dense mesh anyway.
     """
     empty_scene()
@@ -556,7 +558,7 @@ def open_surface_report(entries, cells):
 
 
 def opacity_report(entries, cells, finished):
-    """The G3 partial, answered: is TRELLIS.2's opacity output in the GLB, and does it now reach the
+    """The partial the asset gate left open: is TRELLIS.2's opacity output in the GLB, and does it reach the
     finished material?"""
     section("the opacity channel")
     for entry in entries[:1]:
@@ -619,7 +621,7 @@ def finish_report(entries, cells, finished, floors):
 
 def verdict(entries, cells, summary, finished, floors):
     """A verdict sentence, not a table with no conclusion."""
-    section("G3b verdict")
+    section("verdict: one-shot against staged")
     a, b = summary.get("staged"), summary.get("oneshot")
     if not a or not b:
         note("verdict", "not enough measured cells for a verdict")

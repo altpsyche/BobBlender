@@ -1,7 +1,7 @@
-"""Headless measurement of the G8 gate (docs/COMFYUI.md): D12, Omni's bounding-box control mode.
+"""Headless measurement: Omni's bounding-box control mode, against the point cloud (docs/GENERATION.md).
 
-G4c proved that a block-out proxy can own a generated asset's footprint, using 8,192 points sampled
-off the proxy's surface. D12 asked the obvious follow-up and left it open for four phases: **did that
+The control gate proved that a block-out proxy can own a generated asset's footprint, using 8,192 points sampled
+off the proxy's surface. The obvious follow-up sat open for a long time: **did that
 need a point cloud, or just eight corners?** `Hy3DOmniBBoxGenerate` conditions on three numbers, the
 encoder turns them into the eight corners of a box (`omni_encoder.bbox_to_corners`), and Bob knows
 every proxy's bounding box for free. So this gate is one comparison with a null beside it.
@@ -11,28 +11,29 @@ every proxy's bounding box for free. So this gate is one comparison with a null 
      a value in one place (`control_route`, `CONTROL_WORKFLOWS`, `asset_chain` on either control
      form), and `gen_assets.control_bbox` checked against the control glb's OWN position extents,
      because a permuted bbox is still a valid bbox and conditions on a plausible wrong shape in
-     silence. Plus the D14 tripwire: the installed `comfy-aimdo` version against the one G6
+     silence. Plus the staged-copy tripwire: the installed `comfy-aimdo` version against the one the
+     agent-surface gate
      measured the segfault on. No server, always runs, costs a second.
-  B. **The grid.** The same three block-outs G4c used, the same conditioning image, the same
+  B. **The grid.** The same three block-outs the control gate used, the same conditioning image, the same
      scoring with NO rotation search, each against its own self-agreement ceiling. Three control
      modes: `mesh_geom_ctrl` point (the number to beat), `mesh_geom_bbox` with Bob's proportions, and `mesh_geom_bbox` with `auto_bbox`,
      which estimates the proportions from the image and is the NULL that says whether Bob's
      numbers added anything at all.
-  C. **The finished asset.** One block-out through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the G3
+  C. **The finished asset.** One block-out through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the asset gate
      asset checks it inherits, with the footprint measured again after simplify, bake, scale, LODs
      and BobShade.
   D. **The transport claim.** `mesh_geom_bbox` uploads nothing, so it should be the one Omni route that survives
-     a process with no ComfyUI folder, which is what G7 found broken over MCP. Measured both ways
+     a process with no ComfyUI folder, which is what the geometry A/B found broken over MCP. Measured both ways
      with `comfy_dir()` forced to None, rather than asserted.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
-        --python tools/scripts/headless_comfy_g8.py -- [--part a,b,c,d] [--fresh] [--no-gen]
+        --python tools/scripts/headless_gen_bbox_control.py -- [--part a,b,c,d] [--fresh] [--no-gen]
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM under
 `_generated/comfy_g8_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates.
-The shape maths, the block-outs and the VRAM sampler are imported from the G4c gate rather than
-copied, so the two phases' numbers are the same measurement and not two implementations of it.
+The shape maths, the block-outs and the VRAM sampler are imported from the control gate rather than
+copied, so both gates' numbers are the same measurement and not two implementations of it.
 Exit 0 = nothing failed.
 """
 
@@ -50,8 +51,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import headless_comfy_g3 as g3  # noqa: E402
-import headless_comfy_g4c as g4c  # noqa: E402
+import headless_gen_assets as assets_gate  # noqa: E402
+import headless_gen_blockout_control as control_gate  # noqa: E402
 
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
@@ -64,8 +65,8 @@ OUT = os.path.join(REPO, "_generated", "comfy_g8_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
-SEED = g4c.SEED
-FACES = g4c.FACES
+SEED = control_gate.SEED
+FACES = control_gate.FACES
 
 # Every class `mesh_geom_bbox` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniBBoxGenerate")
@@ -79,11 +80,12 @@ COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_bbox bbox", "mesh_geom_bbox auto")
 # The decision rule, fixed BEFORE the run so the verdict cannot be chosen after seeing the table.
 # `DEFAULT_CONTROL_MODE` moves to "bbox" only if the bbox column wins or draws on footprint IoU on
 # at least two of the three block-outs AND is not slower; a draw is within 0.02 IoU, which is under
-# the smallest gap between any two ceilings G4c measured.
+# the smallest gap between any two ceilings the control gate measured.
 DRAW = 0.02
 WIN_THRESHOLD = 2
 
-# What G6 measured the `comfy_aimdo` segfault on (docs/COMFYUI.md, D14). D14's re-test trigger is a
+# What the agent-surface gate measured the `comfy_aimdo` segfault on (docs/GENERATION.md, the
+# staged-copy fault). Its re-test trigger is a
 # fork update, so the version is the tripwire: same version, same install, nothing to re-test.
 AIMDO_MEASURED = "0.4.10"
 
@@ -169,9 +171,9 @@ def part_a(args, reachable):
           "classes: " + ", ".join(sorted({n["class_type"] for n in graph.values()})))
 
     # The mode is a value in ONE place, so the truth table is the test.
-    # G9 added a third mode that reads the SAME control file `mesh_geom_ctrl` does, so a mesh alone no longer
+    # A third mode reads the SAME control file `mesh_geom_ctrl` does, so a mesh alone no longer
     # names a mode and the default breaks that tie too. Written against the constant rather than
-    # against "point", or this gate fails the day the default moves for a reason G8 did not measure.
+    # against "point", or this gate fails the day the default moves for a reason the bbox gate did not measure.
     table = [({}, None, "no control at all"),
              ({"control": "/x.glb"}, comfy.DEFAULT_CONTROL_MODE, "a mesh and nothing else"),
              ({"control_bbox": [1, 1, 1]}, "bbox", "proportions and nothing else"),
@@ -193,7 +195,7 @@ def part_a(args, reachable):
 
     # The frame mapping, against the file Omni actually reads rather than against the code that
     # wrote it. A cube with three different extents, so a permutation cannot pass for the identity.
-    g4c.empty_scene()
+    control_gate.empty_scene()
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     probe = bpy.context.active_object
     probe.scale = (0.3, 0.7, 1.0)
@@ -228,14 +230,14 @@ def part_a(args, reachable):
               f"length {node['inputs']['bbox_length']}, height {node['inputs']['bbox_height']}, "
               f"depth {node['inputs']['bbox_depth']}")
 
-    # D14's tripwire. The decision says re-test on a fork update; the version is what says whether
+    # The staged-copy tripwire. The rule says re-test on a fork update; the version is what says whether
     # there was one, so a stale reminder becomes a check.
     version = aimdo_version()
-    check("comfy-aimdo is the version G6 measured the segfault on, so D14 needs no re-test",
+    check("comfy-aimdo is the version the segfault was measured on, so the staged-copy check needs no re-run",
           version in (None, AIMDO_MEASURED),
           f"installed {version or 'absent'}, measured {AIMDO_MEASURED}"
-          + ("" if version in (None, AIMDO_MEASURED) else "; re-run the G6 tiling test and D14"))
-    note("TILING_COPY_MODE", f"{comfy.TILING_COPY_MODE!r}, the D14 workaround, still in force")
+          + ("" if version in (None, AIMDO_MEASURED) else "; re-run the tiling test and the staged-copy check"))
+    note("TILING_COPY_MODE", f"{comfy.TILING_COPY_MODE!r}, the staged-copy workaround, still in force")
     note("ComfyUI folder", str(comfy.comfy_dir()))
 
 
@@ -263,15 +265,15 @@ def part_b(args, reachable, ready):
          f"at least {WIN_THRESHOLD} of 3 block-outs AND is not slower")
 
     scores, rows = {}, []
-    for kind in g4c.PROMPTS:
-        obj = g4c.blockout(kind)
-        proxy_points = g4c.mesh_points(obj, seed=1)
-        ceiling = g4c.fixed_agreement(proxy_points, g4c.mesh_points(obj, seed=99))
+    for kind in control_gate.PROMPTS:
+        obj = control_gate.blockout(kind)
+        proxy_points = control_gate.mesh_points(obj, seed=1)
+        ceiling = control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(obj, seed=99))
         control = os.path.join(GEN, f"{kind}_control.glb")
         os.makedirs(GEN, exist_ok=True)
         exported = gen_assets.export_control(obj, control)
         dims = exported["bbox"]
-        views = g4c.views_of(obj, os.path.join(GEN, f"{kind}_views"))
+        views = control_gate.views_of(obj, os.path.join(GEN, f"{kind}_views"))
         note(kind, f"{gen_assets.face_count(obj)} faces, {exported['height_m']:.3f} m tall, "
                    f"bbox {dims}, ceiling IoU {ceiling['iou']:.4f} / footprint "
                    f"{ceiling['footprint_iou']:.4f}")
@@ -280,16 +282,16 @@ def part_b(args, reachable, ready):
             if args.no_gen and not os.path.isfile(target):
                 print(f"[SKIP] {kind} {label}: --no-gen and nothing cached")
                 continue
-            stamp = g4c.generate_cached(target, lambda t=target, r=run: r(t), args.fresh)
+            stamp = control_gate.generate_cached(target, lambda t=target, r=run: r(t), args.fresh)
             if stamp.get("error") or not os.path.isfile(target):
                 check(f"{kind} {label} generated a mesh", False, stamp.get("error", "no file"))
                 continue
-            g4c.empty_scene()
+            control_gate.empty_scene()
             got = gen_assets.import_glb(target, name=f"{kind}_{label.replace(' ', '_')}",
                                         orient=gen_assets.CONTROL_RETURN_TURN)
             gen_assets.weld(got)
-            agree = g4c.fixed_agreement(proxy_points, g4c.mesh_points(got, seed=2))
-            best = g4c.best_axis_map(proxy_points, g4c.mesh_points(got, seed=2))
+            agree = control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(got, seed=2))
+            best = control_gate.best_axis_map(proxy_points, control_gate.mesh_points(got, seed=2))
             agree["best_iou"] = best["iou"]
             agree["best_map"] = f"{best['perm']}{best['signs']}"
             scores[(kind, label)] = dict(agree, faces=gen_assets.face_count(got),
@@ -337,12 +339,12 @@ def part_b(args, reachable, ready):
                  f"peak {int(np.mean([s['peak'] for s in got]))} MiB, aspect error "
                  f"{np.mean([s['aspect_error'] for s in got]):.3f}")
 
-    # First, whether the control signal reaches the model at ALL. This is the G4c failure mode --
+    # First, whether the control signal reaches the model at ALL. This is the control gate's failure mode --
     # a wrapper that ignores its control and says nothing -- and it has to be separated from "the
     # control is not enough", which is a finding rather than a defect. A box can only control
     # PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
     pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_bbox auto")))
-             for kind in g4c.PROMPTS]
+             for kind in control_gate.PROMPTS]
     live = [(k, b, a) for k, b, a in pairs if b and a]
     if live:
         held = sum(1 for _k, b, a in live if b["aspect_error"] < a["aspect_error"])
@@ -357,7 +359,7 @@ def part_b(args, reachable, ready):
                          for k, b, a in live))
 
     pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_ctrl point")))
-             for kind in g4c.PROMPTS]
+             for kind in control_gate.PROMPTS]
     live = [(k, b, p) for k, b, p in pairs if b and p]
     if live:
         wins = sum(1 for _k, b, p in live if b["footprint_iou"] >= p["footprint_iou"] - DRAW)
@@ -374,11 +376,11 @@ def part_b(args, reachable, ready):
         check("the shipped default is the one the rule chose",
               comfy.DEFAULT_CONTROL_MODE == verdict,
               f"shipped {comfy.DEFAULT_CONTROL_MODE!r}, rule {verdict!r}")
-        # The adopted mode has to clear G4c's own bar. The mode that lost does not, and holding it
+        # The adopted mode has to clear the control gate's own bar. The mode that lost does not, and holding it
         # to one would only encode a hope: what it has to do is be measured and be documented.
         adopted = "mesh_geom_bbox bbox" if comfy.DEFAULT_CONTROL_MODE == "bbox" else "mesh_geom_ctrl point"
         got = column(adopted)
-        check(f"the shipped control mode ({adopted}) clears G4c's footprint bar on every block-out",
+        check(f"the shipped control mode ({adopted}) clears the control gate's footprint bar on every block-out",
               all(s["footprint_iou"] > 0.5 for s in got),
               "; ".join(f"{k} {s['footprint_iou']:.4f}"
                         for (k, lab), s in scores.items() if lab == adopted))
@@ -390,20 +392,20 @@ def part_b(args, reachable, ready):
 
 # -- Part C: the finished asset --------------------------------------------------------------------
 def part_c(args, reachable, ready):
-    section("C. The finished asset from three numbers, through the G3 checks it inherits")
+    section("C. The finished asset from three numbers, through the asset checks it inherits")
     if not (reachable and ready):
         print("[SKIP] part C needs a server with the Omni pack and its weights")
         return
     kind = "notched"
-    obj = g4c.blockout(kind)
-    proxy_points = g4c.mesh_points(obj, seed=1)
+    obj = control_gate.blockout(kind)
+    proxy_points = control_gate.mesh_points(obj, seed=1)
     height = float(obj.dimensions[2])
     dims = gen_assets.control_bbox(obj)
     pack = os.path.join(OUT, "pack")
-    views = g4c.views_of(obj, os.path.join(GEN, f"{kind}_views"))
+    views = control_gate.views_of(obj, os.path.join(GEN, f"{kind}_views"))
 
     raw = os.path.join(GEN, f"{kind}_w7b.glb")
-    stamp = g4c.generate_cached(raw, lambda: comfy.mesh_geom_bbox(dims, views[0], raw, seed=SEED),
+    stamp = control_gate.generate_cached(raw, lambda: comfy.mesh_geom_bbox(dims, views[0], raw, seed=SEED),
                                 args.fresh)
     if stamp.get("error") or not os.path.isfile(raw):
         check("mesh_geom_bbox generated a mesh to finish", False, stamp.get("error", "no file"))
@@ -430,7 +432,7 @@ def part_c(args, reachable, ready):
     exports = comfy.stage_exports({"meta": {"control": None, "control_bbox": dims},
                                    "simplified_mesh": simp, "textured_mesh": tex})
     note("turns to undo per staged file", str(exports))
-    g4c.empty_scene()
+    control_gate.empty_scene()
     report = gen_assets.finish_asset(raw, pack, kind="rocks", name=f"bbox_{kind}",
                                      height_m=height, faces=FACES, exports=exports,
                                      simplify_pass=simp, texture_pass=tex)
@@ -451,27 +453,27 @@ def part_c(args, reachable, ready):
     check("the material is a BobShader",
           materials.master_type(final.active_material) is not None,
           str(materials.master_type(final.active_material)))
-    # The bake frame, which G7 made a number rather than a hope: a route that rescales on the server
+    # The bake frame, which the geometry A/B made a number rather than a hope: a route that rescales on the server
     # and does not move its dense mesh bakes a flat normal and nothing errors.
     note("bake_rescale", str(report.get("bake_rescale")))
     normal = (report.get("maps") or {}).get("normal")
-    detail = g3.neighbour_detail(normal) if normal else 0.0
+    detail = assets_gate.neighbour_detail(normal) if normal else 0.0
     check("the baked normal carries detail", detail > 0.001,
           f"mean absolute neighbour difference {detail:.5f}"
           + ("" if normal else ", and no normal map was written"))
-    agree = g4c.fixed_agreement(proxy_points, g4c.mesh_points(final, seed=2))
+    agree = control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(final, seed=2))
     note("the finished asset against the block-out",
          f"footprint IoU {agree['footprint_iou']:.4f}, IoU {agree['iou']:.4f}, "
          f"aspect {agree['aspect']}")
 
     # What steps 6 to 8 are on the hook for is PRESERVING whatever the control achieved, not
-    # improving it, so the check is against this route's own raw mesh rather than against G4c's
-    # absolute bar. That bar belongs to the adopted mode and the G4c gate already holds the point
+    # improving it, so the check is against this route's own raw mesh rather than against the control gate's
+    # absolute bar. That bar belongs to the adopted mode and the control gate already holds the point
     # route to it; holding the mode that LOST to it would only record a disappointment as a failure.
-    g4c.empty_scene()
+    control_gate.empty_scene()
     source = gen_assets.import_glb(raw, name="raw", orient=gen_assets.CONTROL_RETURN_TURN)
     gen_assets.weld(source)
-    raw_agree = g4c.fixed_agreement(proxy_points, g4c.mesh_points(source, seed=2))
+    raw_agree = control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(source, seed=2))
     check("simplify, bake, scale, LODs and BobShade keep the footprint the control achieved",
           agree["footprint_iou"] >= raw_agree["footprint_iou"] - 0.05,
           f"finished {agree['footprint_iou']:.4f} against the raw mesh's "
@@ -488,12 +490,12 @@ def part_d(args, reachable, ready):
         print("[SKIP] part D needs a server with the Omni pack and its weights")
         return
     kind = "rock"
-    obj = g4c.blockout(kind)
+    obj = control_gate.blockout(kind)
     dims = gen_assets.control_bbox(obj)
     control = os.path.join(GEN, f"{kind}_control.glb")
     if not os.path.isfile(control):
         gen_assets.export_control(obj, control)
-    views = g4c.views_of(obj, os.path.join(GEN, f"{kind}_views"))
+    views = control_gate.views_of(obj, os.path.join(GEN, f"{kind}_views"))
 
     # ONE variable, which needs saying because the obvious way to run this measures two.
     # `omni_model_dir` is derived from `comfy_dir` as well, so simply forcing the folder away also
@@ -516,7 +518,7 @@ def part_d(args, reachable, ready):
                                  seed=SEED, steps=1)
         except comfy.ComfyError as exc:
             point_error = str(exc)
-        check("the point route fails without a ComfyUI folder, which is G7's finding restated",
+        check("the point route fails without a ComfyUI folder, which is the geometry A/B's finding restated",
               point_error is not None, (point_error or "it succeeded").splitlines()[0][:160])
 
         target = os.path.join(GEN, "transport_bbox.glb")
@@ -547,7 +549,7 @@ def main():
     args = parser.parse_args(argv)
     os.makedirs(GEN, exist_ok=True)
 
-    section("G8: Omni's bounding-box control mode (D12)")
+    section("verdict: Omni's bounding-box control mode")
     ok, detail = comfy.reachable()
     note("ComfyUI", detail if ok else f"not reachable ({detail[:70]})")
     checkout = os.environ.get("BOB_COMFY_DIR", os.path.expanduser("~/dev/ComfyUI"))

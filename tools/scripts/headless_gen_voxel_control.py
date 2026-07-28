@@ -1,36 +1,39 @@
-"""Headless measurement of the G9 gate (docs/COMFYUI.md): D12's remainder, Omni's voxel control.
+"""Headless measurement: Omni's voxel control mode, and the control ordering (docs/GENERATION.md).
 
-G8 answered half of D12 and named the other half as the interesting one rather than the leftover.
+The bbox gate answered half of the control-ordering question and named the other half as the
+interesting one rather than the leftover.
 Eight corners lost to 8,192 points because a box constrains EXTENT and says nothing about PLAN, and
 a ground plan is what "drops into a layout" reduces to. `Hy3DOmniVoxelGenerate` is the only Omni
 control mode left that carries one: it area-samples the same block-out mesh `mesh_geom_ctrl` takes and
 `OmniEncoder.generate_voxel` quantises those samples onto a 16-cubed occupancy grid. So this gate is
-the same comparison G8 ran, with a third real column and a different null.
+the same comparison the bbox gate ran, with a third real column and a different null.
 
   A. **The values, the frame and preflight.** Preflight over every shipped graph offline against the
      committed dump, the `api_node` assertion on `mesh_geom_voxel`, the third control mode as a value in one place
      (`CONTROL_MODES`, `CONTROL_WORKFLOWS`, `control_route` including its refusal of an unknown
-     name), `stage_exports` on the mesh form, and the D14 tripwire. No server, always runs.
+     name), `stage_exports` on the mesh form, and the staged-copy tripwire. No server, always runs.
   B. **The input rotation, then the grid.** `Hy3DOmniVoxelGenerate` turns its control -90 degrees
      about X by default and `Hy3DOmniPointGenerate` does not, so the setting is measured on the
      asymmetric block-out before anything else runs and `comfy.VOXEL_INPUT_ROTATION` has to equal
-     what won. Then the same three block-outs G4c and G8 used, the same conditioning image, the same
+     what won. Then the same three block-outs the control and bbox gates use, the same conditioning
+     image, the same
      scoring with NO rotation search: `mesh_geom_ctrl` point, `mesh_geom_voxel` voxel, `mesh_geom_voxel` with a SWAPPED control (the null),
      and `mesh_geom_bbox` bbox for the record.
-  C. **The finished asset.** One block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the G3
+  C. **The finished asset.** One block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the asset gate
      asset checks it inherits, with the footprint measured again after the finish.
   D. **Transport.** `mesh_geom_voxel` uploads a mesh, so unlike `mesh_geom_bbox` it cannot be the fallback for a process with
      no ComfyUI folder. Measured rather than reasoned, with the weights held fixed.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
-        --python tools/scripts/headless_comfy_g9.py -- [--part a,b,c,d] [--fresh] [--no-gen]
+        --python tools/scripts/headless_gen_voxel_control.py -- [--part a,b,c,d] [--fresh] [--no-gen]
                                                        [--no-bbox]
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM under
 `_generated/comfy_g9_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
-shape maths, the block-outs, the VRAM sampler and the caching are imported from the G4c gate and the
-normal-detail read from the G3 gate, so G4c's, G8's and G9's numbers are one measurement rather than
+shape maths, the block-outs, the VRAM sampler and the caching are imported from the control gate and
+the normal-detail read from the asset gate, so all three control gates' numbers are one measurement
+rather than
 three implementations of it. Exit 0 = nothing failed.
 """
 
@@ -47,8 +50,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import headless_comfy_g3 as g3  # noqa: E402
-import headless_comfy_g4c as g4c  # noqa: E402
+import headless_gen_assets as assets_gate  # noqa: E402
+import headless_gen_blockout_control as control_gate  # noqa: E402
 
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
@@ -61,8 +64,8 @@ OUT = os.path.join(REPO, "_generated", "comfy_g9_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
-SEED = g4c.SEED
-FACES = g4c.FACES
+SEED = control_gate.SEED
+FACES = control_gate.FACES
 
 # Every class `mesh_geom_voxel` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniVoxelGenerate",
@@ -79,22 +82,23 @@ COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_voxel voxel", "mesh_geom_voxel swa
 
 # The decision rules, all three fixed BEFORE the run so no verdict can be chosen after the table.
 #
-#   DRAW           two footprint IoUs within this are a draw. G8's value, kept so the two phases'
+#   DRAW           two footprint IoUs within this are a draw. The bbox gate's value, kept so both gates'
 #                  verdicts are decided on the same scale.
 #   WIN_THRESHOLD  how many of the three block-outs a challenger has to win or draw on.
 #   WIRED_THRESHOLD how many of the three the properly controlled run has to beat its own swapped
 #                  null on. Below this the control is not reaching the model and there is no verdict
 #                  to read, only a defect: three phases running, an Omni control that misses NEVER
-#                  errors (G0.5's black albedo, G4c's random projection, G8's auto_bbox).
+#                  errors (the black albedo, Omni's random projection, auto_bbox).
 DRAW = 0.02
 WIN_THRESHOLD = 2
 WIRED_THRESHOLD = 2
 
-# G4c's footprint bar. It belongs to the ADOPTED mode and to no other: holding a challenger to the
-# winner's bar records a negative result as a broken suite (G8's sixth correction).
+# The control gate's footprint bar. It belongs to the ADOPTED mode and to no other: holding a
+# challenger to the winner's bar records a negative result as a broken suite.
 FOOTPRINT_BAR = 0.5
 
-# What G6 measured the `comfy_aimdo` segfault on (docs/COMFYUI.md, D14), the same tripwire G8 set.
+# What the agent-surface gate measured the `comfy_aimdo` segfault on (docs/GENERATION.md, the
+# staged-copy fault), the same tripwire the bbox gate sets.
 AIMDO_MEASURED = "0.4.10"
 
 
@@ -193,8 +197,8 @@ def part_a(args, reachable):
           comfy.stage_exports(staged) == {"raw": 1, "simplified": 2, "textured": 3},
           str(comfy.stage_exports(staged)))
 
-    # One exporter, one producer: G9 added a control mode and no new export.
-    g4c.empty_scene()
+    # One exporter, one producer: the voxel mode is a control mode and no new export.
+    control_gate.empty_scene()
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     probe = bpy.context.active_object
     probe.scale = (0.3, 0.7, 1.0)
@@ -210,15 +214,15 @@ def part_a(args, reachable):
           f"one exporter, mode label {voxel_signal['mode']!r}, bbox {voxel_signal['bbox']}")
 
     version = _aimdo_version()
-    check("comfy-aimdo is the version G6 measured the segfault on, so D14 needs no re-test",
+    check("comfy-aimdo is the version the segfault was measured on, so the staged-copy check needs no re-run",
           version in (None, AIMDO_MEASURED),
           f"installed {version or 'absent'}, measured {AIMDO_MEASURED}"
-          + ("" if version in (None, AIMDO_MEASURED) else "; re-run the G6 tiling test and D14"))
+          + ("" if version in (None, AIMDO_MEASURED) else "; re-run the tiling test and the staged-copy check"))
     note("ComfyUI folder", str(comfy.comfy_dir()))
 
 
 def _aimdo_version():
-    """The installed `comfy-aimdo` version, or None. Same read as the G8 gate's."""
+    """The installed `comfy-aimdo` version, or None. Same read as the bbox gate's."""
     base = comfy.comfy_dir() or os.path.expanduser("~/dev/ComfyUI")
     site = os.path.join(base, "venv", "lib")
     if not os.path.isdir(site):
@@ -235,25 +239,25 @@ def _aimdo_version():
 # -- Part B: the input rotation, then the grid ------------------------------------------------------
 def _prepare(kind):
     """One block-out's proxy samples, control file, conditioning view and bbox, in one place."""
-    obj = g4c.blockout(kind)
+    obj = control_gate.blockout(kind)
     os.makedirs(GEN, exist_ok=True)
     control = os.path.join(GEN, f"{kind}_control.glb")
     exported = gen_assets.export_control(obj, control)
-    return {"kind": kind, "points": g4c.mesh_points(obj, seed=1),
-            "ceiling": g4c.fixed_agreement(g4c.mesh_points(obj, seed=1),
-                                           g4c.mesh_points(obj, seed=99)),
+    return {"kind": kind, "points": control_gate.mesh_points(obj, seed=1),
+            "ceiling": control_gate.fixed_agreement(control_gate.mesh_points(obj, seed=1),
+                                           control_gate.mesh_points(obj, seed=99)),
             "control": control, "bbox": exported["bbox"], "height_m": exported["height_m"],
             "faces": gen_assets.face_count(obj),
-            "view": g4c.views_of(obj, os.path.join(GEN, f"{kind}_views"))[0]}
+            "view": control_gate.views_of(obj, os.path.join(GEN, f"{kind}_views"))[0]}
 
 
 def _score(target, proxy_points, name):
     """Import a generated glb the way the shipped path does and score it where it landed."""
-    g4c.empty_scene()
+    control_gate.empty_scene()
     got = gen_assets.import_glb(target, name=name, orient=gen_assets.CONTROL_RETURN_TURN)
     gen_assets.weld(got)
-    points = g4c.mesh_points(got, seed=2)
-    agree = g4c.fixed_agreement(proxy_points, points)
+    points = control_gate.mesh_points(got, seed=2)
+    agree = control_gate.fixed_agreement(proxy_points, points)
     agree["faces"] = gen_assets.face_count(got)
     agree["points"] = points
     return agree
@@ -264,7 +268,7 @@ def _run_cached(target, run, args, label):
     if args.no_gen and not os.path.isfile(target):
         print(f"[SKIP] {label}: --no-gen and nothing cached")
         return {}, False
-    stamp = g4c.generate_cached(target, run, args.fresh)
+    stamp = control_gate.generate_cached(target, run, args.fresh)
     if stamp.get("error") or not os.path.isfile(target):
         check(f"{label} generated a mesh", False, stamp.get("error", "no file"))
         return stamp, False
@@ -318,7 +322,7 @@ def part_b(args, reachable, ready):
          f"voxel becomes the default only if it wins or draws (within {DRAW}) on footprint IoU on "
          f"at least {WIN_THRESHOLD} of 3 block-outs AND is not slower warm")
 
-    blocks = {kind: _prepare(kind) for kind in g4c.PROMPTS}
+    blocks = {kind: _prepare(kind) for kind in control_gate.PROMPTS}
     for kind, block in blocks.items():
         note(kind, f"{block['faces']} faces, {block['height_m']:.3f} m tall, bbox {block['bbox']}, "
                    f"ceiling IoU {block['ceiling']['iou']:.4f} / footprint "
@@ -354,7 +358,7 @@ def part_b(args, reachable, ready):
                 other = blocks[SWAP[kind]]
                 swap_cross[kind] = {
                     "control_from": SWAP[kind],
-                    "against_control": g4c.fixed_agreement(other["points"],
+                    "against_control": control_gate.fixed_agreement(other["points"],
                                                            agree["points"])["footprint_iou"],
                     "against_image": agree["footprint_iou"]}
             scores[(kind, label)] = {k: v for k, v in agree.items() if k != "points"}
@@ -404,7 +408,7 @@ def part_b(args, reachable, ready):
     # WIRING first. A swapped control is a stronger null than an absent one: both runs load the same
     # model with the same image and the same steps, so the only difference is which block-out the
     # control came from. If the result does not move with it, the control is not reaching the model.
-    wired = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_voxel swap"))) for k in g4c.PROMPTS]
+    wired = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_voxel swap"))) for k in control_gate.PROMPTS]
     live = [(k, v, s) for k, v, s in wired if v and s]
     if live:
         held = sum(1 for _k, v, s in live if v["footprint_iou"] > s["footprint_iou"])
@@ -419,8 +423,8 @@ def part_b(args, reachable, ready):
                            f"(its control) and {c['against_image']:.4f} against {k} (its image)"
                            for k, c in sorted(swap_cross.items())))
 
-    # Then the verdict, on the same rule shape G8 used, so the two are directly comparable.
-    pairs = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_ctrl point"))) for k in g4c.PROMPTS]
+    # Then the verdict, on the same rule shape the bbox gate uses, so the two are directly comparable.
+    pairs = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_ctrl point"))) for k in control_gate.PROMPTS]
     live = [(k, v, p) for k, v, p in pairs if v and p]
     if live:
         wins = sum(1 for _k, v, p in live if v["footprint_iou"] >= p["footprint_iou"] - DRAW)
@@ -441,7 +445,7 @@ def part_b(args, reachable, ready):
                    "bbox": "mesh_geom_bbox bbox"}[comfy.DEFAULT_CONTROL_MODE]
         got = column(adopted)
         if got:
-            check(f"the shipped control mode ({adopted}) clears G4c's footprint bar everywhere",
+            check(f"the shipped control mode ({adopted}) clears the control gate's footprint bar everywhere",
                   all(s["footprint_iou"] > FOOTPRINT_BAR for s in got),
                   "; ".join(f"{k} {s['footprint_iou']:.4f}"
                             for (k, lab), s in scores.items() if lab == adopted))
@@ -454,7 +458,7 @@ def part_b(args, reachable, ready):
 
 # -- Part C: the finished asset ---------------------------------------------------------------------
 def part_c(args, reachable, ready):
-    section("C. The finished asset from an occupancy grid, through the G3 checks it inherits")
+    section("C. The finished asset from an occupancy grid, through the asset checks it inherits")
     if not (reachable and ready):
         print("[SKIP] part C needs a server with the Omni pack and its weights")
         return
@@ -490,7 +494,7 @@ def part_c(args, reachable, ready):
                                             "control_mode": "voxel"},
                                    "simplified_mesh": simp, "textured_mesh": tex})
     note("turns to undo per staged file", str(exports))
-    g4c.empty_scene()
+    control_gate.empty_scene()
     report = gen_assets.finish_asset(raw, pack, kind="rocks", name=f"voxel_{kind}",
                                      height_m=height, faces=FACES, exports=exports,
                                      simplify_pass=simp, texture_pass=tex)
@@ -513,7 +517,7 @@ def part_c(args, reachable, ready):
           str(materials.master_type(final.active_material)))
     note("bake_rescale", str(report.get("bake_rescale")))
     normal = (report.get("maps") or {}).get("normal")
-    detail = g3.neighbour_detail(normal) if normal else 0.0
+    detail = assets_gate.neighbour_detail(normal) if normal else 0.0
     check("the baked normal carries detail", detail > 0.001,
           f"mean absolute neighbour difference {detail:.5f}"
           + ("" if normal else ", and no normal map was written"))
@@ -534,7 +538,7 @@ def part_c(args, reachable, ready):
 
 
 def _score_finished(obj, proxy_points):
-    return g4c.fixed_agreement(proxy_points, g4c.mesh_points(obj, seed=2))
+    return control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(obj, seed=2))
 
 
 # -- Part D: transport -------------------------------------------------------------------------------
@@ -546,7 +550,8 @@ def part_d(args, reachable, ready):
     kind = "rock"
     block = _prepare(kind)
 
-    # ONE variable, the G8 pattern: `omni_model_dir` is derived from `comfy_dir` too, so forcing the
+    # ONE variable, the bbox gate's pattern: `omni_model_dir` is derived from `comfy_dir` too, so
+    # forcing the
     # folder away without holding the weights unbinds them as well and the wrapper starts a 13.5 GB
     # download inside a loader that `/interrupt` does not reach.
     weights = comfy.omni_model_dir()
@@ -583,12 +588,12 @@ def main():
     parser.add_argument("--no-gen", action="store_true",
                         help="score the cache only, generate nothing")
     parser.add_argument("--no-bbox", action="store_true",
-                        help="drop the mesh_geom_bbox column, which G8 already measured")
+                        help="drop the mesh_geom_bbox column, which the bbox gate already measured")
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     args = parser.parse_args(argv)
     os.makedirs(GEN, exist_ok=True)
 
-    section("G9: Omni's voxel control mode, and the close of D12")
+    section("verdict: Omni's voxel control mode, and the control ordering")
     ok, detail = comfy.reachable()
     note("ComfyUI", detail if ok else f"not reachable ({detail[:70]})")
     checkout = os.environ.get("BOB_COMFY_DIR", os.path.expanduser("~/dev/ComfyUI"))

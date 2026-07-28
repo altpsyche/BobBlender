@@ -5,27 +5,27 @@ submodule, and it reuses the numpy that `core/heightfields` already depends on. 
 bpy-free and imports nothing but the stdlib and numpy, so the venv, the headless scripts, and a
 future MCP tool all drive the same code.
 
-G2 derives five maps from one albedo, all from a single shared relief field so they agree with
+The variants gate derives five maps from one albedo, all from a single shared relief field so they agree with
 each other instead of each re-deriving the surface:
 
     basecolor  the generation, untouched
     height     a wrap-safe high-pass of the luminance (the relief field, recentred on 0.5)
     normal     the relief field's gradient, OpenGL convention, unit length
     ao         multi-scale occlusion of the relief field; the sampler folds this into the albedo
-    roughness  local-contrast, percentile-stretched, NOT the G1 global band
+    roughness  local-contrast, percentile-stretched, NOT the first spike global band
 
 `cavity_from()` is a signal rather than a written map: the roughness consumes it in memory and no
 master reads a cavity file, so writing one would be work nothing loads. Metallic is skipped (no
 shipped set has one and
 nature surfaces are dielectric). The normal map IS written even though neither master carries a
-normal socket today (S3 drives relief from a bump instead, see core/materials/texset.py): it is
+normal socket today (BobFirmament drives relief from a bump instead, see core/materials/texset.py): it is
 part of the texture-set contract and track B needs it, and an unread file costs 0.1 s.
 
-G5 added one derivation that is not part of a texture set: `macro_field` / `macro_from`, the terrain
+The macro-mask gate added one derivation that is not part of a texture set: `macro_field` / `macro_from`, the terrain
 macro mask (track E). It reuses the luminance and the box blur the five maps already share and takes
 the LOW side of the same cutoff, which is why track E needed no module of its own.
 
-F3 (BobFoliage) added two more that are not derivations at all. `grain_report` MEASURES the dominant
+BobFoliage added two more that are not derivations at all. `grain_report` MEASURES the dominant
 gradient axis, because bark needs a direction and `seam_report` only measures continuity. And the
 `orient_sprite` / `place_sprite` / `atlas_compose` / `atlas_cells` group composes a leaf atlas out of
 one generated sprite per cell, because a diffusion model asked for a 2x2 grid returns five sprays in
@@ -44,7 +44,7 @@ import zlib
 import numpy as np
 
 # Rec.709 luma. The albedo is sRGB-encoded and stays that way: these are crude perceptual
-# derivations, not a linear-light computation, and G2 is where that distinction starts to matter.
+# derivations, not a linear-light computation, and the variants gate is where that distinction starts to matter.
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 # Roughness band. A raw 1-minus-luminance puts a bright sand at 0.1 roughness, which reads as wet
@@ -52,7 +52,7 @@ _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 ROUGHNESS_RANGE = (0.35, 0.95)
 
 # How much of the roughness signal is the GLOBAL inverse luminance and how much is the LOCAL
-# deviation from it. G1 was 1.0 global, which is why a bright albedo parked the whole map at the
+# deviation from it. The first spike was 1.0 global, which is why a bright albedo parked the whole map at the
 # top of the band (measured 117-242, mean 206). Mostly-local means a pale stone and a dark stone
 # both get the full band, and the variation follows the surface rather than the paint.
 ROUGHNESS_GLOBAL = 0.35
@@ -68,7 +68,7 @@ CAVITY_FRACTION = 1.0 / 128.0
 # The macro mask (track E) is the SAME split read from the other side: keep the low frequency and
 # throw the detail away. A twelfth of the image is the coarsest cutoff that still resolves a
 # separate massif and a separate basin in one frame; anything finer starts handing the erosion stack
-# structure it would rather generate itself (R7).
+# structure it would rather generate itself (the bit-depth floor).
 MACRO_LOWPASS_FRACTION = 1.0 / 12.0
 
 # Percentiles the macro mask is stretched between. Not 0 and 100: one blown-out highlight in the
@@ -84,7 +84,7 @@ AO_FRACTIONS = (1.0 / 6.0, 1.0 / 16.0, 1.0 / 48.0)
 
 # How dark full occlusion goes. Deliberately shy of black: the terrain sampler multiplies this
 # straight into the albedo (core/materials/texset.py), so an over-confident AO darkens a material
-# in a way that is worse than no AO, which is exactly why G1 shipped none.
+# in a way that is worse than no AO, which is exactly why the first spike shipped none.
 AO_STRENGTH = 0.6
 
 # Normal-map slope gain. The relief field is already normalised to -0.5..0.5, so this is a look
@@ -236,7 +236,7 @@ def _normalise(signed, percentile=99.0):
 
     Floored at one 8-bit step: on a flat or very smooth albedo the field is float rounding noise,
     and normalising by its own percentile would amplify that noise to full range. With the floor,
-    no real relief means zero, which is the honest answer. (Found by a G1 unit test, not by eye.)
+    no real relief means zero, which is the honest answer. (Found by a the first spike unit test, not by eye.)
     """
     scale = max(float(np.percentile(np.abs(signed), percentile)), 1.0 / 255.0)
     return np.clip(signed / (2.0 * scale), -0.5, 0.5)
@@ -276,7 +276,7 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
     0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering where
     0 is the basin floor and 1 is the highest ground, not as a signed displacement.
 
-    It is a MASK, not a heightfield (R7): every real slope, drainage line and rill comes from the
+    It is a MASK, not a heightfield (the bit-depth floor): every real slope, drainage line and rill comes from the
     erosion stack afterwards. `MACRO_LOWPASS_FRACTION` is the whole claim, in one number -- a
     twelfth of the image, so nothing finer than a massif survives to compete with the erosion.
     """
@@ -292,9 +292,9 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
 
 
 def macro_from(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False):
-    """`macro_field` as the 8-bit PNG the terrain op stack reads. 8 bits on purpose, per R7: 256
+    """`macro_field` as the 8-bit PNG the terrain op stack reads. 8 bits on purpose, per the bit-depth floor: 256
     levels of a mask that is about to be blurred and eroded is not the same claim as 256 levels of
-    a heightfield, and G5 measures the difference rather than asserting it."""
+    a heightfield, and the macro-mask gate measures the difference rather than asserting it."""
     return _to_u8(macro_field(rgb, fraction, wrap))
 
 
@@ -343,7 +343,7 @@ def roughness_from(rgb, band=ROUGHNESS_RANGE, fraction=ROUGHNESS_LOCAL_FRACTION,
                    global_weight=ROUGHNESS_GLOBAL, cavity=None):
     """Roughness from local contrast, percentile-stretched into the band.
 
-    G1's version was a global remap of the inverse luminance, and it had one measurable defect:
+    The first spike's version was a global remap of the inverse luminance, and it had one measurable defect:
     on a bright albedo every pixel lands near the top of the band, so the map reads "rough
     everywhere, very slightly less so on the bright bits" (measured 117-242 of 255, mean 206).
 
@@ -423,7 +423,7 @@ def _blend_axis(array, pad):
     # core's FIRST `pad` rows. Fading from that copy into this one puts the continuous join on the
     # wrap line and pushes the discontinuity into the middle of the band, where the ramp absorbs
     # it -- the offset-blend trick, but between two renders of the same content rather than
-    # between unrelated pixels, which is why it costs far less contrast than the G1 measurement of
+    # between unrelated pixels, which is why it costs far less contrast than the first spike measurement of
     # the WAS blend did.
     alt = array[array.shape[0] - pad:].astype(np.float32)
     ramp = np.linspace(0.0, 1.0, pad, endpoint=False, dtype=np.float32)
@@ -474,10 +474,10 @@ def seam_report(array):
             "ratio": (seam / interior) if interior else float("inf")}
 
 
-# -- Grain direction (BobFoliage F3: bark) ---------------------------------------------------
+# -- Grain direction (BobFoliage: bark) ------------------------------------------------------
 # `seam_report` measures CONTINUITY across the wrap and says nothing about DIRECTION, which is the
 # property bark actually needs: grain runs along the trunk, and a tileable SDXL pass has no reason
-# to keep an axis. Measured at F3, the two failures are different and only one of them is caught by
+# to keep an axis. Measured: the two failures are different and only one of them is caught by
 # an intensity measure:
 #
 #   "rough conifer bark" (no clause)      grain 83.8 deg off vertical, coherence 0.487
@@ -557,13 +557,13 @@ def axis_spread(angles):
     return float(np.degrees(np.sqrt(max(0.0, -2.0 * np.log(max(r, 1e-9))))) / 2.0)
 
 
-# -- Leaf atlases (BobFoliage F3) ------------------------------------------------------------
+# -- Leaf atlases (BobFoliage) ---------------------------------------------------------------
 # A card reads ONE CELL of an atlas, so an atlas has two properties a texture set does not: every
 # cell must carry a sprite (an empty cell is a card that renders as nothing), and each sprite must
 # grow from its cell's BOTTOM EDGE, because the card's v is 0 at the twig it hangs from
 # (docs/FOLIAGE.md 2.3, 4.4).
 #
-# **SDXL cannot be asked for a grid.** Measured at F3 with a 2x2 grid-layout prompt through `mesh_subject`: the
+# **SDXL cannot be asked for a grid.** Measured with a 2x2 grid-layout prompt through `mesh_subject`: the
 # result was FIVE sprays arranged in a ring, straddling the cell boundaries, each pointing a
 # different way and none touching a cell's bottom edge. Per-cell coverage passed (8 to 11% opaque in
 # every quadrant) and the atlas was still unusable, which is exactly the "tree-shaped is not right"

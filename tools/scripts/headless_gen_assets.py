@@ -1,4 +1,4 @@
-"""Headless measurement of the G3 gate (docs/COMFYUI.md).
+"""Headless measurement: prompt to a scattered, shaded, correctly scaled asset (docs/GENERATION.md).
 
 Measures rather than asserts, except where the gate names an assertion. What it covers, in gate
 order:
@@ -14,10 +14,10 @@ order:
      UV and Quadriflow + Smart UV, on the same five meshes
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_comfy_g3.py [-- --keep --ab-only --assets N]
+        --python tools/scripts/headless_gen_assets.py [-- --keep --ab-only --assets N]
 
 Reachability-gated for the server half and always-run for the rest, the same shape
-`headless_comfy_g2.py` uses, because "ComfyUI is never required" is itself under test. Exit 0 =
+`headless_gen_variants_maps.py` uses, because "ComfyUI is never required" is itself under test. Exit 0 =
 nothing failed.
 
 Generation is cached between runs in `_generated/comfy_g3_check/gen/`: a raw GLB that is already
@@ -64,7 +64,7 @@ SUBJECTS = [
      "prompt": "a single pine cone"},
 ]
 
-# What counts as a genuinely open, genuinely thin surface. Both numbers come from G0.5's leaf
+# What counts as a genuinely open, genuinely thin surface. Both numbers come from the leaf
 # measurement, which is the case TRELLIS.2 exists to handle and Hunyuan structurally cannot.
 OPEN_BOUNDARY_EDGES = 500
 THIN_AXIS_RATIO = 0.25
@@ -256,7 +256,7 @@ def assert_finished(entry, report):
     key = entry["key"]
     budget = gen_assets.DEFAULT_FACES
     faces = report["lod_faces"][0]
-    # The budget is delivered by `Trellis2Simplify` on the server, and D6 measured that Blender
+    # The budget is delivered by `Trellis2Simplify` on the server, and it was measured that Blender
     # Decimate cannot reach it on a generated mesh at all. So on the no-server cached path this is
     # not a Bob property to assert: it asserts the server. Skip it there, the same way the
     # near-constant texture check below skips when no textured GLB was produced. Asserting it
@@ -264,7 +264,7 @@ def assert_finished(entry, report):
     # opposite of the "ComfyUI is never required" property this suite exists to demonstrate.
     if report.get("simplify_source") == "decimate":
         note("SKIP", f"{key}: face budget needs the server's simplify; "
-                     f"{faces} faces off the local decimate fallback (D6)")
+                     f"{faces} faces off the local decimate fallback")
     else:
         check(f"{key}: face count within budget",
               faces <= budget * 1.1,
@@ -285,7 +285,8 @@ def assert_finished(entry, report):
     if "normal" in report["maps"]:
         mean, std, lo, hi = image_stats(report["maps"]["normal"])
         # NOT std: a perfectly flat tangent-space normal is (0.5, 0.5, 1.0), whose channel spread
-        # gives std 0.2357, so the "not flat" check this gate shipped with could not fail. G7 found
+        # gives std 0.2357, so the "not flat" check this gate shipped with could not fail. The geometry
+    # A/B found
         # that on a route whose bake really did write a flat map. The honest measure is the mean
         # absolute neighbour difference, which is 0.0 on a constant image by construction.
         detail = neighbour_detail(report["maps"]["normal"])

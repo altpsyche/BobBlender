@@ -11,7 +11,7 @@ survives Blender's threading model rather than the one that looks concurrent:
                place bpy is touched
     clear()    load_post: in-flight jobs are cancelled server-side and their callbacks dropped
 
-One worker, not a pool, because 16 GB of VRAM makes the server sequential anyway (R8): a second
+One worker, not a pool, because 16 GB of VRAM makes the server sequential anyway (the VRAM-floor rule): a second
 concurrent job would queue behind the first inside ComfyUI and buy nothing but two ways to be
 half-finished when the file changes.
 
@@ -157,7 +157,7 @@ def cancel(job_id):
 
 
 def clear(cancel_running=True):
-    """Drop the registry, cancelling anything in flight (R15).
+    """Drop the registry, cancelling anything in flight (the threading rule).
 
     Called from `load_post`: a job that finished against the previous file must not run its
     callback against the new one, so the callbacks go with the registry and any result that
@@ -258,7 +258,7 @@ def register():
     """Install the load_post handler. Called by the addon's register().
 
     The handler has to be `@persistent`: a plain load_post handler is itself removed by the file
-    load, so the one load it would survive to see is the only one it must not miss (R15).
+    load, so the one load it would survive to see is the only one it must not miss (the threading rule).
     """
     global _on_load
     import bpy

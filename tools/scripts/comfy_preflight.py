@@ -1,6 +1,6 @@
 """Preflight every shipped workflow against a ComfyUI server (docs/COMFYUI.md, Testing).
 
-The check that keeps local-only true over time rather than by intention (R18): a graph pasted in
+The check that keeps local-only true over time rather than by intention: a graph pasted in
 from a community workflow can reach for a `comfy_api_nodes` class by accident, and the only place
 that gets caught for free is here. It also catches the failure that actually happens on a fresh
 machine, which is a model nobody downloaded.

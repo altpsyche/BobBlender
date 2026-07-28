@@ -1,4 +1,4 @@
-"""Headless measurement of the G4c gate (docs/COMFYUI.md): Omni, `mesh_geom_ctrl`, and `export_control`.
+"""Headless measurement: Omni, `mesh_geom_ctrl` and `export_control` (docs/GENERATION.md).
 
 The question the phase exists to answer is narrow and it is not "does it generate": it is **does a
 block-out proxy still recognisably own the result**. So every figure here is scored against the
@@ -11,17 +11,17 @@ does not fit the layout.
      and it is cheap enough to run every time.
   B. **`mesh_geom_ctrl` against `mesh_geom_mv_trellis` on the same block-outs.** Three proxies, one of them asymmetric front-to-back,
      each conditioning Omni on its shape (`mesh_geom_ctrl`) and TRELLIS.2 on four Blender-rendered views of it
-     (`mesh_geom_mv_trellis`, the measured baseline from G4). Scored WITHOUT the rotation search: voxel IoU, Chamfer,
+     (`mesh_geom_mv_trellis`, the multi-view baseline). Scored WITHOUT the rotation search: voxel IoU, Chamfer,
      the XY-projected footprint IoU that is what "drops into a layout" actually means, and the bbox
      aspect ratio against the proxy's. Wall clock and per-process VRAM beside each.
-  C. **Does the finished asset still pass the checks it inherits from G3?** One block-out through
+  C. **Does the finished asset still pass the checks it inherits from the asset gate?** One block-out through
      `mesh_geom_ctrl`, `mesh_simplify_uv` and `mesh_texture` and then all of steps 6 to 8: face budget, UV overlap, height, origin, LODs,
      BobShader.
-  D. **Can the Omni wrapper share a session with SDXL?** The card is 16.3 GB and G4 measured the
+  D. **Can the Omni wrapper share a session with SDXL?** The card is 16.3 GB and the stylise gate measured the
      stylise route peaking at 14.2 of it, so this is a residency question with a yes or no answer.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
-        --python tools/scripts/headless_comfy_g4c.py -- [--part a,b,c,d] [--fresh] [--no-baseline]
+        --python tools/scripts/headless_gen_blockout_control.py -- [--part a,b,c,d] [--fresh] [--no-baseline]
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0, which is itself the check that no wrapper is ever required. Generated
@@ -90,7 +90,7 @@ def empty_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-# -- VRAM, per process and summed over the ComfyUI family (the G3b rule) -------------------------
+# -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
 _OURS = {os.getpid()}
 
 
@@ -115,7 +115,7 @@ def _gpu_sample():
 class Vram:
     """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
     with the RISE over this stage's own baseline reported beside the absolute peak. Same class as the
-    G3b and G4 gates, because the numbers have to be comparable with theirs."""
+    one-shot-against-staged and stylise gates, because the numbers have to be comparable with theirs."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -159,7 +159,7 @@ class Vram:
 def mesh_points(obj, count=SAMPLES, seed=0):
     """Area-weighted surface samples, centred and divided by ONE scale so the aspect ratio survives.
 
-    The single scale matters here in a way it did not at G4: a footprint comparison is a comparison
+    The single scale matters here in a way it did not for the stylise gate: a footprint comparison is a comparison
     of proportions, so normalising per axis would erase exactly what is being measured.
     """
     mesh = obj.data
@@ -226,11 +226,11 @@ def extents(points):
 
 
 def fixed_agreement(proxy_points, candidate_points, grid=GRID):
-    """Every G4c figure for one candidate, scored where the candidate LANDED.
+    """Every figure for one candidate, scored where the candidate LANDED.
 
-    No rotation search, and that is the whole methodological difference from G4's `shape_agreement`.
-    G4 was asking whether a model had understood a shape, so the exporter's frame was noise to be
-    searched out. G4c is asking whether the result can be dropped into a composed layout, and a
+    No rotation search, and that is the whole methodological difference from `shape_agreement`.
+    That was asking whether a model had understood a shape, so the exporter's frame was noise to be
+    searched out. This is asking whether the result can be dropped into a composed layout, and a
     result that needs turning first cannot be, so the orientation is part of the answer.
     """
     proxy_extent = extents(proxy_points)
@@ -587,9 +587,9 @@ def part_b(args, reachable, ready):
                   sort_keys=True, default=str)
 
 
-# -- Part C: the finished asset, through the checks it inherits from G3 ---------------------------
+# -- Part C: the finished asset, through the checks it inherits from the asset gate ----------------
 def part_c(args, reachable, ready):
-    section("C. The finished asset from a block-out, through the G3 checks it inherits")
+    section("C. The finished asset from a block-out, through the asset checks it inherits")
     if not reachable or not ready:
         print("[SKIP] part C needs a server with the Omni pack and its weights")
         return
@@ -717,7 +717,7 @@ def part_d(args, reachable, ready):
           f"peak {shared['comfy_peak']} MiB of a 16,303 MiB card, rise {shared['rise']}, "
           f"{info['seconds']:.1f} s")
 
-    # The question the other way round, and it is the one that bites: G4 measured the stylise route
+    # The question the other way round, and it is the one that bites: the stylise gate measured that route
     # peaking at 14,194 MiB, and Omni's ~7 to 8 GB cannot be evicted by ComfyUI's model management
     # because the wrapper caches its pipeline in a module-level dict. `POST /free` cannot reach it.
     comfy.free()
@@ -745,7 +745,7 @@ def part_d(args, reachable, ready):
         note("VERDICT on sharing a session",
              f"the stylise route survives with Omni resident: peak {stylise['comfy_peak']} MiB of "
              f"16,303, rise {stylise['rise']} into the {16303 - held} MiB Omni left free, "
-             f"{stylise['seconds']:.1f} s against G4's 10.3 to 10.8 s and 14,194 MiB measured alone")
+             f"{stylise['seconds']:.1f} s against 10.3 to 10.8 s and 14,194 MiB measured alone")
     _stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "resident": True,
                                          "held_after_free": held, "stylise": stylise,
                                          "stylise_error": stylise_error})

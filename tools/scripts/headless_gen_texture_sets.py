@@ -1,4 +1,4 @@
-"""Headless check for the G1 spike: prompt to a rendered terrain layer (docs/COMFYUI.md).
+"""Headless check: prompt to a rendered terrain layer (docs/GENERATION.md).
 
 Measures the gate rather than asserting it. Generates one seamless set through ComfyUI, writes it
 into a throwaway generated pack, proves it resolves through the same `assets.texture_set_maps()`
@@ -6,7 +6,7 @@ the picker uses, assigns it to a terrain layer, renders in EEVEE, and reports th
 across generation, map derivation, write, and apply plus render.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_comfy_texset.py
+        --python tools/scripts/headless_gen_texture_sets.py
 
 The generation half needs a live server, so it is gated on reachability and SKIPS cleanly when
 there is none: no server means nothing else in the suite behaves differently, which is the
@@ -151,7 +151,7 @@ def main():
     print(f"      apply to the terrain layer         {apply_s:6.2f} s")
     print(f"      EEVEE render                       {render_s:6.2f} s")
     print(f"      TOTAL                              {total:6.2f} s")
-    check("G1 gate: prompt to rendered layer under 60 s", total < 60.0, f"{total:.2f} s")
+    check("prompt to rendered layer under 60 s", total < 60.0, f"{total:.2f} s")
 
     print()
     if FAILURES:

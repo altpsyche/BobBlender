@@ -9,7 +9,7 @@ check keeps every intra-package import relative.
 
 Banned top-level names (absolute import of any of these from inside the package):
   - bob_blender_tools : the package importing itself by absolute path
-  - bbmcp             : the dead pre-rename alias (removed at P1)
+  - bbmcp             : the dead pre-rename alias, gone from the tree and kept banned here
 
 Usage:
   python tools/scripts/check_selfimports.py [package_dir]

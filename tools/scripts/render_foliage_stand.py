@@ -1,4 +1,4 @@
-"""The F5 stand shot: BobFoliage conifers scattered on a terrain, framed like the redwood run.
+"""The stand shot: BobFoliage conifers scattered on a terrain, framed like a whole-scene run.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/render_foliage_stand.py -- [--samples 32] [--width 1280]
@@ -43,7 +43,7 @@ def main(argv):
     args = ap.parse_args(argv)
 
     # The repo's generated pack, on the search path. The shipped species name a generated bark set and
-    # a generated leaf atlas (F6), and this addon is imported rather than registered, so without this
+    # a generated leaf atlas, and this addon is imported rather than registered, so without this
     # the stand is grown with the block-out fallbacks and the shot is about the wrong thing.
     pack = os.path.join(REPO, "packs", "generated")
     if os.path.isdir(pack):

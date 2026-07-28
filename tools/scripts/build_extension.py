@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build the BobBlenderTools extension zip (P6).
+"""Build the BobBlenderTools extension zip.
 
 Stamps the manifest version (optional), validates the manifest, then runs Blender's extension
 builder to produce `bob_blender_tools-<version>.zip`. The extension folder is already the whole
-product (P0-P2) and the terrain compute is committed inside it (P4), so there is nothing to
+product, and the terrain compute is committed inside it rather than copied from a venv, so there is
+nothing to
 vendor -- this just validates and zips.
 
 Usage:

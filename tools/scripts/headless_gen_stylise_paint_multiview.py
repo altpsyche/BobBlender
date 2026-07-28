@@ -1,4 +1,5 @@
-"""Headless measurement of the G4 gate (docs/COMFYUI.md): tracks D, B-stylised, and multi-view.
+"""Headless measurement: look-dev stylise, the stylised paint route, and multi-view conditioning
+(docs/GENERATION.md).
 
 Four questions, each answered with a number rather than a screenshot:
 
@@ -22,7 +23,7 @@ Four questions, each answered with a number rather than a screenshot:
      voxel IoU and Chamfer distance, whole and BACK HALF only.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
-        --python tools/scripts/headless_comfy_g4.py -- [--part a,b,c] [--fresh] [--views 6]
+        --python tools/scripts/headless_gen_stylise_paint_multiview.py -- [--part a,b,c] [--fresh] [--views 6]
 
 Reachability-gated: with no server it prints SKIP for the generation half and exits 0, which is
 itself the check that ComfyUI is never required. Every generated file is cached under
@@ -85,7 +86,7 @@ def empty_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-# -- VRAM, per process and summed over the ComfyUI family (the G3b rule) -------------------------
+# -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
 _OURS = {os.getpid()}
 
 
@@ -108,7 +109,7 @@ def _gpu_sample():
 
 
 class Vram:
-    """Peak VRAM across a job, sampled from a thread. Copied from `headless_comfy_g3b.py`, because
+    """Peak VRAM across a job, sampled from a thread. Copied from `headless_gen_oneshot_vs_staged.py`, because
     the rule it encodes is the point: read PER PROCESS and sum over the ComfyUI family, and report
     the RISE over the stage's own baseline as well as the absolute peak, which is order-dependent
     (`mesh_subject` and `stylize_render` both leave SDXL resident at roughly 6.6 GB)."""
@@ -383,7 +384,8 @@ def _sun_and_world(scene, strength=3.0):
 def build_render_scene():
     """A small Bob-shaped scene: a displaced ground, a few props, a camera and a sun.
 
-    Real generated assets when a G3b run has left them on disk, primitives otherwise, so the test
+    Real generated assets when an earlier one-shot-against-staged run has left them on disk, and
+    primitives otherwise, so the test
     works on a fresh clone and gets better on a machine that has already generated.
     """
     empty_scene()
@@ -561,7 +563,7 @@ def normal_convention(args):
 
     A sphere is the one shape whose normal map is unambiguous: red has to rise left to right, green
     bottom to top, and blue has to saturate in the middle where the surface faces the camera. This
-    is a better test than correlating against NormalBAE, which the first G4 run showed can pick the
+    is a better test than correlating against NormalBAE, which was measured to pick the
     WRONG sign on a scene whose channels barely vary (a mostly flat ground gave an argmin that would
     have encoded a front-facing surface as black).
     """
@@ -807,7 +809,7 @@ def part_b(args, reachable):
                                   f"{lora_delta:.1f} of 255 on the front view, at denoise "
                                   f"{comfy.PAINT_DENOISE} under both ControlNets and the IPAdapter")
     # The mechanism, separated from the setting. At paint denoise the render dominates by design
-    # (R20), so a small delta there says the route is working as specified rather than that the LoRA
+    # band, so a small delta there says the route is working as specified rather than that the LoRA
     # is not wired. This pair says whether it is wired at all.
     free_delta = None
     if lora:

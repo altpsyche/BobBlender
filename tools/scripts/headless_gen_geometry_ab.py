@@ -1,4 +1,4 @@
-"""Headless measurement of the G7 gate (docs/COMFYUI.md): the geometry A/B, decided once.
+"""Headless measurement: the geometry A/B, decided once (docs/GENERATION.md).
 
 TRELLIS.2 (`mesh_geom_texture`, the shipped one-shot route) against Hunyuan3D 2.1 (`mesh_geom_alt` then `mesh_process` then `mesh_texture`) on ten
 fixed prompts, three of them foliage, with ONE shared `mesh_subject` subject image per prompt so the grid
@@ -6,7 +6,7 @@ compares geometry models rather than reference images. The deliverable is a verd
 rather than a global winner, because the two differ structurally and not by degree.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_comfy_g7.py [-- --part a,b,c,d --prompts N --no-gen]
+        --python tools/scripts/headless_gen_geometry_ab.py [-- --part a,b,c,d --prompts N --no-gen]
 
 Four parts, because they cost very different amounts of GPU time:
 
@@ -17,9 +17,10 @@ Four parts, because they cost very different amounts of GPU time:
      is attributable, with wall clock, per-process peak VRAM sampled from a thread, face count,
      boundary edges AFTER A WELD, thinnest/longest axis ratio, UV overlap, chart coverage and the
      in-chart albedo std that catches the black-albedo trap.
-  C  three of the ten through steps 6 to 8 on BOTH models, against the G3 asset checks.
-  D  D11: does the dense mesh buy measurable normal detail now that G4c fixed the bake alignment?
-     Re-measured on the same assets G3b used, from the G3b cache, so it costs no GPU at all.
+  C  three of the ten through steps 6 to 8 on BOTH models, against the asset checks.
+  D  the dense-mesh question: does the dense mesh buy measurable normal detail now that the bake
+     alignment is fixed?
+     Re-measured on the same assets the route A/B used, from the route A/B's cache, so it costs no GPU at all.
 
 Every generated mesh caches WITH its timing and its VRAM under `_generated/comfy_g7_check/gen/`,
 so `--no-gen` re-scores in minutes and `--fresh` regenerates. Reachability-gated: with no server
@@ -48,17 +49,17 @@ OUT = os.path.join(REPO, "_generated", "comfy_g7_check")
 GEN = os.path.join(OUT, "gen")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
-# G3b's cache, which is where the shared subject images and D11's four assets come from.
+# The route A/B's cache, which is where the shared subject images and the dense-mesh question's four assets come from.
 G3B = os.path.join(REPO, "_generated", "comfy_g3b_check", "gen")
 
 FACES = gen_assets.DEFAULT_FACES
 TEXTURE_SIZE = 1024
 CARD_MIB = 16303
 # A texture whose in-chart standard deviation is below this is the black-albedo trap rather than a
-# flat-looking asset (G3's floor, kept so the two phases' numbers mean the same thing).
+# flat-looking asset (the asset gate's floor, kept so both gates' numbers mean the same thing).
 ALBEDO_FLOOR = 0.02
 
-# The same ten prompts, seeds and heights G3b used, so the TRELLIS.2 column here is comparable with
+# The same ten prompts, seeds and heights the route A/B used, so the TRELLIS.2 column here is comparable with
 # that table and the shared subject images are already on disk. Three of the ten are foliage, which
 # is where the two models differ structurally rather than by degree.
 SUBJECTS = [
@@ -86,7 +87,7 @@ SUBJECTS = [
 ]
 
 MODELS = ("trellis", "hunyuan")
-# D11's four, which are exactly the four G3b took through steps 6 to 8.
+# The dense-mesh question's four, which are exactly the four the route A/B took through steps 6 to 8.
 D11_KEYS = ("boulder", "fern", "leaf", "stump")
 
 
@@ -122,7 +123,7 @@ def foliage(subject):
 # -- VRAM ---------------------------------------------------------------------------------------
 # Per process and summed over the ComfyUI FAMILY, because comfy-env runs each isolated pack in its
 # own process: the main server, the TRELLIS2 pixi worker and the GeometryPack pixi worker each hold
-# their own allocation and only their sum answers "does it fit". Same sampler G3b and G4 used.
+# their own allocation and only their sum answers "does it fit". Same sampler the route A/B and the stylise gate used.
 _OURS = {os.getpid()}
 
 
@@ -243,8 +244,8 @@ def new_entry(subject):
 def stage_subject(entry, fresh, reachable):
     """The ONE reference image both models are conditioned on.
 
-    Reused from the G3b cache when it is there, which is not a shortcut: it is the same prompt at
-    the same seed, and it makes the TRELLIS.2 column here directly comparable with G3b's one-shot
+    Reused from the route A/B's cache when it is there, which is not a shortcut: it is the same prompt at
+    the same seed, and it makes the TRELLIS.2 column here directly comparable with the route A/B's one-shot
     column rather than merely similar.
     """
     png = entry["paths"]["subject"]
@@ -354,7 +355,7 @@ def texture_report(obj):
 def mesh_report(path):
     """Everything the grid asks of one cell's returned GLB, measured in Blender.
 
-    Boundary edges are counted AFTER a weld, per G3's correction: the glTF importer splits vertices
+    Boundary edges are counted AFTER a weld, per the asset gate's correction: the glTF importer splits vertices
     per corner, so an unwelded count is a statement about the file format and not about the surface.
     """
     empty_scene()
@@ -376,7 +377,7 @@ def normal_stats(path):
     """(std, detail) of a baked tangent-space normal map.
 
     `std` cannot tell transferred detail from a shading difference, so `detail` is the mean absolute
-    neighbour difference, which is high frequency by construction. This is the pair D11 turns on.
+    neighbour difference, which is high frequency by construction. This is the pair the dense-mesh question turns on.
     """
     img = bpy.data.images.load(path, check_existing=False)
     px = np.empty(len(img.pixels), dtype=np.float32)
@@ -405,7 +406,7 @@ def staged_for(entry, model):
 
 
 def finish_cell(entry, model):
-    """One cell through steps 6 to 8, with the G4c export alignment applied."""
+    """One cell through steps 6 to 8, with the control gate's export alignment applied."""
     empty_scene()
     staged = staged_for(entry, model)
     simplify_pass, texture_pass = comfy.finish_passes(staged)
@@ -436,7 +437,7 @@ def part_a():
               f"{len(graph)} nodes, derived from {(prov.get('derived_from') or '')[:48]}")
 
     section("A. the route is a value, in one place")
-    check("asset_chain knows three chains and defaults to the G3b winner",
+    check("asset_chain knows three chains and defaults to the route A/B's winner",
           comfy.DEFAULT_ASSET_ROUTE == "oneshot"
           and set(comfy.ASSET_ROUTES) == {"oneshot", "staged", "alt"}
           and comfy.asset_chain() is comfy.generate_asset_oneshot,
@@ -569,7 +570,7 @@ def black_albedo_report(entries, cells):
     The asymmetry is deliberate rather than convenient. "The default route never returns a black
     texture" is an invariant `mesh_geom_texture` holds structurally, because it never re-encodes a mesh, so a failure
     there is a regression. The challenger's rate is a property of `Trellis2EncodeMesh` on a mesh it
-    did not generate, which G3b already measured at 1 in 10 on the staged route; asserting it away
+    did not generate, which the route A/B already measured at 1 in 10 on the staged route; asserting it away
     would turn a verdict input into a red suite, and asserting it holds would be asserting something
     the measurement says is false.
     """
@@ -623,18 +624,19 @@ def plate_control(entries, reachable, fresh):
 
 # -- part D: the dense mesh, re-measured through a fixed bake ------------------------------------
 def part_d(limit=len(D11_KEYS)):
-    """D11: does the dense mesh buy measurable normal detail now that the bake is aligned?
+    """The dense-mesh question: does the dense mesh buy measurable normal detail now that the bake is
+    aligned?
 
-    G3b concluded it bought none, but every `Trellis2ExportTrimesh` write turns the subject and the
+    The route A/B concluded it bought none, but every `Trellis2ExportTrimesh` write turns the subject and the
     turns accumulate, so that bake read from a cage rotated 90 or 180 degrees from its target. The
-    fix is `comfy.stage_exports`. Same four assets, same files, from the G3b cache, so the only
+    fix is `comfy.stage_exports`. Same four assets, same files, from the route A/B's cache, so the only
     variable is the alignment. Three finishes per asset:
 
       staged aligned    the dense `mesh_geom_trellis` mesh baked onto the `mesh_simplify_uv` low mesh, in one frame
-      staged as G3b ran it   the same with no `exports`, i.e. the misaligned bake
+      staged as the route A/B ran it   the same with no `exports`, i.e. the misaligned bake
       one-shot          `mesh_geom_texture`'s own mesh baked onto itself, which is the no-dense-mesh control
     """
-    section("D. the dense mesh, re-measured with the bake alignment fixed (D11)")
+    section("D. the dense mesh, re-measured with the bake alignment fixed")
     by_key = {s["key"]: s for s in SUBJECTS}
     out = {}
     for key in D11_KEYS[:limit]:
@@ -644,7 +646,7 @@ def part_d(limit=len(D11_KEYS)):
                  "tex": os.path.join(G3B, key + "_a_tex.glb"),
                  "one": os.path.join(G3B, key + "_b_tex.glb")}
         if not all(_cache(p) for p in files.values()):
-            skip(f"D11 {key}", "the G3b cache does not hold this asset")
+            skip(f"dense mesh, {key}", "the route A/B's cache does not hold this asset")
             continue
         staged = {"raw_mesh": files["raw"], "simplified_mesh": files["simp"],
                   "textured_mesh": files["tex"]}
@@ -687,8 +689,8 @@ def part_d(limit=len(D11_KEYS)):
               if r.get("staged_aligned", {}).get("normal_detail") is not None
               and r.get("oneshot", {}).get("normal_detail") is not None]
     for key, r in scored:
-        note(f"D11 {key}",
-             f"aligned detail {r['staged_aligned']['normal_detail']:.5f} against G3b's misaligned "
+        note(f"dense mesh, {key}",
+             f"aligned detail {r['staged_aligned']['normal_detail']:.5f} against the route A/B's misaligned "
              f"{r['staged_g3b']['normal_detail']:.5f} and the one-shot control's "
              f"{r['oneshot']['normal_detail']:.5f}; std "
              f"{fmt(r['staged_aligned']['normal_std'], 4)} / "
@@ -701,10 +703,10 @@ def part_d(limit=len(D11_KEYS)):
                   if r["staged_aligned"]["normal_detail"] > r["oneshot"]["normal_detail"] * 1.1]
         fixed = [k for k, r in scored
                  if r["staged_aligned"]["normal_detail"] > r["staged_g3b"]["normal_detail"] * 1.1]
-        note("D11 answer",
+        note("dense mesh, the answer",
              f"the aligned dense-mesh bake beats the one-shot control by more than 10% on "
              f"{len(better)} of {len(scored)} assets ({', '.join(better) or 'none'}), and beats "
-             f"its own misaligned G3b bake on {len(fixed)} of {len(scored)} "
+             f"its own earlier misaligned bake on {len(fixed)} of {len(scored)} "
              f"({', '.join(fixed) or 'none'})")
     return out
 
@@ -712,7 +714,7 @@ def part_d(limit=len(D11_KEYS)):
 # -- the verdict ---------------------------------------------------------------------------------
 def verdict(entries, cells, summary, finished, plate):
     """A verdict per asset class, with the losing case stated as plainly as the winning one."""
-    section("G7 verdict, per asset class")
+    section("verdict, per asset class")
     tr, hu = summary.get("trellis", {}), summary.get("hunyuan", {})
     if not tr or not hu:
         note("verdict", "not enough measured cells for a verdict")
@@ -737,7 +739,7 @@ def verdict(entries, cells, summary, finished, plate):
                         "leaner": "hunyuan" if b["peak_comfy_mib"] < a["peak_comfy_mib"]
                                   else "trellis"}
     note("block-out", "no cell here and none possible: the challenger's Hunyuan graph takes no "
-                      "control mesh, so the block-out class was decided at G4c by mesh_geom_ctrl (Omni), "
+                      "control mesh, so the block-out class was decided by the control gate in favour of mesh_geom_ctrl (Omni), "
                       "footprint IoU 0.9079 mean against mesh_geom_mv_trellis's 0.6748")
     return lines
 

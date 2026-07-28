@@ -52,7 +52,7 @@ derive 0.67, write 0.11, apply 1.33, EEVEE 0.5); 7.3 s on a cold server. Seam ra
 3.86 untreated, i.e. the wrap is as continuous as an arbitrary interior line. EEVEE luminance range
 0.6131. The `CircularVAEDecode` segfault found here shaped the graph: circular padding is applied to
 the UNet and the VAE separately. Ten corrections to the plan came out of this phase. Gate:
-`headless_comfy_texset.py`.
+`headless_gen_texture_sets.py`.
 
 ## G2
 
@@ -428,7 +428,7 @@ one-command suite exists to prevent.
   sitting mid-band on a flat one, unit-length normals that are `(128, 128, 255)` where the relief
   is flat, AO darkening a pit and leaving open surface alone, and `wrap_pad` plus
   `crop_wrap_blend` restoring tileability after a non-periodic disturbance.
-- `tools/scripts/headless_comfy_g2.py`, the G2 gate: ten generate-and-accept cycles with the drift
+- `tools/scripts/headless_gen_variants_maps.py`, the G2 gate: ten generate-and-accept cycles with the drift
   reported, the longest main-thread block during a background job measured against the blocking
   path, preflight over the shipped graphs and over five deliberately broken ones, the seam before
   and after a `tex_upres` upres, roughness contrast G1 against G2 on the same image, and the `load_post`
@@ -436,10 +436,10 @@ one-command suite exists to prevent.
   half always runs.
 - Headless track A: apply a fixture set to a terrain layer, assert image nodes are wired into the
   master's map sockets and the render is not flat. **G1 added the generated-set counterpart**,
-  `tools/scripts/headless_comfy_texset.py`: generate, resolve through `assets.texture_set_maps()`,
+  `tools/scripts/headless_gen_texture_sets.py`: generate, resolve through `assets.texture_set_maps()`,
   assign, render, and report the stage split. Gated on reachability, so with no server it prints
   SKIP and exits 0, which is itself the check that ComfyUI is never required.
-- `tools/scripts/headless_comfy_g3.py`, the G3 gate. **Shipped at G3**, and it caches its
+- `tools/scripts/headless_gen_assets.py`, the G3 gate. **Shipped at G3**, and it caches its
   generated source meshes (with their timings) under `_generated/comfy_g3_check/gen/`, so re-running
   the Blender half costs seconds instead of another 90 s per asset; `--fresh` overrides that and
   `--no-ab` / `--ab-only` split the slow half off. Reachability-gated for the server half.
@@ -456,7 +456,7 @@ one-command suite exists to prevent.
   it wildly, and `Trellis2ProcessMesh(remesh=on)` closes the surface outright. Backface culling is
   asserted (off, so a blade renders from behind); the opacity channel is measured and, since G3b,
   reports **wired** on the leaf.
-- `tools/scripts/headless_comfy_g4.py`, the G4 gate, in four parts (`--part a,b,c,d`) because they
+- `tools/scripts/headless_gen_stylise_paint_multiview.py`, the G4 gate, in four parts (`--part a,b,c,d`) because they
   cost very different amounts of GPU time. **A**: the normal convention on a sphere and the depth
   linearity against the analytic answer, then `stylize_render` against `stylize_render_est` at two denoise levels with silhouette
   IoU, edge IoU, and Depth Anything V2's reading of each output against Blender's true depth after an
@@ -468,7 +468,7 @@ one-command suite exists to prevent.
   generated file caches WITH its timing and VRAM beside it, so a rerun reports what the generating run
   measured rather than a table of zeros. Reachability-gated: with no server it prints SKIP for every
   generation half and exits 0.
-- `tools/scripts/headless_comfy_g4c.py`, the G4c gate, in four parts (`--part a,b,c,d`).
+- `tools/scripts/headless_gen_blockout_control.py`, the G4c gate, in four parts (`--part a,b,c,d`).
   **A**: `export_control`'s round trip, then the ORIENTATION convention, measured over all 24
   axis-aligned rotations on an asymmetric block-out so a mirror cannot pass for a rotation, and the
   assertion that `gen_assets.CONTROL_RETURN_TURN` undoes the exporter's turn. It needs a server but no
@@ -480,7 +480,7 @@ one-command suite exists to prevent.
   resident alongside SDXL, which on a 16.3 GB card is a real question rather than a formality.
   `--no-baseline` drops `mesh_geom_mv_trellis`, the slow half. Reachability-gated twice over: no server, or no Omni pack
   or weights, prints SKIP and exits 0.
-- `tools/scripts/headless_comfy_g5.py`, the G5 gate, in five parts (`--part a,b,c,d,e`).
+- `tools/scripts/headless_gen_terrain_macro.py`, the G5 gate, in five parts (`--part a,b,c,d,e`).
   **A**: the derivation against `relief()` on one image, the tiled and open seam ratios, the
   composition (`with_macro` demoting the preset's generator), the cache noticing an edited mask at a
   name it has already baked, and the 8-bit budget in levels and in metres. No server, always runs.
@@ -497,7 +497,7 @@ one-command suite exists to prevent.
   and part B keeps the raw generation beside each (`heightmap_macro(keep_source=True)`) because the
   8-bit claim can only be audited against the image the mask was derived from. Reachability-gated:
   with no server every generation half prints SKIP and exits 0.
-- `tools/scripts/headless_comfy_g6.py`, the G6 gate, in four parts (`--part a,b,c,d`), and the one
+- `tools/scripts/headless_gen_agent_surface.py`, the G6 gate, in four parts (`--part a,b,c,d`), and the one
   gate here that does **not** run inside Blender. It calls the real MCP tool functions in the MCP
   process and reaches Blender only through `executor.run_build`, the way an agent has to, so a wrong
   tool signature, a wrong contract model or a missing handler fails it where a `core`-level test
@@ -514,7 +514,7 @@ one-command suite exists to prevent.
 - `tools/scripts/comfy_omni_fix.py`, which is a test as much as a fix: `--check` reports whether the
   Omni control projection actually loaded and exits 1 when it did not. The G4c gate runs it, because
   it is the one failure in this integration that no graph-level check can see.
-- `tools/scripts/headless_comfy_g7.py`, the G7 gate, in four parts (`--part a,b,c,d`), inside
+- `tools/scripts/headless_gen_geometry_ab.py`, the G7 gate, in four parts (`--part a,b,c,d`), inside
   Blender. **A**: preflight over every shipped graph offline against the committed dump, the
   `api_node` assertion on the two new graphs, and the route decision as a value in one place
   (`asset_chain` over route, kind and control; `KIND_ROUTE`; `is_foliage`; `stage_exports` on the alt
@@ -531,7 +531,7 @@ one-command suite exists to prevent.
   column is directly comparable with that table, `--no-gen` re-scores and `--fresh` regenerates.
   Reachability-gated for the generation half. `--fast` is `--part a,d`, which is the whole
   no-GPU half of the gate.
-- `tools/scripts/headless_comfy_g8.py`, the G8 gate, in four parts (`--part a,b,c,d`), inside
+- `tools/scripts/headless_gen_bbox_control.py`, the G8 gate, in four parts (`--part a,b,c,d`), inside
   Blender. **A**: preflight over every shipped graph offline against the committed dump, the
   `api_node` assertion on `mesh_geom_bbox`, the control mode as a value in one place (`control_route`'s whole
   truth table, `CONTROL_WORKFLOWS`, `asset_chain` on either control form), the frame mapping checked
@@ -550,7 +550,7 @@ one-command suite exists to prevent.
   block-outs and VRAM sampler rather than copying them, so the two phases' figures are the same
   measurement. Reachability-gated twice over: no server, or no Omni pack or weights, prints SKIP and
   exits 0. `--fast` is `--part a`.
-- `tools/scripts/headless_comfy_g9.py`, the G9 gate, in four parts (`--part a,b,c,d`), inside
+- `tools/scripts/headless_gen_voxel_control.py`, the G9 gate, in four parts (`--part a,b,c,d`), inside
   Blender. **A**: preflight over every shipped graph offline against the committed dump, the
   `api_node` assertion on `mesh_geom_voxel`, the third mode as a value (`control_route`'s extended truth table
   including its REFUSAL of an unknown name, `MESH_CONTROL_MODES`, `CONTROL_WORKFLOWS`,
@@ -569,7 +569,7 @@ one-command suite exists to prevent.
   `--fresh` regenerates, `--no-bbox` drops the column G8 already measured. Imports G4c's shape maths,
   block-outs, VRAM sampler and caching and G3's normal-detail read rather than copying any of them.
   Reachability-gated twice over. `--fast` is `--part a`.
-- `tools/scripts/headless_comfy_g3b.py`, the G3b gate: ten prompts through both routes off ONE
+- `tools/scripts/headless_gen_oneshot_vs_staged.py`, the G3b gate: ten prompts through both routes off ONE
   shared `mesh_subject` subject each, with wall clock, per-process VRAM sampled from a thread at the queue
   moment and at the peak, face count, boundary edges after a weld, UV overlap, chart coverage and
   in-chart albedo and alpha statistics; then four of them through steps 6 to 8 on both routes with

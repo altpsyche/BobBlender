@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the G6 gate (docs/COMFYUI.md): the whole generation surface, driven as an agent drives it.
+"""Measure the whole generation surface, driven the way an agent drives it (docs/GENERATION.md).
 
 This is the one gate that does NOT run inside Blender, and that is the point. Every earlier gate
 imported `core` and called it; this one calls the real MCP tool functions in the MCP process and
@@ -7,13 +7,13 @@ reaches Blender only the way an agent can, through `executor.run_build`, which s
 op list. So what it measures is the agent-facing surface rather than the code behind it: if a tool's
 signature, a contract model or a handler is wrong, this fails where a `core`-level test would pass.
 
-    uv run --project tools --extra all python tools/scripts/headless_comfy_g6.py \
+    uv run --project tools --extra all python tools/scripts/headless_gen_agent_surface.py \
         [--part a,b,c,d] [--faces 4000] [--keep]
 
   A. **The contract, offline.** Every new op validated by its model, and every new op REJECTED with a
      readable sentence when given bad params (which is the half a gate usually skips). The comfy_*
      tools pointed at a dead port, so the "server not reachable" degradation is measured rather than
-     asserted. The macro key composed onto a preset-shaped params dict, which is the hazard G5
+     asserted. The macro key composed onto a preset-shaped params dict, which is the hazard the
      corrected. No server, no GPU, always runs.
   B. **Prompt to a scattered asset, no GUI.** comfy_mesh over HTTP, then ONE build carrying
      import_generated, a scatter layer, a camera and a render. The asset is INSPECTED rather than
@@ -81,7 +81,10 @@ def rel(path) -> str:
 
 
 def run_build(ops: list[dict], name: str, base: str | None = None) -> dict:
-    """One `build` through the real executor, with the op list saved beside the render (R10)."""
+    """One `build` through the real executor, with the op list saved beside the render.
+
+    That sidecar is the provenance rule: every generated artefact carries the recipe that made it.
+    """
     (OUT / f"{name}_ops.json").write_text(json.dumps(ops, indent=2, default=str))
     out_file = rel(OUT / f"{name}.blend")
     result = executor.run_build(contracts.BuildRequest(
@@ -144,7 +147,8 @@ def part_a() -> None:
     for op in ("apply_texture_set", "import_generated", "export_control"):
         check(f"{op} is in API.md", f"`{op}`" in api)
 
-    # The G5 hazard, at the level the MCP tool actually hits it: a preset's params dict arrives with
+    # The macro-mask composition hazard, at the level the MCP tool actually hits it: a preset's
+    # params dict arrives with
     # its stack ALREADY resolved, so a macro has to compose onto that stack rather than be expanded
     # from flat knobs, and it must not apply twice.
     paths.add_core_to_path()

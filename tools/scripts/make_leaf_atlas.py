@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Write the block-out leaf atlas that BobFoliage F2 instances on branch tips (docs/FOLIAGE.md).
+"""Write the block-out leaf atlas BobFoliage instances on branch tips (docs/FOLIAGE.md).
 
     uv run --project tools python tools/scripts/make_leaf_atlas.py
 
-The point of shipping a placeholder is that F2 does not block on ComfyUI: the card recipe needs an
-atlas with REAL cutout alpha to be testable at all, and F3's job is to replace the picture, not the
-plumbing. So this writes the smallest thing that exercises every property the real atlas will have:
+The point of shipping a placeholder is that the card recipe does not block on ComfyUI: it needs an
+atlas with REAL cutout alpha to be testable at all, and a generated atlas replaces the picture, not
+the plumbing. So this writes the smallest thing that exercises every property the real atlas has:
 
 - a grid of cells (2x2), because the card picks a cell from a random index and a one-cell atlas
   would let a broken pick pass,
@@ -32,7 +32,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 PACK = REPO / "blender" / "extensions" / "bob_blender_tools" / "assets"
 SET_NAME = "leaf_atlas_blockout"
 
-CELLS = 2          # 2x2. The recipe takes the grid as a param; F3 decides where it really lives.
+CELLS = 2          # 2x2. The recipe takes the grid as a param; the generated atlas sets the real one.
 CELL_PX = 256
 
 # Per-cell spray shape: (leaflet count, fan half-angle in degrees, leaflet length as a fraction of

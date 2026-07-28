@@ -1,6 +1,6 @@
 """Renders that carry their own geometry: a beauty frame plus TRUE depth and normal passes.
 
-This is the half of tracks D and B that only Blender can do (docs/COMFYUI.md, R19/R20). A depth
+This is the half of tracks D and B that only Blender can do (docs/COMFYUI.md, the retopology tier rule/the projection-route finding). A depth
 estimator guesses a relative depth from pixels; Blender already knows the metric one, and it knows
 the surface normal exactly rather than inferring it from shading. Handing ComfyUI those two passes
 is the entire reason track D exists, and `mesh_paint_views`'s per-view restyle rests on the same three files.
@@ -39,7 +39,7 @@ from mathutils import Matrix, Vector
 # Only Z needs flipping, and that is a measurement rather than a reading of the docs:
 # `ShaderNodeVectorTransform`'s WORLD-to-CAMERA gives a surface facing the camera a Z of about -1,
 # so without the flip a front-facing surface encodes as BLACK in blue. X and Y come out already
-# right. Verified on a sphere (`headless_comfy_g4.py`, part A): red rises left to right, green rises
+# right. Verified on a sphere (`headless_gen_stylise_paint_multiview.py`, part A): red rises left to right, green rises
 # bottom to top, blue saturates in the middle.
 NORMAL_FLIP = (1.0, 1.0, -1.0)
 
@@ -180,7 +180,7 @@ def camera_info(camera, resolution):
     """Everything the projection needs about one camera, as plain floats.
 
     Read from `matrix_world` AFTER a view-layer update by the caller: a matrix read straight after
-    setting `location` still describes the old transform, which is the same trap G3 hit with
+    setting `location` still describes the old transform, which is the same trap the asset gate hit with
     `bound_box`.
     """
     data = camera.data

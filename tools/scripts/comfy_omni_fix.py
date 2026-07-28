@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Make the downloaded Hunyuan3D-Omni control encoder match the installed wrapper's attribute name.
 
-The defect, measured at G4c and silent by construction. `ComfyUI-Hy3D-Omni` vendors a copy of
+The defect, measured and silent by construction. `ComfyUI-Hy3D-Omni` vendors a copy of
 Tencent's `hy3dshape` in which one attribute has been renamed: upstream's `OmniEncoder.linear`, the
 MLP that projects the Fourier-embedded control signal (point cloud, voxel, bounding box or skeleton)
 into the DiT's token stream, is spelled `self.liner` in the vendored copy. The released checkpoint

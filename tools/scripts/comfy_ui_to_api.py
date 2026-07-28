@@ -1,6 +1,7 @@
 """Convert a ComfyUI GUI-format workflow into the API format Bob's shipped graphs use.
 
-Bob's workflows are DERIVED from shipped templates rather than authored (docs/COMFYUI.md R17), and
+Bob's workflows are DERIVED from shipped templates rather than authored, so an upstream change is a
+diff rather than archaeology (docs/GENERATION.md, the derivation rule). And
 the templates ship in GUI format: a `nodes` / `links` graph carrying positions, sizes, and an
 ordered `widgets_values` list per node. The API format the `/prompt` endpoint takes is a flat
 `{node_id: {"class_type", "inputs", "_meta"}}` dict with every widget named. This script is that
@@ -9,7 +10,7 @@ conversion, so deriving a graph is a repeatable step instead of a hand-transcrip
 Widget names are NOT in the GUI file. A GUI node's `inputs` array lists only its LINK sockets
 (plus any widget the author converted into a socket, which carries a `widget` key). So the names
 come from the server's `/object_info`, in `input_order`, filtered to the widget types, with three
-rules, the second and third of which G3 had to add because the TRELLIS.2 nodes break the first:
+rules, and the second and third exist because the TRELLIS.2 nodes break the first:
 
 1. A widget declaring `control_after_generate` is followed in `widgets_values` by an extra control
    entry that has no API counterpart and is skipped.

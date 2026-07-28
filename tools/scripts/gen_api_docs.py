@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the op-vocabulary table in docs/API.md from the source of truth (P7).
+"""Generate the op-vocabulary table in docs/API.md from the source of truth.
 
 The op contract is the Pydantic models in the extension's `mcp_agent/contracts.py`; the handlers
 are the `_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types, defaults)

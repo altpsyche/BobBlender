@@ -49,7 +49,7 @@ def build_panel_presets() -> dict:
 
 
 def build_panel_stacks() -> dict:
-    """Each preset's raw op stack, so the P4 stack editor can load one to edit
+    """Each preset's raw op stack, so the stack editor can load one to edit
     without hopping to the venv. These are the neutral (as-authored) stacks; the
     global-knob modulation only applies to the preset+knobs bake path.
 

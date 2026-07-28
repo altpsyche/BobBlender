@@ -11,7 +11,7 @@ Every check here would have FAILED before the fix it guards, which is the whole 
 the run found these by rendering probe frames and reading them, and a gate that only asserts what
 the code already says would not have caught any of them. Where a defect's cause was pure Python the
 check lives in `tools/tests` instead (map resolution, pack-root ordering, the contract fields, the
-VRAM floors, the D16 receipt sentence); what is here is everything that needs a real depsgraph.
+VRAM floors, the dead-wood routing note); what is here is everything that needs a real depsgraph.
 
 Unlike `headless_texset.py` this REGISTERS the addon. The curve and world ops read PropertyGroups
 that `ui/` owns (`bbt_curve`, `bbt_scatter_layer`, `bbt_world`), so `core.dispatch` alone raises
@@ -238,7 +238,7 @@ def scatter_scene():
           unknown == ["Alpha", "Bravo", "Charlie"], f"{unknown}")
 
 
-# -- The D16 panel note, which is copy and therefore drifts --------------------------------------
+# -- The dead-wood routing note, which is copy and therefore drifts ------------------------------
 def foliage_note():
     """The info row under Generate Asset. Its dict is keyed by the `gen_kind` enum, so a renamed
     kind would silently lose its warning; the sentence itself is unit-tested in tools/tests."""

@@ -261,7 +261,7 @@ the far end. Both are single flags:
 
 Needs a local ComfyUI (see [COMFYUI.md](COMFYUI.md)); with none of it, every other example above
 still works. Check `comfy_status()` first. Two flows, and both are measured end to end in
-`tools/scripts/headless_comfy_g6.py`.
+`tools/scripts/headless_gen_agent_surface.py`.
 
 **Prompt to a shaded terrain, about 24 s.** The mask decides where the massif goes; the erosion stack
 builds every slope.

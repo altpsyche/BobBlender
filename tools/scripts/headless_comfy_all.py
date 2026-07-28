@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Run every shipped ComfyUI gate as ONE command, one summary line each (docs/COMFYUI.md, G6).
+"""Run every shipped ComfyUI gate as ONE command, one summary line each (docs/GENERATION.md).
 
-Seven phases each shipped their own headless gate, and by G5 checking that none of them had regressed
-meant seven invocations with seven different flag sets, so in practice nobody checked. This is that
-one command. It spawns Blender per gate, reads each gate's own verdict, and prints a line carrying
-the exit status, the wall clock, the peak VRAM the whole card reached while it ran, and how many
-checks the gate skipped for want of a server.
+Every generation feature shipped its own headless gate, and once there were seven of them, checking
+that none had regressed meant seven invocations with seven different flag sets, so in practice
+nobody checked. This is that one command. It spawns Blender per gate, reads each gate's own verdict,
+and prints a line carrying the exit status, the wall clock, the peak VRAM the whole card reached
+while it ran, and how many checks the gate skipped for want of a server.
 
-    uv run --project tools python tools/scripts/headless_comfy_all.py [--gate g2,g5] [--fast]
-                                                                     [--timeout 3600] [--json PATH]
+    uv run --project tools python tools/scripts/headless_comfy_all.py
+        [--gate variants-maps,terrain-macro] [--fast] [--timeout 3600] [--json PATH]
 
 Nothing here re-implements a check. Each gate keeps its own reachability gate and its own exit code
 (0 = nothing failed, and a gate with no server prints SKIP and still exits 0), so this runner is a
-scheduler and a table: a regression in any phase is one command rather than seven, and a machine with
+scheduler and a table: a regression anywhere is one command rather than seven, and a machine with
 no ComfyUI at all reports every generation gate as SKIP and exits 0, which is the same
 "ComfyUI is never required" property each gate already carries individually.
 
@@ -22,7 +22,7 @@ whether a gate can share the machine, and the per-process split is the individua
 
 --fast passes each gate the flags that make it cheap (fewer prompts, cached generations, no slow A/B
 baseline). It measures less; what it still measures is whether every gate runs. The full run is
-GPU-hours, so --fast is what a regression check should use and the full run is what a phase verdict
+GPU-hours, so --fast is what a regression check should use and the full run is what a decision
 needs.
 """
 
@@ -42,53 +42,69 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "tools" / "scripts"
 
-# Every shipped gate, oldest first, with the phase it proves and the flags that make it cheap. `slow`
-# is a rough full-run cost in minutes on the reference 5080, so a caller can see what a full sweep
-# costs before starting one.
+# Every shipped gate, cheapest-first within the pipeline order, with what it covers and the flags
+# that make it cheap. `slow` is a rough full-run cost in minutes on the reference 5080, so a caller
+# can see what a full sweep costs before starting one. Keys are features, not phases: `--gate
+# bbox-control` says what will run.
 GATES = [
-    {"key": "g0", "script": "headless_texset.py", "phase": "G0 texture-set sampler",
+    {"key": "texture-sets-sampler", "script": "headless_texset.py",
+     "covers": "the shipped texture-set sampler on a terrain layer",
      "fast": [], "slow": 1, "server": False},
-    # Not a phase gate: the seams the redwood-scene run found between subsystems (docs/COMFYUI.md).
-    # Listed here because this is the runner anyone actually invokes, and a gate nobody runs guards
-    # nothing. Needs no server and no card, so it is in every --fast sweep.
-    {"key": "redwood", "script": "headless_redwood.py", "phase": "redwood-run fixes (items 3-11)",
+    # Cross-subsystem seams rather than one feature: the things a whole-scene run found between
+    # terrain, water, scatter and shading. Listed here because this is the runner anyone actually
+    # invokes, and a gate nobody runs guards nothing. Needs no server and no card, so it is in
+    # every --fast sweep.
+    {"key": "scene-seams", "script": "headless_redwood.py",
+     "covers": "the seams a whole-scene run found between subsystems",
      "fast": [], "slow": 1, "server": False},
-    # BobFoliage. Its geometry never needs a server -- that is the point of the track -- and since F3
-    # its two TEXTURE sets do, so it is the one gate that is half and half: every structural check
-    # runs regardless and `check_generation` alone prints SKIP without a server (docs/FOLIAGE.md).
+    # BobFoliage. Its geometry never needs a server -- that is the point of the subsystem -- and its
+    # two TEXTURE sets do, so it is the one gate that is half and half: every structural check runs
+    # regardless and `check_generation` alone prints SKIP without a server (docs/FOLIAGE.md).
     # `server: False` still, because the gate is not skipped as a whole for want of one.
     {"key": "foliage", "script": "headless_foliage.py",
-     "phase": "F1-F5 tree, cards, textures, wind, variants, a stand",
+     "covers": "tree, cards, textures, wind, variants, a stand",
      "fast": [], "slow": 4, "server": False},
-    {"key": "texset", "script": "headless_comfy_texset.py", "phase": "G1 prompt to a shaded layer",
+    {"key": "texture-sets", "script": "headless_gen_texture_sets.py",
+     "covers": "prompt to a shaded terrain layer",
      "fast": [], "slow": 1, "server": True},
-    {"key": "g2", "script": "headless_comfy_g2.py", "phase": "G2 variants, preflight, maps",
+    {"key": "variants-maps", "script": "headless_gen_variants_maps.py",
+     "covers": "variants, preflight, derived maps",
      "fast": ["--sets", "2"], "slow": 3, "server": True},
-    {"key": "g3", "script": "headless_comfy_g3.py", "phase": "G3 prompt to a scattered asset",
+    {"key": "assets", "script": "headless_gen_assets.py",
+     "covers": "prompt to a scattered asset",
      "fast": ["--assets", "1", "--no-ab"], "slow": 15, "server": True},
-    {"key": "g3b", "script": "headless_comfy_g3b.py", "phase": "G3b one-shot against staged",
+    {"key": "oneshot-vs-staged", "script": "headless_gen_oneshot_vs_staged.py",
+     "covers": "one-shot against the staged chain",
      "fast": ["--no-gen"], "slow": 20, "server": True},
-    {"key": "g4", "script": "headless_comfy_g4.py", "phase": "G4 stylise, paint, multi-view",
+    {"key": "stylise-paint-multiview", "script": "headless_gen_stylise_paint_multiview.py",
+     "covers": "stylise, paint, multi-view conditioning",
      "fast": ["--part", "a"], "slow": 25, "server": True},
-    {"key": "g4c", "script": "headless_comfy_g4c.py", "phase": "G4c Omni block-out control",
+    {"key": "blockout-control", "script": "headless_gen_blockout_control.py",
+     "covers": "Omni block-out control from a point cloud",
      "fast": ["--part", "a", "--no-baseline"], "slow": 15, "server": True},
-    {"key": "g5", "script": "headless_comfy_g5.py", "phase": "G5 terrain macro mask",
+    {"key": "terrain-macro", "script": "headless_gen_terrain_macro.py",
+     "covers": "a prompted terrain macro mask through the op stack",
      "fast": ["--part", "a"], "slow": 10, "server": True},
-    # G6 is the one gate that does NOT run inside Blender: it drives the MCP tools in this process
-    # and reaches Blender only through the executor, which is the whole point of it.
-    {"key": "g6", "script": "headless_comfy_g6.py", "phase": "G6 the agent-facing surface",
+    # The one gate that does NOT run inside Blender: it drives the MCP tools in this process and
+    # reaches Blender only through the executor, which is the whole point of it.
+    {"key": "agent-surface", "script": "headless_gen_agent_surface.py",
+     "covers": "the agent-facing surface, driven as an agent drives it",
      "fast": ["--part", "a"], "slow": 8, "server": True, "runner": "python"},
-    # G7's --fast is parts A and D: A costs a second and D re-scores the G3b cache with no GPU at
-    # all, so the cheap run still measures the route decision and the dense-mesh answer.
-    {"key": "g7", "script": "headless_comfy_g7.py", "phase": "G7 the geometry A/B",
+    # --fast here is parts A and D: A costs a second and D re-scores the one-shot-against-staged
+    # cache with no GPU at all, so the cheap run still measures the route decision and the
+    # dense-mesh answer.
+    {"key": "geometry-ab", "script": "headless_gen_geometry_ab.py",
+     "covers": "the geometry A/B, TRELLIS.2 against Hunyuan3D 2.1",
      "fast": ["--part", "a,d"], "slow": 30, "server": True},
-    # G8's --fast is part A: the values, the frame mapping and preflight, all of which cost a
-    # second and none of which needs the card.
-    {"key": "g8", "script": "headless_comfy_g8.py", "phase": "G8 Omni bbox control (D12)",
+    # --fast is part A: the values, the frame mapping and preflight, all of which cost a second and
+    # none of which needs the card.
+    {"key": "bbox-control", "script": "headless_gen_bbox_control.py",
+     "covers": "Omni control from three proportions, against the point cloud",
      "fast": ["--part", "a"], "slow": 12, "server": True},
-    # G9's --fast is part A, for G8's reason: the values, the frame constant and preflight cost a
+    # --fast is part A, for the same reason: the values, the frame constant and preflight cost a
     # second between them and none of them needs the card.
-    {"key": "g9", "script": "headless_comfy_g9.py", "phase": "G9 Omni voxel control (D12 closed)",
+    {"key": "voxel-control", "script": "headless_gen_voxel_control.py",
+     "covers": "Omni control from an occupancy grid, and the control ordering",
      "fast": ["--part", "a"], "slow": 14, "server": True},
 ]
 
@@ -147,7 +163,8 @@ def verdict(text: str, code: int) -> tuple[str, str]:
     ("no failures", "all checks passed", and "N failure(s)" where N may be 0), and a gate that printed
     NONE of them did not finish -- which is the case worth reporting loudly, because Blender exits 0
     after a script traceback, so a crashed gate looks like a clean one to an exit code alone. That is
-    how G6 found that the G2 gate had been crashing in its own layout stub since G4.
+    not hypothetical: it is how the `variants-maps` gate was found to have been crashing in its own
+    layout stub for three releases while reporting exit 0.
 
     A gate that ran no checks at all and only skipped is SKIP, not PASS: "passed with no server" would
     be a lie about what was measured.
@@ -189,7 +206,8 @@ def run_gate(gate: dict, blender: str, extra: list[str], timeout: float) -> dict
     peak = sampler.stop()
     status, detail = ("FAIL", f"timed out after {timeout:.0f}s") if code == 124 \
         else verdict(out, code)
-    return {"key": gate["key"], "phase": gate["phase"], "status": status, "detail": detail,
+    return {"key": gate["key"], "covers": gate["covers"], "status": status,
+            "detail": detail,
             "seconds": round(seconds, 1), "peak_vram_mib": peak, "output": out}
 
 
@@ -205,7 +223,7 @@ def main(argv=None) -> int:
 
     if args.list:
         for gate in GATES:
-            print(f"  {gate['key']:7} {gate['phase']:38} ~{gate['slow']:>3} min full")
+            print(f"  {gate['key']:24} {gate['covers']:56} ~{gate['slow']:>3} min full")
         return 0
 
     wanted = {k.strip() for k in args.gate.split(",") if k.strip()}
@@ -223,7 +241,7 @@ def main(argv=None) -> int:
 
     results, t0 = [], time.time()
     for gate in gates:
-        print(f"[{gate['key']}] {gate['phase']} ...", flush=True)
+        print(f"[{gate['key']}] {gate['covers']} ...", flush=True)
         result = run_gate(gate, blender, gate["fast"] if args.fast else [], args.timeout)
         results.append(result)
         if args.verbose:
@@ -236,10 +254,10 @@ def main(argv=None) -> int:
     total = time.time() - t0
 
     print()
-    print(f"{'gate':8} {'status':7} {'wall':>9} {'peak VRAM':>11}  note")
+    print(f"{'gate':24} {'status':7} {'wall':>9} {'peak VRAM':>11}  note")
     for result in results:
         vram = f"{result['peak_vram_mib']} MiB" if result["peak_vram_mib"] else "n/a"
-        print(f"{result['key']:8} {result['status']:7} {result['seconds']:>7.1f} s "
+        print(f"{result['key']:24} {result['status']:7} {result['seconds']:>7.1f} s "
               f"{vram:>11}  {result['detail']}")
     failed = [r["key"] for r in results if r["status"] in ("FAIL", "MISSING")]
     peaks = [r["peak_vram_mib"] for r in results if r["peak_vram_mib"]]

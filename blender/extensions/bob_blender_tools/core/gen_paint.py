@@ -1,8 +1,8 @@
 """Projection painting: N stylised views back into one UV texture, and the numbers that say so.
 
-The Blender half of the `mesh_paint_views` style-control paint route (docs/COMFYUI.md family 3, R19/R20). ComfyUI
+The Blender half of the `mesh_paint_views` style-control paint route (docs/COMFYUI.md family 3, the retopology tier rule/the projection-route finding). ComfyUI
 restyles each turntable view; everything here is Bob's, because Blender already rasterises and
-projects better than a bundled CUDA rasteriser would, which is R20's whole argument.
+projects better than a bundled CUDA rasteriser would, which is the projection-route finding's whole argument.
 
 Three steps, all numpy:
 
@@ -21,7 +21,7 @@ correct wherever texel density reaches pixel density, which is the case whenever
 much smaller than the render.
 
 **Why the drift number matters more than a screenshot.** Per-view SDXL img2img has no cross-view
-consistency (R20): the front and the back are two independent renders of the same prompt. The
+consistency (the projection-route finding): the front and the back are two independent renders of the same prompt. The
 honest gate is therefore not "does one angle look right" but how far apart two views land where
 they overlap, and how far the front view has drifted from the same texels seen from 180 degrees.
 Both come out of `project_views` as numbers in 0-255.
