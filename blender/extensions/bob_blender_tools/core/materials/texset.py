@@ -1,38 +1,38 @@
-"""The texture-set sampler (BobShaders, the texture-set sampler): one shared S_TexSet group that turns a
-`<pack>/textures/<set>/` set into the map values S_TerrainMaster and S_SurfaceMaster already
+"""The texture-set sampler (BobShaders, the texture-set sampler): one shared S_TexSet group that turns
+a `<pack>/textures/<set>/` set into the map values S_TerrainMaster and S_SurfaceMaster already
 accept, plus the wrapper-side plumbing that instances it per terrain layer.
 
-Why one shared group. A set is up to four images and a terrain carries six layer slots, so the
-naive graph is thirty image nodes plus six copies of the same fold maths, against EEVEE's
-sampler budget (docs/GENERATION.md the sampler-budget rule). Here the fold maths lives once in S_TexSet and is
-INSTANCED per layer (one node in the material, whatever the maths costs), and image texture
-nodes are created only for the layers that actually carry a set.
+Why one shared group. A set is up to four images and a terrain carries six layer slots, so the naive
+graph is thirty image nodes plus six copies of the same fold maths, against EEVEE's sampler budget
+(docs/GENERATION.md the sampler-budget rule). Here the fold maths lives once in S_TexSet and is
+INSTANCED per layer (one node in the material, whatever the maths costs), and image texture nodes
+are created only for the layers that actually carry a set.
 
-What lands where. The terrain master carries per-layer Albedo Map / Roughness Map / Detail
-Height; the surface master carries Albedo Map / Roughness Map / Metallic Map / AO Map. So:
+What lands where. The terrain master carries per-layer Albedo Map / Roughness Map / Detail Height;
+the surface master carries Albedo Map / Roughness Map / Metallic Map / AO Map. So:
 
 - AO is FOLDED into the albedo rather than routed to its own socket. That is the convention
-  surface.py's AO Map socket already documents (the convert path owns that socket, the
-  texture-set path folds, and nothing double-darkens), and it is the only option on terrain,
-  which has no per-layer AO socket at all.
+  surface.py's AO Map socket already documents (the convert path owns that socket, the texture-set
+  path folds, and nothing double-darkens), and it is the only option on terrain, which has no
+  per-layer AO socket at all.
 - Metallic is left alone. No set on disk ships a metallic map and nature surfaces are dielectric;
   both masters already carry a Metallic scalar for the case that is not true.
 - The height map is not a master input at all. It comes back out of the master's blended Height
   output (terrain) or straight off the sampler (surface) and drives a Bump into the wrapper's
   Principled Normal. That gives a set real surface relief without either master gaining a normal
-  socket, and therefore without a shared-group version bump, which would reset every tuned
-  terrain in the file.
+  socket, and therefore without a shared-group version bump, which would reset every tuned terrain
+  in the file.
 - The normal map on disk is consequently unused. Using it would need a per-layer vector
-  socket on the master (the version-bump cost above) and a tangent space that box projection
-  does not have.
+  socket on the master (the version-bump cost above) and a tangent space that box projection does
+  not have.
 
 Projection. Blender's own box projection on the image node IS the triplanar option: one node
-property, no hand-rolled three-sample graph, and identical in EEVEE and Cycles. It is
-per-material rather than per-layer, because six independent projection toggles on one ground
-material is knob sprawl with no case behind it. Terrain projects from OBJECT coordinates in
-both modes: it is a GN-generated grid with no UV layer, so a UV projection would sample
-nothing, and flat there means a top-down planar projection, which is the right default for
-ground. A surface prop has UVs, so its flat mode uses them.
+property, no hand-rolled three-sample graph, and identical in EEVEE and Cycles. It is per-material
+rather than per-layer, because six independent projection toggles on one ground material is knob
+sprawl with no case behind it. Terrain projects from OBJECT coordinates in both modes: it is a
+GN-generated grid with no UV layer, so a UV projection would sample nothing, and flat there means a
+top-down planar projection, which is the right default for ground. A surface prop has UVs, so its
+flat mode uses them.
 """
 
 import bpy

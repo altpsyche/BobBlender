@@ -88,24 +88,25 @@ _CURVE_OTHER_MASKS = ("Slope Strength", "Height Strength", "Noise Strength",
 
 def apply_curve_surface(mat, base_color, roughness=0.85, height_bias=0.3, hard_edge=0.0,
                         channel="a"):
-    """Configure a terrain BobShader layer as a curve surface band (BobSplines, the material band/the per-role surfaces): a layer
-    keyed to a curve overlay mask, so a road/dirt surface reads only along a path. Mirrors
-    _autoconfig_riverbed but for the curve mask. Idempotent: reuses the slot already keyed to THIS
-    channel on a re-apply, else the highest free (disabled) slot, else the top slot.
+    """Configure a terrain BobShader layer as a curve surface band (BobSplines, the material band/the
+    per-role surfaces): a layer keyed to a curve overlay mask, so a road/dirt surface reads only
+    along a path. Mirrors _autoconfig_riverbed but for the curve mask. Idempotent: reuses the slot
+    already keyed to THIS channel on a re-apply, else the highest free (disabled) slot, else the top
+    slot.
 
-    channel selects which curve mask keys the layer (the per-role surfaces): "a" -> bbt_curve_mask (the shared band,
-    dirt/trail), "b" -> bbt_curve_mask_b (a distinct class, e.g. a paved road). Two roles on
-    different channels therefore key two DIFFERENT layers and read as different surfaces; the slot
-    keys off exactly one channel (the other is cleared).
+    channel selects which curve mask keys the layer (the per-role surfaces): "a" -> bbt_curve_mask
+    (the shared band, dirt/trail), "b" -> bbt_curve_mask_b (a distinct class, e.g. a paved road).
+    Two roles on different channels therefore key two DIFFERENT layers and read as different
+    surfaces; the slot keys off exactly one channel (the other is cleared).
 
     height_bias is kept modest on purpose (docs/SPLINES.md 9 #7): with a SOFT edge the layer's
-    height field is weight (= the curve mask here) + Height Bias + macro, so off the curve weight
-    -> 0 and H -> Height Bias; a small bias wins the height-lerp ON the curve (mask 1 -> H ~ 1 +
-    bias) but loses to a full base layer (H ~ 1) OFF it, so the surface does not bleed past the path.
+    height field is weight (= the curve mask here) + Height Bias + macro, so off the curve weight ->
+    0 and H -> Height Bias; a small bias wins the height-lerp ON the curve (mask 1 -> H ~ 1 + bias)
+    but loses to a full base layer (H ~ 1) OFF it, so the surface does not bleed past the path.
 
-    hard_edge (0..1, the hard road edge) mixes in a crisp edge: at 1 the layer's H is gated straight off
-    the curve mask (a step at the band boundary) so the surface edges sharply regardless of Blend
-    Softness -- a road wants ~1, a worn dirt path wants 0 (the soft feathered edge above).
+    hard_edge (0..1, the hard road edge) mixes in a crisp edge: at 1 the layer's H is gated straight
+    off the curve mask (a step at the band boundary) so the surface edges sharply regardless of
+    Blend Softness -- a road wants ~1, a worn dirt path wants 0 (the soft feathered edge above).
 
     Returns the configured slot index, or None when mat is not a terrain BobShader (or is an older
     master group without this curve channel -- rebuild the material to get it).
@@ -259,9 +260,9 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     flow_band = _mrange(g, I["Flow Map"], f_lo, I[p + "Flow Threshold"], 0.0, 1.0, (x0 + 200, y - 1200))
     flow = _gated(g, flow_band, I[p + "Flow Strength"], (x0 + 380, y - 1200))
 
-    # Curve: the curve overlay's mask attribute (bbt_curve_mask, 1 on a path band; BobSplines, the material band).
-    # Keeps the layer to a path/road, gated by strength. Absent attribute reads 0, so a
-    # Curve-Strength layer correctly vanishes off every curve.
+    # Curve: the curve overlay's mask attribute (bbt_curve_mask, 1 on a path band; BobSplines, the
+# material band). Keeps the layer to a path/road, gated by strength. Absent attribute reads 0,
+# so a Curve-Strength layer correctly vanishes off every curve.
     ca = g.nodes.new("ShaderNodeAttribute")
     ca.attribute_type = "GEOMETRY"
     ca.attribute_name = "bbt_curve_mask"
@@ -269,7 +270,8 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     curve = _gated(g, ca.outputs["Fac"], I[p + "Curve Strength"], (x0 + 200, y - 1340))
 
     # Curve B: a second curve channel off bbt_curve_mask_b, so a distinct role keys its own layer
-    # (BobSplines, the verge band). Same shape as Curve; gated by Curve B Strength (0 = off, the default).
+# (BobSplines, the verge band). Same shape as Curve; gated by Curve B Strength (0 = off, the
+# default).
     cb = g.nodes.new("ShaderNodeAttribute")
     cb.attribute_type = "GEOMETRY"
     cb.attribute_name = "bbt_curve_mask_b"
@@ -297,10 +299,11 @@ def _terrain_layer(g, I, i, pos, nz, wz, pointiness, x0):
     m_a = _mmath(g, "MULTIPLY", m_c, I["Macro Amount"], (x0 + 1390, y - 300))
     H = _mmath(g, "ADD", w, I[p + "Height Bias"], (x0 + 1560, y - 200))
     H = _mmath(g, "ADD", H, m_a, (x0 + 1730, y - 200))
-    # Hard curve edge (the hard road edge): a steep remap of the raw curve mask swings H from a floor off the band
-    # to well above every other layer on it, so the height-lerp pick flips within the mask's own
-    # falloff (a crisp road edge) rather than over Blend Softness. Curve Hard 0 keeps the soft H, so
-    # every layer that does not opt in (all of them by default) is byte-identical to before.
+    # Hard curve edge (the hard road edge): a steep remap of the raw curve mask swings H from a
+# floor off the band to well above every other layer on it, so the height-lerp pick flips within
+# the mask's own falloff (a crisp road edge) rather than over Blend Softness. Curve Hard 0 keeps
+# the soft H, so every layer that does not opt in (all of them by default) is byte-identical to
+# before.
     hard_H = _mrange(g, ca.outputs["Fac"], 0.45, 0.55, -1.0, 2.0, (x0 + 1560, y - 1620))
     H = _lerp(g, H, hard_H, I[p + "Curve Hard"], (x0 + 1900, y - 200))
     hard_H_b = _mrange(g, cb.outputs["Fac"], 0.45, 0.55, -1.0, 2.0, (x0 + 1560, y - 1760))
@@ -350,16 +353,18 @@ def terrain_master_group():
         _gin(g, p + "Flow Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Flow Threshold", "NodeSocketFloat", 0.6, 0.0, 1.0)
         # Curve band: keep this layer to a path/road, keyed off the curve overlay's baked
-        # bbt_curve_mask attribute (BobSplines, the material band, docs/SPLINES.md 4.4). Gated by Curve Strength
-        # (0 = off, the default), the same shape as the Flow mask keying a riverbed layer.
+# bbt_curve_mask attribute (BobSplines, the material band, docs/SPLINES.md 4.4). Gated by
+# Curve Strength (0 = off, the default), the same shape as the Flow mask keying a riverbed
+# layer.
         _gin(g, p + "Curve Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
-        # Curve Hard (BobSplines the hard road edge, docs/SPLINES.md 9 #7): 0 = the soft height-lerp edge (default,
-        # unchanged), 1 = a crisp edge gated straight off the curve mask, so a road surface stops
-        # sharply at the band regardless of Blend Softness rather than feathering over it.
+        # Curve Hard (BobSplines the hard road edge, docs/SPLINES.md 9 #7): 0 = the soft height-lerp
+# edge (default, unchanged), 1 = a crisp edge gated straight off the curve mask, so a road
+# surface stops sharply at the band regardless of Blend Softness rather than feathering over
+# it.
         _gin(g, p + "Curve Hard", "NodeSocketFloat", 0.0, 0.0, 1.0)
-        # Curve B (BobSplines, the verge band): a SECOND curve channel keyed off bbt_curve_mask_b, so a distinct
-        # role (a paved road) keys its own surface layer without sharing the dirt-path look. Same
-        # shape as Curve; both default off, so a layer opts into at most one.
+        # Curve B (BobSplines, the verge band): a SECOND curve channel keyed off bbt_curve_mask_b,
+# so a distinct role (a paved road) keys its own surface layer without sharing the dirt-path
+# look. Same shape as Curve; both default off, so a layer opts into at most one.
         _gin(g, p + "Curve B Strength", "NodeSocketFloat", 0.0, 0.0, 1.0)
         _gin(g, p + "Curve B Hard", "NodeSocketFloat", 0.0, 0.0, 1.0)
         # Texture-set maps, identity defaults so an untextured layer is unchanged.
@@ -410,11 +415,11 @@ def terrain_master_group():
     for i in range(1, MAX_TERRAIN_LAYERS):
         col, rough, metal, H, enable, dh = layers[i]
         fy = -i * 300
-        # Gate the height by Enable before it enters the fold. Enable only zeroing the colour
-        # blend factor (below) let a DISABLED layer still push its height into acc_H, raising the
-        # bar for later layers and suppressing them (a disabled slot's masks default to strength 0,
-        # so its height is high). Fold H toward a floor when disabled so it never wins and never
-        # pollutes acc_H; an enabled layer (Enable 1) is unchanged, so enabled terrains are identical.
+        # Gate the height by Enable before it enters the fold. Enable only zeroing the colour blend
+# factor (below) let a DISABLED layer still push its height into acc_H, raising the bar for
+# later layers and suppressing them (a disabled slot's masks default to strength 0, so its
+# height is high). Fold H toward a floor when disabled so it never wins and never pollutes
+# acc_H; an enabled layer (Enable 1) is unchanged, so enabled terrains are identical.
         H = _lerp(g, -1000.0, H, enable, (fx - 200, fy))
         hmax = _mmath(g, "MAXIMUM", acc_H, H, (fx, fy))
         ma = _mmath(g, "SUBTRACT", hmax, soft, (fx + 170, fy))
@@ -437,11 +442,12 @@ def terrain_master_group():
     g.links.new(acc_col, weather.inputs["Base Color"])
     g.links.new(acc_rough, weather.inputs["Roughness"])
     g.links.new(acc_metal, weather.inputs["Metallic"])
-    # Damp bed (BobSplines, the damp bed): a river/stream overlay writes bbt_curve_wet along its channel; MAX
-    # it into the Wetness Map so the bed and banks read damp (materials.apply_curve_wet raises
-    # Terrain Wetness, the multiplier that path is gated by, so it shows). An absent attribute reads
-    # 0, so a terrain with no river is byte-identical; weather still amplifies it (rain raises env
-    # wetness in S_Weather, and wetf takes the MAX of the terrain map and the weather wetness).
+    # Damp bed (BobSplines, the damp bed): a river/stream overlay writes bbt_curve_wet along its
+# channel; MAX it into the Wetness Map so the bed and banks read damp (materials.apply_curve_wet
+# raises Terrain Wetness, the multiplier that path is gated by, so it shows). An absent
+# attribute reads 0, so a terrain with no river is byte-identical; weather still amplifies it
+# (rain raises env wetness in S_Weather, and wetf takes the MAX of the terrain map and the
+# weather wetness).
     cwet = g.nodes.new("ShaderNodeAttribute")
     cwet.attribute_type = "GEOMETRY"
     cwet.attribute_name = "bbt_curve_wet"

@@ -35,7 +35,8 @@ _WATER_TUCK = 0.15
 # Curve overlay modifiers are named per curve so a terrain can carry several, and so removing a
 # curve finds and drops exactly its modifier.
 _OVERLAY_PREFIX = "BOB_Curve_"
-# A river/stream's water-surface ribbon is its own object, one per curve (BobSplines, the water ribbon).
+# A river/stream's water-surface ribbon is its own object, one per curve (BobSplines, the water
+# ribbon).
 _WATER_PREFIX = "BOB_Water_"
 
 # Subdivisions per segment the curve evaluates to (Curve to Mesh honours resolution_u). High so the
@@ -46,13 +47,14 @@ _CURVE_RES = 128
 # Roles: a typed curve preset. Each carries the SHAPE defaults (seeded onto bbt_curve at Add / role
 # change, then scene-owned and live) plus STRUCTURAL keys that only apply on Build: family ("impose"
 # = river/stream, carve DOWN to a descending water centreline; absent = follow-terrain), drape (the
-# monotonic downhill solve for rivers), surface* (the material band material band), wet* (the water channel damp bed).
+# monotonic downhill solve for rivers), surface* (the material band material band), wet* (the water
+# channel damp bed).
 #
 # The shape defaults are in REAL units: `width` is the full channel width (1:1), `depth` the channel
 # depth, `water_level` the fill fraction (0..1) of the channel. bbt_curve owns these live and the
 # panel syncs them to BOTH the terrain-carve overlay and the water ribbon (see sync_curve_params),
-# so one set of params drives both and updating depth re-carves the terrain and moves the water.
-# The water_level/flow/foam/bank_height keys matter only to the impose family (harmless on paths).
+# so one set of params drives both and updating depth re-carves the terrain and moves the water. The
+# water_level/flow/foam/bank_height keys matter only to the impose family (harmless on paths).
 _SHAPE_KEYS = ("width", "depth", "falloff", "taper", "shoulder", "bank_slope", "bank_bias",
                "bank_height", "water_level", "flow", "foam_bank", "foam_rapids",
                "wave_amp", "wave_len", "wave_steep", "wave_speed", "wave_chop", "width_var")
@@ -148,11 +150,11 @@ def _unique_object_name(base):
 
 
 def _edge_attr_name(curve):
-    """The per-curve edge-ring attribute a Verge scatter layer reads for ONE path (BobSplines, the verge band).
-    The overlay writes the same name; both derive it from the curve name so a rename is picked up on
-    the next build. Mirrors ui.scatter.edge_attr_name (kept in sync by the shared derivation; the
-    scatter panel owns the reader side, so the one-line format is duplicated rather than cross-imported
-    to keep core free of a ui import)."""
+    """The per-curve edge-ring attribute a Verge scatter layer reads for ONE path (BobSplines, the
+    verge band). The overlay writes the same name; both derive it from the curve name so a rename
+    is picked up on the next build. Mirrors ui.scatter.edge_attr_name (kept in sync by the shared
+    derivation; the scatter panel owns the reader side, so the one-line format is duplicated
+    rather than cross-imported to keep core free of a ui import)."""
     return f"bbt_curve_edge_{curve.name}"
 
 
@@ -209,12 +211,13 @@ def _position_overlay(terrain, curve):
 def _apply_curve_transform(curve):
     """Bake the curve object's transform into its points and reset it to identity.
 
-    The whole river pipeline (drape samples the heightmap at the point's own XY, the overlay/water
-    read the curve via Object Info) assumes the curve sits at the ORIGIN. If the artist grab-moves
-    the curve object, its Location offsets where the drape samples the terrain and shifts the whole
-    river in Z. Baking the transform in (points move to world, object matrix -> identity) keeps the
-    curve exactly where it looks while restoring the origin assumption, so a moved river still
-    carves and floods against the terrain under it. Idempotent (a no-op when already at identity)."""
+    The whole river pipeline (drape samples the heightmap at the point's own XY, the
+    overlay/water read the curve via Object Info) assumes the curve sits at the ORIGIN. If the
+    artist grab-moves the curve object, its Location offsets where the drape samples the terrain
+    and shifts the whole river in Z. Baking the transform in (points move to world, object matrix
+    -> identity) keeps the curve exactly where it looks while restoring the origin assumption, so
+    a moved river still carves and floods against the terrain under it. Idempotent (a no-op when
+    already at identity)."""
     import mathutils
 
     if curve is None or curve.type != "CURVE" or curve.matrix_world == mathutils.Matrix.Identity(4):
@@ -237,8 +240,9 @@ def _apply_curve_transform(curve):
 def _curve_off_terrain(curve, terrain):
     """True if any of the curve's control points sits outside the terrain footprint (|x|,|y| > size/2).
 
-    A cheap panel-side check (control points only, no mesh eval) so the Active Path panel can warn that
-    a dragged-off point will be clipped by the drape. Terrain is centred at the origin, size square."""
+    A cheap panel-side check (control points only, no mesh eval) so the Active Path panel can
+    warn that a dragged-off point will be clipped by the drape. Terrain is centred at the origin,
+    size square."""
     if curve is None or terrain is None or curve.type != "CURVE":
         return False
     half = 0.5 * float(terrain.get("bbt_terrain_size", 90.0))
@@ -272,11 +276,12 @@ def _build_curve_overlay(terrain, curve, carve=True):
         # there is one authority for what the terrain was built from (docs/SPLINES.md).
         res = _apply([{"op": "drape_curve", "name": curve.name, "terrain": terrain.name,
                        **role.get("drape", {})}])
-        # A drape that failed (missing heightmap, curve entirely off the terrain) returns an info-only
-        # dict with no "created"; do not then claim the curve was draped.
+        # A drape that failed (missing heightmap, curve entirely off the terrain) returns an
+# info-only dict with no "created"; do not then claim the curve was draped.
         draped = bool(res and res[0].get("created"))
         # drape_curve clips points dragged off the terrain (else a river's monotonic solve carves a
-        # runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back on.
+# runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back
+# on.
         off_terrain = bool(res and res[0].get("dropped"))
     from .geonodes import build_geonodes_on_object
 
@@ -310,12 +315,14 @@ def _build_curve_overlay(terrain, curve, carve=True):
 
 # -- Material helpers ------------------------------------------------------------------------
 def _apply_curve_material(terrain, role):
-    """Configure the terrain material from the role's Material channel (BobSplines, the material band / the damp bed).
+    """Configure the terrain material from the role's Material channel (BobSplines, the material band /
+    the damp bed).
 
-    Follow family (path/road): a curve-surface layer keyed to the curve mask (apply_curve_surface).
-    Impose family (river/stream): the damp-bed wetness path (apply_curve_wet), so the carved bed and
-    banks read wet and glossy under the transparent water. Returns the configured slot index (or
-    True for the wet path), or None when the terrain has no Terrain BobShader to key."""
+    Follow family (path/road): a curve-surface layer keyed to the curve mask
+    (apply_curve_surface). Impose family (river/stream): the damp-bed wetness path
+    (apply_curve_wet), so the carved bed and banks read wet and glossy under the transparent
+    water. Returns the configured slot index (or True for the wet path), or None when the terrain
+    has no Terrain BobShader to key."""
     if terrain is None:
         return None
     mat = terrain.active_material
@@ -360,9 +367,10 @@ def _set_mod_input(mod, name, value):
 
 def _drive_water_freeze(water, wmod, scene):
     """Drive the water ribbon's Freeze input live from bbt_env.temperature, so a cold scene flattens
-    the wave geometry (the shader freezes the look; this stops the mesh animating). Ramp matches the
-    shader's env-cold path: 0 at/above freezing, 1 by -6 C. Reinstalled on each build because a reset
-    rebuild regenerates the socket identifiers. No env, no driver (the default 0 leaves it liquid)."""
+    the wave geometry (the shader freezes the look; this stops the mesh animating). Ramp matches
+    the shader's env-cold path: 0 at/above freezing, 1 by -6 C. Reinstalled on each build because
+    a reset rebuild regenerates the socket identifiers. No env, no driver (the default 0 leaves
+    it liquid)."""
     if water is None or wmod is None or wmod.node_group is None:
         return
     if getattr(scene, "bbt_env", None) is None:
@@ -422,7 +430,8 @@ def _build_water(curve):
 # bbt_curve is the single owner of the shape params; editing one pushes it to BOTH the terrain-carve
 # overlay and the water ribbon, so they never drift and update in real time. The panel's per-prop
 # update callback checks this flag so seed_role_params can set a whole role at once without a sync
-# firing per property (the flag lives here so the ui callback and the core seeder share one authority).
+# firing per property (the flag lives here so the ui callback and the core seeder share one
+# authority).
 _syncing = False
 
 
@@ -439,15 +448,15 @@ def _derived_water(cfg):
     spans the bed and meets the banks with no gap.
 
     In banks-from-erosion mode the drape samples the ERODED channel floor (path_z == floor, the
-    overlay only carves the shallow guarantee bed), so the fill is keyed to the guarantee depth, not
-    the authored depth, and the width is just the channel plus a tuck (the eroded banks, not a graded
-    shoulder, hold the water; the shader shore fade hides the exact edge)."""
+    overlay only carves the shallow guarantee bed), so the fill is keyed to the guarantee depth,
+    not the authored depth, and the width is just the channel plus a tuck (the eroded banks, not
+    a graded shoulder, hold the water; the shader shore fade hides the exact edge)."""
     if cfg.banks_from_erosion:
         g = _guarantee_depth(cfg)
         water_depth = g * (1.0 - cfg.water_level)
         # Reach the ribbon out to where the shallow guarantee bed's wall crosses the waterline (same
-        # by-construction containment as the graded path, scaled to the guarantee depth), so the edge
-        # sits at the waterline on the eroded bank, not low in the channel.
+# by-construction containment as the graded path, scaled to the guarantee depth), so the
+# edge sits at the waterline on the eroded bank, not low in the channel.
         reach = (g * cfg.water_level) / max(cfg.bank_slope, 0.05)
         fill = cfg.width + 2.0 * reach + 2.0 * _WATER_TUCK
         return fill, water_depth
@@ -459,10 +468,11 @@ def _derived_water(cfg):
 
 def sync_curve_params(terrain, curve):
     """Push bbt_curve's shape params onto the curve's overlay (Path Width is a RADIUS, so width/2)
-    and its water ribbon (Width/Water Depth derived to fill the channel and meet the banks). A no-op
-    for inputs a modifier lacks (a follow overlay has no Bank Height; a path has no water ribbon), so
-    it is safe for every role and whether or not the pieces are built yet. `terrain` is the mesh the
-    overlay lives on (the panel resolves it from context; None syncs only the water ribbon)."""
+    and its water ribbon (Width/Water Depth derived to fill the channel and meet the banks). A
+    no-op for inputs a modifier lacks (a follow overlay has no Bank Height; a path has no water
+    ribbon), so it is safe for every role and whether or not the pieces are built yet. `terrain`
+    is the mesh the overlay lives on (the panel resolves it from context; None syncs only the
+    water ribbon)."""
     if curve is None:
         return
     cfg = curve.bbt_curve
@@ -571,10 +581,10 @@ def _curve_band_spec(curve, terrain, cap=300):
     """One curve's centreline as terrain-UV points [[u, v], ...] plus its channel width and a
     normalised seed depth, for the erosion band mask / drainage prior / channel seed. Reuses
     path_curve._ordered_polyline_xy (the same order-robust wire walk the drape uses) so the band
-    tracks the channel exactly. u = x/size + 0.5; v = 0.5 - y/size (the PNG is top-row-first while
-    Blender samples it V-up). `depth` is the authored channel depth mapped into the heightfield's
-    normalised [0,1] range (metres / terrain height), so the seed carve matches the intended channel.
-    Returns None for a degenerate curve."""
+    tracks the channel exactly. u = x/size + 0.5; v = 0.5 - y/size (the PNG is top-row-first
+    while Blender samples it V-up). `depth` is the authored channel depth mapped into the
+    heightfield's normalised [0,1] range (metres / terrain height), so the seed carve matches the
+    intended channel. Returns None for a degenerate curve."""
     _apply_curve_transform(curve)  # origin assumption: the curve XY IS the terrain sample point
     from . import path_curve
     size = float(terrain.get("bbt_terrain_size", 90.0)) or 1.0
@@ -601,13 +611,13 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
     """Apply one curve's channels (the middle of curve_build): drape + carve the overlay, add the
     surface band / damp bed, lay the water ribbon, sync the live params, and clear scatter along it.
 
-    Reads the role and channel state off curve.bbt_curve. `terrain` is the mesh to carve/mask against
-    (the caller resolves it). scatter_cb is an injected callable (the ui operator wraps the scatter
-    build operator; MCP passes None, so the scatter step is skipped and noted). Returns
-    {built, watered, surfaced, scattered, note, did, warnings, error}: error is a single blocking
-    reason (no terrain) that makes the caller stop; warnings are non-fatal (missing BobShader,
-    water build failed, no scatter emitter). A fresh build clears banks_from_erosion (the graded
-    channel is re-imposed until an Erode sets it again)."""
+    Reads the role and channel state off curve.bbt_curve. `terrain` is the mesh to carve/mask
+    against (the caller resolves it). scatter_cb is an injected callable (the ui operator wraps
+    the scatter build operator; MCP passes None, so the scatter step is skipped and noted).
+    Returns {built, watered, surfaced, scattered, note, did, warnings, error}: error is a single
+    blocking reason (no terrain) that makes the caller stop; warnings are non-fatal (missing
+    BobShader, water build failed, no scatter emitter). A fresh build clears banks_from_erosion
+    (the graded channel is re-imposed until an Erode sets it again)."""
     cfg = curve.bbt_curve
     role = _role_of(curve)
     impose = role.get("family") == "impose"
@@ -632,8 +642,9 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
         result["did"].append(f"carved terrain ({note})" if do_terrain else "curve mask")
         if do_terrain and not note.startswith("draped"):
             # "curve Z" is not a neutral fallback: the overlay grades the bench to whatever Z the
-            # control points happen to hold, so on rising ground it cuts a trench and on falling
-            # ground it leaves the path in the air. Say so instead of reporting it as a success mode.
+# control points happen to hold, so on rising ground it cuts a trench and on falling
+# ground it leaves the path in the air. Say so instead of reporting it as a success
+# mode.
             result["warnings"].append(
                 "carved at the curve's own Z, not the terrain surface: the terrain carries no "
                 "bbt_heightmap, so there is nothing to drape onto. Build it from a bake "
@@ -645,9 +656,9 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
         if slot is not None:
             result["surfaced"] = True
             # The SLOT is part of the result, not an internal detail: it is the `index` an
-            # apply_texture_set has to name to put a real surface on the band, and there is no other
-            # way to read it back (the redwood run guessed it and rendered probe frames). None for the
-            # impose family, whose damp bed is a whole-material knob rather than a layer.
+# apply_texture_set has to name to put a real surface on the band, and there is no other
+# way to read it back (the redwood run guessed it and rendered probe frames). None for
+# the impose family, whose damp bed is a whole-material knob rather than a layer.
             result["slot"] = None if impose else slot
             result["did"].append("damp bed" if impose
                                  else f"surface band (layer {slot}, channel "
@@ -687,9 +698,9 @@ def run_bake_erode(terrain, curves, erode_params, *, host_bake=None, scatter_cb=
 
     `curves` is the list of curve objects to re-impose (each must carry bbt_curve). erode_params:
     {"strength": 0..1, "scope": "band"|"global", "deposit": bool, "seed": int}. host_bake is the
-    injected bake callable (out_abs, params) -> (meta, error); when None the erode is SKIPPED and the
-    result carries a note (best-effort, so an MCP caller without a reachable host still gets a clear
-    answer instead of an exception). Returns {eroded, reimposed, scope, note, error}."""
+    injected bake callable (out_abs, params) -> (meta, error); when None the erode is SKIPPED and
+    the result carries a note (best-effort, so an MCP caller without a reachable host still gets
+    a clear answer instead of an exception). Returns {eroded, reimposed, scope, note, error}."""
     result = {"eroded": False, "reimposed": 0, "scope": "", "note": "", "error": None}
     hm = terrain.get("bbt_heightmap")
     if not hm or not os.path.exists(hm):
@@ -728,9 +739,9 @@ def run_bake_erode(terrain, curves, erode_params, *, host_bake=None, scatter_cb=
         return result
 
     if host_bake is None:
-        # Best-effort: without a host bake we cannot rewrite the heightfield, so leave the terrain as
-        # it is and report the curves that WOULD be re-imposed. The MCP handler lands here when the
-        # host process is not reachable from this (e.g. headless) session.
+        # Best-effort: without a host bake we cannot rewrite the heightfield, so leave the terrain
+# as it is and report the curves that WOULD be re-imposed. The MCP handler lands here when
+# the host process is not reachable from this (e.g. headless) session.
         result["note"] = ("erosion skipped (no host bake available); "
                            f"{len(reimpose)} curve(s) ready to re-impose")
         return result
@@ -909,7 +920,8 @@ def _list_scene_curves(scene, names=None):
 
 def _register_curve_entry(scene, curve):
     """Add the curve to the scene curve list so an MCP-made curve shows up in the Paths panel. A
-    no-op when the list is not registered (a standalone core session) or the curve is already listed."""
+    no-op when the list is not registered (a standalone core session) or the curve is already
+    listed."""
     scn = getattr(scene, "bbt_curves", None)
     if scn is None:
         return
@@ -922,13 +934,14 @@ def _register_curve_entry(scene, curve):
 
 def make_curve(op: dict) -> dict:
     """MCP op: add a typed curve of a role. Creates a NURBS through the shared make_path op (so the
-    agent and the panel author the same datablock), sets its role, and seeds the role's shape defaults.
+    agent and the panel author the same datablock), sets its role, and seeds the role's shape
+    defaults.
 
-    params: name (str), role (dirt_path/road/river/stream/trail/... a ROLES key), points (optional
-    list of xyz control points, else a starter line sized to the terrain), terrain (optional mesh
-    name, used to size the starter line and sync the seeded params), shape (optional dict of
-    SHAPE_PARAMS overriding the role's defaults: width/depth/falloff/taper/shoulder/bank_*/water_*/
-    wave_*/flow/foam_*/width_var/verge_*)."""
+    params: name (str), role (dirt_path/road/river/stream/trail/... a ROLES key), points
+    (optional list of xyz control points, else a starter line sized to the terrain), terrain
+    (optional mesh name, used to size the starter line and sync the seeded params), shape
+    (optional dict of SHAPE_PARAMS overriding the role's defaults:
+    width/depth/falloff/taper/shoulder/bank_*/water_*/ wave_*/flow/foam_*/width_var/verge_*)."""
     role = op.get("role", "dirt_path")
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r} (have: {sorted(ROLES)})")
@@ -971,8 +984,9 @@ def _shape_of(curve):
 
 def curve_build(op: dict) -> dict:
     """MCP op: build one curve's channels (carve, material band, water). Resolves the curve + terrain
-    by name and calls build_curve. The channel bools default to the curve's own bbt_curve settings so
-    an agent can just name the curve; pass do_terrain/do_material/do_water/do_scatter to override.
+    by name and calls build_curve. The channel bools default to the curve's own bbt_curve settings
+    so an agent can just name the curve; pass do_terrain/do_material/do_water/do_scatter to
+    override.
 
     `shape` (a dict of SHAPE_PARAMS) is applied BEFORE the build, so the channel is carved at the
     width and depth asked for rather than at the role's defaults.
@@ -1005,9 +1019,10 @@ def curve_build(op: dict) -> dict:
     if res["watered"]:
         created.append(_water_name(curve))
     role = _role_of(curve)
-    # `slot` and `draped` are the two things an agent cannot read back any other way: the layer index
-    # an apply_texture_set must name to surface the band, and whether the carve used the draped Z or
-    # the curve's own (which is the difference between a graded bench and a trench through a hill).
+    # `slot` and `draped` are the two things an agent cannot read back any other way: the layer
+# index an apply_texture_set must name to surface the band, and whether the carve used the
+# draped Z or the curve's own (which is the difference between a graded bench and a trench
+# through a hill).
     return {"op": "curve_build", "created": created, "info": info,
             "data": {"slot": res["slot"], "note": res["note"],
                      "draped": res["note"].startswith("draped"),
@@ -1019,9 +1034,10 @@ def curve_build(op: dict) -> dict:
 
 def _host_bake_cb():
     """Wire the package-level host bake (_run_host_bake) for an MCP erode when it is reachable. Lazy
-    import (it lives in the addon __init__, not core, so it survives the bridge's core-only reload)
-    and wrapped with bpy.context. Returns a (out_abs, params) -> (meta, error) callable, or None when
-    the package entry is not importable (a bare-core session with no addon __init__)."""
+    import (it lives in the addon __init__, not core, so it survives the bridge's core-only
+    reload) and wrapped with bpy.context. Returns a (out_abs, params) -> (meta, error) callable,
+    or None when the package entry is not importable (a bare-core session with no addon
+    __init__)."""
     try:
         from .. import _run_host_bake
     except (ImportError, ValueError):
@@ -1035,8 +1051,8 @@ def _host_bake_cb():
 
 def bake_erode(op: dict) -> dict:
     """MCP op: Bake & Erode a terrain and re-impose its curves. Best-effort -- wires the host bake
-    when reachable, else returns a note that the erosion was skipped (still reporting the curves that
-    would be re-imposed) instead of failing.
+    when reachable, else returns a note that the erosion was skipped (still reporting the curves
+    that would be re-imposed) instead of failing.
 
     params: terrain (mesh name, required), curves (optional list of curve names, else every scene
     curve), strength (0..1), scope (band/global), deposit (bool), seed (int)."""
@@ -1060,7 +1076,8 @@ def bake_erode(op: dict) -> dict:
 def revert_erode(op: dict) -> dict:
     """MCP op: revert a terrain to its clean heightfield and re-impose the curves' graded channels.
 
-    params: terrain (mesh name, required), curves (optional list of curve names, else every scene curve)."""
+    params: terrain (mesh name, required), curves (optional list of curve names, else every scene
+    curve)."""
     terrain = _terrain_object(op.get("terrain"), required=True)
     curves = _list_scene_curves(bpy.context.scene, op.get("curves"))
     res = run_revert_erode(terrain, curves, scatter_cb=None)

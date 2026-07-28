@@ -146,7 +146,7 @@ The wrapper is the least maintained dependency in the track and **shipped with t
 silently random**: a vendored `linear` to `liner` rename gave 0.010 voxel IoU before the fix and 0.53
 after. `tools/scripts/comfy_omni_fix.py` is the fix. One bug found on another route: the exporter's
 turns **accumulate**, so the staged chain's high-to-low bake had been reading across a 90 or 180
-degree rotation since the asset gate, which put a the route A/B conclusion back in question (re-answered by the geometry A/B).
+degree rotation since the asset gate, which put the one-shot-against-staged conclusion back in question (re-answered by the geometry A/B).
 
 ## A prompted terrain macro mask
 

@@ -54,18 +54,20 @@ def macro_size(stack, size) -> int:
     return AMPLIFY_BASE if has_amplify(stack) else int(size)
 
 # Ops whose slope-relaxation threshold can be authored as a real repose ANGLE (repose_deg) instead
-# of a hand-picked normalised talus. Maps each op kind to the param name that carries that threshold.
+# of a hand-picked normalised talus. Maps each op kind to the param name that carries that
+# threshold.
 _REPOSE_PARAM = {"thermal": "talus", "scarp": "talus", "fluvial": "talus", "deposit": "settle_talus"}
 
 
 def _resolve_repose(stack, bake_res, relief_ratio):
     """Turn any op's `repose_deg` into a resolution-correct talus, in place.
 
-    A preset may author a slope-relaxation pass by real angle (`repose_deg`) so the rendered slope
-    holds that PHYSICAL angle at any bake resolution or tile size; here, once the bake resolution and
-    the preset's relief ratio are known, that becomes the concrete normalised talus the engine op
-    takes (see presets.talus_for_angle). Ops still take a raw `talus` when a structural, non-repose
-    slope is wanted (cap-rock cliffs), so the two are not mutually exclusive."""
+    A preset may author a slope-relaxation pass by real angle (`repose_deg`) so the rendered
+    slope holds that PHYSICAL angle at any bake resolution or tile size; here, once the bake
+    resolution and the preset's relief ratio are known, that becomes the concrete normalised
+    talus the engine op takes (see presets.talus_for_angle). Ops still take a raw `talus` when a
+    structural, non-repose slope is wanted (cap-rock cliffs), so the two are not mutually
+    exclusive."""
     for op in stack:
         if "repose_deg" not in op:
             continue
@@ -109,8 +111,8 @@ def with_macro(stack, path, *, weight=MACRO_WEIGHT, smooth=MACRO_SMOOTH, invert=
     character are a weighted sum, and the erosion that follows sees one field either way.
 
     Everything downstream is untouched: `fluvial`, `thermal` and `amplify` cannot tell a mask-based
-    macro from a noise-based one, which is why the macro-heightmap family needed no new erosion path:
-    the mask is a low-frequency input, never a heightfield.
+    macro from a noise-based one, which is why the macro-heightmap family needed no new erosion
+    path: the mask is a low-frequency input, never a heightfield.
     """
     out = copy.deepcopy(list(stack))
     weight = max(0.0, min(1.0, float(weight)))
@@ -149,11 +151,11 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
                   size=DEFAULT_SIZE):
     """Copy a preset stack and modulate it by the five global knobs, returning an engine-ready stack.
 
-    All knobs at 0.5 reproduce the preset exactly (every factor is 1.0, no octave
-    shift, only the seed is injected). Factors are centred on 0.5 so a knob reads
-    the same way on any preset. `size` is the bake resolution any `repose_deg` pass is resolved
-    against (see _resolve_repose), so the returned stack carries a concrete talus the engine op takes,
-    never a raw angle; callers that bake at a non-default resolution pass their size."""
+    All knobs at 0.5 reproduce the preset exactly (every factor is 1.0, no octave shift, only the
+    seed is injected). Factors are centred on 0.5 so a knob reads the same way on any preset.
+    `size` is the bake resolution any `repose_deg` pass is resolved against (see
+    _resolve_repose), so the returned stack carries a concrete talus the engine op takes, never a
+    raw angle; callers that bake at a non-default resolution pass their size."""
     stack = copy.deepcopy(presets.stack(preset))
     salt = _preset_salt(preset)
     rugged = 0.4 + 1.2 * float(relief)       # 0.4 .. 1.6  (x1.0 at 0.5)
@@ -179,10 +181,12 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
         elif kind in ("fluvial", "pipe_hydraulic"):
             op["iterations"] = _clampi(op.get("iterations", 60) * erode, 4, 400)
         elif kind == "rill":
-            # Erosion knob deepens the dissection by adding groove iterations (more, denser gullies).
+            # Erosion knob deepens the dissection by adding groove iterations (more, denser
+# gullies).
             op["iterations"] = _clampi(op.get("iterations", 10) * erode, 2, 40)
         elif kind == "glacial":
-            # Erosion knob scales the ice-sculpting passes (more abrasion + planing = deeper troughs).
+            # Erosion knob scales the ice-sculpting passes (more abrasion + planing = deeper
+# troughs).
             op["iterations"] = _clampi(op.get("iterations", 60) * erode, 12, 160)
         elif kind == "thermal":
             op["iterations"] = _clampi(op.get("iterations", 4) * erode, 0, 60)
@@ -190,7 +194,8 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["amount"] = op.get("amount", 0.5) * sharp
         elif kind == "amplify":
             # amplify climbs to the bake resolution; the Detail knob scales its detail amplitude,
-            # matching how it scales sharpen. `relief` makes the aeolian repose settle scale-correct.
+# matching how it scales sharpen. `relief` makes the aeolian repose settle
+# scale-correct.
             op["to"] = int(size)
             op["relief"] = relief_ratio
             op["strength"] = op.get("strength", 0.025) * sharp

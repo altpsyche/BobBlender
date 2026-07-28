@@ -7,20 +7,20 @@ Four questions, each answered with a number rather than a screenshot:
      depth and normal pass worth the export code?** `stylize_render` (real passes) against `stylize_render_est` (Depth Anything
      V2 plus NormalBAE on the same frame), same seed, same prompt, same denoise. Preservation is
      measured two ways: the IoU of the thresholded silhouette against the depth pass, and the
-     agreement between Blender's true depth and Depth Anything V2's reading of each stylised
-     output, after the affine alignment a scale-invariant estimator requires.
+     agreement between Blender's true depth and Depth Anything V2's reading of each stylised output,
+     after the affine alignment a scale-invariant estimator requires.
   B. **Does a mesh come back stylised, with the seam and the drift measured ACROSS a turntable?**
-     Six views through `mesh_paint_views` under both ControlNets with the front view as the IPAdapter reference,
-     then Blender projection-bakes them: per-view mean absolute difference in the overlap regions,
-     and the front-against-180-degrees drift. Plus the LoRA control the route exists for, measured
-     as the difference one makes on a fixed seed.
+     Six views through `mesh_paint_views` under both ControlNets with the front view as the
+     IPAdapter reference, then Blender projection-bakes them: per-view mean absolute difference in
+     the overlap regions, and the front-against-180-degrees drift. Plus the LoRA control the route
+     exists for, measured as the difference one makes on a fixed seed.
   D. **Does the Advanced-panel button work through the real operator and the real job queue?**
      One press: the render happens on the main thread (it has to), the stylise on the worker, and
      the longest main-thread tick while it ran is measured against one frame at 60 Hz.
   C. **Does multi-view geometry beat single-view on a back-facing test?** A ground-truth object
-     whose back is not inferable from the front, through `mesh_geom_trellis` (front only), `mesh_geom_mv_trellis`
-     (Trellis2MultiViewImageToShape) and `mesh_geom_mv` (Hunyuan multi-view), scored against the ground truth by
-     voxel IoU and Chamfer distance, whole and BACK HALF only.
+     whose back is not inferable from the front, through `mesh_geom_trellis` (front only),
+     `mesh_geom_mv_trellis` (Trellis2MultiViewImageToShape) and `mesh_geom_mv` (Hunyuan multi-view),
+     scored against the ground truth by voxel IoU and Chamfer distance, whole and BACK HALF only.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
         --python tools/scripts/headless_gen_stylise_paint_multiview.py -- [--part a,b,c] [--fresh] [--views 6]
@@ -109,10 +109,11 @@ def _gpu_sample():
 
 
 class Vram:
-    """Peak VRAM across a job, sampled from a thread. Copied from `headless_gen_oneshot_vs_staged.py`, because
-    the rule it encodes is the point: read PER PROCESS and sum over the ComfyUI family, and report
-    the RISE over the stage's own baseline as well as the absolute peak, which is order-dependent
-    (`mesh_subject` and `stylize_render` both leave SDXL resident at roughly 6.6 GB)."""
+    """Peak VRAM across a job, sampled from a thread. Copied from `headless_gen_oneshot_vs_staged.py`,
+    because the rule it encodes is the point: read PER PROCESS and sum over the ComfyUI family,
+    and report the RISE over the stage's own baseline as well as the absolute peak, which is
+    order-dependent (`mesh_subject` and `stylize_render` both leave SDXL resident at roughly 6.6
+    GB)."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -557,7 +558,8 @@ def probe_image(graph, image_path, out_path, label):
     return out_path
 
 
-# -- Part A: the look-dev stylise family ----------------------------------------------------------------------------
+# -- Part A: the look-dev stylise family
+# ----------------------------------------------------------------------------
 def normal_convention(args):
     """The normal channel convention, checked on a sphere where the right answer is known.
 
@@ -620,8 +622,9 @@ def part_a(args, reachable):
     normal_convention(args)
     scene = build_render_scene()
     started = time.time()
-    # transparent=False on purpose: the look-dev stylise family makes a PITCH frame, so the sky belongs in it, and a
-    # silhouette test against an empty background would be trivially passed by black staying black.
+    # transparent=False on purpose: the look-dev stylise family makes a PITCH frame, so the sky
+# belongs in it, and a silhouette test against an empty background would be trivially passed by
+# black staying black.
     shot = gen_views.render_passes(GEN, "scene", camera=scene["camera"], resolution=RESOLUTION,
                                   samples=48, engine="BLENDER_EEVEE", transparent=False)
     render_seconds = time.time() - started
@@ -748,7 +751,8 @@ def part_a(args, reachable):
                   fh, indent=2, sort_keys=True, default=str)
 
 
-# -- Part B: the mesh-texturing family stylised --------------------------------------------------------------------
+# -- Part B: the mesh-texturing family stylised
+# --------------------------------------------------------------------
 def part_b(args, reachable):
     section("B. The mesh-texturing family stylised: a turntable painted through mesh_paint_views, with seam and drift measured")
     obj, source = paint_target()

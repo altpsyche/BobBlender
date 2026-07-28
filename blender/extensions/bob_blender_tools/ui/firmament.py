@@ -1,18 +1,18 @@
 """Firmament: the Atmosphere panel, peer to Terrain, Scatter, and Shaders.
 
-Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/CONVENTIONS.md, panel UX conventions). It
-authors the built subsystems: Sky, Clouds, Fog, and Weather (rain/motes/snow coverage). The
-shared world state (Scene.bbt_env) is still owned and registered here, but its UI (the
-Environment sliders), the Preview/Final Quality level, the Live Environment master, and the
-Scene Presets / Apply Season now live in the World panel (world.py). This module keeps
-the firmament_* operators; the World panel drives them.
+Labelled "Atmosphere" in the tab since the 2026-07-20 UX redesign (docs/CONVENTIONS.md, panel UX
+conventions). It authors the built subsystems: Sky, Clouds, Fog, and Weather (rain/motes/snow
+coverage). The shared world state (Scene.bbt_env) is still owned and registered here, but its UI
+(the Environment sliders), the Preview/Final Quality level, the Live Environment master, and the
+Scene Presets / Apply Season now live in the World panel (world.py). This module keeps the
+firmament_* operators; the World panel drives them.
 
-The Live Environment master (bbt_world.live_env) and Quality reach this panel's subsystems
-through the world applier registry: register subscribes _apply_world, which (re)installs or
-removes the wind/snow drivers and re-applies quality when a world control changes.
+The Live Environment master (bbt_world.live_env) and Quality reach this panel's subsystems through
+the world applier registry: register subscribes _apply_world, which (re)installs or removes the
+wind/snow drivers and re-applies quality when a world control changes.
 
-Two homes, no drift: the shared world is bbt_env (World panel); Firmament's own subsystem
-state is bbt_firmament.
+Two homes, no drift: the shared world is bbt_env (World panel); Firmament's own subsystem state is
+bbt_firmament.
 """
 
 import bpy
@@ -139,9 +139,9 @@ def _draw_knobs_mod(layout, mod, names, enabled=True):
 # --- Live sun: reposition the Sun lamp + sky node from the world state whenever a geographic field
 # (time/date/place, via env's geo-hook) or a sun override (this panel's own props) is edited, so the
 # sun moves with no Build Sky press. The sun position is a nonlinear solar calc, so it cannot be a
-# driver (and a custom-function pydriver breaks on untrusted files); a lightweight reposition runs on
-# each edit instead. No node rebuild: it just sets the sun rotation/energy + the sky node sun angle,
-# the same values a Build Sky would compute. ---
+# driver (and a custom-function pydriver breaks on untrusted files); a lightweight reposition runs
+# on each edit instead. No node rebuild: it just sets the sun rotation/energy + the sky node sun
+# angle, the same values a Build Sky would compute. ---
 _solar = None
 
 
@@ -285,7 +285,8 @@ class BBT_FirmamentProps(PropertyGroup):
     ground_albedo: FloatProperty(name="Ground Albedo", default=0.3, min=0.0, max=1.0)
 
     # Quality (Preview/Final) and the Live Environment master toggle moved to the World panel
-    # (bbt_world); they are scene-wide, not atmosphere-specific (docs/CONVENTIONS.md, panel UX conventions).
+# (bbt_world); they are scene-wide, not atmosphere-specific (docs/CONVENTIONS.md, panel UX
+# conventions).
 
     # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
     cloud_object: StringProperty(name="Object", default="BOB_Clouds")
@@ -621,9 +622,9 @@ class BBT_OT_firmament_scene_preset(Operator):
 
 
 # Firmament is now "Atmosphere": the built sky/clouds/fog/weather subsystems. The world state
-# (bbt_env), the Quality level, the Live Environment master, and Scene Presets moved to the
-# World panel (docs/CONVENTIONS.md, panel UX conventions). Class/operator names keep the firmament_* / BBT_*
-# spelling per decision F.
+# (bbt_env), the Quality level, the Live Environment master, and Scene Presets moved to the World
+# panel (docs/CONVENTIONS.md, panel UX conventions). Class/operator names keep the firmament_* /
+# BBT_* spelling per decision F.
 class BBT_PT_firmament(Panel):
     bl_label = "Atmosphere"
     bl_idname = "BBT_PT_firmament"
@@ -634,9 +635,10 @@ class BBT_PT_firmament(Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        # Primary action first: the root is no longer empty. It shows the sky state and carries the primary Build
-        # Sky, so the panel's main action is the first thing you see instead of buried at the
-        # bottom of the Sky sub-panel under its ten inputs. Sky / Clouds / Fog / Weather tune below.
+        # Primary action first: the root is no longer empty. It shows the sky state and carries the
+# primary Build Sky, so the panel's main action is the first thing you see instead of buried
+# at the bottom of the Sky sub-panel under its ten inputs. Sky / Clouds / Fog / Weather tune
+# below.
         layout = self.layout
         built = bpy.data.objects.get("BOB_Sun") is not None
         layout.label(text="Sky built" if built else "No sky yet",
@@ -659,9 +661,9 @@ class BBT_PT_firmament_sky(Panel):
         fm = context.scene.bbt_firmament
         layout = self.layout
 
-        # These are the INPUTS to Build Sky (not live post-build knobs), so they show always.
-        # Build Sky itself lives on the Atmosphere header above so the primary action comes first, not repeated here; edit an
-        # input, then press Rebuild Sky up there.
+        # These are the INPUTS to Build Sky (not live post-build knobs), so they show always. Build
+# Sky itself lives on the Atmosphere header above so the primary action comes first, not
+# repeated here; edit an input, then press Rebuild Sky up there.
         col = layout.column(align=True)
         col.label(text="Sun", icon="LIGHT_SUN")
         col.prop(fm, "use_override")
@@ -711,8 +713,9 @@ class BBT_PT_firmament_clouds(Panel):
             layout.label(text="Build to edit cloud knobs", icon="INFO")
             return
 
-        # Instant preset: the look preset is instant (light: sets knobs), so it is gated behind Build like the
-        # other knobs. It no longer sits above the gate where picking it would silently build.
+        # Instant preset: the look preset is instant (light: sets knobs), so it is gated behind
+# Build like the other knobs. It no longer sits above the gate where picking it would
+# silently build.
         helpers.preset_row(layout, "bob_blender_tools.firmament_cloud_preset")
 
         live = _live_env_on(context.scene)
@@ -774,7 +777,8 @@ class BBT_PT_firmament_fog(Panel):
             layout.label(text="Build to edit fog knobs", icon="INFO")
             return
 
-        # Instant preset: instant look preset, gated behind Build so picking it never silently builds.
+        # Instant preset: instant look preset, gated behind Build so picking it never silently
+# builds.
         helpers.preset_row(layout, "bob_blender_tools.firmament_fog_preset")
 
         col = layout.column(align=True)
@@ -886,8 +890,9 @@ class BBT_PT_firmament_weather(Panel):
         if snow_mod is not None:
             live = _live_env_on(context.scene)
             # Snow (amount) is driven from bbt_env when Live Environment is on, so grey it. The
-            # world-Z Altitude/Falloff are the snow line, set from the env on build/sync (Use Env
-            # Snow), so they show as author-owned; the slope band and occlusion are author-owned too.
+# world-Z Altitude/Falloff are the snow line, set from the env on build/sync (Use Env
+# Snow), so they show as author-owned; the slope band and occlusion are author-owned
+# too.
             _draw_knobs_mod(box, snow_mod, ["Snow"], enabled=not live)
             _draw_knobs_mod(box, snow_mod, ["Slope Threshold", "Slope Falloff", "Altitude",
                                             "Altitude Falloff", "Occlusion", "Occlusion Distance"])
@@ -934,7 +939,8 @@ def register():
     # Live sun: subscribe the reposition to the shared env's geographic-change hook, so editing
     # time/date/place re-places the sun (the override props carry their own update callback).
     _env.register_geo_hook(_sun_live_update)
-    # Subscribe the atmosphere applier so the World master toggle / quality drive it (quality scaling).
+    # Subscribe the atmosphere applier so the World master toggle / quality drive it (quality
+# scaling).
     world.register_applier(_apply_world)
 
 

@@ -1,32 +1,35 @@
-"""curve_overlay: carve a cross-section profile along a curve into the terrain (BobSplines, the terrain overlay).
+"""curve_overlay: carve a cross-section profile along a curve into the terrain (BobSplines, the terrain
+overlay).
 
-The standalone terrain-shape overlay (docs/SPLINES.md 4.3), superseding the inline path grade
-that used to live in heightmap_terrain. It runs as its OWN modifier ON the terrain object (after
-the terrain modifier, so it sees the displaced surface), one modifier per curve, so a network of
-paths stacks instead of being limited to a single inline path. It:
+The standalone terrain-shape overlay (docs/SPLINES.md 4.3), superseding the inline path grade that
+used to live in heightmap_terrain. It runs as its OWN modifier ON the terrain object (after the
+terrain modifier, so it sees the displaced surface), one modifier per curve, so a network of paths
+stacks instead of being limited to a single inline path. It:
 
 1. Levels a bench toward (live terrain Z at the centreline) - Path Depth across Path Width + a flat
    Shoulder Width, then grades back to the terrain over an embankment. The embankment width is
-   slope-aware (the road cross-section): it widens with the cut/fill depth so a bench on a slope ramps out at Bank Slope
-   instead of cliffing (docs/SPLINES.md 9 #11), and Bank Bias skews it to one side of the curve.
+   slope-aware (the road cross-section): it widens with the cut/fill depth so a bench on a slope
+   ramps out at Bank Slope instead of cliffing (docs/SPLINES.md 9 #11), and Bank Bias skews it to
+   one side of the curve.
 2. Writes the curve mask attributes the shader and scatter READ instead of re-solving proximity
    (docs/SPLINES.md 9 #2 / #4): bbt_curve_mask (0..1, 1 on the band), this curve's own edge ring
    under edge_attr (the shoulder ring a Verge scatter layer reads), an optional per-role surface
-   class attribute for a distinct role, bbt_curve_carved (coverage of carving curves, for the junction
-   take-lower rule), and bbt_curve_dist (the XY distance). The masks MAX-accumulate across curves, so
-   overlapping paths add rather than overwrite (a prior overlay's value is read and maxed).
+   class attribute for a distinct role, bbt_curve_carved (coverage of carving curves, for the
+   junction take-lower rule), and bbt_curve_dist (the XY distance). The masks MAX-accumulate across
+   curves, so overlapping paths add rather than overwrite (a prior overlay's value is read and
+   maxed).
 3. Resolves crossings by TAKE-LOWER (the junction take-lower rule): where a prior curve carved, this curve may only lower the
    surface, so a junction settles to the lower bench rather than the last-built curve winning.
 
-Cross-section knobs live ONCE here, on the overlay modifier, snapshot-restored across a rebuild
-like any GN knob (the single-owner decision): nothing downstream duplicates a width/depth knob.
+Cross-section knobs live ONCE here, on the overlay modifier, snapshot-restored across a rebuild like
+any GN knob (the single-owner decision): nothing downstream duplicates a width/depth knob.
 
-This recipe adds a Geometry INPUT socket, so build_geonodes_on_object binds the terrain mesh in.
-The bench height is sampled LIVE (the live re-drape): the overlay raycasts the incoming terrain straight down at
-the centreline every evaluation, so the bench tracks the ground as the terrain is re-sculpted or the
-curve is moved, with no re-Build. curve_field's draped path_z stays only as the fallback where that
-ray misses the mesh (see _live_terrain_z). The Build-time drape still runs so the curve WIRE sits on
-the terrain for editing.
+This recipe adds a Geometry INPUT socket, so build_geonodes_on_object binds the terrain mesh in. The
+bench height is sampled LIVE (the live re-drape): the overlay raycasts the incoming terrain straight
+down at the centreline every evaluation, so the bench tracks the ground as the terrain is
+re-sculpted or the curve is moved, with no re-Build. curve_field's draped path_z stays only as the
+fallback where that ray misses the mesh (see _live_terrain_z). The Build-time drape still runs so
+the curve WIRE sits on the terrain for editing.
 """
 
 import bpy
@@ -40,7 +43,8 @@ _LIFT = 10000.0  # raycast the centreline probe from well above any terrain, str
 
 
 def _live_terrain_z(ng, geometry, near, fallback_z, location):
-    """The CURRENT terrain height under the curve centreline (BobSplines, the live re-drape, live re-drape).
+    """The CURRENT terrain height under the curve centreline (BobSplines, the live re-drape, live
+    re-drape).
 
     curve_field's path_z reads the curve's Build-time draped Z, which goes stale the moment the
     terrain is re-sculpted or the curve is moved sideways. Instead, raycast the incoming terrain
@@ -104,22 +108,23 @@ def build(ng, out, params: dict):
     add_input(ng, "Path Falloff", "NodeSocketFloat", float(params.get("path_falloff", 3.5)), 0.0)
     add_input(ng, "Path Depth", "NodeSocketFloat", float(params.get("path_depth", 0.3)), 0.0)
     add_input(ng, "End Taper", "NodeSocketFloat", float(params.get("end_taper", 0.0)), 0.0)
-    # Width Variation: fraction the bench half-width wanders along the spline (0 = constant width, the
-    # old behaviour). A low-frequency noise sampled at the centreline scales the inner bench width, so
-    # the carved channel meanders in lockstep with the water ribbon (curve_water uses the SAME
-    # construction and WIDTH_NOISE_SCALE). Seeded > 0 only for the river/stream roles; 0 elsewhere.
+    # Width Variation: fraction the bench half-width wanders along the spline (0 = constant width,
+# the old behaviour). A low-frequency noise sampled at the centreline scales the inner bench
+# width, so the carved channel meanders in lockstep with the water ribbon (curve_water uses the
+# SAME construction and WIDTH_NOISE_SCALE). Seeded > 0 only for the river/stream roles; 0
+# elsewhere.
     add_input(ng, "Width Variation", "NodeSocketFloat",
               float(params.get("width_var", 0.0)), 0.0, 0.95)
-    # Cross-section shape (the road cross-section): a flat shoulder extends the bench; the embankment beyond it is
-    # slope-aware; Bank Bias skews it to one side of the curve.
+    # Cross-section shape (the road cross-section): a flat shoulder extends the bench; the
+# embankment beyond it is slope-aware; Bank Bias skews it to one side of the curve.
     add_input(ng, "Shoulder Width", "NodeSocketFloat", float(params.get("shoulder_width", 0.0)), 0.0)
     add_input(ng, "Bank Slope", "NodeSocketFloat", float(params.get("bank_slope", 1.0)), 0.05)
     add_input(ng, "Bank Bias", "NodeSocketFloat", float(params.get("bank_bias", 0.0)), -1.0, 1.0)
-    # Verge band (the per-role surfaces, item-8): the shoulder ring a Verge scatter layer reads (edge_attr), controlled
-    # independently of the carve. Verge Gap is the clear metres OUT from the path edge before the band
-    # starts (a hedgerow set back from the road); Verge Width is the band's own width; Verge Side is
-    # -1 (left only) / 0 (both) / +1 (right only). Distance-based, so a mask-only path (no carve) still
-    # has a verge.
+    # Verge band (the per-role surfaces, item-8): the shoulder ring a Verge scatter layer reads
+# (edge_attr), controlled independently of the carve. Verge Gap is the clear metres OUT from the
+# path edge before the band starts (a hedgerow set back from the road); Verge Width is the
+# band's own width; Verge Side is -1 (left only) / 0 (both) / +1 (right only). Distance-based,
+# so a mask-only path (no carve) still has a verge.
     add_input(ng, "Verge Gap", "NodeSocketFloat", float(params.get("verge_gap", 0.0)), 0.0)
     add_input(ng, "Verge Width", "NodeSocketFloat", float(params.get("verge_width", 1.5)), 0.0)
     add_input(ng, "Verge Side", "NodeSocketFloat", float(params.get("verge_side", 0.0)), -1.0, 1.0)
@@ -140,14 +145,14 @@ def build(ng, out, params: dict):
     # tangent is unused here (the embankment reads only `side`); the river water ribbon consumes it.
     dist, near, path_z, end_dist, side, _tangent = curve_field(ng, curve, (-1100, -560))
 
-    # Bench target Z, in one of two families (docs/SPLINES.md 9 #1):
-    # - FOLLOW (dirt path / trail / road): sample the LIVE terrain Z under the centreline (the live re-drape) so
-    #   the bench tracks a re-sculpt or a curve move, then recess it by Depth.
-    # - IMPOSE (river / stream): use the DRAPED monotonic path_z instead, so the terrain conforms
-    #   DOWN to the descending water centreline rather than the channel following the ground. The
-    #   drape (drape_curve monotonic) guarantees path_z never rises source->mouth, so the carved bed
-    #   runs downhill; Depth sinks the bed below the water surface the ribbon later sits on.
-    # diff drives both the carve and, by its magnitude, the slope-aware embankment width.
+    # Bench target Z, in one of two families (docs/SPLINES.md 9 #1): - FOLLOW (dirt path / trail /
+# road): sample the LIVE terrain Z under the centreline (the live re-drape) so the bench tracks
+# a re-sculpt or a curve move, then recess it by Depth. - IMPOSE (river / stream): use the
+# DRAPED monotonic path_z instead, so the terrain conforms DOWN to the descending water
+# centreline rather than the channel following the ground. The drape (drape_curve monotonic)
+# guarantees path_z never rises source->mouth, so the carved bed runs downhill; Depth sinks the
+# bed below the water surface the ribbon later sits on. diff drives both the carve and, by its
+# magnitude, the slope-aware embankment width.
     if params.get("impose", False):
         bench_z = path_z
     else:
@@ -158,14 +163,15 @@ def build(ng, out, params: dict):
     target_z = math_node(ng, "SUBTRACT", bench_z, gi.outputs["Path Depth"], (-600, -120))
     diff = math_node(ng, "SUBTRACT", target_z, psep.outputs["Z"], (-420, -120))
 
-    # Cross-section band (the road cross-section). The flat bench spans Path Width + Shoulder Width at bench level;
-    # beyond it the embankment grades back to terrain. Its width is slope-aware (docs/SPLINES.md 9
-    # #11): a deeper cut/fill (|diff|) needs a wider run to hold Bank Slope (rise/run), so a bench on
-    # a slope ramps out instead of cliffing. Bank Bias skews the embankment to one side (side -1/+1).
-    # The extra width is capped at 3x Path Falloff so the band stays bounded on far/steep ground.
-    # Inner bench half-width, scaled by the shared width-variation noise so the carved channel wanders
-    # in lockstep with the water ribbon (curve_water widens its swept profile by the same wmul). Width
-    # Variation 0 -> wmul 1 -> the exact old constant-width bench, so non-river roles are unaffected.
+    # Cross-section band (the road cross-section). The flat bench spans Path Width + Shoulder Width
+# at bench level; beyond it the embankment grades back to terrain. Its width is slope-aware
+# (docs/SPLINES.md 9 #11): a deeper cut/fill (|diff|) needs a wider run to hold Bank Slope
+# (rise/run), so a bench on a slope ramps out instead of cliffing. Bank Bias skews the
+# embankment to one side (side -1/+1). The extra width is capped at 3x Path Falloff so the band
+# stays bounded on far/steep ground. Inner bench half-width, scaled by the shared
+# width-variation noise so the carved channel wanders in lockstep with the water ribbon
+# (curve_water widens its swept profile by the same wmul). Width Variation 0 -> wmul 1 -> the
+# exact old constant-width bench, so non-river roles are unaffected.
     inner_base = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Shoulder Width"], (-780, 320))
     wmul = width_multiplier(ng, near, gi.outputs["Width Variation"], (-2400, 520))
     inner = math_node(ng, "MULTIPLY", inner_base, wmul, (-420, 380))
@@ -183,9 +189,10 @@ def build(ng, out, params: dict):
     # onpath: 1 on the flat bench, easing to 0 across the embankment. smooth_falloff is its inverse.
     onpath = math_node(ng, "SUBTRACT", 1.0, smooth_falloff(ng, dist, inner, outer, (660, 440)),
                        (840, 440))
-    # Endpoint taper (the endpoint taper, docs/SPLINES.md 9 #8): fade the band over the last End Taper metres so it
-    # stops at the tip instead of fanning into a radial semicircle past it (the tip vertex has
-    # end_dist 0, so its fan tapers too). End Taper 0 leaves it off (MAXIMUM guards a 0-width range).
+    # Endpoint taper (the endpoint taper, docs/SPLINES.md 9 #8): fade the band over the last End
+# Taper metres so it stops at the tip instead of fanning into a radial semicircle past it (the
+# tip vertex has end_dist 0, so its fan tapers too). End Taper 0 leaves it off (MAXIMUM guards a
+# 0-width range).
     taper_outer = math_node(ng, "MAXIMUM", gi.outputs["End Taper"], 1e-6, (660, 600))
     taper = smooth_falloff(ng, end_dist, 0.0, taper_outer, (840, 620))
     onpath = math_node(ng, "MULTIPLY", onpath, taper, (1020, 500))
@@ -223,13 +230,14 @@ def build(ng, out, params: dict):
         # FOLLOW bench carve: offset = diff * onpath, so the surface meets the bench on the path
         # (onpath 1) and is untouched off it (onpath 0).
         offset_raw = math_node(ng, "MULTIPLY", diff, onpath, (1120, 120))
-    # Junction Z rule (the junction take-lower rule, docs/SPLINES.md 9 #9, take-lower): where a PRIOR curve already carved
-    # (its bbt_curve_carved coverage rode in on this overlay's input geometry), only let this curve
-    # LOWER the surface, never raise it, so a crossing settles to the lower bench instead of the
-    # last-built curve clobbering the other. Order-independent for the crossing height; the mix by
-    # prior coverage eases a partial overlap rather than stepping it. It reads bbt_curve_carved (not
-    # bbt_curve_mask) so a mask-only path -- material/scatter but no carve -- does not suppress a
-    # crossing road's fill. A lone curve has prior 0 everywhere, so it is byte-identical to before.
+    # Junction Z rule (the junction take-lower rule, docs/SPLINES.md 9 #9, take-lower): where a
+# PRIOR curve already carved (its bbt_curve_carved coverage rode in on this overlay's input
+# geometry), only let this curve LOWER the surface, never raise it, so a crossing settles to the
+# lower bench instead of the last-built curve clobbering the other. Order-independent for the
+# crossing height; the mix by prior coverage eases a partial overlap rather than stepping it. It
+# reads bbt_curve_carved (not bbt_curve_mask) so a mask-only path -- material/scatter but no
+# carve -- does not suppress a crossing road's fill. A lone curve has prior 0 everywhere, so it
+# is byte-identical to before.
     prior = nodes.new("GeometryNodeInputNamedAttribute")
     prior.data_type = "FLOAT"
     prior.location = (1120, -100)
@@ -249,12 +257,13 @@ def build(ng, out, params: dict):
     if params.get("carve", True):
         geo = _store_max(ng, geo, "bbt_curve_carved", onpath, (2020, 0))
 
-    # Curve edge ring (the per-role surfaces, item-8): a verge band set by its OWN metres, not tied to the bench. It
-    # starts Verge Gap out from the path edge (Path Width, a radius) and spans Verge Width, with soft
-    # edges, faded at the ends by the same End Taper as the band. Stored under THIS curve's own
-    # attribute (scatter_panel.edge_attr_name), so a Verge scatter layer targets one path's verge;
-    # only this curve's overlay writes it, so it holds this ring alone. A Verge layer with no curve
-    # bound reads a name nothing writes, so it scatters nothing (it needs a path).
+    # Curve edge ring (the per-role surfaces, item-8): a verge band set by its OWN metres, not tied
+# to the bench. It starts Verge Gap out from the path edge (Path Width, a radius) and spans
+# Verge Width, with soft edges, faded at the ends by the same End Taper as the band. Stored
+# under THIS curve's own attribute (scatter_panel.edge_attr_name), so a Verge scatter layer
+# targets one path's verge; only this curve's overlay writes it, so it holds this ring alone. A
+# Verge layer with no curve bound reads a name nothing writes, so it scatters nothing (it needs
+# a path).
     v_inner = math_node(ng, "ADD", gi.outputs["Path Width"], gi.outputs["Verge Gap"], (1560, 500))
     v_outer = math_node(ng, "ADD", v_inner, gi.outputs["Verge Width"], (1560, 460))
     # Soft edge, capped at 40% of the band width so a narrow verge stays a distinct band.
@@ -265,7 +274,8 @@ def build(ng, out, params: dict):
                        (2060, 400))
     v_band = math_node(ng, "MULTIPLY", v_rise, v_fall, (2200, 460))
     v_band = math_node(ng, "MULTIPLY", v_band, taper, (2200, 420))  # fade at the curve ends
-    # One-sided select: both sides when Verge Side is ~0, else keep the half whose `side` sign matches.
+    # One-sided select: both sides when Verge Side is ~0, else keep the half whose `side` sign
+# matches.
     v_both = math_node(ng, "SUBTRACT", 1.0, math_node(ng, "ABSOLUTE", gi.outputs["Verge Side"], location=(1740, 300)), (1920, 300))
     v_match = math_node(ng, "GREATER_THAN", math_node(ng, "MULTIPLY", side, gi.outputs["Verge Side"], (1740, 260)), 0.0, (1920, 260))
     v_sidesel = math_node(ng, "MAXIMUM", v_both, v_match, (2060, 280))
@@ -274,18 +284,19 @@ def build(ng, out, params: dict):
     if edge_attr:
         geo = _store_max(ng, geo, edge_attr, edge, (2440, 0))
 
-    # bbt_curve_<class> (the per-role surfaces): the per-role surface band, so a distinct role (a paved road) keys its
-    # own terrain-material layer instead of sharing one look with dirt paths. Written only when the
-    # role asks for a non-shared class (else the shared bbt_curve_mask above is the surface too).
+    # bbt_curve_<class> (the per-role surfaces): the per-role surface band, so a distinct role (a
+# paved road) keys its own terrain-material layer instead of sharing one look with dirt paths.
+# Written only when the role asks for a non-shared class (else the shared bbt_curve_mask above
+# is the surface too).
     surface_attr = params.get("surface_attr", "")
     if surface_attr and surface_attr != "bbt_curve_mask":
         geo = _store_max(ng, geo, surface_attr, onpath, (2460, 0))
 
-    # bbt_curve_wet (BobSplines, the damp bed, the damp bed): the river/stream role writes its band into a
-    # wetness mask the terrain material reads (materials.apply_curve_wet) so the bed and banks read
-    # damp and glossy, weather-amplified. Same band as onpath (1 in the channel, easing up the
-    # banks), MAX-accumulated. Written only when the role asks (wet_attr set), so a dry path leaves
-    # it untouched and the attribute reads 0 everywhere else.
+    # bbt_curve_wet (BobSplines, the damp bed, the damp bed): the river/stream role writes its band
+# into a wetness mask the terrain material reads (materials.apply_curve_wet) so the bed and
+# banks read damp and glossy, weather-amplified. Same band as onpath (1 in the channel, easing
+# up the banks), MAX-accumulated. Written only when the role asks (wet_attr set), so a dry path
+# leaves it untouched and the attribute reads 0 everywhere else.
     wet_attr = params.get("wet_attr", "")
     if wet_attr:
         geo = _store_max(ng, geo, wet_attr, onpath, (2500, -300))

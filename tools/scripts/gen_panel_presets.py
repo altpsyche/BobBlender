@@ -50,13 +50,14 @@ def build_panel_presets() -> dict:
 
 def build_panel_stacks() -> dict:
     """Each preset's raw op stack, so the stack editor can load one to edit
-    without hopping to the venv. These are the neutral (as-authored) stacks; the
-    global-knob modulation only applies to the preset+knobs bake path.
+    without hopping to the venv. These are the neutral (as-authored) stacks; the global-knob
+    modulation only applies to the preset+knobs bake path.
 
     Any op authored by a real repose ANGLE (`repose_deg`) is resolved here to a concrete talus at
-    the full-bake reference resolution (params.DEFAULT_SIZE): the editor and its custom-stack bake
-    take a plain talus, not an angle the engine op would reject, and it matches what a full bake
-    produces. The preset+knobs path still resolves repose per bake resolution (params.build_params)."""
+    the full-bake reference resolution (params.DEFAULT_SIZE): the editor and its custom-stack
+    bake take a plain talus, not an angle the engine op would reject, and it matches what a full
+    bake produces. The preset+knobs path still resolves repose per bake resolution
+    (params.build_params)."""
     out = {}
     for name in presets.PRESETS:
         stack = presets.stack(name)

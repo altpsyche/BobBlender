@@ -42,7 +42,8 @@ def _enable_cycles_gpu():
 
 
 def release_gpu():
-    """Drop what Blender holds on the GPU after a frame, and report what was dropped (the VRAM-handback rule).
+    """Drop what Blender holds on the GPU after a frame, and report what was dropped (the VRAM-handback
+    rule).
 
     An agent that generates and renders in one session is now the normal case, and the two halves
     fight over one card: ComfyUI keeps about 7.3 GB it will not give back and Blender keeps about

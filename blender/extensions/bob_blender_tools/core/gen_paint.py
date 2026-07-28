@@ -22,10 +22,10 @@ correct wherever texel density reaches pixel density, which is the case whenever
 much smaller than the render.
 
 **Why the drift number matters more than a screenshot.** Per-view SDXL img2img has no cross-view
-consistency (the projection-route finding): the front and the back are two independent renders of the same prompt. The
-honest gate is therefore not "does one angle look right" but how far apart two views land where
-they overlap, and how far the front view has drifted from the same texels seen from 180 degrees.
-Both come out of `project_views` as numbers in 0-255.
+consistency (the projection-route finding): the front and the back are two independent renders of
+the same prompt. The honest gate is therefore not "does one angle look right" but how far apart two
+views land where they overlap, and how far the front view has drifted from the same texels seen from
+180 degrees. Both come out of `project_views` as numbers in 0-255.
 """
 
 import math
@@ -338,8 +338,8 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
     """Project `images` (one per view) onto `obj`'s UVs and write a texture set into `out_dir`.
 
     Returns {"maps": {role: path}, "report": {...}}. Roughness, normal, height and AO come from the
-    same numpy derivation the texture family uses, which is honest for a stylised nature asset: the paint model
-    returns a colour, not a PBR set, and metallic is zero on everything this makes.
+    same numpy derivation the texture family uses, which is honest for a stylised nature asset: the
+    paint model returns a colour, not a PBR set, and metallic is zero on everything this makes.
     """
     gbuf = uv_gbuffer(obj, size=size)
     if gbuf is None:
@@ -364,7 +364,8 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
 
 
 def paint_object(obj, views, images, out_dir, stem, *, size=1024, material_name=None):
-    """`paint_maps`, wired onto the object as a material. The whole Blender half of the `mesh_paint_views` route.
+    """`paint_maps`, wired onto the object as a material. The whole Blender half of the
+    `mesh_paint_views` route.
 
     Reuses `gen_assets.apply_baked_material`, so a painted asset carries the same graph shape a
     baked one does and stays a BobShader candidate rather than a special case.

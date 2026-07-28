@@ -226,7 +226,8 @@ def test_validate_biome_flags_missing_texture(assets, monkeypatch, tmp_path):
     assert any("absent_set" in w for w in warnings)
 
 
-# -- Generated model entries (the manifest origin rule, the asset gate) -----------------------------------------------------------
+# -- Generated model entries (the manifest origin rule, the asset gate)
+# -----------------------------------------------------------
 def _make_generated_pack(root, *, height_m=1.8, on_disk=True):
     """The pack `core.gen_assets` writes: ONE biome-shaped manifest named `generated`, with the
     kinds inside it. One per kind would put "rocks" and "trees" in the biome picker."""
@@ -244,8 +245,9 @@ def _make_generated_pack(root, *, height_m=1.8, on_disk=True):
 
 
 def test_norm_entries_defaults_the_generated_fields(assets, monkeypatch, tmp_path):
-    """One reader, still (the manifest origin rule): a v1 bare string and a v2 object both come back with height_m,
-    lod, origin and faces present, so a caller never has to ask which schema it is holding."""
+    """One reader, still (the manifest origin rule): a v1 bare string and a v2 object both come back
+    with height_m, lod, origin and faces present, so a caller never has to ask which schema it is
+    holding."""
     pack = tmp_path / "p"
     bdir = pack / "models" / "b"
     bdir.mkdir(parents=True)
@@ -401,12 +403,13 @@ def test_bad_species_files_are_warnings_not_crashes(assets, monkeypatch, tmp_pat
 
 def test_missing_generatable_sets_are_reported_apart_from_authoring_mistakes(
         assets, monkeypatch, tmp_path):
-    """A named-but-absent bark set is a STATE, not a mistake, and the texture sets is what made that matter.
+    """A named-but-absent bark set is a STATE, not a mistake, and the texture sets is what made that
+    matter.
 
     No placeholder bark set ships, deliberately -- a hand-made one would hide the grain-direction
-    problem generation actually has -- so the shipped tree presets name the bark they want and pick it
-    up the moment it is generated. A caller asking "is this preset well authored" has to be able to
-    filter that out, which is what splitting the report is for.
+    problem generation actually has -- so the shipped tree presets name the bark they want and pick
+    it up the moment it is generated. A caller asking "is this preset well authored" has to be able
+    to filter that out, which is what splitting the report is for.
     """
     pack = tmp_path / "p"
     _make_species(pack, "pine", params={"levels": 2, "bark_set": "bark_pine",
@@ -436,8 +439,8 @@ def test_missing_sets_report_nothing_once_the_set_exists(assets, monkeypatch, tm
 
 
 def test_shipped_tree_presets_name_the_bark_they_want(assets):
-    """The the texture sets wiring, as data: a species names its bark set, so generating it once dresses every
-    tree of that species with no assignment step anywhere."""
+    """The the texture sets wiring, as data: a species names its bark set, so generating it once
+    dresses every tree of that species with no assignment step anywhere."""
     assert assets.foliage_species("conifer")["params"]["bark_set"] == "bark_conifer"
     assert assets.foliage_species("broadleaf")["params"]["bark_set"] == "bark_broadleaf"
 

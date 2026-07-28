@@ -1,28 +1,28 @@
 """BobShaders: authored surface materials, the layer that ties the suite together.
 
-The surface-materials counterpart to the Scatter and Firmament panels, and the top of
-the dependency graph. Like Scatter it is panel-only and in-process (no venv, no new MCP
-op): it drives the shared shader node groups in bbmcp/materials.py directly, so a code
-change to it needs an addon re-enable, never an MCP reconnect.
+The surface-materials counterpart to the Scatter and Firmament panels, and the top of the dependency
+graph. Like Scatter it is panel-only and in-process (no venv, no new MCP op): it drives the shared
+shader node groups in bbmcp/materials.py directly, so a code change to it needs an addon re-enable,
+never an MCP reconnect.
 
-Native identity (docs/CONVENTIONS.md, panel UX conventions): the panel edits the material on the ACTIVE
-object's active material slot, not a stored material_name + target pointer. Select a mesh
-and its material slots are listed; pick a slot and the sub-panels edit that material. A
-slot's kind is DETECTED from the datablock (materials.master_type): a surface BobShader, a
-terrain BobShader, or a plain material offered a Convert. New BobShader auto-names M_<object>.
+Native identity (docs/CONVENTIONS.md, panel UX conventions): the panel edits the material on the
+ACTIVE object's active material slot, not a stored material_name + target pointer. Select a mesh and
+its material slots are listed; pick a slot and the sub-panels edit that material. A slot's kind is
+DETECTED from the datablock (materials.master_type): a surface BobShader, a terrain BobShader, or a
+plain material offered a Convert. New BobShader auto-names M_<object>.
 
 - A per-object material is a thin wrapper (M_<name>): one S_SurfaceMaster (or S_TerrainMaster)
- group node feeding one Principled BSDF. The instance parameters are that group node's input
- values, drawn live and edited in place (shader group inputs re-evaluate on edit, so there is
- no rebuild to preserve, unlike the GN modifier surface Scatter draws).
+ group node feeding one Principled BSDF. The instance parameters are that group node's input values,
+ drawn live and edited in place (shader group inputs re-evaluate on edit, so there is no rebuild to
+ preserve, unlike the GN modifier surface Scatter draws).
 - S_SurfaceMaster ends in S_Weather, which reads the world through S_EnvState. The world reaches
- the shaders via drivers on S_EnvState installed once from bbt_env. The one master Live
- Environment toggle lives on the World panel (bbt_world); Shaders subscribes _apply_world to the
- world applier registry so raising the world snow whitens every surface with no rebuild.
+ the shaders via drivers on S_EnvState installed once from bbt_env. The one master Live Environment
+ toggle lives on the World panel (bbt_world); Shaders subscribes _apply_world to the world applier
+ registry so raising the world snow whitens every surface with no rebuild.
 
 Two homes, no drift: the shared world is bbt_env (World panel); BobShaders' own UI state is
-bbt_shaders. Coverage has one authority: the shader computes it the same way on every surface,
-keyed off the env snow line, so terrain and assets obey the same line (no attribute switch).
+bbt_shaders. Coverage has one authority: the shader computes it the same way on every surface, keyed
+off the env snow line, so terrain and assets obey the same line (no attribute switch).
 """
 
 import os
@@ -57,8 +57,8 @@ _WEATHER_SEASON = ["Dust Amount", "Moss Amount"]
 _SHELL_KNOBS = ["Thickness", "Smooth"]
 SNOW_SHELL_MOD = "BOB_SnowShell"
 
-# Water master knobs (BobSplines, the water look, the water look pass), split colour/optics from the flow/foam
-# animation, with the freeze slider on its own so it reads as the deliberate action it is.
+# Water master knobs (BobSplines, the water look, the water look pass), split colour/optics from the
+# flow/foam animation, with the freeze slider on its own so it reads as the deliberate action it is.
 _WATER_LOOK = ["Shallow Color", "Deep Color", "Depth", "Depth Absorption", "Depth Opacity",
                "Shoreline Fade", "Water Roughness", "IOR", "Transmission", "Edge Fade"]
 _WATER_FLOW = ["Flow Speed", "Ripple Strength", "Ripple Scale", "Wave Detail", "Surface Texture",
@@ -104,8 +104,8 @@ def _active_object(context):
 
 def _active_material(context):
     """The material on the active object's active slot: the native identity the panel edits
- (docs/CONVENTIONS.md, panel UX conventions). Selection follows the viewport and stays in sync with the
- Material Properties active slot."""
+ (docs/CONVENTIONS.md, panel UX conventions). Selection follows the viewport and stays in sync
+ with the Material Properties active slot."""
     obj = _active_object(context)
     return obj.active_material if obj is not None else None
 
@@ -226,8 +226,8 @@ def _live_env_on(scene):
 
 # Shaders' world applier (subscribed with world): install or remove the shared S_EnvState drivers
 # per the master Live Environment toggle, so raising the world snow whitens every surface with no
-# rebuild. A driver edit on a shared datablock, safe from the rebuild re-entrancy the repo avoids for
-# structural changes. The three lines live in core/shading so the ops reach the same applier.
+# rebuild. A driver edit on a shared datablock, safe from the rebuild re-entrancy the repo avoids
+# for structural changes. The three lines live in core/shading so the ops reach the same applier.
 _apply_world = shading.apply_world_feed
 
 
@@ -379,7 +379,8 @@ class BBT_ShadersProps(PropertyGroup):
                     "reference workflow instead: img2img from your photo with its palette locked, "
                     "so the result is that surface rather than the model's idea of the words")
     # The Live Environment toggle folded into the one World-panel master (bbt_world.live_env);
-    # Shaders subscribes _apply_world to drive its S_EnvState feed (docs/CONVENTIONS.md, panel UX conventions).
+# Shaders subscribes _apply_world to drive its S_EnvState feed (docs/CONVENTIONS.md, panel UX
+# conventions).
 
 
 # Identity operators: New (create a BobShader), Convert (plain -> BobShader), Select (slot).
@@ -406,9 +407,10 @@ class BBT_OT_shaders_new(Operator):
             self.report({"ERROR"}, "Select a mesh first")
             return {"CANCELLED"}
         mats = _materials()
-        # New never converts: New creates on an empty/new slot; it never silently converts. A slot that already
-        # holds a plain material is turned into a BobShader with Convert (which keeps its textures
-        # and is surfaced per-row in the panel), so New and Convert stay distinct actions.
+        # New never converts: New creates on an empty/new slot; it never silently converts. A slot
+# that already holds a plain material is turned into a BobShader with Convert (which keeps
+# its textures and is surfaced per-row in the panel), so New and Convert stay distinct
+# actions.
         existing = obj.active_material
         if existing is not None:
             if mats.master_type(existing) is not None:
@@ -1031,8 +1033,8 @@ def _draw_texture_set(layout, context, mat, index=None):
                                    note="rebuilds: this material's sampler nodes")
     op.index = index if terrain else -1
 
-    # Generate a set instead of picking one (docs/GENERATION.md, the texture family). Same slot, same
-    # assignment path, so a generated set is a texture set like any other from here on.
+    # Generate a set instead of picking one (docs/GENERATION.md, the texture family). Same slot,
+# same assignment path, so a generated set is a texture set like any other from here on.
     slot = index if terrain else -1
     gen = layout.column(align=True)
     gen.prop(scn, "gen_prompt", text="", icon="SHADERFX")
@@ -1117,7 +1119,8 @@ class BBT_PT_shaders(Panel):
         scn = context.scene.bbt_shaders
         obj = _active_object(context)
 
-        # The context header, or the empty state: the context header, or the empty state that says what to do next.
+        # The context header, or the empty state: the context header, or the empty state that says
+# what to do next.
         if not helpers.context_header(layout, "Active mesh", obj.name if obj else None,
                                          icon="OUTLINER_OB_MESH",
                                          empty="Select a mesh to shade its materials."):
@@ -1156,9 +1159,9 @@ class BBT_PT_shaders(Panel):
                 op = row.operator("bob_blender_tools.shaders_convert", text="Convert",
                                   icon="NODE_MATERIAL")
                 op.index = i
-        # New never converts: no "Convert all" button here. Whole-object convert is now the "All slots" option of
-        # the scope dropdown below, so Convert lives in exactly two places: per-row (targeted) and
-        # the scope dropdown (all slots / selected / collection).
+        # New never converts: no "Convert all" button here. Whole-object convert is now the "All
+# slots" option of the scope dropdown below, so Convert lives in exactly two places: per-row
+# (targeted) and the scope dropdown (all slots / selected / collection).
 
         # Adaptive action for the active slot : New when empty, else the editing header.
         active_mat = slots[active_idx].material if active_idx < len(slots) else None
@@ -1282,9 +1285,9 @@ class BBT_PT_shaders_water(Panel):
         return _materials().master_type(_editing_material(context)) == "water"
 
     def draw(self, context):
-        # Grouping: the root shows the depth/optics look (the default view). Flow+foam and Freeze moved
-        # to DEFAULT_CLOSED child sub-panels below, the way Firmament splits its subsystems, so the
-        # 23-knob wall is no longer one flat scroll.
+        # Grouping: the root shows the depth/optics look (the default view). Flow+foam and Freeze
+# moved to DEFAULT_CLOSED child sub-panels below, the way Firmament splits its subsystems,
+# so the 23-knob wall is no longer one flat scroll.
         layout = self.layout
         node = _master_node(_editing_material(context))
         if node is None:
@@ -1365,11 +1368,11 @@ class BBT_PT_shaders_terrain(Panel):
                       icon="INFO")
         _draw_inputs(layout, node, _TERRAIN_GLOBAL)
 
-        # Layer slots (the adaptive-slots finding): draw only the ENABLED slots, not a fixed six-row stack, so
-        # the box shows the depth actually in use. One disable model: the per-row checkbox turns a
-        # layer off (it drops out of the list); Add Layer below is the sole add affordance. The old
-        # Remove Layer button was a second way to do the checkbox's job, so it is gone. Stacking is
-        # by Height Bias (not slot order), so no reorder is needed.
+        # Layer slots (the adaptive-slots finding): draw only the ENABLED slots, not a fixed six-row
+# stack, so the box shows the depth actually in use. One disable model: the per-row checkbox
+# turns a layer off (it drops out of the list); Add Layer below is the sole add affordance.
+# The old Remove Layer button was a second way to do the checkbox's job, so it is gone.
+# Stacking is by Height Bias (not slot order), so no reorder is needed.
         maxn = _materials().MAX_TERRAIN_LAYERS
         active = scn.terrain_active
         enabled = [i for i in range(maxn)
@@ -1476,9 +1479,9 @@ class BBT_PT_shaders_weather(Panel):
         box.label(text="Snow Accumulation Shell", icon="MOD_SMOOTH")
         surface = _active_object(context)
         shell = _named_mod(surface, SNOW_SHELL_MOD)
-        # Empty states: the shell reads the surface's snow_cover pass for its thickness. Say so inline, before
-        # the Add press, rather than only in a post-click warning, so the dependency is visible up
-        # front (the coverage pass is built in Atmosphere > Snow Coverage).
+        # Empty states: the shell reads the surface's snow_cover pass for its thickness. Say so
+# inline, before the Add press, rather than only in a post-click warning, so the dependency
+# is visible up front (the coverage pass is built in Atmosphere > Snow Coverage).
         if _named_mod(surface, "BOB_Snow") is None:
             cap = box.row()
             cap.enabled = False

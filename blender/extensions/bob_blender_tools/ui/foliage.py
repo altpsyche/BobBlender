@@ -44,10 +44,11 @@ from ..core import assets, foliage_build, foliage_variants
 from . import helpers
 
 # Live knobs, grouped by the sub-panel that draws them. A name absent from this build's interface is
-# skipped by `helpers.live_knobs`, which is what lets one list serve levels=1 and levels=4.
-# `Taper Curve`, `Flare`, `Collar` and `Lobe` (the wood shaping) sit with the trunk rather than in a box of their
-# own: they are all statements about how thick wood is where, which is what the Trunk box already is,
-# and a fifth box called Shape next to one called Trunk would be a coin toss to an artist.
+# skipped by `helpers.live_knobs`, which is what lets one list serve levels=1 and levels=4. `Taper
+# Curve`, `Flare`, `Collar` and `Lobe` (the wood shaping) sit with the trunk rather than in a box of
+# their own: they are all statements about how thick wood is where, which is what the Trunk box
+# already is, and a fifth box called Shape next to one called Trunk would be a coin toss to an
+# artist.
 _TRUNK_KNOBS = ["Height", "Trunk Radius", "Taper", "Taper Curve", "Flare", "Collar", "Lobe",
                 "Lean", "Gnarl", "Segments", "Branch Segments"]
 _LEVEL_KNOBS = ["Branches", "Angle", "Length", "Radius", "Phyllotaxy", "Start", "Sag"]
@@ -479,9 +480,9 @@ class BBT_UL_foliage(UIList):
 
 class BBT_PT_foliage(Panel):
     # Plain "Foliage", the way every other top-level panel in the category is a plain noun: World,
-    # Biome, Paths, Scatter, Shaders, Atmosphere. "BobFoliage" is the TRACK's name (docs/FOLIAGE.md)
-    # and it stays that in the code and the docs; a header is not the place to say it, and it was the
-    # only one of the seven that did.
+# Biome, Paths, Scatter, Shaders, Atmosphere. "BobFoliage" is the TRACK's name (docs/FOLIAGE.md)
+# and it stays that in the code and the docs; a header is not the place to say it, and it was
+# the only one of the seven that did.
     bl_label = "Foliage"
     bl_idname = "BBT_PT_foliage"
     bl_space_type = "VIEW_3D"
@@ -513,10 +514,10 @@ class BBT_PT_foliage(Panel):
         if tree is None:
             return
 
-        # Species: staged then applied (the heavy-idiom convention), because loading one replaces every
-        # shape param on the tree. It keeps the object, so it is not as heavy as a Build -- but it
-        # is not a look tweak either, and firing it on the pick would lose a tuned tree to a
-        # mis-click in a dropdown.
+        # Species: staged then applied (the heavy-idiom convention), because loading one replaces
+# every shape param on the tree. It keeps the object, so it is not as heavy as a Build --
+# but it is not a look tweak either, and firing it on the pick would lose a tuned tree to a
+# mis-click in a dropdown.
         helpers.staged_preset_row(layout, scn, "species",
                                   "bob_blender_tools.foliage_load_species",
                                   text="Species", apply_text="Load Species",

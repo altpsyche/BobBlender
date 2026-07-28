@@ -1,41 +1,41 @@
 """Albedo to texture-set maps, in numpy, plus the PNG IO the round trip needs.
 
-Map derivation is Bob's, not the graph's (docs/GENERATION.md, the texture family): deterministic, tunable, no
-submodule, and it reuses the numpy that `core/heightfields` already depends on. This module is
-bpy-free and imports nothing but the stdlib and numpy, so the venv, the headless scripts, and a
-future MCP tool all drive the same code.
+Map derivation is Bob's, not the graph's (docs/GENERATION.md, the texture family): deterministic,
+tunable, no submodule, and it reuses the numpy that `core/heightfields` already depends on. This
+module is bpy-free and imports nothing but the stdlib and numpy, so the venv, the headless scripts,
+and a future MCP tool all drive the same code.
 
-The variants gate derives five maps from one albedo, all from a single shared relief field so they agree with
-each other instead of each re-deriving the surface:
+The variants gate derives five maps from one albedo, all from a single shared relief field so they
+agree with each other instead of each re-deriving the surface:
 
-    basecolor  the generation, untouched
-    height     a wrap-safe high-pass of the luminance (the relief field, recentred on 0.5)
-    normal     the relief field's gradient, OpenGL convention, unit length
-    ao         multi-scale occlusion of the relief field; the sampler folds this into the albedo
-    roughness  local-contrast, percentile-stretched, NOT the first spike global band
+    basecolor  the generation, untouched height     a wrap-safe high-pass of the luminance (the
+    relief field, recentred on 0.5) normal     the relief field's gradient, OpenGL convention, unit
+    length ao         multi-scale occlusion of the relief field; the sampler folds this into the
+    albedo roughness  local-contrast, percentile-stretched, NOT the first spike global band
 
 `cavity_from()` is a signal rather than a written map: the roughness consumes it in memory and no
 master reads a cavity file, so writing one would be work nothing loads. Metallic is skipped (no
-shipped set has one and
-nature surfaces are dielectric). The normal map IS written even though neither master carries a
-normal socket today (BobFirmament drives relief from a bump instead, see core/materials/texset.py): it is
-part of the texture-set contract and the mesh-texturing family needs it, and an unread file costs 0.1 s.
+shipped set has one and nature surfaces are dielectric). The normal map IS written even though
+neither master carries a normal socket today (BobFirmament drives relief from a bump instead, see
+core/materials/texset.py): it is part of the texture-set contract and the mesh-texturing family
+needs it, and an unread file costs 0.1 s.
 
-The macro-mask gate added one derivation that is not part of a texture set: `macro_field` / `macro_from`, the terrain
-macro mask (the macro-heightmap family). It reuses the luminance and the box blur the five maps already share and takes
-the LOW side of the same cutoff, which is why the macro-heightmap family needed no module of its own.
+The macro-mask gate added one derivation that is not part of a texture set: `macro_field` /
+`macro_from`, the terrain macro mask (the macro-heightmap family). It reuses the luminance and the
+box blur the five maps already share and takes the LOW side of the same cutoff, which is why the
+macro-heightmap family needed no module of its own.
 
 BobFoliage added two more that are not derivations at all. `grain_report` MEASURES the dominant
 gradient axis, because bark needs a direction and `seam_report` only measures continuity. And the
-`orient_sprite` / `place_sprite` / `atlas_compose` / `atlas_cells` group composes a leaf atlas out of
-one generated sprite per cell, because a diffusion model asked for a 2x2 grid returns five sprays in
-a ring -- measured. Both are here rather than in `comfy.py` for this module's usual reason: they are
-numpy over pixels with no HTTP in them, so a unit test drives them with no server.
+`orient_sprite` / `place_sprite` / `atlas_compose` / `atlas_cells` group composes a leaf atlas out
+of one generated sprite per cell, because a diffusion model asked for a 2x2 grid returns five sprays
+in a ring -- measured. Both are here rather than in `comfy.py` for this module's usual reason: they
+are numpy over pixels with no HTTP in them, so a unit test drives them with no server.
 
 The PNG codec here is minimal on purpose: 8-bit, non-interlaced, which is what ComfyUI's SaveImage
 writes and what a texture set wants. Blender's bundled Python ships no PIL and the derivation must
-run in-process, so the 40 lines are cheaper than the alternative of routing pixels through `bpy`
-and losing the bpy-free property.
+run in-process, so the 40 lines are cheaper than the alternative of routing pixels through `bpy` and
+losing the bpy-free property.
 """
 
 import struct
@@ -44,7 +44,8 @@ import zlib
 import numpy as np
 
 # Rec.709 luma. The albedo is sRGB-encoded and stays that way: these are crude perceptual
-# derivations, not a linear-light computation, and the variants gate is where that distinction starts to matter.
+# derivations, not a linear-light computation, and the variants gate is where that distinction
+# starts to matter.
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 # Roughness band. A raw 1-minus-luminance puts a bright sand at 0.1 roughness, which reads as wet
@@ -52,9 +53,9 @@ _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 ROUGHNESS_RANGE = (0.35, 0.95)
 
 # How much of the roughness signal is the GLOBAL inverse luminance and how much is the LOCAL
-# deviation from it. The first spike was 1.0 global, which is why a bright albedo parked the whole map at the
-# top of the band (measured 117-242, mean 206). Mostly-local means a pale stone and a dark stone
-# both get the full band, and the variation follows the surface rather than the paint.
+# deviation from it. The first spike was 1.0 global, which is why a bright albedo parked the whole
+# map at the top of the band (measured 117-242, mean 206). Mostly-local means a pale stone and a
+# dark stone both get the full band, and the variation follows the surface rather than the paint.
 ROUGHNESS_GLOBAL = 0.35
 ROUGHNESS_LOCAL_FRACTION = 1.0 / 8.0
 
@@ -65,10 +66,10 @@ HEIGHT_LOWPASS_FRACTION = 1.0 / 32.0
 # Cavity is the same idea at a much smaller radius: the crevice, not the boulder.
 CAVITY_FRACTION = 1.0 / 128.0
 
-# The macro mask (the macro-heightmap family) is the SAME split read from the other side: keep the low frequency and
-# throw the detail away. A twelfth of the image is the coarsest cutoff that still resolves a
-# separate massif and a separate basin in one frame; anything finer starts handing the erosion stack
-# structure it would rather generate itself (the bit-depth floor).
+# The macro mask (the macro-heightmap family) is the SAME split read from the other side: keep the
+# low frequency and throw the detail away. A twelfth of the image is the coarsest cutoff that still
+# resolves a separate massif and a separate basin in one frame; anything finer starts handing the
+# erosion stack structure it would rather generate itself (the bit-depth floor).
 MACRO_LOWPASS_FRACTION = 1.0 / 12.0
 
 # Percentiles the macro mask is stretched between. Not 0 and 100: one blown-out highlight in the
@@ -198,9 +199,10 @@ def _box_blur(a, radius, wrap=True):
     radius.
 
     `wrap=True` wraps at both edges, so blurring a seamless tile leaves it seamless, and it is the
-    default because every the texture family map is a tile. `wrap=False` replicates the edge instead, for the
-    one signal that is NOT a tile: a terrain macro mask (the macro-heightmap family), where wrapping would bleed the
-    far side of the landform into this one and put a phantom massif on the opposite border.
+    default because every the texture family map is a tile. `wrap=False` replicates the edge
+    instead, for the one signal that is NOT a tile: a terrain macro mask (the macro-heightmap
+    family), where wrapping would bleed the far side of the landform into this one and put a phantom
+    massif on the opposite border.
     """
     if radius < 1:
         return a
@@ -235,8 +237,9 @@ def _normalise(signed, percentile=99.0):
     """A signed field scaled so its 99th absolute percentile lands at 0.5, clipped to -0.5..0.5.
 
     Floored at one 8-bit step: on a flat or very smooth albedo the field is float rounding noise,
-    and normalising by its own percentile would amplify that noise to full range. With the floor,
-    no real relief means zero, which is the honest answer. (Found by a the first spike unit test, not by eye.)
+    and normalising by its own percentile would amplify that noise to full range. With the floor, no
+    real relief means zero, which is the honest answer. (Found by a the first spike unit test, not
+    by eye.)
     """
     scale = max(float(np.percentile(np.abs(signed), percentile)), 1.0 / 255.0)
     return np.clip(signed / (2.0 * scale), -0.5, 0.5)
@@ -269,16 +272,18 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
     This is `relief()`'s other half and not a new idea: relief keeps `lum - lowpass(lum)` because a
     texture's information is its detail, and this keeps `lowpass(lum)` because a landform's
     information is its large scale. Same luminance, same box blur, the opposite side of one cutoff,
-    which is the honest answer to whether the macro-heightmap family needed its own derivation module. It did not.
+    which is the honest answer to whether the macro-heightmap family needed its own derivation
+    module. It did not.
 
-    Two differences from the texture family maps, and both are because a terrain tile is not a texture
-    tile. The blur does NOT wrap (see `_box_blur`), and the result is percentile-stretched to fill
-    0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering where
-    0 is the basin floor and 1 is the highest ground, not as a signed displacement.
+    Two differences from the texture family maps, and both are because a terrain tile is not a
+    texture tile. The blur does NOT wrap (see `_box_blur`), and the result is percentile-stretched
+    to fill 0..1 rather than centred on 0.5, because the op stack reads it as an elevation ordering
+    where 0 is the basin floor and 1 is the highest ground, not as a signed displacement.
 
-    It is a MASK, not a heightfield (the bit-depth floor): every real slope, drainage line and rill comes from the
-    erosion stack afterwards. `MACRO_LOWPASS_FRACTION` is the whole claim, in one number -- a
-    twelfth of the image, so nothing finer than a massif survives to compete with the erosion.
+    It is a MASK, not a heightfield (the bit-depth floor): every real slope, drainage line and rill
+    comes from the erosion stack afterwards. `MACRO_LOWPASS_FRACTION` is the whole claim, in one
+    number -- a twelfth of the image, so nothing finer than a massif survives to compete with the
+    erosion.
     """
     lum = luminance(rgb)
     low = _box_blur(lum, _radius(lum.shape, fraction), wrap=wrap)
@@ -292,9 +297,10 @@ def macro_field(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False, percentiles=MA
 
 
 def macro_from(rgb, fraction=MACRO_LOWPASS_FRACTION, wrap=False):
-    """`macro_field` as the 8-bit PNG the terrain op stack reads. 8 bits on purpose, per the bit-depth floor: 256
-    levels of a mask that is about to be blurred and eroded is not the same claim as 256 levels of
-    a heightfield, and the macro-mask gate measures the difference rather than asserting it."""
+    """`macro_field` as the 8-bit PNG the terrain op stack reads. 8 bits on purpose, per the bit-depth
+    floor: 256 levels of a mask that is about to be blurred and eroded is not the same claim as
+    256 levels of a heightfield, and the macro-mask gate measures the difference rather than
+    asserting it."""
     return _to_u8(macro_field(rgb, fraction, wrap))
 
 
@@ -343,17 +349,17 @@ def roughness_from(rgb, band=ROUGHNESS_RANGE, fraction=ROUGHNESS_LOCAL_FRACTION,
                    global_weight=ROUGHNESS_GLOBAL, cavity=None):
     """Roughness from local contrast, percentile-stretched into the band.
 
-    The first spike's version was a global remap of the inverse luminance, and it had one measurable defect:
-    on a bright albedo every pixel lands near the top of the band, so the map reads "rough
+    The first spike's version was a global remap of the inverse luminance, and it had one measurable
+    defect: on a bright albedo every pixel lands near the top of the band, so the map reads "rough
     everywhere, very slightly less so on the bright bits" (measured 117-242 of 255, mean 206).
 
-    Three changes. Most of the signal is now the deviation from the LOCAL mean, so the map
-    responds to the surface rather than to how pale the paint is; a crevice (`cavity`, when the
-    caller has a relief field to derive one from) is pushed rougher, because it holds dust and
-    damp regardless of its brightness; and the result is stretched by its own 2nd and 98th
-    percentiles, so the band is actually occupied instead of being a range the values happen to
-    sit in one corner of. A little global inverse luminance is kept, because a genuinely dark damp
-    patch really is rougher than the dry stone beside it.
+    Three changes. Most of the signal is now the deviation from the LOCAL mean, so the map responds
+    to the surface rather than to how pale the paint is; a crevice (`cavity`, when the caller has a
+    relief field to derive one from) is pushed rougher, because it holds dust and damp regardless of
+    its brightness; and the result is stretched by its own 2nd and 98th percentiles, so the band is
+    actually occupied instead of being a range the values happen to sit in one corner of. A little
+    global inverse luminance is kept, because a genuinely dark damp patch really is rougher than the
+    dry stone beside it.
     """
     inv = 1.0 - luminance(rgb)
     local = _box_blur(inv, _radius(inv.shape, fraction))
@@ -420,11 +426,11 @@ def _blend_axis(array, pad):
     periodic along that axis. Assumes the input came from `wrap_pad`."""
     core = array[pad:array.shape[0] - pad].astype(np.float32)
     # The last `pad` rows of the padded array are a second, independently processed render of the
-    # core's FIRST `pad` rows. Fading from that copy into this one puts the continuous join on the
-    # wrap line and pushes the discontinuity into the middle of the band, where the ramp absorbs
-    # it -- the offset-blend trick, but between two renders of the same content rather than
-    # between unrelated pixels, which is why it costs far less contrast than the first spike measurement of
-    # the WAS blend did.
+# core's FIRST `pad` rows. Fading from that copy into this one puts the continuous join on the
+# wrap line and pushes the discontinuity into the middle of the band, where the ramp absorbs it
+# -- the offset-blend trick, but between two renders of the same content rather than between
+# unrelated pixels, which is why it costs far less contrast than the first spike measurement of
+# the WAS blend did.
     alt = array[array.shape[0] - pad:].astype(np.float32)
     ramp = np.linspace(0.0, 1.0, pad, endpoint=False, dtype=np.float32)
     ramp = ramp.reshape((pad,) + (1,) * (core.ndim - 1))
@@ -435,10 +441,10 @@ def _blend_axis(array, pad):
 def crop_wrap_blend(array, pad):
     """Crop a wrap-padded image back to its core, made periodic again.
 
-    `wrap_pad` alone is not enough after a non-periodic operation. The padded image's two copies
-    of each edge band are processed independently and drift apart, so a plain crop just moves the
-    seam rather than removing it (measured on `tex_upres`: pad-and-crop took the upscale from ratio 3.43 to
-    2.08, and no crop position does better, because a non-periodic image has no periodic window).
+    `wrap_pad` alone is not enough after a non-periodic operation. The padded image's two copies of
+    each edge band are processed independently and drift apart, so a plain crop just moves the seam
+    rather than removing it (measured on `tex_upres`: pad-and-crop took the upscale from ratio 3.43
+    to 2.08, and no crop position does better, because a non-periodic image has no periodic window).
     Cross-fading the duplicate bands does remove it. X first on the full-height array, then Y, so
     the rows the Y pass fades are already periodic in X and the corners come out right.
     """
@@ -557,19 +563,20 @@ def axis_spread(angles):
     return float(np.degrees(np.sqrt(max(0.0, -2.0 * np.log(max(r, 1e-9))))) / 2.0)
 
 
-# -- Leaf atlases (BobFoliage) ---------------------------------------------------------------
-# A card reads ONE CELL of an atlas, so an atlas has two properties a texture set does not: every
-# cell must carry a sprite (an empty cell is a card that renders as nothing), and each sprite must
-# grow from its cell's BOTTOM EDGE, because the card's v is 0 at the twig it hangs from
-# (docs/FOLIAGE.md 2.3, 4.4).
+# -- Leaf atlases (BobFoliage) --------------------------------------------------------------- A
+# card reads ONE CELL of an atlas, so an atlas has two properties a texture set does not: every cell
+# must carry a sprite (an empty cell is a card that renders as nothing), and each sprite must grow
+# from its cell's BOTTOM EDGE, because the card's v is 0 at the twig it hangs from (docs/FOLIAGE.md
+# 2.3, 4.4).
 #
-# **SDXL cannot be asked for a grid.** Measured with a 2x2 grid-layout prompt through `mesh_subject`: the
-# result was FIVE sprays arranged in a ring, straddling the cell boundaries, each pointing a
-# different way and none touching a cell's bottom edge. Per-cell coverage passed (8 to 11% opaque in
-# every quadrant) and the atlas was still unusable, which is exactly the "tree-shaped is not right"
-# failure this whole track is about. So Bob generates ONE sprite per cell and composes the grid
-# itself: the layout becomes something Bob guarantees rather than something it hopes for, a different
-# seed per cell makes the cells differ by construction, and 4 sprites at 512 cost less than 1 at 1024.
+# **SDXL cannot be asked for a grid.** Measured with a 2x2 grid-layout prompt through
+# `mesh_subject`: the result was FIVE sprays arranged in a ring, straddling the cell boundaries,
+# each pointing a different way and none touching a cell's bottom edge. Per-cell coverage passed (8
+# to 11% opaque in every quadrant) and the atlas was still unusable, which is exactly the
+# "tree-shaped is not right" failure this whole track is about. So Bob generates ONE sprite per cell
+# and composes the grid itself: the layout becomes something Bob guarantees rather than something it
+# hopes for, a different seed per cell makes the cells differ by construction, and 4 sprites at 512
+# cost less than 1 at 1024.
 ATLAS_MARGIN = 0.02       # of a cell, kept clear so a sprite's silhouette is not clipped by its edge
 ATLAS_BLEED_PASSES = 8    # how far the leaf colour is pushed into the transparent region
 # Alpha at or above which a pixel is LEAF rather than fringe. The bleed reads only from these, and
@@ -590,14 +597,14 @@ def _mask_axis(mask, band=AXIS_END_BAND):
     """(centroid, unit axis, end widths) of a boolean mask's principal axis, or None if empty.
 
     The axis is the eigenvector of the mass's covariance with the larger eigenvalue, i.e. the
-    direction a spray is longest along. Oriented so it points toward the FAN, because that is how the
-    base is told from the tip: a needle spray is a bare twig at one end and a fan at the other, so
-    the end that is NARROW across the axis is the end that attaches to a branch.
+    direction a spray is longest along. Oriented so it points toward the FAN, because that is how
+    the base is told from the tip: a needle spray is a bare twig at one end and a fan at the other,
+    so the end that is NARROW across the axis is the end that attaches to a branch.
 
     Geometric on purpose. The obvious alternative -- the twig is brown and the needles are green --
     separates the clear cases better (green excess -14 against +25 on the same spray) and assumes a
-    colour, so it would pick the wrong end of an autumn or dead-foliage atlas. `atlas_cells`
-    reports `base_taper` either way, so a sprite this gets backwards is measured, not hidden.
+    colour, so it would pick the wrong end of an autumn or dead-foliage atlas. `atlas_cells` reports
+    `base_taper` either way, so a sprite this gets backwards is measured, not hidden.
     """
     ys, xs = np.nonzero(mask)
     if len(ys) < 8:
@@ -626,16 +633,16 @@ def _mask_axis(mask, band=AXIS_END_BAND):
 # being asked, rather than the proxy "which end is narrow" that the principal axis answers.
 #
 # Measured on the four sprites of one generated atlas: the woody direction disagreed with the
-# geometric answer on exactly the two cells that came out attached by their needle tips, and agreed on
-# the two that came out right. It is better because it is not a proxy: a spray whose twig sticks out
-# SIDEWAYS from its fan has its long axis along the fan, so no end of that axis is the stem and no
-# rotation of it can be correct.
+# geometric answer on exactly the two cells that came out attached by their needle tips, and agreed
+# on the two that came out right. It is better because it is not a proxy: a spray whose twig sticks
+# out SIDEWAYS from its fan has its long axis along the fan, so no end of that axis is the stem and
+# no rotation of it can be correct.
 #
-# Guarded rather than trusted, because it assumes a colour. Below `WOODY_MIN` there is no stem to find
-# (or the matte cut it off); above `WOODY_MAX` the sprite is not a green fan at all, which is what an
-# autumn or dead-foliage atlas looks like; and the two centroids have to be genuinely apart before
-# their difference means a direction. Outside those, the geometric axis is used, which is what this
-# function did before the colour cue and is still right for most sprites.
+# Guarded rather than trusted, because it assumes a colour. Below `WOODY_MIN` there is no stem to
+# find (or the matte cut it off); above `WOODY_MAX` the sprite is not a green fan at all, which is
+# what an autumn or dead-foliage atlas looks like; and the two centroids have to be genuinely apart
+# before their difference means a direction. Outside those, the geometric axis is used, which is
+# what this function did before the colour cue and is still right for most sprites.
 WOODY_EXCESS = 2.0        # green excess (G - (R+B)/2) at or below which a texel counts as woody
 WOODY_MIN, WOODY_MAX = 0.01, 0.40
 WOODY_SEPARATION = 0.025  # of the sprite's diagonal
@@ -673,11 +680,12 @@ def orient_sprite(rgba, floor=0.5):
     The attaching end is found by `_woody_axis` when the sprite is a green fan on a brown stem, and
     by the principal axis's narrow end (`_mask_axis`) otherwise.
 
-    Why Bob rotates rather than the prompt asking for it: `mesh_subject` was asked for "the cut end of the twig
-    at the bottom of the frame, needles fanning upward" and returned sprays lying diagonally with
-    the twig at the LEFT, on which a card attaches by its side and reads as a leaf growing sideways
-    out of a branch. The prompt clause is kept anyway (it costs nothing and it helps), but the
-    guarantee has to be Bob's, and this is the same argument as the composed grid above.
+    Why Bob rotates rather than the prompt asking for it: `mesh_subject` was asked for "the cut end
+    of the twig at the bottom of the frame, needles fanning upward" and returned sprays lying
+    diagonally with the twig at the LEFT, on which a card attaches by its side and reads as a leaf
+    growing sideways out of a branch. The prompt clause is kept anyway (it costs nothing and it
+    helps), but the guarantee has to be Bob's, and this is the same argument as the composed grid
+    above.
 
     Bilinear, on PREMULTIPLIED colour. Rotating straight RGBA interpolates the colour of transparent
     pixels into the silhouette, which is the white-fringe failure `ATLAS_OPAQUE` describes from the

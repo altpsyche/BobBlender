@@ -10,13 +10,14 @@ does not fit the layout.
      `gen_assets.CONTROL_RETURN_TURN` by measurement rather than by reading the exporter's source,
      and it is cheap enough to run every time.
   B. **`mesh_geom_ctrl` against `mesh_geom_mv_trellis` on the same block-outs.** Three proxies, one of them asymmetric front-to-back,
-     each conditioning Omni on its shape (`mesh_geom_ctrl`) and TRELLIS.2 on four Blender-rendered views of it
-     (`mesh_geom_mv_trellis`, the multi-view baseline). Scored WITHOUT the rotation search: voxel IoU, Chamfer,
-     the XY-projected footprint IoU that is what "drops into a layout" actually means, and the bbox
-     aspect ratio against the proxy's. Wall clock and per-process VRAM beside each.
+     each conditioning Omni on its shape (`mesh_geom_ctrl`) and TRELLIS.2 on four Blender-rendered
+     views of it (`mesh_geom_mv_trellis`, the multi-view baseline). Scored WITHOUT the rotation
+     search: voxel IoU, Chamfer, the XY-projected footprint IoU that is what "drops into a layout"
+     actually means, and the bbox aspect ratio against the proxy's. Wall clock and per-process VRAM
+     beside each.
   C. **Does the finished asset still pass the checks it inherits from the asset gate?** One block-out through
-     `mesh_geom_ctrl`, `mesh_simplify_uv` and `mesh_texture` and then all of steps 6 to 8: face budget, UV overlap, height, origin, LODs,
-     BobShader.
+     `mesh_geom_ctrl`, `mesh_simplify_uv` and `mesh_texture` and then all of steps 6 to 8: face
+     budget, UV overlap, height, origin, LODs, BobShader.
   D. **Can the Omni wrapper share a session with SDXL?** The card is 16.3 GB and the stylise gate measured the
      stylise route peaking at 14.2 of it, so this is a residency question with a yes or no answer.
 
@@ -66,7 +67,8 @@ FACES = 4000
 GRID = 48
 SAMPLES = 8000
 
-# Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP, not FAIL.
+# Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP,
+# not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate")
 
 
@@ -114,8 +116,9 @@ def _gpu_sample():
 
 class Vram:
     """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
-    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as the
-    one-shot-against-staged and stylise gates, because the numbers have to be comparable with theirs."""
+    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as
+    the one-shot-against-staged and stylise gates, because the numbers have to be comparable with
+    theirs."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -159,8 +162,9 @@ class Vram:
 def mesh_points(obj, count=SAMPLES, seed=0):
     """Area-weighted surface samples, centred and divided by ONE scale so the aspect ratio survives.
 
-    The single scale matters here in a way it did not for the stylise gate: a footprint comparison is a comparison
-    of proportions, so normalising per axis would erase exactly what is being measured.
+    The single scale matters here in a way it did not for the stylise gate: a footprint comparison
+    is a comparison of proportions, so normalising per axis would erase exactly what is being
+    measured.
     """
     mesh = obj.data
     mesh.calc_loop_triangles()
@@ -297,8 +301,8 @@ def _sun_and_world(scene, strength=4.0):
 
 def notched_blockout():
     """A block-out whose BACK is not inferable from its front: a plain face forward, a deep alcove
-    and an off-centre buttress behind. The asymmetric case the gate is required to include, and it is
-    also the only one of the three that can distinguish a proper rotation from a mirror."""
+    and an off-centre buttress behind. The asymmetric case the gate is required to include, and
+    it is also the only one of the three that can distinguish a proper rotation from a mirror."""
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0.55))
     block = bpy.context.active_object
     block.name = "Blockout_Notched"
@@ -397,8 +401,8 @@ def part_a(args, reachable):
           f"scale {exported['scale']:.4f}, height {exported['height_m']:.4f} m, "
           f"{exported['points']} points")
 
-    # The round trip Bob's own export and import make on their own, with no server in it: this is the
-    # baseline the exporter's turn is measured against.
+    # The round trip Bob's own export and import make on their own, with no server in it: this is
+# the baseline the exporter's turn is measured against.
     empty_scene()
     local = gen_assets.import_glb(control, name="Local")
     local_map = best_axis_map(proxy_points, mesh_points(local, seed=2))
@@ -451,7 +455,8 @@ def part_a(args, reachable):
                                          "local_map": local_map, "ceiling": ceiling})
 
 
-# -- Part B: `mesh_geom_ctrl` against the `mesh_geom_mv_trellis` baseline ----------------------------------------------------------
+# -- Part B: `mesh_geom_ctrl` against the `mesh_geom_mv_trellis` baseline
+# ----------------------------------------------------------
 def views_of(obj, out_dir):
     """Four cardinal views at a low elevation, in the order both multi-view graphs' sockets name."""
     views = gen_views.turntable_views(obj, out_dir, count=4, elevation=10.0, extra_elevations=(),
@@ -515,8 +520,9 @@ def part_b(args, reachable, ready):
             points = mesh_points(got, seed=2)
             agree = fixed_agreement(proxy_points, points)
             # The diagnostic that keeps the comparison fair: how the same result would score if it
-            # were allowed to be turned first. `mesh_geom_mv_trellis` was never asked to preserve an orientation, so
-            # without this column its score reads as a geometry failure when part of it is a frame.
+# were allowed to be turned first. `mesh_geom_mv_trellis` was never asked to preserve an
+# orientation, so without this column its score reads as a geometry failure when part of
+# it is a frame.
             best = best_axis_map(proxy_points, points)
             at_best = fixed_agreement(proxy_points, best["points"])
             agree["best_iou"] = best["iou"]
@@ -647,8 +653,8 @@ def part_c(args, reachable, ready):
           f"base {low[2]:.4f}, origin {obj_final.location[2]:.4f}")
     check("the LOD chain exists", len(report["lod_faces"]) >= 3, str(report["lod_faces"]))
     # Omni returns geometry with NO material, so the colour roles have no dense mesh to transfer
-    # from and have to come from the low mesh's own `mesh_texture` texture instead. Without that they were
-    # silently absent and the asset shipped grey.
+# from and have to come from the low mesh's own `mesh_texture` texture instead. Without that
+# they were silently absent and the asset shipped grey.
     check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
@@ -717,9 +723,10 @@ def part_d(args, reachable, ready):
           f"peak {shared['comfy_peak']} MiB of a 16,303 MiB card, rise {shared['rise']}, "
           f"{info['seconds']:.1f} s")
 
-    # The question the other way round, and it is the one that bites: the stylise gate measured that route
-    # peaking at 14,194 MiB, and Omni's ~7 to 8 GB cannot be evicted by ComfyUI's model management
-    # because the wrapper caches its pipeline in a module-level dict. `POST /free` cannot reach it.
+    # The question the other way round, and it is the one that bites: the stylise gate measured that
+# route peaking at 14,194 MiB, and Omni's ~7 to 8 GB cannot be evicted by ComfyUI's model
+# management because the wrapper caches its pipeline in a module-level dict. `POST /free` cannot
+# reach it.
     comfy.free()
     time.sleep(6.0)
     card_after_free, procs = _gpu_sample()

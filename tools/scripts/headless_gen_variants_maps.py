@@ -116,8 +116,8 @@ def _an_api_node(info):
 
 # -- 5. roughness contrast ---------------------------------------------------------------------
 def g1_roughness(rgb, band=(0.45, 0.95)):
-    """The global-band roughness verbatim, so the comparison is against the real thing rather than a memory
-    of it: desaturate, invert, remap into the band."""
+    """The global-band roughness verbatim, so the comparison is against the real thing rather than a
+    memory of it: desaturate, invert, remap into the band."""
     inv = 1.0 - comfy_maps.luminance(rgb)
     lo, hi = band
     return np.clip((lo + inv * (hi - lo)) * 255.0 + 0.5, 0, 255).astype(np.uint8)
@@ -300,12 +300,12 @@ def addon_surface():
               for h in bpy.app.handlers.load_post))
 
     # The property that matters: the panel body reads cached state, so drawing it with no server
-    # costs nothing. A socket call here would freeze the UI for the timeout.
-    # A stand-in UILayout. It has to answer every layout verb the panel body uses, and the list grew
-    # since: the stylise block calls `column` and `prop`, and `enabled` is assigned on a
-    # returned row. A stub that is missing one of them fails the gate with an AttributeError instead of
-    # a verdict, which is how this was found -- by the one-command suite, not by anyone re-running this
-    # gate. `__getattr__` would hide the next such drift, so the verbs are listed explicitly.
+# costs nothing. A socket call here would freeze the UI for the timeout. A stand-in UILayout. It
+# has to answer every layout verb the panel body uses, and the list grew since: the stylise
+# block calls `column` and `prop`, and `enabled` is assigned on a returned row. A stub that is
+# missing one of them fails the gate with an AttributeError instead of a verdict, which is how
+# this was found -- by the one-command suite, not by anyone re-running this gate. `__getattr__`
+# would hide the next such drift, so the verbs are listed explicitly.
     class _Stub:
         enabled = True
 

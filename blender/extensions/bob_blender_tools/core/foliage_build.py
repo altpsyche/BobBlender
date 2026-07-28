@@ -31,24 +31,25 @@ from . import env as bbt_env
 # build path, so a tree grown over MCP is as findable as one added in the panel.
 FOLIAGE_STAMP = "bbt_foliage"
 
-# Which species a tree was last loaded from, for the panel's header and for the variant pass's variant naming.
-# Empty on a bare `build_geonodes(recipe="foliage")`, which is a legitimate state: a tree tuned by
-# hand from the defaults belongs to no species.
+# Which species a tree was last loaded from, for the panel's header and for the variant pass's
+# variant naming. Empty on a bare `build_geonodes(recipe="foliage")`, which is a legitimate state: a
+# tree tuned by hand from the defaults belongs to no species.
 SPECIES_STAMP = "bbt_foliage_species"
 
-# The params this tree was last BUILT with, as JSON (variants and LODs). The live knobs live on the modifier and
-# need no copy, but the STRUCTURAL ones -- `levels`, `profile_segments`, `bark_set`, `atlas` -- are
-# Python arguments to the recipe and are recoverable from nothing afterwards. Without this a tree
-# the artist rebuilt at two levels forgot it on the next rebuild (the panel's staged choice was the
-# only record, and it is UI state), and a baked variant would come out at the species' depth rather
-# than at the tree's. `heightmap_terrain` stamps its own build params for the same reason
-# (core/geonodes/__init__.py `_TERRAIN_STAMP`); this is that idiom, kept local to foliage.
+# The params this tree was last BUILT with, as JSON (variants and LODs). The live knobs live on the
+# modifier and need no copy, but the STRUCTURAL ones -- `levels`, `profile_segments`, `bark_set`,
+# `atlas` -- are Python arguments to the recipe and are recoverable from nothing afterwards. Without
+# this a tree the artist rebuilt at two levels forgot it on the next rebuild (the panel's staged
+# choice was the only record, and it is UI state), and a baked variant would come out at the
+# species' depth rather than at the tree's. `heightmap_terrain` stamps its own build params for the
+# same reason (core/geonodes/__init__.py `_TERRAIN_STAMP`); this is that idiom, kept local to
+# foliage.
 BUILD_STAMP = "bbt_foliage_build"
 
 # Where authored trees live. One collection so the panel can list them with a template_list over
 # real objects (the Scatter panel's model) instead of a CollectionProperty of pointers that can go
-# stale. A tree is not required to be in it -- `is_foliage` keys off the stamp, not the collection --
-# so a hero tree dragged into a set-dress collection stays a tree.
+# stale. A tree is not required to be in it -- `is_foliage` keys off the stamp, not the collection
+# -- so a hero tree dragged into a set-dress collection stays a tree.
 FOLIAGE_COLL = "BOB_Foliage"
 
 # The live knobs the world drives. Names must match the recipe's interface (recipes/foliage.py).
@@ -85,10 +86,10 @@ def foliage_objects(scene=None):
                   key=lambda o: o.name)
 
 
-# The unlinked collections a baked variant lives in (variants and LODs). `BOB_Assets_<Kind>` is the pool a scatter
-# layer instances; `BOB_Foliage_LODs` holds the lower rungs, out of the pool for the reason
-# `gen_assets.LOD_COLLECTION` exists -- a GN instancer takes the WHOLE collection, so leaving LOD1
-# and LOD2 in the pool would scatter three copies of every variant at three budgets.
+# The unlinked collections a baked variant lives in (variants and LODs). `BOB_Assets_<Kind>` is the
+# pool a scatter layer instances; `BOB_Foliage_LODs` holds the lower rungs, out of the pool for the
+# reason `gen_assets.LOD_COLLECTION` exists -- a GN instancer takes the WHOLE collection, so leaving
+# LOD1 and LOD2 in the pool would scatter three copies of every variant at three budgets.
 LOD_COLL = "BOB_Foliage_LODs"
 
 
@@ -313,9 +314,9 @@ def apply_wind(scene=None, only=None):
     A tree therefore holds its last-applied wind when Firmament is absent, which is the standalone
     behaviour the rest of the suite has: the value is real, it is just not being updated.
 
-    It walks `wind_targets` and not the scene, which is the variant pass's correction: a baked variant lives in an
-    unlinked `BOB_Assets_<Kind>` and would otherwise never be reached, so the hero tree in the
-    viewport would blow and the four hundred instances behind it would stand still.
+    It walks `wind_targets` and not the scene, which is the variant pass's correction: a baked
+    variant lives in an unlinked `BOB_Assets_<Kind>` and would otherwise never be reached, so the
+    hero tree in the viewport would blow and the four hundred instances behind it would stand still.
     """
     scene = scene or bpy.context.scene
     world = bbt_env.get_env(scene)

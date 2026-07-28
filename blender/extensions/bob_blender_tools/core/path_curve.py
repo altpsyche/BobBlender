@@ -88,13 +88,14 @@ def _ordered_polyline_xy(obj):
 def _clip_xy_to_terrain(pts, size, margin=0.0):
     """Keep only the polyline points within the terrain footprint (|x|, |y| <= size/2 + margin).
 
-    A control point dragged OFF the terrain in the viewport otherwise poisons the river solve: the
-    off-terrain excursion inflates the arc length so `_monotonic_descend`'s min-slope ceiling
-    (`running - min_slope * seg`) drops the bed by metres-per-metre of stray distance, driving the
-    whole downstream channel arbitrarily deep, and the impose overlay then carves the terrain down to
-    that runaway bed (the "everything flattens to the ground" report). It also wastes the resample
-    budget off-grid, leaving the on-terrain path crude. Clipping to the footprint first keeps the
-    solve honest. Returns the in-bounds points in order (a contiguous run for a normal river)."""
+    A control point dragged OFF the terrain in the viewport otherwise poisons the river solve:
+    the off-terrain excursion inflates the arc length so `_monotonic_descend`'s min-slope ceiling
+    (`running - min_slope * seg`) drops the bed by metres-per-metre of stray distance, driving
+    the whole downstream channel arbitrarily deep, and the impose overlay then carves the terrain
+    down to that runaway bed (the "everything flattens to the ground" report). It also wastes the
+    resample budget off-grid, leaving the on-terrain path crude. Clipping to the footprint first
+    keeps the solve honest. Returns the in-bounds points in order (a contiguous run for a normal
+    river)."""
     lim = 0.5 * float(size) + float(margin)
     return [p for p in pts if -lim <= p[0] <= lim and -lim <= p[1] <= lim]
 
@@ -124,8 +125,9 @@ def _resample_xy(pts, n):
 def _rebuild_nurbs(obj, points):
     """Replace obj's curve data with a single NURBS spline through points [(x, y, z), ...].
 
-    The points are already dense (a river densify), so a low resolution_u keeps the evaluated curve
-    smooth without exploding the vertex count the overlay's proximity solve walks per terrain point."""
+    The points are already dense (a river densify), so a low resolution_u keeps the evaluated
+    curve smooth without exploding the vertex count the overlay's proximity solve walks per
+    terrain point."""
     curve = obj.data
     curve.splines.clear()
     spline = curve.splines.new("NURBS")
@@ -140,22 +142,22 @@ def _rebuild_nurbs(obj, points):
 # A river runs monotonically downhill (docs/SPLINES.md 9 #1, the IMPOSE family): unlike a path,
 # which follows whatever Z the terrain has, a river's centreline must never rise from source to
 # mouth, and the terrain later conforms DOWN to it (the overlay's impose mode). Sea level sits at
-# absolute Z 0 because heightmap_terrain displaces by (raw - sea_level) * height, so raw == sea_level
-# maps to Z 0; pulling the mouth "to the sea" therefore pulls it toward 0.
+# absolute Z 0 because heightmap_terrain displaces by (raw - sea_level) * height, so raw ==
+# sea_level maps to Z 0; pulling the mouth "to the sea" therefore pulls it toward 0.
 _SEA_Z = 0.0
 
 
 def _monotonic_descend(pts, min_slope, to_sea, sea_z=_SEA_Z):
     """Clamp a spline's per-point terrain Z into a monotonic downhill profile from source to mouth.
 
-    pts is a list of (x, y, terrain_z) in spline order. The SOURCE is the higher end; the walk
-    runs toward the lower MOUTH. Each point's Z is the MINIMUM of three ceilings, so the profile is
+    pts is a list of (x, y, terrain_z) in spline order. The SOURCE is the higher end; the walk runs
+    toward the lower MOUTH. Each point's Z is the MINIMUM of three ceilings, so the profile is
     guaranteed downhill and (optionally) reaches the sea:
 
     - the terrain sample itself (so the river hugs the valley floor where the ground already falls);
     - a running min-slope ceiling `running - min_slope * segment_length` (monotonic descent, and a
-      gentle continuous fall through flats/pools when min_slope > 0, cutting a gorge where the ground
-      would rise);
+      gentle continuous fall through flats/pools when min_slope > 0, cutting a gorge where the
+      ground would rise);
     - when to_sea, a straight source->sea_z ceiling over the arc length, so the mouth lands at sea
       level even if the terrain there is high.
 
@@ -239,16 +241,16 @@ def _terrain_drape_params(op):
 def drape_curve(op: dict) -> dict:
     """Drape an existing curve object's control points onto a terrain heightmap, in place.
 
-    The counterpart to make_path's drape for a hand-drawn or panel-added curve: make_path
-    bakes Z into points it creates, but a curve the artist drew (or moved) needs its Z
-    re-sampled against the current terrain so its smooth profile follows the ground. This is
-    the first pass stand-in for the live re-drape the GN overlay does in the terrain overlay (docs/SPLINES.md 4.2): the
+    The counterpart to make_path's drape for a hand-drawn or panel-added curve: make_path bakes Z
+    into points it creates, but a curve the artist drew (or moved) needs its Z re-sampled against
+    the current terrain so its smooth profile follows the ground. This is the first pass stand-in
+    for the live re-drape the GN overlay does in the terrain overlay (docs/SPLINES.md 4.2): the
     follow-terrain roles grade a bench to the curve's own Z, so that Z must track the surface.
 
-    With monotonic set (a river/stream, docs/SPLINES.md 9 #1), the sampled Z is additionally
-    clamped into a downhill profile from source to mouth (_monotonic_descend), so the water
-    centreline never runs uphill and the overlay's impose mode can cut the terrain DOWN to it.
-    min_slope forces a gentle continuous fall through flats; to_sea pulls the mouth to sea level.
+    With monotonic set (a river/stream, docs/SPLINES.md 9 #1), the sampled Z is additionally clamped
+    into a downhill profile from source to mouth (_monotonic_descend), so the water centreline never
+    runs uphill and the overlay's impose mode can cut the terrain DOWN to it. min_slope forces a
+    gentle continuous fall through flats; to_sea pulls the mouth to sea level.
 
     densify (>= 2, rivers) resamples the curve to that many points along its evaluated shape BEFORE
     sampling + solving, then rebuilds it as one dense NURBS. Sampling only the few control points
@@ -256,8 +258,8 @@ def drape_curve(op: dict) -> dict:
     over dips (measured: 17% of the water surface floated above the ground with 4 points, 0% with
     48). The dense solve tracks the actual valley, so the water sits IN the terrain everywhere.
 
-    Points are read/written in the curve's local space, so the curve object is assumed to sit
-    at the origin (make_path and the Paths panel create it there).
+    Points are read/written in the curve's local space, so the curve object is assumed to sit at the
+    origin (make_path and the Paths panel create it there).
 
     `terrain` (a mesh name) is the way to call this without restating anything: the terrain object
     records the heightmap, size, height and sea level it was built with, and a drape against numbers
@@ -348,9 +350,9 @@ def drape_curve(op: dict) -> dict:
 
 def inspect_river(op: dict) -> dict:
     """Read-only diagnostic: measure the built water ribbon against the terrain, to see whether it
-    floats. Reports water Z range, how many water verts sit ABOVE the surrounding banks (floating)
-    vs inside a carved channel, and a few sample rows (water / bed-directly-below / bank at a lateral
-    probe). No mutation."""
+    floats. Reports water Z range, how many water verts sit ABOVE the surrounding banks
+    (floating) vs inside a carved channel, and a few sample rows (water / bed-directly-below /
+    bank at a lateral probe). No mutation."""
     water = bpy.data.objects.get(op.get("water", "BOB_Water_River"))
     terrain = bpy.data.objects.get(op.get("terrain", "Terrain"))
     if water is None or terrain is None:

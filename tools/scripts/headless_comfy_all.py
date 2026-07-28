@@ -159,15 +159,15 @@ def verdict(text: str, code: int) -> tuple[str, str]:
     """(status, detail) from a gate's own output plus its exit code.
 
     Each gate already prints a decisive line and returns 1 only when something failed, so this reads
-    the gate rather than re-judging it. Three verdict wordings are live across the seven gates
-    ("no failures", "all checks passed", and "N failure(s)" where N may be 0), and a gate that printed
+    the gate rather than re-judging it. Three verdict wordings are live across the seven gates ("no
+    failures", "all checks passed", and "N failure(s)" where N may be 0), and a gate that printed
     NONE of them did not finish -- which is the case worth reporting loudly, because Blender exits 0
-    after a script traceback, so a crashed gate looks like a clean one to an exit code alone. That is
-    not hypothetical: it is how the `variants-maps` gate was found to have been crashing in its own
-    layout stub for three releases while reporting exit 0.
+    after a script traceback, so a crashed gate looks like a clean one to an exit code alone. That
+    is not hypothetical: it is how the `variants-maps` gate was found to have been crashing in its
+    own layout stub for three releases while reporting exit 0.
 
-    A gate that ran no checks at all and only skipped is SKIP, not PASS: "passed with no server" would
-    be a lie about what was measured.
+    A gate that ran no checks at all and only skipped is SKIP, not PASS: "passed with no server"
+    would be a lie about what was measured.
     """
     skips = len(re.findall(r"\[SKIP\]", text))
     passes = len(re.findall(r"\[(?:PASS|ok)\]", text))

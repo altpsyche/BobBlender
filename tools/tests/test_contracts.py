@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 # The contract lives inside the extension (mcp_agent/). Import it as a top-level package without
-# touching the bpy-bound addon __init__ -- the same trick gen_api_docs.py and the server launcher use.
+# touching the bpy-bound addon __init__ -- the same trick gen_api_docs.py and the server launcher
+# use.
 EXT = Path(__file__).resolve().parents[2] / "blender" / "extensions" / "bob_blender_tools"
 sys.path.insert(0, str(EXT))
 
@@ -88,10 +89,11 @@ def test_shade_terrain_requires_object():
         contracts.BuildRequest(output_file="x.blend", ops=[{"op": "shade_terrain"}])
 
 
-# -- The generation ops (the agent-surface gate) ------------------------------------------------------------------
-# Rejection is the half that matters here: an agent gets these wrong before it gets them right, and
-# the difference between a readable rejection and a traceback is the difference between a retry and
-# a stuck agent. Each case below is a DIFFERENT failure mode, not the same one four times.
+# -- The generation ops (the agent-surface gate)
+# ------------------------------------------------------------------ Rejection is the half that
+# matters here: an agent gets these wrong before it gets them right, and the difference between a
+# readable rejection and a traceback is the difference between a retry and a stuck agent. Each case
+# below is a DIFFERENT failure mode, not the same one four times.
 def test_export_control_requires_an_object():
     with pytest.raises(Exception):
         contracts.BuildRequest(output_file="x.blend", ops=[{"op": "export_control"}])

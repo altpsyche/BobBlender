@@ -42,8 +42,8 @@ def _slugify(name: str) -> str:
 def _comfy():
     """The stdlib ComfyUI client from the extension's `core/`, imported lazily.
 
-    Lazily because ComfyUI is optional: an agent that never generates anything must not pay an import
-    for it, and a broken install of it must not stop `build` from working.
+    Lazily because ComfyUI is optional: an agent that never generates anything must not pay an
+    import for it, and a broken install of it must not stop `build` from working.
     """
     paths.add_core_to_path()
     import comfy  # noqa: E402  (resolved via <ext>/core on sys.path)
@@ -62,10 +62,10 @@ def _generation(fn, route=None):
     """Run one generation call, turning every failure into a sentence rather than a traceback.
 
     Four failures are worth telling apart and this is where they become one shape: no server at all,
-    not enough free VRAM (the VRAM-handback rule: the card is the scarce resource the moment an agent generates and
-    renders in one session), a graph that will not run (preflight: a missing model, a pack that is
-    not installed, a cloud node) and anything else. The first three are the normal ones and all
-    three are the artist's to fix.
+    not enough free VRAM (the VRAM-handback rule: the card is the scarce resource the moment an
+    agent generates and renders in one session), a graph that will not run (preflight: a missing
+    model, a pack that is not installed, a cloud node) and anything else. The first three are the
+    normal ones and all three are the artist's to fix.
 
     `route` names the VRAM floor to check (core/comfy.VRAM_FLOOR_MIB). The check tries one recovery
     before it refuses, so the common case -- a card a previous job left full -- costs a `POST /free`
@@ -91,9 +91,9 @@ def _generation(fn, route=None):
 def comfy_status() -> dict:
     """Is the local ComfyUI reachable, on what device, with how much free VRAM and how deep a queue.
 
-    The check to make before any comfy_* call, and the one tool here that never fails: with no server
-    it returns {"ok": false, ...} and a reason. Also lists the generation tools and the shipped
-    workflows, so an agent can see what this install can actually run.
+    The check to make before any comfy_* call, and the one tool here that never fails: with no
+    server it returns {"ok": false, ...} and a reason. Also lists the generation tools and the
+    shipped workflows, so an agent can see what this install can actually run.
 
     Returns {ok, url, device, vram_free_mib, running, pending, detail, workflows}.
     """
@@ -112,12 +112,12 @@ def comfy_status() -> dict:
 def comfy_free() -> dict:
     """Ask ComfyUI to give the card back, and report honestly how much it actually gave.
 
-    The tool to reach for between a generate and a Cycles render, and after a generate that failed on
-    VRAM. It is not a fix for the VRAM-handback rule (docs/GENERATION.md) and does not pretend to be: `POST /free` only
-    drops what ComfyUI's MAIN process will release, the generation workers are separate processes
-    that cannot reuse that cache, and on the measured case it recovers about 100 MiB of a 7.3 GB
-    hold. When that is not enough this says so and names the thing that does work -- restarting the
-    server, which Bob will not do for a server it did not start.
+    The tool to reach for between a generate and a Cycles render, and after a generate that failed
+    on VRAM. It is not a fix for the VRAM-handback rule (docs/GENERATION.md) and does not pretend to
+    be: `POST /free` only drops what ComfyUI's MAIN process will release, the generation workers are
+    separate processes that cannot reuse that cache, and on the measured case it recovers about 100
+    MiB of a 7.3 GB hold. When that is not enough this says so and names the thing that does work --
+    restarting the server, which Bob will not do for a server it did not start.
 
     Returns {ok, before, after, recovered, advice} in MiB.
     """
@@ -186,7 +186,8 @@ def comfy_bark_set(
     conifer bark" on its own came back as polygonal mud cracks 84 degrees off vertical, and the
     shipped clause holds it inside 18 degrees across species and seeds (docs/FOLIAGE.md 3).
 
-    prompt: the species and its surface ("grey beech bark", "shaggy redwood bark"). The vertical-grain
+    prompt: the species and its surface ("grey beech bark", "shaggy redwood bark"). The
+    vertical-grain
             clause and the tiling and lighting clauses are added for you.
     name:   the set's folder name. Pass the name a species preset asks for -- the shipped `conifer`
             wants `bark_conifer` and `broadleaf` wants `bark_broadleaf` -- and every tree of that
@@ -227,23 +228,24 @@ def comfy_leaf_atlas(
 
     Bob generates one sprite per cell and composes the grid itself, because a diffusion model asked
     for a grid does not make one: measured, a "2 by 2 grid, one spray per quadrant" prompt returned
-    five sprays in a ring straddling every boundary, none touching a cell's bottom edge, and per-cell
-    coverage still passed. Composing instead means every cell is filled, the cells differ, and each
-    sprite is oriented with its stem at the bottom -- where a card's v is 0, so a leaf hangs from its
-    twig rather than by its tips.
+    five sprays in a ring straddling every boundary, none touching a cell's bottom edge, and
+    per-cell coverage still passed. Composing instead means every cell is filled, the cells differ,
+    and each sprite is oriented with its stem at the bottom -- where a card's v is 0, so a leaf
+    hangs from its twig rather than by its tips.
 
-    prompt: the foliage ("spruce needle spray", "birch leaf cluster", "fern frond"). The single-sprig
+    prompt: the foliage ("spruce needle spray", "birch leaf cluster", "fern frond"). The
+    single-sprig
             and lighting clauses are added for you.
     cols/rows: the grid. 2x2 is four sprites; 4x4 is sixteen and about four times the wall clock.
-    name:   the set's folder name; blank names it after the prompt.
-    route:  "cells" (default, composed) or "grid" (one frame, the measured-insufficient way).
+    name:   the set's folder name; blank names it after the prompt. route:  "cells" (default,
+    composed) or "grid" (one frame, the measured-insufficient way).
 
     The set RECORDS its own grid, so a species preset only has to name the set: the recipe reads the
     layout from it and its `Atlas Columns` / `Atlas Rows` knobs stay as an override. Point a tree at
     it with the `atlas` param on `build_geonodes`.
 
-    Returns {ok, set, dir, maps, cols, rows, cells, cell_distinctness, seconds, pack_dir} or
-    {ok: false, error}. `cells` is per cell: `opaque` 0 is a card that renders as nothing.
+    Returns {ok, set, dir, maps, cols, rows, cells, cell_distinctness, seconds, pack_dir} or {ok:
+    false, error}. `cells` is per cell: `opaque` 0 is a card that renders as nothing.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
@@ -276,11 +278,11 @@ def comfy_mesh(
 ) -> dict:
     """Generate a scatter asset from a prompt: reference image, then geometry plus PBR texture.
 
-    This is the ComfyUI half only, and it is the slow one (40 to 200 s warm). It leaves a staged mesh
-    on disk; the Blender half (bake, scale to height_m, origin at the base, LOD chain, BobShader,
-    write the pack, import into BOB_Assets_<Kind>) is the `import_generated` op, which this returns
-    ready to send. Generated meshes are scatter-grade by design: dense triangles, no edge flow,
-    convincing at 3 m.
+    This is the ComfyUI half only, and it is the slow one (40 to 200 s warm). It leaves a staged
+    mesh on disk; the Blender half (bake, scale to height_m, origin at the base, LOD chain,
+    BobShader, write the pack, import into BOB_Assets_<Kind>) is the `import_generated` op, which
+    this returns ready to send. Generated meshes are scatter-grade by design: dense triangles, no
+    edge flow, convincing at 3 m.
 
     WRITING THE PROMPT is the highest-leverage thing here, because every geometry stage conditions
     on the reference IMAGE and none of them reads your text. Describe the subject you want isolated
@@ -296,7 +298,8 @@ def comfy_mesh(
           it for DEAD WOOD -- a stump, a fallen log, a snag, a root ball -- which is the class this
           route measures best on. A standing tree is not one of them: the crown comes back a faceted
           fan, and a generated trunk cannot carry branches because there is no curve to attach them
-          to. Live trees come from the foliage generator (docs/FOLIAGE.md, the dead-wood routing rule).
+          to. Live trees come from the foliage generator (docs/FOLIAGE.md, the dead-wood routing
+          rule).
     height_m: the real-world height. Mandatory in spirit: every image-to-3D model emits a
           unit-cube mesh, so without it the scatter looks like a toy set.
     faces: the face budget the simplify hits. hero: 2K bake and 2048 texture.
@@ -309,12 +312,12 @@ def comfy_mesh(
           ComfyUI-folder preference) pointing at the checkout. Without it the job fails inside the
           graph with "Mesh file not found"; `control_bbox` has no such dependency.
     control_bbox: the same op's `bbox` field instead, which conditions on the block-out's three
-          proportions rather than on its surface. Cheaper and it uploads nothing; measured at the bbox gate,
-          and which one is the default is `comfy.DEFAULT_CONTROL_MODE`. Pass one or the other.
-          THE CEILING: the Omni node's widgets bound each of the three to [0.1, 3.0], so a raw
-          ratio like [1, 9, 1] is rejected outright. `export_control` already divides by the longest
-          axis, which is why its own output always fits; hand-written numbers must be normalised the
-          same way, and that also caps the expressible slenderness at 1:10 per axis.
+          proportions rather than on its surface. Cheaper and it uploads nothing; measured at the
+          bbox gate, and which one is the default is `comfy.DEFAULT_CONTROL_MODE`. Pass one or the
+          other. THE CEILING: the Omni node's widgets bound each of the three to [0.1, 3.0], so a
+          raw ratio like [1, 9, 1] is rejected outright. `export_control` already divides by the
+          longest axis, which is why its own output always fits; hand-written numbers must be
+          normalised the same way, and that also caps the expressible slenderness at 1:10 per axis.
     control_mode: which Omni control the mesh in `control` becomes. "point" samples its surface and
           "voxel" quantises it to a 16-cubed occupancy grid; both read the same file, so the mesh
           alone cannot say which was meant and leaving this unset takes the measured default. Only
@@ -322,8 +325,9 @@ def comfy_mesh(
     subject: a local image with ALPHA to use instead of generating a reference. Skips the reference
           stage entirely, so `negative` does nothing alongside it.
     route: "oneshot" (default, `mesh_subject` then `mesh_geom_texture`), "staged" (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`; the only route that
-          leaves a dense mesh on disk) or "alt" (`mesh_subject`, `mesh_geom_alt`, `mesh_process`, `mesh_texture`; Hunyuan 2.1 geometry, which needs
-          no custom node pack). Leave it unset and the kind decides, which is the geometry A/B verdict.
+          leaves a dense mesh on disk) or "alt" (`mesh_subject`, `mesh_geom_alt`, `mesh_process`,
+          `mesh_texture`; Hunyuan 2.1 geometry, which needs no custom node pack). Leave it unset and
+          the kind decides, which is the geometry A/B verdict.
 
     Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}.
     """
@@ -379,16 +383,17 @@ def comfy_paint_mesh(
 ) -> dict:
     """Texture a mesh you already have, in its own UVs (the mesh-texturing family, the PBR route).
 
-    Takes a local mesh file (GLB / OBJ / PLY / STL), uploads it, generates a reference image from the
-    prompt unless you pass one, and returns a textured GLB with base colour, roughness, metallic and
-    opacity in that mesh's UVs.
+    Takes a local mesh file (GLB / OBJ / PLY / STL), uploads it, generates a reference image from
+    the prompt unless you pass one, and returns a textured GLB with base colour, roughness, metallic
+    and opacity in that mesh's UVs.
 
     The mesh has to be UNIT-CUBE normalised or the texture comes back silently BLACK: the encoder
     voxelises in unit-cube space and a metre-scale mesh lands outside the grid. The `export_control`
     op writes exactly that normalisation, so it is the way to get a Bob object into this tool.
 
-    The other route, stylised painting with LoRA control, is not available here: it renders turntable
-    views, which needs Blender, so it stays a panel action (Stylise) rather than an MCP tool.
+    The other route, stylised painting with LoRA control, is not available here: it renders
+    turntable views, which needs Blender, so it stays a panel action (Stylise) rather than an MCP
+    tool.
 
     Returns {ok, path, seconds, subject} or {ok: false, error}.
     """
@@ -428,7 +433,8 @@ def comfy_heightmap(
 
     Not a heightfield, and the distinction is the whole design. The mask supplies the low-frequency
     LAYOUT (about 0.3 m of relief on a 54 m tile) and the erosion stack supplies the landform (about
-    3 m of fine relief and every slope), measured. Diffusion has no drainage logic; the op stack has.
+    3 m of fine relief and every slope), measured. Diffusion has no drainage logic; the op stack
+    has.
 
     Feed it to `bake_heightfield`'s `macro` key, which this returns ready to use:
     bake_heightfield(out_file="_generated/t.png", params={"preset": "alpine",
@@ -488,8 +494,9 @@ def comfy_stylize(
             stem = os.path.splitext(os.path.basename(image_file))[0]
             out_abs = comfy.unique_file_name(os.path.dirname(os.path.abspath(image_file)),
                                              stem + "_styled", ".png")
-        # The route is a value in `core/comfy.py`: passing both passes selects `stylize_render` and passing
-        # neither selects `stylize_render_est`, so there is no workflow argument to get wrong here.
+        # The route is a value in `core/comfy.py`: passing both passes selects `stylize_render` and
+# passing neither selects `stylize_render_est`, so there is no workflow argument to get
+# wrong here.
         info = comfy.stylize_render(image_file, out_abs, prompt, depth=depth, normal=normal,
                                     seed=int(seed), denoise=float(strength))
         return {"path": info["path"], "seconds": round(info["seconds"], 2),
@@ -602,16 +609,16 @@ def build(output_file: str, ops: list[dict], base_file: str | None = None) -> di
 def build_live(ops: list[dict] | None = None, batch: str | None = None) -> dict:
     """Author ops into the open Blender session over the live socket bridge.
 
-    Same op vocabulary as build, but applied to the running Blender instead of a headless
-    file, so the result appears in the viewport. Requires the BobBlenderTools extension to
-    be enabled with its bridge running (Advanced -> Start).
+    Same op vocabulary as build, but applied to the running Blender instead of a headless file, so
+    the result appears in the viewport. Requires the BobBlenderTools extension to be enabled with
+    its bridge running (Advanced -> Start).
 
     Every call runs under an IDEMPOTENCY KEY, returned as `batch`. A slow batch (a 14,000-face
-    import_generated is the measured case) no longer comes back as a timeout that cannot be told from
-    a failure: this waits, collecting the same key, and only returns when the bridge says the batch is
-    done. If it does give up it returns status "running" with the key, which means the work is STILL
-    IN PROGRESS and the ops must NOT be re-sent -- call build_live(batch="<the key>") to collect it.
-    Passing `batch` alone collects; passing `ops` alone starts new work.
+    import_generated is the measured case) no longer comes back as a timeout that cannot be told
+    from a failure: this waits, collecting the same key, and only returns when the bridge says the
+    batch is done. If it does give up it returns status "running" with the key, which means the work
+    is STILL IN PROGRESS and the ops must NOT be re-sent -- call build_live(batch="<the key>") to
+    collect it. Passing `batch` alone collects; passing `ops` alone starts new work.
 
     Returns {ok, results:[{op, created, info, data}], error, batch, status}.
     """
@@ -693,9 +700,10 @@ def bake_heightfield(
         base.update(p)
         p = base
     # A preset's params dict arrives with its stack ALREADY resolved, so `macro` has to be composed
-    # onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
-    # and is idempotent, which is why this tool passes the key straight through instead of calling
-    # `params.with_macro` here and risking a second application (docs/GENERATION.md, the macro-mask gate correction 12).
+# onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
+# and is idempotent, which is why this tool passes the key straight through instead of calling
+# `params.with_macro` here and risking a second application (docs/GENERATION.md, the macro-mask
+# gate correction 12).
 
     try:
         out_abs = str(paths.resolve_output(out_file))

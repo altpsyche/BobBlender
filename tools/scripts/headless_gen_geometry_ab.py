@@ -1,9 +1,10 @@
 """Headless measurement: the geometry A/B, decided once (docs/GENERATION.md).
 
-TRELLIS.2 (`mesh_geom_texture`, the shipped one-shot route) against Hunyuan3D 2.1 (`mesh_geom_alt` then `mesh_process` then `mesh_texture`) on ten
-fixed prompts, three of them foliage, with ONE shared `mesh_subject` subject image per prompt so the grid
-compares geometry models rather than reference images. The deliverable is a verdict per asset class
-rather than a global winner, because the two differ structurally and not by degree.
+TRELLIS.2 (`mesh_geom_texture`, the shipped one-shot route) against Hunyuan3D 2.1 (`mesh_geom_alt`
+then `mesh_process` then `mesh_texture`) on ten fixed prompts, three of them foliage, with ONE
+shared `mesh_subject` subject image per prompt so the grid compares geometry models rather than
+reference images. The deliverable is a verdict per asset class rather than a global winner, because
+the two differ structurally and not by degree.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/headless_gen_geometry_ab.py [-- --part a,b,c,d --prompts N --no-gen]
@@ -20,11 +21,12 @@ Four parts, because they cost very different amounts of GPU time:
   C  three of the ten through steps 6 to 8 on BOTH models, against the asset checks.
   D  the dense-mesh question: does the dense mesh buy measurable normal detail now that the bake
      alignment is fixed?
-     Re-measured on the same assets the route A/B used, from the route A/B's cache, so it costs no GPU at all.
+     Re-measured on the same assets the route A/B used, from the route A/B's cache, so it costs no
+     GPU at all.
 
-Every generated mesh caches WITH its timing and its VRAM under `_generated/comfy_g7_check/gen/`,
-so `--no-gen` re-scores in minutes and `--fresh` regenerates. Reachability-gated: with no server
-every generation half prints SKIP and exits 0. Exit 0 = nothing failed.
+Every generated mesh caches WITH its timing and its VRAM under `_generated/comfy_g7_check/gen/`, so
+`--no-gen` re-scores in minutes and `--fresh` regenerates. Reachability-gated: with no server every
+generation half prints SKIP and exits 0. Exit 0 = nothing failed.
 """
 
 import argparse
@@ -49,7 +51,8 @@ OUT = os.path.join(REPO, "_generated", "comfy_g7_check")
 GEN = os.path.join(OUT, "gen")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
-# The route A/B's cache, which is where the shared subject images and the dense-mesh question's four assets come from.
+# The route A/B's cache, which is where the shared subject images and the dense-mesh question's four
+# assets come from.
 G3B = os.path.join(REPO, "_generated", "comfy_g3b_check", "gen")
 
 FACES = gen_assets.DEFAULT_FACES
@@ -59,9 +62,9 @@ CARD_MIB = 16303
 # flat-looking asset (the asset gate's floor, kept so both gates' numbers mean the same thing).
 ALBEDO_FLOOR = 0.02
 
-# The same ten prompts, seeds and heights the route A/B used, so the TRELLIS.2 column here is comparable with
-# that table and the shared subject images are already on disk. Three of the ten are foliage, which
-# is where the two models differ structurally rather than by degree.
+# The same ten prompts, seeds and heights the route A/B used, so the TRELLIS.2 column here is
+# comparable with that table and the shared subject images are already on disk. Three of the ten are
+# foliage, which is where the two models differ structurally rather than by degree.
 SUBJECTS = [
     {"key": "boulder", "kind": "rocks", "seed": 1234, "height_m": 1.8,
      "prompt": "a mossy granite boulder"},
@@ -87,7 +90,8 @@ SUBJECTS = [
 ]
 
 MODELS = ("trellis", "hunyuan")
-# The dense-mesh question's four, which are exactly the four the route A/B took through steps 6 to 8.
+# The dense-mesh question's four, which are exactly the four the route A/B took through steps 6 to
+# 8.
 D11_KEYS = ("boulder", "fern", "leaf", "stump")
 
 
@@ -123,7 +127,8 @@ def foliage(subject):
 # -- VRAM ---------------------------------------------------------------------------------------
 # Per process and summed over the ComfyUI FAMILY, because comfy-env runs each isolated pack in its
 # own process: the main server, the TRELLIS2 pixi worker and the GeometryPack pixi worker each hold
-# their own allocation and only their sum answers "does it fit". Same sampler the route A/B and the stylise gate used.
+# their own allocation and only their sum answers "does it fit". Same sampler the route A/B and the
+# stylise gate used.
 _OURS = {os.getpid()}
 
 
@@ -149,8 +154,9 @@ def _gpu_sample():
 class Vram:
     """Peak VRAM across a job, sampled from a thread so the measurement does not serialise with it.
 
-    `at_queue` is the baseline the moment the job is handed over and `peak` the highest reading while
-    it ran. The rise between them is what the graph cost; the absolute peak is what has to fit.
+    `at_queue` is the baseline the moment the job is handed over and `peak` the highest reading
+    while it ran. The rise between them is what the graph cost; the absolute peak is what has to
+    fit.
     """
 
     def __init__(self, interval=0.5):
@@ -244,9 +250,9 @@ def new_entry(subject):
 def stage_subject(entry, fresh, reachable):
     """The ONE reference image both models are conditioned on.
 
-    Reused from the route A/B's cache when it is there, which is not a shortcut: it is the same prompt at
-    the same seed, and it makes the TRELLIS.2 column here directly comparable with the route A/B's one-shot
-    column rather than merely similar.
+    Reused from the route A/B's cache when it is there, which is not a shortcut: it is the same
+    prompt at the same seed, and it makes the TRELLIS.2 column here directly comparable with the
+    route A/B's one-shot column rather than merely similar.
     """
     png = entry["paths"]["subject"]
     if _cache(png) and not fresh:
@@ -355,8 +361,9 @@ def texture_report(obj):
 def mesh_report(path):
     """Everything the grid asks of one cell's returned GLB, measured in Blender.
 
-    Boundary edges are counted AFTER a weld, per the asset gate's correction: the glTF importer splits vertices
-    per corner, so an unwelded count is a statement about the file format and not about the surface.
+    Boundary edges are counted AFTER a weld, per the asset gate's correction: the glTF importer
+    splits vertices per corner, so an unwelded count is a statement about the file format and not
+    about the surface.
     """
     empty_scene()
     obj = gen_assets.import_glb(path, name="cell")
@@ -377,7 +384,8 @@ def normal_stats(path):
     """(std, detail) of a baked tangent-space normal map.
 
     `std` cannot tell transferred detail from a shading difference, so `detail` is the mean absolute
-    neighbour difference, which is high frequency by construction. This is the pair the dense-mesh question turns on.
+    neighbour difference, which is high frequency by construction. This is the pair the dense-mesh
+    question turns on.
     """
     img = bpy.data.images.load(path, check_existing=False)
     px = np.empty(len(img.pixels), dtype=np.float32)
@@ -568,11 +576,11 @@ def black_albedo_report(entries, cells):
     """The trap, per model. It is a CHECK on the shipped route and a measurement on the challenger.
 
     The asymmetry is deliberate rather than convenient. "The default route never returns a black
-    texture" is an invariant `mesh_geom_texture` holds structurally, because it never re-encodes a mesh, so a failure
-    there is a regression. The challenger's rate is a property of `Trellis2EncodeMesh` on a mesh it
-    did not generate, which the route A/B already measured at 1 in 10 on the staged route; asserting it away
-    would turn a verdict input into a red suite, and asserting it holds would be asserting something
-    the measurement says is false.
+    texture" is an invariant `mesh_geom_texture` holds structurally, because it never re-encodes a
+    mesh, so a failure there is a regression. The challenger's rate is a property of
+    `Trellis2EncodeMesh` on a mesh it did not generate, which the route A/B already measured at 1 in
+    10 on the staged route; asserting it away would turn a verdict input into a red suite, and
+    asserting it holds would be asserting something the measurement says is false.
     """
     section("B. the black-albedo trap")
     for model in MODELS:
@@ -592,11 +600,11 @@ def black_albedo_report(entries, cells):
 def plate_control(entries, reachable, fresh):
     """Does the plain plate in `mesh_geom_alt` matter, or is it ceremony?
 
-    `mesh_subject` writes RGBA whose RGB is still the SDXL frame, and ComfyUI's LoadImage drops alpha rather
-    than compositing it, so `mesh_geom` hands Hunyuan a background TRELLIS.2 never sees. This measures the
-    same subject through `mesh_geom` (no plate) and reads the difference off the geometry, on one solid and
-    one foliage prompt. It is two generations, and without it the grid's Hunyuan column would be
-    open to the charge that it measured the background.
+    `mesh_subject` writes RGBA whose RGB is still the SDXL frame, and ComfyUI's LoadImage drops
+    alpha rather than compositing it, so `mesh_geom` hands Hunyuan a background TRELLIS.2 never
+    sees. This measures the same subject through `mesh_geom` (no plate) and reads the difference off
+    the geometry, on one solid and one foliage prompt. It is two generations, and without it the
+    grid's Hunyuan column would be open to the charge that it measured the background.
     """
     section("B. the plate control: the same subject with and without the composite")
     if not entries:
@@ -627,14 +635,15 @@ def part_d(limit=len(D11_KEYS)):
     """The dense-mesh question: does the dense mesh buy measurable normal detail now that the bake is
     aligned?
 
-    The route A/B concluded it bought none, but every `Trellis2ExportTrimesh` write turns the subject and the
-    turns accumulate, so that bake read from a cage rotated 90 or 180 degrees from its target. The
-    fix is `comfy.stage_exports`. Same four assets, same files, from the route A/B's cache, so the only
-    variable is the alignment. Three finishes per asset:
+    The route A/B concluded it bought none, but every `Trellis2ExportTrimesh` write turns the
+    subject and the turns accumulate, so that bake read from a cage rotated 90 or 180 degrees from
+    its target. The fix is `comfy.stage_exports`. Same four assets, same files, from the route A/B's
+    cache, so the only variable is the alignment. Three finishes per asset:
 
-      staged aligned    the dense `mesh_geom_trellis` mesh baked onto the `mesh_simplify_uv` low mesh, in one frame
-      staged as the route A/B ran it   the same with no `exports`, i.e. the misaligned bake
-      one-shot          `mesh_geom_texture`'s own mesh baked onto itself, which is the no-dense-mesh control
+      staged aligned    the dense `mesh_geom_trellis` mesh baked onto the `mesh_simplify_uv` low
+      mesh, in one frame staged as the route A/B ran it   the same with no `exports`, i.e. the
+      misaligned bake one-shot          `mesh_geom_texture`'s own mesh baked onto itself, which is
+      the no-dense-mesh control
     """
     section("D. the dense mesh, re-measured with the bake alignment fixed")
     by_key = {s["key"]: s for s in SUBJECTS}

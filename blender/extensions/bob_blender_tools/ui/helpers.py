@@ -1,19 +1,19 @@
 """Shared UX helpers for the BobBlenderTools panels.
 
-One implementation of the suite's recurring UI patterns (docs/CONVENTIONS.md, panel UX
-conventions), so every panel speaks the same visual language instead of each inventing its
-own idioms:
+One implementation of the suite's recurring UI patterns (docs/CONVENTIONS.md, panel UX conventions),
+so every panel speaks the same visual language instead of each inventing its own idioms:
 
 - context_header: the compact "what am I acting on" line a panel opens with, read from the
- active thing (not panel-local state), with a consistent one-line empty-state hint (the context header and the empty state).
+ active thing (not panel-local state), with a consistent one-line empty-state hint (the context
+ header and the empty state).
 - structural_action: a button for a STRUCTURAL action (one that builds or rebuilds a
- datablock) marked with a shared icon and a short "rebuilds: ..." note, so a structural
- press always reads differently from an instant live knob .
+ datablock) marked with a shared icon and a short "rebuilds: ..." note, so a structural press always
+ reads differently from an instant live knob .
 - preset_row: the one preset control (operator_menu_enum with per-item label + description),
  used for every preset in the suite .
 
-Pure draw helpers: no properties, operators, or registration. Panels import and call these;
-nothing here holds state, so a Reload Builders or addon re-enable needs no special handling.
+Pure draw helpers: no properties, operators, or registration. Panels import and call these; nothing
+here holds state, so a Reload Builders or addon re-enable needs no special handling.
 """
 
 # The shared marker for a STRUCTURAL action (builds or rebuilds a datablock), distinct from
@@ -120,20 +120,21 @@ def select_row(layout, op_idname, text, selected, op_props=None, radio=True):
 
 
 def live_knobs(layout, obj, names, enabled=True, seed_op=None, seed_names=()):
-    """Draw a Geometry Nodes modifier's LIVE inputs by socket name (the instant half of the live-vs-structural split).
+    """Draw a Geometry Nodes modifier's LIVE inputs by socket name (the instant half of the
+    live-vs-structural split).
 
- A socket that does not exist on this build is skipped rather than drawn dead, which is what
- lets one name list serve a recipe whose interface changes with its params. Values are read from
+ A socket that does not exist on this build is skipped rather than drawn dead, which is what lets
+ one name list serve a recipe whose interface changes with its params. Values are read from
  `mod.properties.inputs.<identifier>.value` -- the surface a Blender 5.2 Nodes modifier actually
  evaluates. Not `mod[identifier]` (a Nodes modifier has no IDProperties and raises TypeError) and
- not the interface `default_value`, which only seeds a fresh bind: drawing that would show and
- edit a number the modifier is not using.
+ not the interface `default_value`, which only seeds a fresh bind: drawing that would show and edit
+ a number the modifier is not using.
 
- `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its
- reshuffle button; the operator is passed `{"socket": <name>}`.
+ `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its reshuffle
+ button; the operator is passed `{"socket": <name>}`.
 
- Scatter and Firmament each grew their own copy of this before it existed here. New panels use
- this one; folding those two into it is a subtraction pass of its own, not a side effect of one.
+ Scatter and Firmament each grew their own copy of this before it existed here. New panels use this
+ one; folding those two into it is a subtraction pass of its own, not a side effect of one.
  """
     mod = next((m for m in obj.modifiers if m.type == "NODES"), None) if obj is not None else None
     if mod is None or mod.node_group is None:

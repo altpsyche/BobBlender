@@ -1,7 +1,8 @@
-"""Headless measurement: Omni's bounding-box control mode, against the point cloud (docs/GENERATION.md).
+"""Headless measurement: Omni's bounding-box control mode, against the point cloud
+(docs/GENERATION.md).
 
-The control gate proved that a block-out proxy can own a generated asset's footprint, using 8,192 points sampled
-off the proxy's surface. The obvious follow-up sat open for a long time: **did that
+The control gate proved that a block-out proxy can own a generated asset's footprint, using 8,192
+points sampled off the proxy's surface. The obvious follow-up sat open for a long time: **did that
 need a point cloud, or just eight corners?** `Hy3DOmniBBoxGenerate` conditions on three numbers, the
 encoder turns them into the eight corners of a box (`omni_encoder.bbox_to_corners`), and Bob knows
 every proxy's bounding box for free. So this gate is one comparison with a null beside it.
@@ -12,29 +13,28 @@ every proxy's bounding box for free. So this gate is one comparison with a null 
      form), and `gen_assets.control_bbox` checked against the control glb's OWN position extents,
      because a permuted bbox is still a valid bbox and conditions on a plausible wrong shape in
      silence. Plus the staged-copy tripwire: the installed `comfy-aimdo` version against the one the
-     agent-surface gate
-     measured the segfault on. No server, always runs, costs a second.
+     agent-surface gate measured the segfault on. No server, always runs, costs a second.
   B. **The grid.** The same three block-outs the control gate used, the same conditioning image, the same
      scoring with NO rotation search, each against its own self-agreement ceiling. Three control
-     modes: `mesh_geom_ctrl` point (the number to beat), `mesh_geom_bbox` with Bob's proportions, and `mesh_geom_bbox` with `auto_bbox`,
-     which estimates the proportions from the image and is the NULL that says whether Bob's
-     numbers added anything at all.
+     modes: `mesh_geom_ctrl` point (the number to beat), `mesh_geom_bbox` with Bob's proportions,
+     and `mesh_geom_bbox` with `auto_bbox`, which estimates the proportions from the image and is
+     the NULL that says whether Bob's numbers added anything at all.
   C. **The finished asset.** One block-out through `mesh_geom_bbox`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the asset gate
      asset checks it inherits, with the footprint measured again after simplify, bake, scale, LODs
      and BobShade.
   D. **The transport claim.** `mesh_geom_bbox` uploads nothing, so it should be the one Omni route that survives
-     a process with no ComfyUI folder, which is what the geometry A/B found broken over MCP. Measured both ways
-     with `comfy_dir()` forced to None, rather than asserted.
+     a process with no ComfyUI folder, which is what the geometry A/B found broken over MCP.
+     Measured both ways with `comfy_dir()` forced to None, rather than asserted.
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \\
         --python tools/scripts/headless_gen_bbox_control.py -- [--part a,b,c,d] [--fresh] [--no-gen]
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM under
-`_generated/comfy_g8_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates.
-The shape maths, the block-outs and the VRAM sampler are imported from the control gate rather than
-copied, so both gates' numbers are the same measurement and not two implementations of it.
-Exit 0 = nothing failed.
+`_generated/comfy_g8_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
+shape maths, the block-outs and the VRAM sampler are imported from the control gate rather than
+copied, so both gates' numbers are the same measurement and not two implementations of it. Exit 0 =
+nothing failed.
 """
 
 import argparse
@@ -71,10 +71,10 @@ FACES = control_gate.FACES
 # Every class `mesh_geom_bbox` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniBBoxGenerate")
 
-# The three control modes, in the order the tables read. "auto" is not a Bob mode: it is `mesh_geom_bbox` with
-# `auto_bbox`, i.e. the node guessing the proportions off the conditioning image, and it is here as
-# the null. Without it a bbox result that merely looks reasonable cannot be told apart from the
-# model doing what it would have done from the picture alone.
+# The three control modes, in the order the tables read. "auto" is not a Bob mode: it is
+# `mesh_geom_bbox` with `auto_bbox`, i.e. the node guessing the proportions off the conditioning
+# image, and it is here as the null. Without it a bbox result that merely looks reasonable cannot be
+# told apart from the model doing what it would have done from the picture alone.
 COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_bbox bbox", "mesh_geom_bbox auto")
 
 # The decision rule, fixed BEFORE the run so the verdict cannot be chosen after seeing the table.
@@ -170,10 +170,10 @@ def part_a(args, reachable):
           not any(n["class_type"] == "Trellis2LoadMesh" for n in graph.values()),
           "classes: " + ", ".join(sorted({n["class_type"] for n in graph.values()})))
 
-    # The mode is a value in ONE place, so the truth table is the test.
-    # A third mode reads the SAME control file `mesh_geom_ctrl` does, so a mesh alone no longer
-    # names a mode and the default breaks that tie too. Written against the constant rather than
-    # against "point", or this gate fails the day the default moves for a reason the bbox gate did not measure.
+    # The mode is a value in ONE place, so the truth table is the test. A third mode reads the SAME
+# control file `mesh_geom_ctrl` does, so a mesh alone no longer names a mode and the default
+# breaks that tie too. Written against the constant rather than against "point", or this gate
+# fails the day the default moves for a reason the bbox gate did not measure.
     table = [({}, None, "no control at all"),
              ({"control": "/x.glb"}, comfy.DEFAULT_CONTROL_MODE, "a mesh and nothing else"),
              ({"control_bbox": [1, 1, 1]}, "bbox", "proportions and nothing else"),
@@ -216,8 +216,8 @@ def part_a(args, reachable):
           signal["path"] is None and signal["bbox"] == got and signal["height_m"] > 0,
           f"height {signal['height_m']:.3f} m, bbox {signal['bbox']}")
 
-    # `mesh_geom_bbox`'s own binding, both ways, without a server: `auto_bbox` is the difference between Bob's
-    # numbers and the node's guess, and it is bound from one argument being None.
+    # `mesh_geom_bbox`'s own binding, both ways, without a server: `auto_bbox` is the difference
+# between Bob's numbers and the node's guess, and it is bound from one argument being None.
     for dims, auto in (([0.3, 1.0, 0.7], False), (None, True)):
         bound = comfy.template(comfy.load_workflow("mesh_geom_bbox")[0],
                                {"BOB_SEED": dict({"seed": SEED, "auto_bbox": dims is None},
@@ -230,8 +230,8 @@ def part_a(args, reachable):
               f"length {node['inputs']['bbox_length']}, height {node['inputs']['bbox_height']}, "
               f"depth {node['inputs']['bbox_depth']}")
 
-    # The staged-copy tripwire. The rule says re-test on a fork update; the version is what says whether
-    # there was one, so a stale reminder becomes a check.
+    # The staged-copy tripwire. The rule says re-test on a fork update; the version is what says
+# whether there was one, so a stale reminder becomes a check.
     version = aimdo_version()
     check("comfy-aimdo is the version the segfault was measured on, so the staged-copy check needs no re-run",
           version in (None, AIMDO_MEASURED),
@@ -339,10 +339,10 @@ def part_b(args, reachable, ready):
                  f"peak {int(np.mean([s['peak'] for s in got]))} MiB, aspect error "
                  f"{np.mean([s['aspect_error'] for s in got]):.3f}")
 
-    # First, whether the control signal reaches the model at ALL. This is the control gate's failure mode --
-    # a wrapper that ignores its control and says nothing -- and it has to be separated from "the
-    # control is not enough", which is a finding rather than a defect. A box can only control
-    # PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
+    # First, whether the control signal reaches the model at ALL. This is the control gate's failure
+# mode -- a wrapper that ignores its control and says nothing -- and it has to be separated from
+# "the control is not enough", which is a finding rather than a defect. A box can only control
+# PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
     pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_bbox auto")))
              for kind in control_gate.PROMPTS]
     live = [(k, b, a) for k, b, a in pairs if b and a]
@@ -376,8 +376,9 @@ def part_b(args, reachable, ready):
         check("the shipped default is the one the rule chose",
               comfy.DEFAULT_CONTROL_MODE == verdict,
               f"shipped {comfy.DEFAULT_CONTROL_MODE!r}, rule {verdict!r}")
-        # The adopted mode has to clear the control gate's own bar. The mode that lost does not, and holding it
-        # to one would only encode a hope: what it has to do is be measured and be documented.
+        # The adopted mode has to clear the control gate's own bar. The mode that lost does not, and
+# holding it to one would only encode a hope: what it has to do is be measured and be
+# documented.
         adopted = "mesh_geom_bbox bbox" if comfy.DEFAULT_CONTROL_MODE == "bbox" else "mesh_geom_ctrl point"
         got = column(adopted)
         check(f"the shipped control mode ({adopted}) clears the control gate's footprint bar on every block-out",
@@ -453,8 +454,8 @@ def part_c(args, reachable, ready):
     check("the material is a BobShader",
           materials.master_type(final.active_material) is not None,
           str(materials.master_type(final.active_material)))
-    # The bake frame, which the geometry A/B made a number rather than a hope: a route that rescales on the server
-    # and does not move its dense mesh bakes a flat normal and nothing errors.
+    # The bake frame, which the geometry A/B made a number rather than a hope: a route that rescales
+# on the server and does not move its dense mesh bakes a flat normal and nothing errors.
     note("bake_rescale", str(report.get("bake_rescale")))
     normal = (report.get("maps") or {}).get("normal")
     detail = assets_gate.neighbour_detail(normal) if normal else 0.0
@@ -467,9 +468,10 @@ def part_c(args, reachable, ready):
          f"aspect {agree['aspect']}")
 
     # What steps 6 to 8 are on the hook for is PRESERVING whatever the control achieved, not
-    # improving it, so the check is against this route's own raw mesh rather than against the control gate's
-    # absolute bar. That bar belongs to the adopted mode and the control gate already holds the point
-    # route to it; holding the mode that LOST to it would only record a disappointment as a failure.
+# improving it, so the check is against this route's own raw mesh rather than against the
+# control gate's absolute bar. That bar belongs to the adopted mode and the control gate already
+# holds the point route to it; holding the mode that LOST to it would only record a
+# disappointment as a failure.
     control_gate.empty_scene()
     source = gen_assets.import_glb(raw, name="raw", orient=gen_assets.CONTROL_RETURN_TURN)
     gen_assets.weld(source)
@@ -483,7 +485,8 @@ def part_c(args, reachable, ready):
                    "bbox": dims}, fh, indent=2, sort_keys=True, default=str)
 
 
-# -- Part D: the transport claim --------------------------------------------------------------------
+# -- Part D: the transport claim
+# --------------------------------------------------------------------
 def part_d(args, reachable, ready):
     section("D. mesh_geom_bbox uploads nothing, so it is the one Omni route with no ComfyUI folder to know")
     if not (reachable and ready):

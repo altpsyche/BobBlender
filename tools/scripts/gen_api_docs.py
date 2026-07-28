@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generate the op-vocabulary table in docs/API.md from the source of truth.
 
-The op contract is the Pydantic models in the extension's `mcp_agent/contracts.py`; the handlers
-are the `_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types, defaults)
-and parses the dispatch registry (op -> handler), then rewrites ONLY the region of docs/API.md
-between the GENERATED markers, leaving the authored sections untouched.
+The op contract is the Pydantic models in the extension's `mcp_agent/contracts.py`; the handlers are
+the `_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types,
+defaults) and parses the dispatch registry (op -> handler), then rewrites ONLY the region of
+docs/API.md between the GENERATED markers, leaving the authored sections untouched.
 
 Run: uv run --project tools python tools/scripts/gen_api_docs.py  (no new deps; Pydantic is there)
 Dispatch is parsed with ast (importing it would pull in bpy, which the venv lacks).

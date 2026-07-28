@@ -45,12 +45,12 @@ _preview_coll = None
 _PREVIEW_KEY = "hf"
 
 
-# Panel presets: picking a landscape family loads a good starting look -- the four
-# global knobs reset to neutral (0.5, the preset as authored) and the Blender-side
-# display knobs (height, sea level) that suit the family. The table is committed in
-# presets.json, generated from the heightfield presets (core/heightfields/presets.py) by tools/scripts/gen_panel_presets.py
-# (the single source of truth; a drift test guards it). You then sculpt with the
-# knobs; there is no separate "custom" entry -- your knob tweaks ARE the custom look.
+# Panel presets: picking a landscape family loads a good starting look -- the four global knobs
+# reset to neutral (0.5, the preset as authored) and the Blender-side display knobs (height, sea
+# level) that suit the family. The table is committed in presets.json, generated from the
+# heightfield presets (core/heightfields/presets.py) by tools/scripts/gen_panel_presets.py (the
+# single source of truth; a drift test guards it). You then sculpt with the knobs; there is no
+# separate "custom" entry -- your knob tweaks ARE the custom look.
 def _load_hf_presets():
     """The per-preset slider table (global knobs + display) from the committed JSON."""
     path = os.path.join(os.path.dirname(__file__), "presets.json")
@@ -89,10 +89,11 @@ def _on_terrain_size_update(self, context):
 
 
 def _apply_hf_preset(hf):
-    """Load the chosen preset's neutral slider values onto the heightfield props. Instant (the instant-preset rule):
+    """Load the chosen preset's neutral slider values onto the heightfield props. Instant (the
+    instant-preset rule):
  this only loads slider values (light, fully reversible, no rebuild until Bake + Build), so it
- uses the instant preset_row idiom like the other look presets, not the staged idiom reserved
- for the heavy rebuilds (Sky Look, Build Biome, Biome World).
+ uses the instant preset_row idiom like the other look presets, not the staged idiom reserved for
+ the heavy rebuilds (Sky Look, Build Biome, Biome World).
 
  `relief_ratio` is stored, then Height is DERIVED from it and the current tile size (real-world
  scale); every other key maps straight onto its prop."""
@@ -199,9 +200,9 @@ class BBT_AddonPreferences(AddonPreferences):
         col.prop(self, "comfy_repo")
         col.prop(self, "comfy_reserve_vram")
         # The licensing obligation, at the point an artist decides to download 20 GB of weights
-        # (docs/GENERATION.md, Licensing obligations item 2). BobBlenderTools ships no weights, so the
-        # terms are the artist's; the two that are not permissive are named here rather than left in
-        # a file nobody opens. Full table in docs/THIRD-PARTY-MODELS.md.
+# (docs/GENERATION.md, Licensing obligations item 2). BobBlenderTools ships no weights, so
+# the terms are the artist's; the two that are not permissive are named here rather than
+# left in a file nobody opens. Full table in docs/THIRD-PARTY-MODELS.md.
         note = col.column(align=True)
         note.enabled = False
         note.label(text="Models are downloaded by you, not shipped. Output licensing follows",
@@ -313,7 +314,8 @@ class BBT_OT_copy_mcp_config(Operator):
                      "extension; no repo checkout needed. See docs/MCP.md")
 
     def execute(self, context):
-        # realpath so a dev symlink install resolves to the real tree, matching the runner bootstrap.
+        # realpath so a dev symlink install resolves to the real tree, matching the runner
+# bootstrap.
         ext = os.path.dirname(os.path.realpath(__file__))
         launcher = os.path.join(ext, "mcp_agent", "__main__.py")
         snippet = json.dumps(
@@ -624,7 +626,8 @@ def _stack_from_ops(hf):
     return [_op_to_dict(op) for op in hf.ops if op.enabled]
 
 
-# Heightfield terrain: bake in-process (core/heightfields; dev-venv host-hop fallback), build in place here.
+# Heightfield terrain: bake in-process (core/heightfields; dev-venv host-hop fallback), build in
+# place here.
 class BBT_HeightfieldProps(PropertyGroup):
     target: StringProperty(name="Object", default="Terrain")
     # No Material picker (docs/CONVENTIONS.md, panel UX conventions): a terrain gets its material by
@@ -689,9 +692,10 @@ class BBT_HeightfieldProps(PropertyGroup):
     ops: CollectionProperty(type=BBT_TerrainOp)
     active_op: IntProperty(name="Active op", default=0)
 
-    # Generate Base (docs/GENERATION.md, the macro heightmap): a prompted low-frequency MACRO MASK as the op
-    # stack's first input. Not a terrain generator, and the panel says so in those words: the mask
-    # decides where the massif and the basin are, and the erosion stack still makes every slope.
+    # Generate Base (docs/GENERATION.md, the macro heightmap): a prompted low-frequency MACRO MASK
+# as the op stack's first input. Not a terrain generator, and the panel says so in those words:
+# the mask decides where the massif and the basin are, and the erosion stack still makes every
+# slope.
     macro_prompt: StringProperty(
         name="Prompt", default="",
         description="The landform to lay out, e.g. 'a broad basin ringed by high ground'. The "
@@ -835,10 +839,10 @@ def _run_host_bake(context, out_abs, *, knobs=None, params=None, preview=False, 
             return hf_mod.bake(out_abs, resolved, force=True, preview=preview), None
         except Exception as exc:
             # In-process compute failed. Causes: deps not installed (ModuleNotFoundError), or CuPy
-            # imports but its CUDA/NVRTC libs are unreachable (e.g. a Steam pressure-vessel sandbox
-            # hides system CUDA, and the CUDA-13 pip wheels are not yet published) -> a
-            # CompileException/CUDA error, not an import error. Either way, fall back to the dev venv,
-            # which hops to the host via the Steam launcher (see _venv_bake) where CUDA works.
+# imports but its CUDA/NVRTC libs are unreachable (e.g. a Steam pressure-vessel sandbox
+# hides system CUDA, and the CUDA-13 pip wheels are not yet published) -> a
+# CompileException/CUDA error, not an import error. Either way, fall back to the dev
+# venv, which hops to the host via the Steam launcher (see _venv_bake) where CUDA works.
             meta, verr = _venv_bake(context, out_abs, knobs=knobs, params=params,
                                     preview=preview, maps=maps)
             if meta is not None:
@@ -921,8 +925,9 @@ class BBT_OT_enable_compute(Operator):
             return {"CANCELLED"}
 
         pr = compute.probe(refresh=True)
-        # If a GPU wheel went in, verify a real device round-trip (the compute acceptance check). A wheel
-        # that imports but cannot reach the driver degrades to CPU with a clear message, not a crash.
+        # If a GPU wheel went in, verify a real device round-trip (the compute acceptance check). A
+# wheel that imports but cannot reach the driver degrades to CPU with a clear message, not a
+# crash.
         if pr["cupy_ok"]:
             gok, ginfo = compute.verify_gpu()
             hf.backend_hint = compute.status_line(pr, _venv_exists())
@@ -939,9 +944,9 @@ class BBT_OT_enable_compute(Operator):
 def _macro_knob(hf):
     """The `macro` bake knob for the panel's state, or None when there is no mask to use.
 
- One reader for both bake branches and for the MCP tool the agent-surface gate will wrap; the composition itself
- lives in `heightfields.params.with_macro`, so nothing about how a mask enters a stack is
- decided here."""
+ One reader for both bake branches and for the MCP tool the agent-surface gate will wrap; the
+ composition itself lives in `heightfields.params.with_macro`, so nothing about how a mask enters
+ a stack is decided here."""
     if not (hf.use_macro and hf.macro_path and os.path.exists(bpy.path.abspath(hf.macro_path))):
         return None
     return {"path": bpy.path.abspath(hf.macro_path), "weight": float(hf.macro_weight),
@@ -973,8 +978,8 @@ class BBT_OT_terrain_generate_base(Operator):
 
         out_dir = os.path.join(_output_dir(), "macro")
         os.makedirs(out_dir, exist_ok=True)
-        # the naming rule: a second press on the same prompt is a new mask, not a replaced one, because the
-        # terrain currently on screen was baked from the old file.
+        # the naming rule: a second press on the same prompt is a new mask, not a replaced one,
+# because the terrain currently on screen was baked from the old file.
         out_path = comfy.unique_file_name(out_dir, comfy.slugify(prompt) + "_macro", ".png")
         seed = int(hf.macro_seed)
 
@@ -1028,11 +1033,12 @@ class BBT_OT_bake_terrain(Operator):
             # result is supposed to look like the thing the artist asked for.
             self.report({"WARNING"}, "Macro mask file is missing; baked the preset without it")
 
-        # Blocking bake with feedback (wait cursor + progress spinner) via the shared host-bake runner.
+        # Blocking bake with feedback (wait cursor + progress spinner) via the shared host-bake
+# runner.
         t0 = time.perf_counter()
-        # Panel always bakes full resolution: every shipped preset amplifies, so a "preview" only ever
-        # dropped to AMPLIFY_PREVIEW (512 vs 768) for a marginal GPU speedup. The fast-look path lives on
-        # in the CLI (--preview) and pipeline.bake(preview=True) for CPU/scripted use.
+        # Panel always bakes full resolution: every shipped preset amplifies, so a "preview" only
+# ever dropped to AMPLIFY_PREVIEW (512 vs 768) for a marginal GPU speedup. The fast-look
+# path lives on in the CLI (--preview) and pipeline.bake(preview=True) for CPU/scripted use.
         meta, err = _run_host_bake(context, out_abs, knobs=knobs, preview=False, maps=hf.emit_maps)
         if err is not None:
             self.report({"ERROR"}, err)
@@ -1051,16 +1057,17 @@ class BBT_OT_bake_terrain(Operator):
         # viewport. Cap at the bake size so a low-res preview is not needlessly dense.
         grid_res = min(int(hf.mesh_res), bake_size)
         # Height is the honest real-world relief; Exaggeration is a separate GIS-style multiplier so
-        # a diorama or a small tile can punch up relief without lying about the base Height (exag 1.0
-        # is true scale). The recipe only sees the product.
+# a diorama or a small tile can punch up relief without lying about the base Height (exag
+# 1.0 is true scale). The recipe only sees the product.
         eff_height = hf.height * hf.vert_exag
         tparams = {"heightmap": out_abs, "size": hf.terrain_size, "resolution": grid_res,
                    "height": eff_height, "sea_level": hf.sea_level}
-        # No material here (decision D): the terrain is shaded from the Shaders panel.
-        # reset=True: Height and Sea Level are panel-authoritative (derived from relief ratio x Size),
-        # so a re-bake must take them from params. Without it, build_geonodes preserves the old live
-        # modifier values by socket name (the knob-restore meant for hand-tuned subsystems) and the
-        # panel's Height silently does nothing -- a stale tall value then squashes/inflates the rebuild.
+        # No material here (decision D): the terrain is shaded from the Shaders panel. reset=True:
+# Height and Sea Level are panel-authoritative (derived from relief ratio x Size), so a
+# re-bake must take them from params. Without it, build_geonodes preserves the old live
+# modifier values by socket name (the knob-restore meant for hand-tuned subsystems) and the
+# panel's Height silently does nothing -- a stale tall value then squashes/inflates the
+# rebuild.
         apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain",
                   "name": hf.target, "params": tparams, "reset": True})
 
@@ -1300,19 +1307,20 @@ class BBT_OT_comfy_start(Operator):
         venv = os.path.join(repo, "venv", "bin", "python")
         python = venv if os.path.isfile(venv) else "python3"
         # No `--disable-dynamic-vram` here, deliberately. That flag does fix the copied-VAE segfault
-        # this fork has (docs/GENERATION.md, the agent-surface gate and the staged-copy fault), but it costs the whole install its dynamic
-        # weight staging, which is what lets a 16 GB card hold a model larger than its free VRAM.
-        # Bob avoids the crash at its own end instead, by asking for circular padding IN PLACE and
-        # undoing it before anything that must not wrap (`comfy.TILING_COPY_MODE`,
-        # `comfy.ensure_untiled`). The flag stays documented as the fallback for the one case Bob
-        # cannot cover: another client generating on the same server inside the padded window.
+# this fork has (docs/GENERATION.md, the agent-surface gate and the staged-copy fault), but
+# it costs the whole install its dynamic weight staging, which is what lets a 16 GB card
+# hold a model larger than its free VRAM. Bob avoids the crash at its own end instead, by
+# asking for circular padding IN PLACE and undoing it before anything that must not wrap
+# (`comfy.TILING_COPY_MODE`, `comfy.ensure_untiled`). The flag stays documented as the
+# fallback for the one case Bob cannot cover: another client generating on the same server
+# inside the padded window.
         cmd = [python, "main.py", "--reserve-vram", f"{_prefs().comfy_reserve_vram:g}"]
-        # expandable_segments (the VRAM-handback rule): torch's default caching allocator fragments across a session of
-        # differently-shaped jobs, and `POST /free` then recovers about 100 MiB of a 7.3 GB hold
-        # because the pages are stranded in the allocator rather than held by a live tensor. This is
-        # the launch-time half of the answer -- it does not free anything already stranded, it stops
-        # the stranding building up. Only reaches a server BOB starts; one the artist started keeps
-        # whatever environment it was launched with.
+        # expandable_segments (the VRAM-handback rule): torch's default caching allocator fragments
+# across a session of differently-shaped jobs, and `POST /free` then recovers about 100 MiB
+# of a 7.3 GB hold because the pages are stranded in the allocator rather than held by a
+# live tensor. This is the launch-time half of the answer -- it does not free anything
+# already stranded, it stops the stranding building up. Only reaches a server BOB starts;
+# one the artist started keeps whatever environment it was launched with.
         env = dict(os.environ)
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         try:
@@ -1480,8 +1488,9 @@ def _draw_comfy_service(layout):
     row.operator("bob_blender_tools.comfy_start", icon="PLAY")
     row.operator("bob_blender_tools.comfy_stop", icon="PAUSE")
 
-    # The look-dev stylise family lives here rather than in a panel of its own: it makes a pitch frame, not scene data,
-    # so nothing downstream in the suite reads it and no pipeline stage owns it.
+    # The look-dev stylise family lives here rather than in a panel of its own: it makes a pitch
+# frame, not scene data, so nothing downstream in the suite reads it and no pipeline stage owns
+# it.
     stylise = bpy.context.scene.bbt_stylise
     col = layout.column(align=True)
     col.prop(stylise, "prompt")
@@ -1500,13 +1509,12 @@ def _draw_comfy_service(layout):
         row.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
 
 
-# Panel
-# Pipeline panel order (docs/CONVENTIONS.md, panel UX conventions, + Paths per docs/SPLINES.md 5): World=0,
-# Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via bl_order so
-# the N-panel teaches the terrain -> paths -> scatter -> shade sequence regardless of registration
-# order, driven by the World quality setting. The
-# dev/agent Bridge is demoted to a collapsed Advanced panel (decision B): it should not greet
-# an artist first, but stays in the tab for when an agent needs the live socket.
+# Panel Pipeline panel order (docs/CONVENTIONS.md, panel UX conventions, + Paths per docs/SPLINES.md
+# 5): World=0, Terrain=1, Paths=2, Scatter=3, Shaders=4, Atmosphere=5, Advanced/Bridge=6. Set via
+# bl_order so the N-panel teaches the terrain -> paths -> scatter -> shade sequence regardless of
+# registration order, driven by the World quality setting. The dev/agent Bridge is demoted to a
+# collapsed Advanced panel (decision B): it should not greet an artist first, but stays in the tab
+# for when an agent needs the live socket.
 class BBT_PT_panel(Panel):
     bl_label = "Advanced"
     bl_idname = "BBT_PT_panel"
@@ -1546,7 +1554,8 @@ class BBT_PT_panel(Panel):
 def _draw_generate_base(layout, hf):
     """Generate Base, inside the Terrain panel rather than in a panel of its own: it is an INPUT to
  the bake below it, and the caption says mask because a row labelled "generate terrain" beside a
- terrain generator would be read as a competing one (docs/GENERATION.md, the macro heightmap, the bit-depth floor)."""
+ terrain generator would be read as a competing one (docs/GENERATION.md, the macro heightmap, the
+ bit-depth floor)."""
     from .ui.scatter import _comfy_reachable_cached
 
     state = _comfy_reachable_cached()
@@ -1593,14 +1602,15 @@ class BBT_PT_heightfield(Panel):
         if _preview_coll is not None and _PREVIEW_KEY in _preview_coll:
             layout.template_icon(icon_value=_preview_coll[_PREVIEW_KEY].icon_id, scale=8)
 
-        # The active thing: the target mesh the bake builds (or replaces). "Active mesh" is the one suite-wide
-        # noun for the thing a panel acts on, matching World/Biome/Scatter/Shaders.
+        # The active thing: the target mesh the bake builds (or replaces). "Active mesh" is the one
+# suite-wide noun for the thing a panel acts on, matching World/Biome/Scatter/Shaders.
         helpers.context_header(layout, "Active mesh", hf.target, icon="OUTLINER_OB_MESH")
         col = layout.column(align=True)
         col.prop(hf, "target")
-        # Instant preset: instant preset (light: loads slider values, no rebuild until Bake + Build), so it
-        # uses the same instant idiom as the other look presets. The current pick rides in the
-        # dropdown label (operator_menu_enum won't show it on its own), so no separate caption.
+        # Instant preset: instant preset (light: loads slider values, no rebuild until Bake +
+# Build), so it uses the same instant idiom as the other look presets. The current pick
+# rides in the dropdown label (operator_menu_enum won't show it on its own), so no separate
+# caption.
         helpers.preset_row(layout, "bob_blender_tools.hf_apply_preset", text="Preset",
                               current=hf.preset)
 
@@ -1686,9 +1696,9 @@ class BBT_PT_hf_displace(Panel):
         layout.prop(hf, "sea_level")
         layout.prop(hf, "mesh_res")
         # Real-world scale readout (1 unit = 1 m): peak-above-sea relief and the ground texel size,
-        # so the artist knows a dropped 1.8 m character or 6 m house will read correctly. Peak folds
-        # in Exaggeration (what the terrain actually builds at); the true-scale peak is shown when it
-        # differs so the honest relief stays visible behind the diorama multiplier.
+# so the artist knows a dropped 1.8 m character or 6 m house will read correctly. Peak folds
+# in Exaggeration (what the terrain actually builds at); the true-scale peak is shown when
+# it differs so the honest relief stays visible behind the diorama multiplier.
         peak = hf.height * hf.vert_exag * (1.0 - hf.sea_level)
         texel = hf.terrain_size / max(int(hf.mesh_res), 1)
         box = layout.box()

@@ -1,9 +1,10 @@
-"""World: the shared environment, promoted to its own top panel (docs/CONVENTIONS.md, panel UX conventions).
+"""World: the shared environment, promoted to its own top panel (docs/CONVENTIONS.md, panel UX
+conventions).
 
-The world (Scene.bbt_env) is read by Terrain, Scatter, Shaders, and Atmosphere, so it gets
-the top slot in the pipeline instead of being buried in a Firmament sub-panel. This panel is
-the single place to drive the world, which resolves the old Apply-Season confusion (several
-overlapping ways to change the world across panels).
+The world (Scene.bbt_env) is read by Terrain, Scatter, Shaders, and Atmosphere, so it gets the top
+slot in the pipeline instead of being buried in a Firmament sub-panel. This panel is the single
+place to drive the world, which resolves the old Apply-Season confusion (several overlapping ways to
+change the world across panels).
 
 Two labelled groups make the live-vs-structural split visible :
 - World now: time/place and the live continuous conditions (weather, temperature, wetness,
@@ -11,15 +12,15 @@ Two labelled groups make the live-vs-structural split visible :
 - Set up a look: Season + Apply Season and Scene Presets, which are STRUCTURAL (they build or
  rebuild subsystems).
 
-It also owns the scene-wide controls the plan moved here: Scene Quality (Preview/Final) and the
-ONE Live Environment master toggle (folding the old per-panel Shaders and Firmament toggles).
+It also owns the scene-wide controls the plan moved here: Scene Quality (Preview/Final) and the ONE
+Live Environment master toggle (folding the old per-panel Shaders and Firmament toggles).
 
-Scaling model (the reason this is its own module, not a Firmament sub-panel): a subscriber
-registry. Each consumer registers an applier fn(scene) that re-applies its response to the
-current world state (drivers on/off, quality). A world control change calls every applier.
-Adding a new world-driven subsystem later is one register_applier call: World never imports
-its consumers, so env.py stays the acyclic root and a polyrepo split stays mechanical. The
-registry is addon-level (not bbmcp), so it survives a Reload Builders like the other UI state.
+Scaling model (the reason this is its own module, not a Firmament sub-panel): a subscriber registry.
+Each consumer registers an applier fn(scene) that re-applies its response to the current world state
+(drivers on/off, quality). A world control change calls every applier. Adding a new world-driven
+subsystem later is one register_applier call: World never imports its consumers, so env.py stays the
+acyclic root and a polyrepo split stays mechanical. The registry is addon-level (not bbmcp), so it
+survives a Reload Builders like the other UI state.
 """
 
 import bpy
@@ -180,7 +181,8 @@ class BBT_OT_world_biome_world(Operator):
             self.report({"ERROR"}, f"Biome '{biome}' has no world block")
             return {"CANCELLED"}
         # The bbt_env setattr loop lives in core/biome.apply_world (shared with the MCP world_biome
-        # handler); the panel keeps the staged-pick resolution, the applier re-run, and the sky build.
+# handler); the panel keeps the staged-pick resolution, the applier re-run, and the sky
+# build.
         from ..core import biome
         res = biome.apply_world(context.scene.bbt_env, world)
         applied = res["applied"]
@@ -312,7 +314,8 @@ class BBT_PT_biome(Panel):
         # Scatter / Biome World are the same recipe applied one piece at a time.
         layout.label(text="A biome presets terrain + scatter + world together", icon="INFO")
 
-        # The active thing: the mesh Build Biome shades and scatters onto (Scatter emitter, or active mesh).
+        # The active thing: the mesh Build Biome shades and scatters onto (Scatter emitter, or
+# active mesh).
         target = _apply_target(context)
         helpers.context_header(
             layout, "Active mesh", target.name if target else None,
@@ -356,10 +359,11 @@ class BBT_PT_world(Panel):
         layout.label(text="World, Terrain, Paths, Scatter, Shaders, Atmosphere", icon="INFO")
 
         # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
-        # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
-        # Unreachable branch: in the shipped single addon this branch never fires (firmament.register always
-        # registers bbt_env at load). It is kept deliberately for the planned polyrepo split, where
-        # World can ship without Firmament and bbt_env is then genuinely absent.
+# Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
+# Unreachable branch: in the shipped single addon this branch never fires
+# (firmament.register always registers bbt_env at load). It is kept deliberately for the
+# planned polyrepo split, where World can ship without Firmament and bbt_env is then
+# genuinely absent.
         firmament_off = _env is None or _env.get_env(context.scene) is None
         row = layout.row(align=True)
         row.enabled = not firmament_off
@@ -390,7 +394,8 @@ class BBT_PT_world(Panel):
             note="sets snow/wetness/temperature; winter builds falling snow + coverage")
 
         # -- World now: the live conditions, on top of the season. Time/place (the set-once sun geo
-        # inputs) moved to the collapsed "Time and place" sub-panel below, so this stays day-to-day. --
+# inputs) moved to the collapsed "Time and place" sub-panel below, so this stays day-to-day.
+# --
         box = layout.box()
         col = box.column(align=True)
         col.label(text="Conditions (live)", icon="FORCE_WIND")

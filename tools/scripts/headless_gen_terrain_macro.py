@@ -5,10 +5,11 @@ silhouette still OWNS the landform after Bob's erosion stack has run, and whethe
 landform at all rather than a blurred picture with slopes painted on it. So nothing here is scored
 by eye:
 
-  A. **The arithmetic, offline.** The derivation is one cutoff of the same luminance the texture family uses;
+  A. **The arithmetic, offline.** The derivation is one cutoff of the same luminance the texture
+  family uses;
      the composition demotes the preset's own generator instead of being overwritten by it; the bake
-     cache notices when a mask file changes under a name it has already seen; and the 8-bit budget is
-     stated in levels and in metres before anything is generated. No server, always runs.
+     cache notices when a mask file changes under a name it has already seen; and the 8-bit budget
+     is stated in levels and in metres before anything is generated. No server, always runs.
   B. **Three prompts, each baked three ways.** The mask alone (the blurred-image baseline), the mask
      plus the preset stack (the shipped path), and the preset stack with no mask (the null the
      correlation is read against). Scored by band-limited correlation at the mask's own cutoff, by
@@ -17,8 +18,7 @@ by eye:
   C. **The 8-bit question, end to end.** The same mask at 8 bits, at 16 bits and deliberately
      crushed to 5, through the same stack, differenced in METRES and then RENDERED and differenced
      in pixels against the renderer's own noise floor. The bit-depth worry is that 256 levels cannot
-     carry a heightfield;
-     this measures what 256 levels carry when the thing they carry is a mask.
+     carry a heightfield; this measures what 256 levels carry when the thing they carry is a mask.
   D. **Residency.** Whether this route can share a card with what is already resident, which on a
      16.3 GB card after a `mesh_geom_ctrl` job is a real question, and the block-out control gate is
      where that was first measured.
@@ -123,9 +123,9 @@ def _gpu_sample():
 
 class Vram:
     """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
-    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as the
-    one-shot-against-staged, stylise and block-out-control gates, because the numbers have to be
-    comparable with theirs."""
+    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as
+    the one-shot-against-staged, stylise and block-out-control gates, because the numbers have to
+    be comparable with theirs."""
 
     def __init__(self, interval=0.5):
         self.interval = interval
@@ -180,10 +180,10 @@ def resample(a, n):
 def band_sigma(n, fraction=comfy_maps.MACRO_LOWPASS_FRACTION):
     """The gaussian sigma that splits a field where the MASK's own cutoff is.
 
-    Not `fraction * n` itself: the mask is low-passed by a BOX blur of that radius, and a box blur of
-    radius r has the second moment of a gaussian of r / sqrt(3). Splitting at the wider sigma would
-    charge the mask for content it does not have and put nine percent of its own variance in the band
-    that is supposed to be the erosion's, which is what the first run of this gate did.
+    Not `fraction * n` itself: the mask is low-passed by a BOX blur of that radius, and a box blur
+    of radius r has the second moment of a gaussian of r / sqrt(3). Splitting at the wider sigma
+    would charge the mask for content it does not have and put nine percent of its own variance in
+    the band that is supposed to be the erosion's, which is what the first run of this gate did.
     """
     return fraction * n / np.sqrt(3.0)
 
@@ -212,8 +212,9 @@ def band_report(mask, field, fraction=comfy_maps.MACRO_LOWPASS_FRACTION):
 
     `r_low` is the survival number: does the shape the artist asked for still exist. `r_high` should
     be near zero and it is not a formality -- if erosion's fine detail correlated with the mask's
-    residual noise, the mask would be leaking quantisation steps into the band that is supposed to be
-    the erosion's alone. `high_var` says how much of the finished landform the erosion actually built.
+    residual noise, the mask would be leaking quantisation steps into the band that is supposed to
+    be the erosion's alone. `high_var` says how much of the finished landform the erosion actually
+    built.
     """
     n = field.shape[0]
     sigma = band_sigma(n, fraction)
@@ -257,13 +258,13 @@ def slope_area(h, acc, bins=14, lo=30.0, hi=3000.0):
     """The log-log slope-area gradient, binned. Returns (gradient, r).
 
     Medians per logarithmic bin rather than a fit through the raw cloud, because the cloud is wildly
-    heteroscedastic and a least-squares line through it is dominated by hillslope cells. The range is
-    the channelised one: 30 to 3000 upstream cells.
+    heteroscedastic and a least-squares line through it is dominated by hillslope cells. The range
+    is the channelised one: 30 to 3000 upstream cells.
 
     Reported as the GRADIENT and read against the no-mask bake rather than against Flint's law. This
     engine's own gradient is positive (slope rises with drainage area), which is not what an
-    equilibrium landscape does; see docs/GENERATION-BASELINES.md, because that is a finding about the terrain
-    engine and not about the mask.
+    equilibrium landscape does; see docs/GENERATION-BASELINES.md, because that is a finding about
+    the terrain engine and not about the mask.
     """
     n = h.shape[0]
     m = int(n * MARGIN_FRACTION)
@@ -328,9 +329,9 @@ def bake(out_name, stack, size=BAKE_SIZE, seed=SEED, backend="auto"):
 def stacks_for(mask_path, weight=hf.params.MACRO_WEIGHT):
     """The three stacks every prompt is measured through.
 
-    `mask_only` is the honest baseline for "a diffusion heightmap is not terrain": the mask resampled
-    and blurred, with no erosion at all. `full` is the shipped path. `null` is the same preset with
-    no mask, which is what the correlation has to beat to mean anything.
+    `mask_only` is the honest baseline for "a diffusion heightmap is not terrain": the mask
+    resampled and blurred, with no erosion at all. `full` is the shipped path. `null` is the same
+    preset with no mask, which is what the correlation has to beat to mean anything.
     """
     preset = hf.presets.stack(PRESET)
     return {
@@ -622,11 +623,10 @@ def part_c(args, reachable, masks):
               "re-run part b with --fresh")
         return
     # The reference is the FLOAT derivation, not the file Bob ships. The generation is 8-bit per
-    # channel, but the derivation averages three channels over a box of radius width/12, so the float
-    # mask carries far more precision than any sample in the source did. That is what makes the
-    # terracing
-    # question answerable: the question is not what the diffusion model could express, it is what the
-    # last 8-bit step between the derivation and the op stack costs.
+# channel, but the derivation averages three channels over a box of radius width/12, so the
+# float mask carries far more precision than any sample in the source did. That is what makes
+# the terracing question answerable: the question is not what the diffusion model could express,
+# it is what the last 8-bit step between the derivation and the op stack costs.
     float_mask = comfy_maps.macro_field(comfy_maps.read_png(open(source, "rb").read()))
     note("distinct levels in the float derivation",
          f"{len(np.unique(np.round(float_mask, 6)))} against 256 in the shipped file")

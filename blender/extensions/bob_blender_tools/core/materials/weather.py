@@ -114,11 +114,11 @@ _WEATHER_RAIN, _WEATHER_STORM = 3, 4
 
 def env_state_group():
     """The world-to-shader bridge: one shared group whose internal Value nodes hold the
-    live env fields, driven once from scene.bbt_env by the panel. Because a node group is
-    a single datablock shared by every material that instances it, driving it once feeds
-    every surface (Phase-0). No inputs; outputs Snow, Wetness, Temperature, Snow Line, Snow
-    Line Top, Cloud, Wind. When Firmament is absent no driver is installed and the Value defaults stand
-    (no snow, a high snow line), so a material still renders standalone.
+    live env fields, driven once from scene.bbt_env by the panel. Because a node group is a single
+    datablock shared by every material that instances it, driving it once feeds every surface
+    (Phase-0). No inputs; outputs Snow, Wetness, Temperature, Snow Line, Snow Line Top, Cloud, Wind.
+    When Firmament is absent no driver is installed and the Value defaults stand (no snow, a high
+    snow line), so a material still renders standalone.
 
     Snow model (one authority, shared by terrain and assets) -- two controls, no amount slider:
     - Temperature is the amount: 0 above freezing, ramping to full thickness by SNOW_TEMP_FULL.
@@ -126,9 +126,9 @@ def env_state_group():
     - env.snow_line is the extent, normalized 0..1: 0 = the line at the valley floor (snow
       reaches the whole map), 1 = above the peaks (snow clears). Independent of temperature.
     - The normalized line becomes world Z here, base + snow_line * span, from the terrain's Z
-      bounds (env.snow_z_base / snow_z_span, stamped on Apply Season / build; sane defaults
-      for a standalone asset), so the same 0..1 reads right on a 90 m or a 1000 m terrain.
-      The transition band is a fraction of span, so it scales too."""
+      bounds (env.snow_z_base / snow_z_span, stamped on Apply Season / build; sane defaults for a
+      standalone asset), so the same 0..1 reads right on a 90 m or a 1000 m terrain. The
+      transition band is a fraction of span, so it scales too."""
     g, _fresh = _cached_group(ENV_STATE)
     if not _fresh:
         return g
@@ -195,9 +195,10 @@ def env_state_group():
 def leaf_season_group():
     """The leaf-card season layer: a base colour in, the same colour turned for the season out.
 
-    Sits between the surface master and the Principled on a leaf card only (`foliage_card_material`),
-    which is the whole reason it is a group of its own -- see `LEAF_SEASON` for why a Season output
-    on S_EnvState would have cost every tuned terrain in the file a revert-to-default.
+    Sits between the surface master and the Principled on a leaf card only
+    (`foliage_card_material`), which is the whole reason it is a group of its own -- see
+    `LEAF_SEASON` for why a Season output on S_EnvState would have cost every tuned terrain in the
+    file a revert-to-default.
 
     Two things it does that a straight colour mix would not:
 
@@ -463,8 +464,8 @@ def weather_group():
     # snow WITHOUT a frost sheet (0 = none). The physics gate above is unchanged; this is amount.
     cond = _mmath(g, "MULTIPLY", cond, env_frost, (1720, 640))
     # Patchy break-up: a low-frequency world-space noise so frost forms in patches instead of a
-    # uniform blanket (real hoar frost varies with surface moisture, sky-view, thermal mass). Floored
-    # so a frosted region reads as varied density, not holes.
+# uniform blanket (real hoar frost varies with surface moisture, sky-view, thermal mass).
+# Floored so a frosted region reads as varied density, not holes.
     ppatch = g.nodes.new("ShaderNodeTexNoise")
     ppatch.location = (1360, 300)
     ppatch.inputs["Detail"].default_value = 2.0
@@ -481,7 +482,8 @@ def weather_group():
     g.links.new(geo.outputs["Position"], fnoise.inputs["Vector"])
     sparkle = _mmath(g, "MULTIPLY", _mrange(g, fnoise.outputs["Fac"], 0.62, 0.8, 0.0, 1.0, (1720, 800)),
                      frost, (1900, 760))
-    # Thin cool sheen, then bright glints; the sheen is capped well below opaque (frost is not snow).
+    # Thin cool sheen, then bright glints; the sheen is capped well below opaque (frost is not
+# snow).
     col = _mixcol(g, _mmath(g, "MULTIPLY", frost, _FROST_MAX_OPACITY, (1900, 640)), col, _FROST_COLOR,
                   (2080, 560))
     col = _mixcol(g, _mmath(g, "MULTIPLY", sparkle, 0.7, (2080, 760)), col, (1.0, 1.0, 1.0, 1.0),

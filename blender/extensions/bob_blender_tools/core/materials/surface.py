@@ -18,15 +18,16 @@ from .terrain import _autoconfig_riverbed, _terrain_maps, terrain_material
 
 def surface_master_group():
     """The single-surface master for props, rocks, vegetation: a solid base colour plus
-    scalar roughness and metallic, per-instance variation (Object Info Random jitters the
-    brightness so scattered copies differ), ending in S_Weather. Outputs the weathered
-    Base Color, Roughness, Metallic for the wrapper's Principled BSDF.
+    scalar roughness and metallic, per-instance variation (Object Info Random jitters the brightness
+    so scattered copies differ), ending in S_Weather. Outputs the weathered Base Color, Roughness,
+    Metallic for the wrapper's Principled BSDF.
 
-    The master is solid-colour only until a texture set is assigned. Base Color is authored as the TINT a texture set multiplies into: today
-    it is the albedo directly; when a texture set lands the albedo is Base Color * map, so
-    the same colour drives both looks and switching solid<->textured loses no tuned value.
-    Triplanar, anti-tiling, and the texture-set loader all arrived once library/textures/ has
-    real maps to project (the plan's recommended texture timing)."""
+    The master is solid-colour only until a texture set is assigned. Base Color is authored as
+    the TINT a texture set multiplies into: today it is the albedo directly; when a texture set
+    lands the albedo is Base Color * map, so the same colour drives both looks and switching
+    solid<->textured loses no tuned value. Triplanar, anti-tiling, and the texture-set loader all
+    arrived once library/textures/ has real maps to project (the plan's recommended texture
+    timing)."""
     g, _fresh = _cached_group(SURFACE_MASTER)
     if not _fresh:
         return g
@@ -145,19 +146,19 @@ def bobshade_material(mat, variation=0.15):
     met_src, met_val = capture("Metallic")
 
     # AO from the packed arm map: glTF splits metallicRoughness through a Separate Color (G ->
-    # roughness, B -> metallic) and drops the R (AO) channel. When Roughness comes from that
-    # Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so
-    # the crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
-    #
-    # DELIBERATE ASSUMPTION (a deliberate audit finding, kept as-is): this treats the metallicRoughness R
-    # channel as occlusion, which is true for ORM/"arm" packs (Poly Haven, our shipped biome
-    # assets -- verified to render correctly) but UNDEFINED per the glTF spec for a plain
-    # metallicRoughness texture. A non-ORM asset whose R is 0 would multiply albedo to black, and
-    # an asset with AO already baked into its albedo would double-darken. We keep the heuristic
-    # because every asset the library ships is ORM; revisit with importer-aware occlusion-source
-    # detection (only route AO when the arm image is also the material's occlusionTexture) if a
-    # non-ORM asset is ever imported. Legacy ShaderNodeSeparateRGB exposes this channel as "R", not
-    # "Red", so AO is silently skipped for those older imports (harmless: falls back to 1.0).
+# roughness, B -> metallic) and drops the R (AO) channel. When Roughness comes from that
+# Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so the
+# crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
+#
+# DELIBERATE ASSUMPTION (a deliberate audit finding, kept as-is): this treats the
+# metallicRoughness R channel as occlusion, which is true for ORM/"arm" packs (Poly Haven, our
+# shipped biome assets -- verified to render correctly) but UNDEFINED per the glTF spec for a
+# plain metallicRoughness texture. A non-ORM asset whose R is 0 would multiply albedo to black,
+# and an asset with AO already baked into its albedo would double-darken. We keep the heuristic
+# because every asset the library ships is ORM; revisit with importer-aware occlusion-source
+# detection (only route AO when the arm image is also the material's occlusionTexture) if a
+# non-ORM asset is ever imported. Legacy ShaderNodeSeparateRGB exposes this channel as "R", not
+# "Red", so AO is silently skipped for those older imports (harmless: falls back to 1.0).
     ao_src = None
     if rgh_src is not None and rgh_src.node.bl_idname in ("ShaderNodeSeparateColor", "ShaderNodeSeparateRGB"):
         ao_src = rgh_src.node.outputs.get("Red")
@@ -286,10 +287,11 @@ def surface_material(mat_name, texset_name=None, box=None, alpha=False, leaf=Fal
 def _wire_cutout(nt, maps, coord, bsdf, box):
     """Drive the Principled Alpha from a set's cutout. Returns the socket wired, or None.
 
-    Two sources, in order: a dedicated `opacity` map (what the atlas job emits), else the
-    basecolor image's own alpha channel (what a matted `mesh_subject` subject already carries, measured as
-    a real 0.000-1.000 range). Preferring the dedicated map means a generated set can carry one without touching
-    this, and falling back means the card work's placeholder RGBA atlas works with no extra file.
+    Two sources, in order: a dedicated `opacity` map (what the atlas job emits), else the basecolor
+    image's own alpha channel (what a matted `mesh_subject` subject already carries, measured as a
+    real 0.000-1.000 range). Preferring the dedicated map means a generated set can carry one
+    without touching this, and falling back means the card work's placeholder RGBA atlas works with
+    no extra file.
     """
     src = None
     if maps.get("opacity"):
@@ -413,12 +415,13 @@ def foliage_card_material(mat_name, atlas="leaf_atlas_blockout"):
     master. Answers the open question in docs/FOLIAGE.md 2.7 the way that section preferred.
 
     What a card needs is alpha cutout, two-sided shading and some translucency. Two of the three
-    were already free at the time: Blender shades both faces unless `use_backface_culling` is set, and the
-    cutout is one link (see `surface_material`'s `alpha`). **The wind pass added the third, and kept it outside
-    the master too** -- see `_wire_translucency` for the argument, which turned out to be stronger
-    than the one that deferred it: the master's contract is three scalars into one Principled, and
-    translucency is a second BSDF lobe, so there is no socket shape on the master that could carry
-    it. The season colour (`_wire_season`) sits in the same place for the same kind of reason.
+    were already free at the time: Blender shades both faces unless `use_backface_culling` is set,
+    and the cutout is one link (see `surface_material`'s `alpha`). **The wind pass added the third,
+    and kept it outside the master too** -- see `_wire_translucency` for the argument, which turned
+    out to be stronger than the one that deferred it: the master's contract is three scalars into
+    one Principled, and translucency is a second BSDF lobe, so there is no socket shape on the
+    master that could carry it. The season colour (`_wire_season`) sits in the same place for the
+    same kind of reason.
 
     So no fourth master, and S_SurfaceMaster's interface is still untouched by this whole track.
 

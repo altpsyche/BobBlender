@@ -88,14 +88,15 @@ def dunes(h, xp, seed=0, wind=35.0, frequency=7.0, sharpness=0.5, warp=0.12,
 def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.97,
            smooth=2.0, mix="replace", amount=1.0):
     """Flat-lying layered rock strata: the mesa/plateau base (real strata, not a terrace filter over
-    ridged noise). A broad, near-flat uplifted surface quantised into `layers` genuinely flat benches
-    with near-vertical risers; the risers become cliffs once scarp (ops_erode.scarp) erodes the
-    field. `dissection` > 1 lowers the midtones so the top strata survive only in patches -> isolated
-    mesas/buttes; near 1 it keeps a continuous tableland (plateau). `sharpness` in [0, 1) sets how
-    thin/steep the riser is (0.97 ~ near-vertical). `smooth` (gaussian sigma, cells) merges small high
-    spots BEFORE quantising so they do not survive as isolated full-height spires/pyramids -- raise it
-    for a cleaner plateau (canyon rims), lower it for more scattered buttes. Distinct from
-    ops_filter.terrace, which shapes an EXISTING field; strata GENERATES the flat-layered plateau."""
+    ridged noise). A broad, near-flat uplifted surface quantised into `layers` genuinely flat
+    benches with near-vertical risers; the risers become cliffs once scarp (ops_erode.scarp)
+    erodes the field. `dissection` > 1 lowers the midtones so the top strata survive only in
+    patches -> isolated mesas/buttes; near 1 it keeps a continuous tableland (plateau).
+    `sharpness` in [0, 1) sets how thin/steep the riser is (0.97 ~ near-vertical). `smooth`
+    (gaussian sigma, cells) merges small high spots BEFORE quantising so they do not survive as
+    isolated full-height spires/pyramids -- raise it for a cleaner plateau (canyon rims), lower
+    it for more scattered buttes. Distinct from ops_filter.terrace, which shapes an EXISTING
+    field; strata GENERATES the flat-layered plateau."""
     from . import ops_erode
     n = h.shape[0]
     u = (xp.arange(n, dtype=xp.float64) + 0.5) / n
@@ -124,14 +125,14 @@ def strata(h, xp, seed=0, layers=5, dissection=1.4, base_freq=3.0, sharpness=0.9
 def macro(h, xp, path=None, mix="replace", amount=1.0, smooth=0.02, invert=False, seed=0):
     """An IMAGE as the stack's macro base: read a mask PNG, resample it to the field, blur it, mix.
 
-    This is what a prompted macro mask enters the stack as (docs/GENERATION.md, the macro heightmap). It is a
-    generator like the others, which is the whole point: the engine starts every stack from a zero
-    field, so "feeding the op stack's first input" is exactly "being op 0", and everything after it
-    -- fluvial incision, thermal relaxation, amplify -- treats the mask's landform as the macro it
-    would otherwise have generated from noise.
+    This is what a prompted macro mask enters the stack as (docs/GENERATION.md, the macro
+    heightmap). It is a generator like the others, which is the whole point: the engine starts every
+    stack from a zero field, so "feeding the op stack's first input" is exactly "being op 0", and
+    everything after it -- fluvial incision, thermal relaxation, amplify -- treats the mask's
+    landform as the macro it would otherwise have generated from noise.
 
-    A MASK, not a heightfield (the bit-depth floor). Two of these parameters are the reason that distinction holds
-    rather than being a caveat in a document:
+    A MASK, not a heightfield (the bit-depth floor). Two of these parameters are the reason that
+    distinction holds rather than being a caveat in a document:
 
       smooth   a gaussian blur as a fraction of the field width, applied AFTER the resample. It is
                what keeps the mask low-frequency no matter what the image did: quantisation steps,
@@ -172,7 +173,8 @@ def macro(h, xp, path=None, mix="replace", amount=1.0, smooth=0.02, invert=False
 
 def voronoi(h, xp, seed=0, cells=8.0, pattern="mesa", jitter=0.85, mix="multiply", amount=0.7):
     """Jittered-grid Voronoi (Worley) cellular structure. pattern='mesa' gives flat-topped cells
-    (plateaus/tablelands); pattern='crack' gives the ridged cell borders (cracked hardpan, joints)."""
+    (plateaus/tablelands); pattern='crack' gives the ridged cell borders (cracked hardpan,
+    joints)."""
     n = h.shape[0]
     x, y = _coords(xp, n)
     gx = x * cells

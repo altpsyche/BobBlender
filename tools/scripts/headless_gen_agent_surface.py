@@ -10,7 +10,8 @@ signature, a contract model or a handler is wrong, this fails where a `core`-lev
     uv run --project tools --extra all python tools/scripts/headless_gen_agent_surface.py \
         [--part a,b,c,d] [--faces 4000] [--keep]
 
-  A. **The contract, offline.** Every new op validated by its model, and every new op REJECTED with a
+  A. **The contract, offline.** Every new op validated by its model, and every new op REJECTED with
+  a
      readable sentence when given bad params (which is the half a gate usually skips). The comfy_*
      tools pointed at a dead port, so the "server not reachable" degradation is measured rather than
      asserted. The macro key composed onto a preset-shaped params dict, which is the hazard the
@@ -24,11 +25,13 @@ signature, a contract model or a handler is wrong, this fails where a `core`-lev
      bake_heightfield with the macro key, then one build carrying the terrain, shade_terrain,
      apply_texture_set, a camera and a render. Wall clock per stage.
   D. **Websocket progress.** The same generation with `/ws` on and off, counting the progress updates
-     each route delivered and what they said, so "per-node progress" is a number rather than a claim.
+     each route delivered and what they said, so "per-node progress" is a number rather than a
+     claim.
 
 Reachability-gated: with no ComfyUI, parts B, C and D print SKIP and the script still exits 0, which
-is the "ComfyUI is never required" property. Exit 0 = nothing failed. The op lists and the renders are
-written under `_generated/comfy_g6_check/` so the gate's claims can be audited against artifacts.
+is the "ComfyUI is never required" property. Exit 0 = nothing failed. The op lists and the renders
+are written under `_generated/comfy_g6_check/` so the gate's claims can be audited against
+artifacts.
 """
 
 from __future__ import annotations
@@ -48,8 +51,8 @@ OUT = REPO / "_generated" / "comfy_g6_check"
 PACK = OUT / "pack"
 
 # The MCP server sandboxes every output path under $BOB_WORKDIR and resolves the generated pack from
-# $BOB_GENERATED, so the gate sets both BEFORE importing the server: that is also the configuration an
-# agent gets, and doing it here proves the two variables are enough to make the two worlds agree.
+# $BOB_GENERATED, so the gate sets both BEFORE importing the server: that is also the configuration
+# an agent gets, and doing it here proves the two variables are enough to make the two worlds agree.
 os.environ.setdefault("BOB_WORKDIR", str(REPO))
 os.environ["BOB_GENERATED"] = str(PACK)
 os.environ.setdefault("BOB_ASSET_PACKS", str(REPO / "library"))
@@ -311,8 +314,8 @@ def part_c(args, reachable: bool) -> dict:
                  (macro.get("error") or "")[:120]):
         return {}
 
-    # The bake takes the mask through the `macro` key the tool handed back, which is the whole reason
-    # the macro-heightmap family needed no new op.
+    # The bake takes the mask through the `macro` key the tool handed back, which is the whole
+# reason the macro-heightmap family needed no new op.
     t0 = time.time()
     baked = server.bake_heightfield(rel(OUT / "c_terrain.png"), params={
         "preset": "alpine", "size": 768, "seed": SEED, **macro["bake_params"]}, force=True)
@@ -338,10 +341,10 @@ def part_c(args, reachable: bool) -> dict:
         {"op": "apply_texture_set", "object": "Terrain", "set": tex["set"], "index": 1,
          "pack_dir": tex["pack_dir"]},
         # No `set_env` here, and that is a finding rather than an omission: `Scene.bbt_env` is a
-        # PropertyGroup the ADDON registers, and the headless runner imports `core` into a
-        # --factory-startup Blender without enabling the addon, so every env-dependent op
-        # (set_env, apply_season, scene_preset) raises there and works over `build_live`. The sky is
-        # given its time explicitly for the same reason: with no params it reads the env it cannot see.
+# PropertyGroup the ADDON registers, and the headless runner imports `core` into a
+# --factory-startup Blender without enabling the addon, so every env-dependent op (set_env,
+# apply_season, scene_preset) raises there and works over `build_live`. The sky is given its
+# time explicitly for the same reason: with no params it reads the env it cannot see.
         {"op": "build_sky", "params": {"time_of_day": 15.0}},
         {"op": "add_camera", "name": "BOB_Camera", "location": [150.0, -150.0, 90.0],
          "look_at": [0.0, 0.0, 10.0], "lens": 42.0},

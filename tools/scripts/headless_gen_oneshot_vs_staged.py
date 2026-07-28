@@ -4,10 +4,10 @@
 Two questions the asset gate left measurable and did not answer:
 
   1. Is the combined `geometry_texture` graph (`mesh_geom_texture`) worth having? Ten prompts, four of them
-     foliage, through BOTH routes, with the SAME `mesh_subject` subject image so the reference framing is
-     controlled for and the only variable is the graph. Per prompt and route: wall clock, peak
-     VRAM (per process, at the queue moment and at the peak), face count, boundary edges after a
-     weld, UV overlap, UV chart coverage, and a texture number that is not "looks fine" (in-chart
+     foliage, through BOTH routes, with the SAME `mesh_subject` subject image so the reference
+     framing is controlled for and the only variable is the graph. Per prompt and route: wall clock,
+     peak VRAM (per process, at the queue moment and at the peak), face count, boundary edges after
+     a weld, UV overlap, UV chart coverage, and a texture number that is not "looks fine" (in-chart
      albedo std plus a per-channel range).
   2. Does TRELLIS.2's opacity output reach a finished material? Measured on the GLB each route
      writes, and then through `gen_assets.finish_asset` on a subset.
@@ -186,9 +186,9 @@ def _vram_added(parts):
     """The largest single-stage RISE over its own baseline, across stages.
 
     Reported beside the absolute peak because the two answer different questions and the absolute
-    one is order-dependent: `mesh_subject` leaves SDXL resident, so whichever mesh graph runs first is measured
-    on top of roughly 6.6 GB that has nothing to do with it. The rise is what the graph itself
-    costs; the peak is what the machine actually had to hold.
+    one is order-dependent: `mesh_subject` leaves SDXL resident, so whichever mesh graph runs first
+    is measured on top of roughly 6.6 GB that has nothing to do with it. The rise is what the graph
+    itself costs; the peak is what the machine actually had to hold.
     """
     parts = [p for p in parts if p]
     if not parts:
@@ -441,8 +441,8 @@ def decimate_floor(entry):
     """What Blender's Decimate reaches on this mesh, i.e. what the one-shot route would cost if it
     kept the dense mesh and let Blender do steps 3 and 4 instead of Trellis2ProcessMesh.
 
-    Measured rather than assumed from the asset gate's five: this is the third route the verdict has to rule
-    out, and it is free to measure because the staged route generated the dense mesh anyway.
+    Measured rather than assumed from the asset gate's five: this is the third route the verdict has
+    to rule out, and it is free to measure because the staged route generated the dense mesh anyway.
     """
     empty_scene()
     t0 = time.time()
@@ -558,8 +558,8 @@ def open_surface_report(entries, cells):
 
 
 def opacity_report(entries, cells, finished):
-    """The partial the asset gate left open: is TRELLIS.2's opacity output in the GLB, and does it reach the
-    finished material?"""
+    """The partial the asset gate left open: is TRELLIS.2's opacity output in the GLB, and does it
+    reach the finished material?"""
     section("the opacity channel")
     for entry in entries[:1]:
         for name in ("staged", "oneshot"):

@@ -187,7 +187,8 @@ def convert(graph, object_info):
             continue
         if ntype not in object_info:
             # A UUID type is a subgraph, whose real nodes live under definitions.subgraphs; Bob
-            # ships flattened graphs only (docs/GENERATION.md, "Deriving from the shipped templates").
+# ships flattened graphs only (docs/GENERATION.md, "Deriving from the shipped
+# templates").
             raise ValueError(f"node {node.get('id')}: unknown class_type {ntype!r} "
                              f"({'subgraph, flatten it first' if '-' in ntype else 'pack missing'})")
         inputs = {}

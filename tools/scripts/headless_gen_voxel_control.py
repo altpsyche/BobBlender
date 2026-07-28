@@ -1,12 +1,12 @@
 """Headless measurement: Omni's voxel control mode, and the control ordering (docs/GENERATION.md).
 
 The bbox gate answered half of the control-ordering question and named the other half as the
-interesting one rather than the leftover.
-Eight corners lost to 8,192 points because a box constrains EXTENT and says nothing about PLAN, and
-a ground plan is what "drops into a layout" reduces to. `Hy3DOmniVoxelGenerate` is the only Omni
-control mode left that carries one: it area-samples the same block-out mesh `mesh_geom_ctrl` takes and
-`OmniEncoder.generate_voxel` quantises those samples onto a 16-cubed occupancy grid. So this gate is
-the same comparison the bbox gate ran, with a third real column and a different null.
+interesting one rather than the leftover. Eight corners lost to 8,192 points because a box
+constrains EXTENT and says nothing about PLAN, and a ground plan is what "drops into a layout"
+reduces to. `Hy3DOmniVoxelGenerate` is the only Omni control mode left that carries one: it
+area-samples the same block-out mesh `mesh_geom_ctrl` takes and `OmniEncoder.generate_voxel`
+quantises those samples onto a 16-cubed occupancy grid. So this gate is the same comparison the bbox
+gate ran, with a third real column and a different null.
 
   A. **The values, the frame and preflight.** Preflight over every shipped graph offline against the
      committed dump, the `api_node` assertion on `mesh_geom_voxel`, the third control mode as a value in one place
@@ -16,9 +16,9 @@ the same comparison the bbox gate ran, with a third real column and a different 
      about X by default and `Hy3DOmniPointGenerate` does not, so the setting is measured on the
      asymmetric block-out before anything else runs and `comfy.VOXEL_INPUT_ROTATION` has to equal
      what won. Then the same three block-outs the control and bbox gates use, the same conditioning
-     image, the same
-     scoring with NO rotation search: `mesh_geom_ctrl` point, `mesh_geom_voxel` voxel, `mesh_geom_voxel` with a SWAPPED control (the null),
-     and `mesh_geom_bbox` bbox for the record.
+     image, the same scoring with NO rotation search: `mesh_geom_ctrl` point, `mesh_geom_voxel`
+     voxel, `mesh_geom_voxel` with a SWAPPED control (the null), and `mesh_geom_bbox` bbox for the
+     record.
   C. **The finished asset.** One block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8, against the asset gate
      asset checks it inherits, with the footprint measured again after the finish.
   D. **Transport.** `mesh_geom_voxel` uploads a mesh, so unlike `mesh_geom_bbox` it cannot be the fallback for a process with
@@ -33,8 +33,7 @@ half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM 
 `_generated/comfy_g9_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
 shape maths, the block-outs, the VRAM sampler and the caching are imported from the control gate and
 the normal-detail read from the asset gate, so all three control gates' numbers are one measurement
-rather than
-three implementations of it. Exit 0 = nothing failed.
+rather than three implementations of it. Exit 0 = nothing failed.
 """
 
 import argparse
@@ -67,7 +66,8 @@ DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 SEED = control_gate.SEED
 FACES = control_gate.FACES
 
-# Every class `mesh_geom_voxel` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not FAIL.
+# Every class `mesh_geom_voxel` needs beyond ComfyUI core and TRELLIS.2. Absent means SKIP, not
+# FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate", "Hy3DOmniVoxelGenerate",
                 "Hy3DOmniBBoxGenerate")
 
@@ -236,7 +236,8 @@ def _aimdo_version():
     return None
 
 
-# -- Part B: the input rotation, then the grid ------------------------------------------------------
+# -- Part B: the input rotation, then the grid
+# ------------------------------------------------------
 def _prepare(kind):
     """One block-out's proxy samples, control file, conditioning view and bbox, in one place."""
     obj = control_gate.blockout(kind)
@@ -279,7 +280,8 @@ def frame_probe(args, blocks):
     """Which way `apply_input_rotation` goes, measured on the asymmetric block-out.
 
     The node's default is True and the point node has no such flag, so this is the one setting on
-    `mesh_geom_voxel` that a reasonable person would leave alone and that would silently cost the whole phase.
+    `mesh_geom_voxel` that a reasonable person would leave alone and that would silently cost the
+    whole phase.
     """
     kind = "notched"
     block = blocks[kind]
@@ -423,7 +425,8 @@ def part_b(args, reachable, ready):
                            f"(its control) and {c['against_image']:.4f} against {k} (its image)"
                            for k, c in sorted(swap_cross.items())))
 
-    # Then the verdict, on the same rule shape the bbox gate uses, so the two are directly comparable.
+    # Then the verdict, on the same rule shape the bbox gate uses, so the two are directly
+# comparable.
     pairs = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_ctrl point"))) for k in control_gate.PROMPTS]
     live = [(k, v, p) for k, v, p in pairs if v and p]
     if live:
@@ -456,7 +459,8 @@ def part_b(args, reachable, ready):
                   fh, indent=2, sort_keys=True, default=str)
 
 
-# -- Part C: the finished asset ---------------------------------------------------------------------
+# -- Part C: the finished asset
+# ---------------------------------------------------------------------
 def part_c(args, reachable, ready):
     section("C. The finished asset from an occupancy grid, through the asset checks it inherits")
     if not (reachable and ready):
@@ -541,7 +545,8 @@ def _score_finished(obj, proxy_points):
     return control_gate.fixed_agreement(proxy_points, control_gate.mesh_points(obj, seed=2))
 
 
-# -- Part D: transport -------------------------------------------------------------------------------
+# -- Part D: transport
+# -------------------------------------------------------------------------------
 def part_d(args, reachable, ready):
     section("D. mesh_geom_voxel uploads a mesh, so mesh_geom_bbox keeps the no-ComfyUI-folder fallback to itself")
     if not (reachable and ready):

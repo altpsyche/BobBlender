@@ -1,9 +1,8 @@
 """scatter: distribute a collection of assets across an emitter surface.
 
-A GScatter-style layer. Reads the Emitter object's geometry, distributes points
-with Poisson disk sampling, filters by slope, masks the density, and instances a
-random pick from the Assets collection with per-instance random scale and Z
-rotation, aligned to the surface normal.
+A GScatter-style layer. Reads the Emitter object's geometry, distributes points with Poisson disk
+sampling, filters by slope, masks the density, and instances a random pick from the Assets
+collection with per-instance random scale and Z rotation, aligned to the surface normal.
 
 Modifier inputs (editable knobs):
 
@@ -16,9 +15,9 @@ Modifier inputs (editable knobs):
   patchy density for clumping; Strength 0 = off).
 - Curve (BobSplines, the scatter mask, curve_mode clear/keep): reads a terrain curve mask (written by the
   curve overlay), curve_attr selecting which one -- bbt_curve_mask (the whole band, default) or
-  bbt_curve_edge (the shoulder/verge ring, for the panel's Verge mode). clear clears the layer
-  along it, keep scatters only within it. No scn.path proximity: the overlay solved it once, this
-  just reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
+  bbt_curve_edge (the shoulder/verge ring, for the panel's Verge mode). clear clears the layer along
+  it, keep scatters only within it. No scn.path proximity: the overlay solved it once, this just
+  reads it, so many curves compose (the mask MAX-accumulates them) with no per-layer proximity.
 - Paint (when a mask vertex group is set): Paint Strength.
 - Camera cull (when a camera is set): Camera Distance / Camera Cone / Cull Falloff.
 - Sink: Z Offset (metres, negative sinks). A generated trunk carries a wide root flare and an
@@ -26,17 +25,17 @@ Modifier inputs (editable knobs):
   is the fix, and without this knob the only lever was camera placement.
 
 `assets_exclude` / `assets_include` (lists of object names) drop assets from the pick without
-touching the collection, so one bad member of a shared BOB_Assets_<Kind> pool can be left out of
-ONE layer. Resolved at build time against the collection's own child order, which is the order
+touching the collection, so one bad member of a shared BOB_Assets_<Kind> pool can be left out of ONE
+layer. Resolved at build time against the collection's own child order, which is the order
 Collection Info's Separate Children emits, and reported as a warning when a name is not in the
 collection (rather than silently scattering the full pool).
 
-All masks multiply into the Poisson Density Factor (a 0..1 field), so they compose;
-the slope band drives the Selection instead. The emitter, the asset collection, and
-the optional camera are set on the nodes (Blender 5.x GN modifiers no longer store
-object or collection inputs). Params: emitter and camera (object names), assets (a
-collection name), curve_mode (none/clear/keep), vgroup (a vertex group name on the
-emitter). Placing instances ALONG a curve is the separate scatter_along recipe.
+All masks multiply into the Poisson Density Factor (a 0..1 field), so they compose; the slope band
+drives the Selection instead. The emitter, the asset collection, and the optional camera are set on
+the nodes (Blender 5.x GN modifiers no longer store object or collection inputs). Params: emitter
+and camera (object names), assets (a collection name), curve_mode (none/clear/keep), vgroup (a
+vertex group name on the emitter). Placing instances ALONG a curve is the separate scatter_along
+recipe.
 """
 
 import bpy
@@ -109,9 +108,9 @@ def _allowed_indices(collection, include, exclude):
     """(indices, warnings) for the assets a layer may pick from.
 
     An INCLUDE list is the whole allowance; an EXCLUDE list removes from the full pool. Both are
-    resolved to Instance Index values here, at build time, because that is where the collection is in
-    hand. A name that is not a direct child of the collection is a warning, not a silent no-op: the
-    reason to reach for this is one specific bad asset, so failing to match it must not read as
+    resolved to Instance Index values here, at build time, because that is where the collection is
+    in hand. A name that is not a direct child of the collection is a warning, not a silent no-op:
+    the reason to reach for this is one specific bad asset, so failing to match it must not read as
     success. Returns (None, warnings) when every child is allowed (the graph then adds no filter and
     is byte-identical to before).
     """
@@ -234,8 +233,8 @@ def _camera_cull(ng, camera, gi, pos, loc):
 
 @recipe("scatter")
 def build(ng, out, params: dict):
-    # Resolved through `resolve_named` rather than `bpy.data.*.get`, so a typo'd name is a warning on
-    # the op result instead of a layer that builds, reports success and scatters nothing.
+    # Resolved through `resolve_named` rather than `bpy.data.*.get`, so a typo'd name is a warning
+# on the op result instead of a layer that builds, reports success and scatters nothing.
     emitter = resolve_named("objects", params.get("emitter", ""), what="emitter object")
     assets = resolve_named("collections", params.get("assets", ""), what="asset collection")
     camera = resolve_named("objects", params.get("camera", ""), what="camera object")
@@ -294,10 +293,11 @@ def build(ng, out, params: dict):
     factor = math_node(ng, "MULTIPLY", factor,
                        _noise_mask(ng, gi, pos, (-840, -820)), (400, -600))
 
-    # Curve band (BobSplines, the scatter mask): read the terrain's baked bbt_curve_mask (0..1, 1 on a path).
-    # clear -> multiply by (1 - mask) so density drops to zero along the trail; keep -> multiply by
-    # the mask so scatter stays only in the band (reeds along a bank). Absent attribute reads 0:
-    # clear then leaves density untouched, keep correctly yields nothing (no curve, no band).
+    # Curve band (BobSplines, the scatter mask): read the terrain's baked bbt_curve_mask (0..1, 1 on
+# a path). clear -> multiply by (1 - mask) so density drops to zero along the trail; keep ->
+# multiply by the mask so scatter stays only in the band (reeds along a bank). Absent attribute
+# reads 0: clear then leaves density untouched, keep correctly yields nothing (no curve, no
+# band).
     if curve_mode in ("clear", "keep"):
         cmask = nodes.new("GeometryNodeInputNamedAttribute")
         cmask.data_type = "FLOAT"

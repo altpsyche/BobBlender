@@ -101,41 +101,39 @@ def _vscale(g, vec, scalar, loc):
 
 
 
-# Bump when any shared S_* group's interface (sockets) changes. A group cached in an
-# older .blend carries a stale (or absent) stamp and is rebuilt in place on first
-# access, so an addon upgrade refreshes the interface instead of reusing a group that
-# lacks new sockets -- which otherwise KeyErrors when the caller wires them, or
-# silently renders the old behaviour.
-# v2 (BobSplines, the water channel): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
-# bbt_curve_wet damp-bed read, so existing cached groups must rebuild to pick both up.
-# v3 (water look pass the water look pass): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and a
-# manual Frozen -> ice path (new Shore Foam / Foam Crispness / Wave Detail / Frozen sockets), so a
-# cached v2 water group must rebuild to expose them.
-# v4 (item-3 weather fix): S_Weather gained a Canopy Snow input and S_SurfaceMaster exposes it, so
-# the shared weather interface changed. Every group that EMBEDS S_Weather (S_SurfaceMaster,
-# S_TerrainMaster, and S_WaterMaster via its own override) must rebuild together: an in-place
-# rebuild gives the weather sockets new identifiers, and an embedder left un-rebuilt keeps stale
-# links to them (verified: terrain's 16 weather links drop to 0). A global bump rebuilds all of
-# them consistently, at the known cost of resetting tuned terrain/surface inputs on upgrade.
-# v5 (snow-line unify): S_Weather dropped the Use Attribute switch AND the per-material Altitude /
-# Altitude Falloff knobs; it now computes coverage from a normalized env snow line, scaled to the
-# terrain's Z bounds, on every surface. S_EnvState gained Snow Line + Snow Line Top outputs (world
-# Z) and its Snow output is temperature-driven (no amount slider; below freezing snows, colder is
-# thicker). The material reads a snow_occlusion attribute instead of snow_cover. The weather and
-# env-state interfaces both changed, so every embedder (S_SurfaceMaster, S_TerrainMaster,
-# S_WaterMaster) must rebuild in lockstep.
+# Bump when any shared S_* group's interface (sockets) changes. A group cached in an older .blend
+# carries a stale (or absent) stamp and is rebuilt in place on first access, so an addon upgrade
+# refreshes the interface instead of reusing a group that lacks new sockets -- which otherwise
+# KeyErrors when the caller wires them, or silently renders the old behaviour. v2 (BobSplines, the
+# water channel): the water master (S_WaterMaster) landed and S_TerrainMaster gained the
+# bbt_curve_wet damp-bed read, so existing cached groups must rebuild to pick both up. v3 (water
+# look pass the water look pass): S_WaterMaster gained multi-scale flow waves, crisp/shore foam, and
+# a manual Frozen -> ice path (new Shore Foam / Foam Crispness / Wave Detail / Frozen sockets), so a
+# cached v2 water group must rebuild to expose them. v4 (item-3 weather fix): S_Weather gained a
+# Canopy Snow input and S_SurfaceMaster exposes it, so the shared weather interface changed. Every
+# group that EMBEDS S_Weather (S_SurfaceMaster, S_TerrainMaster, and S_WaterMaster via its own
+# override) must rebuild together: an in-place rebuild gives the weather sockets new identifiers,
+# and an embedder left un-rebuilt keeps stale links to them (verified: terrain's 16 weather links
+# drop to 0). A global bump rebuilds all of them consistently, at the known cost of resetting tuned
+# terrain/surface inputs on upgrade. v5 (snow-line unify): S_Weather dropped the Use Attribute
+# switch AND the per-material Altitude / Altitude Falloff knobs; it now computes coverage from a
+# normalized env snow line, scaled to the terrain's Z bounds, on every surface. S_EnvState gained
+# Snow Line + Snow Line Top outputs (world Z) and its Snow output is temperature-driven (no amount
+# slider; below freezing snows, colder is thicker). The material reads a snow_occlusion attribute
+# instead of snow_cover. The weather and env-state interfaces both changed, so every embedder
+# (S_SurfaceMaster, S_TerrainMaster, S_WaterMaster) must rebuild in lockstep.
 S_GROUP_VER = 6
 
 
-# Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of every
-# material instancing the group (the new sockets get fresh identifiers, verified), so a global
-# S_GROUP_VER bump wipes terrain/surface tuning too. When a change is scoped to ONE group, version it
-# here instead so only that group rebuilds and the rest keep their tuned values. (The string keys are
-# the group names, == the WATER_MASTER etc. constants defined below.)
+# Per-group version overrides. A rebuild clears the interface, which RESETS the tuned inputs of
+# every material instancing the group (the new sockets get fresh identifiers, verified), so a global
+# S_GROUP_VER bump wipes terrain/surface tuning too. When a change is scoped to ONE group, version
+# it here instead so only that group rebuilds and the rest keep their tuned values. (The string keys
+# are the group names, == the WATER_MASTER etc. constants defined below.)
 #   S_WaterMaster v4: geometry Gerstner waves in curve_water made the shader's low-frequency flow
 #   bump redundant -- it now carries only a subtle high-frequency detail normal (the old one combed
 #   into hair-like streaks). Graph + default change, same interface, so water-only rebuild.
-#   S_WaterMaster v5 (the depth interaction): depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
+#   S_WaterMaster v5: depth interaction. New Depth Absorption / Depth Opacity / Shoreline Fade
 #   sockets; reads the ribbon's bbt_depth (water-column metres) for Beer-Lambert colour + opacity and
 #   a soft shoreline. New interface, so rebuild the water group (terrain/surface tuning untouched).
 #   S_WaterMaster v7: it embeds S_Weather, whose interface changed in the item-3 weather fix (the
@@ -193,10 +191,10 @@ def _cached_group(name):
 
 
 # Principled inputs a master group may drive BEYOND Base Color / Roughness / Metallic (the water
-# master, the water look). Wired only when the master exposes the matching OUTPUT, so surface and terrain
-# masters (which do not) are byte-identical. The Principled transmission socket was renamed across
-# Blender versions (Transmission -> Transmission Weight in 4.x), so each master output maps to a
-# list of candidate BSDF socket names and the first that exists wins.
+# master, the water look). Wired only when the master exposes the matching OUTPUT, so surface and
+# terrain masters (which do not) are byte-identical. The Principled transmission socket was renamed
+# across Blender versions (Transmission -> Transmission Weight in 4.x), so each master output maps
+# to a list of candidate BSDF socket names and the first that exists wins.
 _WRAPPER_EXTRA_OUTPUTS = (
     ("Transmission", ("Transmission Weight", "Transmission")),
     ("IOR", ("IOR",)),
@@ -280,9 +278,10 @@ def _build_wrapper(mat_name, master, sig, wire):
         if old_node is not None and old_node.type == "GROUP" \
                 and old_node.node_tree is master and mat.get("bbt_sig") == sig:
             # Structure unchanged, so tuned inputs are kept -- but if the shared master group was
-            # rebuilt in place (version bump), this instance's sockets were left at type-zero. Re-seed
-            # them to the new interface defaults so an upgrade costs a revert-to-default, not a black
-            # base layer / silently-off snow. No-op when the master version is unchanged.
+# rebuilt in place (version bump), this instance's sockets were left at type-zero.
+# Re-seed them to the new interface defaults so an upgrade costs a revert-to-default,
+# not a black base layer / silently-off snow. No-op when the master version is
+# unchanged.
             if mat.get("bbt_master_ver") != master_ver:
                 _seed_inputs_from_interface(old_node)
                 mat["bbt_master_ver"] = master_ver
@@ -307,8 +306,8 @@ def _build_wrapper(mat_name, master, sig, wire):
     nt.links.new(grp.outputs["Base Color"], bsdf.inputs["Base Color"])
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
-    # Water master (the water look): also drive Transmission / IOR / Alpha / Normal when the master exposes
-    # them. A no-op for surface / terrain masters (their groups carry no such outputs).
+    # Water master (the water look): also drive Transmission / IOR / Alpha / Normal when the master
+# exposes them. A no-op for surface / terrain masters (their groups carry no such outputs).
     for out_name, candidates in _WRAPPER_EXTRA_OUTPUTS:
         src = grp.outputs.get(out_name)
         if src is None:
@@ -361,13 +360,14 @@ def is_bobshader(mat):
 
 
 
-# BobShaders water master (S_WaterMaster, BobSplines, the water channel.3). The third BobShader kind, for the river
-# ribbons curve_water lays in a carved channel. It reads the ribbon's baked bbt_flow / bbt_foam /
-# bbt_shore attributes and produces a flowing, depth-tinted, foaming, transparent surface that
-# freezes to ice below 0 C. Like the other masters it ends in S_Weather, so it inherits the shared
-# wetness/frost/snow layer and the live env feed; the freeze reuses that below-freezing frost path
-# rather than adding a new system. Beyond Base Color/Roughness/Metallic it also outputs Transmission,
-# IOR, Normal, and Alpha, which the widened _build_wrapper drives into the Principled BSDF.
+# BobShaders water master (S_WaterMaster, BobSplines, the water channel.3). The third BobShader
+# kind, for the river ribbons curve_water lays in a carved channel. It reads the ribbon's baked
+# bbt_flow / bbt_foam / bbt_shore attributes and produces a flowing, depth-tinted, foaming,
+# transparent surface that freezes to ice below 0 C. Like the other masters it ends in S_Weather, so
+# it inherits the shared wetness/frost/snow layer and the live env feed; the freeze reuses that
+# below-freezing frost path rather than adding a new system. Beyond Base Color/Roughness/Metallic it
+# also outputs Transmission, IOR, Normal, and Alpha, which the widened _build_wrapper drives into
+# the Principled BSDF.
 WATER_MASTER = "S_WaterMaster"
 
 

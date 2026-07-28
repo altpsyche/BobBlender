@@ -1,9 +1,9 @@
 """A minimal websocket reader for ComfyUI's `/ws` progress stream. Stdlib only.
 
-Why this exists at all: until the agent-surface gate the only progress a caller could report was the job's own status
-string, polled at 1 Hz, so a 200 s mesh job showed "in_progress" two hundred times. ComfyUI
-publishes per-node progress on `/ws` (`{"type": "progress", "data": {"value": 3, "max": 20}}`),
-which is the difference between a spinner and a bar.
+Why this exists at all: until the agent-surface gate the only progress a caller could report was the
+job's own status string, polled at 1 Hz, so a 200 s mesh job showed "in_progress" two hundred times.
+ComfyUI publishes per-node progress on `/ws` (`{"type": "progress", "data": {"value": 3, "max":
+20}}`), which is the difference between a spinner and a bar.
 
 Why it is hand-rolled: `core/comfy.py` is stdlib-only by Bob-side constraint 1 (Blender's bundled
 Python has no `websockets` and the extension ships no dependency), so the choice was a hand-rolled
@@ -13,8 +13,8 @@ unmasked, so there is no send path to speak of.
 
 The safety property that makes it worth shipping: **progress only, never termination.** A job's
 terminal state still comes from the jobs API poll in `comfy.wait`, so a dropped, stalled or
-never-connected socket costs a progress bar and nothing else. That is deliberate: a websocket is
-one more thing that can hang, and no artifact in this integration should depend on one.
+never-connected socket costs a progress bar and nothing else. That is deliberate: a websocket is one
+more thing that can hang, and no artifact in this integration should depend on one.
 
     ws = connect(url, client_id)          # None when anything at all goes wrong
     ws.pump(0.5, on_event)                # drain for up to 0.5 s, call on_event per message

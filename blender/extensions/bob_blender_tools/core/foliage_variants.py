@@ -10,8 +10,8 @@ its own state and calls in here with plain arguments, exactly as the wind pass e
 static mesh is the obvious reading of "bake", and it would have silently deleted the whole of
 docs/FOLIAGE.md 2.4: the sway is a `Set Position` driven by Scene Time, so an applied mesh is a tree
 stopped at whatever frame it was baked on. Three measurements decided it, and none of them was
-settled earlier (which only established that two instances agree at ONE frame, which is phase and not
-motion):
+settled earlier (which only established that two instances agree at ONE frame, which is phase and
+not motion):
 
 - an instanced live-GN tree still MOVES: 1.322786 m between frame 1 and frame 31, the same figure
   its source object moves, so `Collection Info` -> `Instance on Points` re-evaluates it per frame;
@@ -19,8 +19,8 @@ motion):
 - the cost is per VARIANT and FLAT in instance count -- 400 instances of one variant cost 5.79
   ms/frame against 5.87 for 100, and eight variants cost 7.65 ms whether they are instanced 100
   times or 400. One tree alone is 5.67 ms, so eight is not eight times one (32 cores, evaluated in
-  parallel). An applied stand costs nothing per frame, because a mesh with no time dependency is
-  not re-evaluated at all.
+  parallel). An applied stand costs nothing per frame, because a mesh with no time dependency is not
+  re-evaluated at all.
 
 So the price of a stand that moves is a fixed handful of milliseconds that does not grow with the
 forest, which is the shape that makes the choice easy. The frozen route still exists and is exactly
@@ -28,11 +28,11 @@ what the pack writer does, because glTF cannot carry a node group -- see `write_
 says so in the manifest rather than leaving someone to find out.
 
 **Variants are SPREAD OUT in the pool, and that is not cosmetic.** A tree's wind phase is read from
-its own world location (wind and season, `_tree_phase`), and a pool is authored at the origin, so eight variants
-stacked at (0,0,0) share one phase and the whole stand pulses in unison -- measured, two same-seed
-variants at the origin differ by 9.54e-07 m, and 40 m apart by 0.7189 m. `Collection Info`'s Reset
-Children means the spread costs nothing: an instance still lands on its point (measured, a variant
-authored at x=40 instanced on a point at x=25 arrives centred on x=24.97).
+its own world location (wind and season, `_tree_phase`), and a pool is authored at the origin, so
+eight variants stacked at (0,0,0) share one phase and the whole stand pulses in unison -- measured,
+two same-seed variants at the origin differ by 9.54e-07 m, and 40 m apart by 0.7189 m. `Collection
+Info`'s Reset Children means the spread costs nothing: an instance still lands on its point
+(measured, a variant authored at x=40 instanced on a point at x=25 arrives centred on x=24.97).
 
 **The ladder is a rebuild and the card enlargement is measured, not chosen** -- see `lod_shape` and
 `fit_ladder`.
@@ -195,10 +195,11 @@ def fit_ladder(params, levels=LOD_LEVELS):
     """[(level, params)] for the ladder, with each rung's `Card Size` MEASURED rather than chosen.
 
     Dropping a branch level removes most of the tips, and a card grows on a tip, so a plain
-    `levels-1` rebuild thins the canopy to a fraction of its coverage -- which is precisely the thing
-    a LOD must not change, because coverage at distance IS the tree. The compensation is derivable:
-    total card area goes as the square of `Card Size`, so scaling by sqrt(area_LOD0 / area_rung)
-    restores it exactly, for any species, with no per-species constant to tune or to drift.
+    `levels-1` rebuild thins the canopy to a fraction of its coverage -- which is precisely the
+    thing a LOD must not change, because coverage at distance IS the tree. The compensation is
+    derivable: total card area goes as the square of `Card Size`, so scaling by sqrt(area_LOD0 /
+    area_rung) restores it exactly, for any species, with no per-species constant to tune or to
+    drift.
 
     That rule alone is right at LOD1 and unusable at LOD2. Holding the conifer's 447 m2 of canopy on
     the 18 cards the first LOD2 rule left would need each card 7.4 m across, and the tree comes back
@@ -210,9 +211,9 @@ def fit_ladder(params, levels=LOD_LEVELS):
     Measured on the four shipped species, as (verts, canopy area, crown width) against LOD0:
 
         conifer     LOD1  3,320  26.3%   100.0%  113.7%      LOD2   490   3.9%   29.8%  115.0%
-        broadleaf   LOD1  1,740  22.0%   100.0%  107.2%      LOD2   218   2.8%  100.0%  114.1%
-        shrub       LOD1    364  19.7%    91.5%  115.0%      LOD2   270  14.6%   91.5%  115.0%
-        grass_tuft  LOD1   (already at the floor)            LOD2   156  52.0%   95.6%  115.0%
+        broadleaf   LOD1  1,740  22.0%   100.0%  107.2%      LOD2   218   2.8%  100.0%  114.1% shrub
+        LOD1    364  19.7%    91.5%  115.0%      LOD2   270  14.6%   91.5%  115.0% grass_tuft  LOD1
+        (already at the floor)            LOD2   156  52.0%   95.6%  115.0%
 
     The conifer's 29.8% at LOD2 is the honest limit of a rung with no impostor bake behind it: a
     narrow crown of 1,228 small cards cannot be carried by 76 large ones without becoming a sphere,
@@ -384,10 +385,10 @@ def make_variants(tree, *, count=DEFAULT_VARIANTS, kind=None, levels=LOD_LEVELS,
                   overrides=None, seed_base=1000, pack_dir=None):
     """Bake `count` seeds of `tree` into `BOB_Assets_<Kind>` as live GN objects. Returns a report.
 
-    The whole of the variant pass's first half. Each variant is the SAME tree at a different `Seed` -- the tuned
-    knobs and the structural choices come off the source object, not off its species preset -- so a
-    stand is the tree the artist authored, eight times, rather than eight of the preset it started
-    from.
+    The whole of the variant pass's first half. Each variant is the SAME tree at a different `Seed`
+    -- the tuned knobs and the structural choices come off the source object, not off its species
+    preset -- so a stand is the tree the artist authored, eight times, rather than eight of the
+    preset it started from.
 
     `levels` is the LOD ladder: rung 0 lands in the scatter pool and the rest in `BOB_Foliage_LODs`,
     which is excluded from the view layer and therefore costs nothing until a layer points at it.
@@ -477,9 +478,8 @@ def _export_materials(copy, params, stem):
     is the Mix Shader chain (`_wire_translucency` mattes a Translucent against a Transparent and
     mixes that into the Principled) that the exporter's tree walk cannot survive. A gate that
     crashed after printing its verdict would read as a clean run to an exit code, which is exactly
-    how one generation gate hid a crash for three releases (docs/GENERATION.md), so this is a fix and
-    not a
-    workaround.
+    how one generation gate hid a crash for three releases (docs/GENERATION.md), so this is a fix
+    and not a workaround.
 
     Slots are replaced IN PLACE and slot 0 (the base mesh's empty implicit slot, which no face
     references) is left alone: `material_index` is an index, and re-ordering the list would put bark

@@ -42,9 +42,9 @@ def main(argv):
     ap.add_argument("--variants", type=int, default=foliage_variants.DEFAULT_VARIANTS)
     args = ap.parse_args(argv)
 
-    # The repo's generated pack, on the search path. The shipped species name a generated bark set and
-    # a generated leaf atlas, and this addon is imported rather than registered, so without this
-    # the stand is grown with the block-out fallbacks and the shot is about the wrong thing.
+    # The repo's generated pack, on the search path. The shipped species name a generated bark set
+# and a generated leaf atlas, and this addon is imported rather than registered, so without this
+# the stand is grown with the block-out fallbacks and the shot is about the wrong thing.
     pack = os.path.join(REPO, "packs", "generated")
     if os.path.isdir(pack):
         assets.add_pack_root(pack)

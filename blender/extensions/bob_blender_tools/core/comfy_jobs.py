@@ -4,16 +4,16 @@ A texture set is tens of seconds and a mesh plus paint is minutes (docs/GENERATI
 constraint 2), so the generation call cannot sit on the UI thread. The shape here is the one that
 survives Blender's threading model rather than the one that looks concurrent:
 
-    submit()   main thread, returns immediately with a Job
-    worker     ONE background thread, drains a work queue, does the HTTP and the numpy, and
+    submit()   main thread, returns immediately with a Job worker     ONE background thread, drains
+    a work queue, does the HTTP and the numpy, and
                NEVER touches bpy -- it only puts events on a result queue
     tick()     main thread, drains the result queue and runs the callbacks, which is the only
                place bpy is touched
     clear()    load_post: in-flight jobs are cancelled server-side and their callbacks dropped
 
-One worker, not a pool, because 16 GB of VRAM makes the server sequential anyway (the VRAM-floor rule): a second
-concurrent job would queue behind the first inside ComfyUI and buy nothing but two ways to be
-half-finished when the file changes.
+One worker, not a pool, because 16 GB of VRAM makes the server sequential anyway (the VRAM-floor
+rule): a second concurrent job would queue behind the first inside ComfyUI and buy nothing but two
+ways to be half-finished when the file changes.
 
 The module imports `bpy` lazily, so the scheduler itself is testable in the venv: a test calls
 `tick()` by hand where Blender calls it from `bpy.app.timers`.
@@ -258,7 +258,8 @@ def register():
     """Install the load_post handler. Called by the addon's register().
 
     The handler has to be `@persistent`: a plain load_post handler is itself removed by the file
-    load, so the one load it would survive to see is the only one it must not miss (the threading rule).
+    load, so the one load it would survive to see is the only one it must not miss (the threading
+    rule).
     """
     global _on_load
     import bpy

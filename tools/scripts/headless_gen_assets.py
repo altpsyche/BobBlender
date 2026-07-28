@@ -17,8 +17,8 @@ order:
         --python tools/scripts/headless_gen_assets.py [-- --keep --ab-only --assets N]
 
 Reachability-gated for the server half and always-run for the rest, the same shape
-`headless_gen_variants_maps.py` uses, because "ComfyUI is never required" is itself under test. Exit 0 =
-nothing failed.
+`headless_gen_variants_maps.py` uses, because "ComfyUI is never required" is itself under test. Exit
+0 = nothing failed.
 
 Generation is cached between runs in `_generated/comfy_g3_check/gen/`: a raw GLB that is already
 there is reused, so re-running the Blender half costs seconds instead of another 90 s per asset.
@@ -126,16 +126,16 @@ def alpha_stats(path):
 
 # -- 0. generation ------------------------------------------------------------------------------
 def generate_sources(reachable, fresh, limit):
-    """`mesh_subject` then `mesh_geom_trellis` per subject into `GEN/`, reusing what is already there. Returns the ones that
-    exist, with their generation timings when this run produced them."""
+    """`mesh_subject` then `mesh_geom_trellis` per subject into `GEN/`, reusing what is already there.
+    Returns the ones that exist, with their generation timings when this run produced them."""
     os.makedirs(GEN, exist_ok=True)
     have = []
     for subject in SUBJECTS[:limit]:
         raw = os.path.join(GEN, subject["key"] + "_raw.glb")
         png = os.path.join(GEN, subject["key"] + "_subject.png")
-        # The generation timings are cached with the mesh. Without this a re-run reports a
-        # per-asset total that silently omits `mesh_subject` and `mesh_geom_trellis`, i.e. the two slowest stages, and the
-        # five-minute budget check would be measuring the wrong thing.
+        # The generation timings are cached with the mesh. Without this a re-run reports a per-asset
+# total that silently omits `mesh_subject` and `mesh_geom_trellis`, i.e. the two slowest
+# stages, and the five-minute budget check would be measuring the wrong thing.
         stamp = os.path.join(GEN, subject["key"] + "_gen.json")
         entry = dict(subject, raw=raw, subject_png=png, seconds={})
         if not fresh and os.path.isfile(raw) and os.path.isfile(png):
@@ -285,7 +285,8 @@ def assert_finished(entry, report):
     if "normal" in report["maps"]:
         mean, std, lo, hi = image_stats(report["maps"]["normal"])
         # NOT std: a perfectly flat tangent-space normal is (0.5, 0.5, 1.0), whose channel spread
-        # gives std 0.2357, so the "not flat" check this gate shipped with could not fail. The geometry
+# gives std 0.2357, so the "not flat" check this gate shipped with could not fail. The
+# geometry
     # A/B found
         # that on a route whose bake really did write a flat map. The honest measure is the mean
         # absolute neighbour difference, which is 0.0 on a constant image by construction.

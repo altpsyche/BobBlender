@@ -28,12 +28,12 @@ from .params import AMPLIFY_PREVIEW, PREVIEW_SIZE
 def _stack_for(params: dict) -> list:
     """The op stack to run: an explicit `stack`, else resolve `preset` + global knobs.
 
-    A `macro` entry (a prompted macro mask, docs/GENERATION.md, the macro heightmap) composes onto EITHER, because
-    this is the one place a bake resolves its stack and the alternative is a silent no-op: a caller
-    that hands over both a resolved stack and a macro -- which is what the MCP tool does, since
-    `presets.get()` returns a params dict with the stack already in it -- would otherwise have its
-    mask accepted and ignored. Idempotent, so `build_params` having already applied it is not a
-    second application.
+    A `macro` entry (a prompted macro mask, docs/GENERATION.md, the macro heightmap) composes onto
+    EITHER, because this is the one place a bake resolves its stack and the alternative is a silent
+    no-op: a caller that hands over both a resolved stack and a macro -- which is what the MCP tool
+    does, since `presets.get()` returns a params dict with the stack already in it -- would
+    otherwise have its mask accepted and ignored. Idempotent, so `build_params` having already
+    applied it is not a second application.
     """
     stack = params["stack"] if params.get("stack") else params_mod.build_params(params)["stack"]
     if params.get("macro") and not (stack and stack[0].get("kind") == "macro"):
@@ -60,7 +60,8 @@ def _stack_file_sig(stack) -> dict:
 
 def _preview_size(params: dict) -> int:
     """Preview resolution. A preset that amplifies previews at AMPLIFY_PREVIEW (one climb level above
-    the macro base) so the preview is a real PREFIX of the full cascade; anything else at PREVIEW_SIZE."""
+    the macro base) so the preview is a real PREFIX of the full cascade; anything else at
+    PREVIEW_SIZE."""
     stack = params["stack"] if params.get("stack") else presets_mod.stack(params["preset"])
     return AMPLIFY_PREVIEW if params_mod.has_amplify(stack) else PREVIEW_SIZE
 

@@ -185,8 +185,9 @@ def asset_roots():
     raw += _OP_ROOTS
     raw += _PREF_ROOTS
     # generated_root(), not _GENERATED_ROOT: the env fallback has to reach the RESOLVER, or a set
-    # generated in a process the addon never registered in is written into a pack that
-    # texture_set_dir cannot see (measured at the agent-surface gate, where the apply step failed on a set that existed).
+# generated in a process the addon never registered in is written into a pack that
+# texture_set_dir cannot see (measured at the agent-surface gate, where the apply step failed on
+# a set that existed).
     generated = generated_root()
     if generated:
         raw.append(generated)
@@ -306,10 +307,10 @@ def texture_set_maps(name):
 def texture_set_meta(name):
     """The texture set's `meta.json` sidecar, or {} when it has none or it is unreadable.
 
-    Every generated set already writes one (`comfy.write_texture_set`, the provenance rule: provenance travels with
-    the artifact), and a hand-authored set may. It is read for DATA a consumer needs and cannot
-    otherwise know -- see `atlas_grid` -- never for anything a set must have, so a set without one
-    keeps working exactly as before.
+    Every generated set already writes one (`comfy.write_texture_set`, the provenance rule:
+    provenance travels with the artifact), and a hand-authored set may. It is read for DATA a
+    consumer needs and cannot otherwise know -- see `atlas_grid` -- never for anything a set must
+    have, so a set without one keeps working exactly as before.
     """
     base = texture_set_dir(name)
     if base is None:
@@ -325,12 +326,12 @@ def texture_set_meta(name):
 def atlas_grid(name):
     """(cols, rows) for a leaf-atlas texture set, from its sidecar, or None when it declares none.
 
-    **The open question in docs/FOLIAGE.md 6, answered: the SET carries its layout.** The card work shipped
-    the interim answer -- `Atlas Columns` and `Atlas Rows` as live recipe params defaulting to the
-    placeholder's 2x2 -- which works and does not scale: an artist assigning a generated 4x4 atlas has
-    to know to change two numbers, and nothing checks that they did. A card reading the wrong grid
-    samples a quarter of the right cell and slices of three neighbours, which renders as foliage and
-    is wrong, so it is exactly the class of failure this track gates rather than trusts.
+    **The open question in docs/FOLIAGE.md 6, answered: the SET carries its layout.** The card work
+    shipped the interim answer -- `Atlas Columns` and `Atlas Rows` as live recipe params defaulting
+    to the placeholder's 2x2 -- which works and does not scale: an artist assigning a generated 4x4
+    atlas has to know to change two numbers, and nothing checks that they did. A card reading the
+    wrong grid samples a quarter of the right cell and slices of three neighbours, which renders as
+    foliage and is wrong, so it is exactly the class of failure this track gates rather than trusts.
 
     The params STAY as the override (the recipe falls back to this only when a param was not given),
     because a hand-made atlas may ship no sidecar and because an artist may want a 4x4 read as 2x2.
@@ -388,12 +389,13 @@ def _load_manifest(biome):
 
 
 # Defaults for the fields a GENERATED model entry carries (docs/GENERATION.md, Contracts). They are
-# defaulted here rather than read by a second loader, which is the manifest origin rule: `biome_manifest()` stays the
-# one normalising reader and a caller never has to ask which schema version it is holding.
+# defaulted here rather than read by a second loader, which is the manifest origin rule:
+# `biome_manifest()` stays the one normalising reader and a caller never has to ask which schema
+# version it is holding.
 #
 # `height_m` is the load-bearing one. Every image-to-3D model emits a unit-cube-normalised mesh, so
-# an entry without a real-world height scatters as a toy; 1.0 is a deliberately obvious wrong
-# answer rather than a silent guess, and `validate_biome` flags a generated entry that relies on it.
+# an entry without a real-world height scatters as a toy; 1.0 is a deliberately obvious wrong answer
+# rather than a silent guess, and `validate_biome` flags a generated entry that relies on it.
 _MODEL_ENTRY_DEFAULTS = {"height_m": 1.0, "lod": [], "origin": "base", "faces": None}
 
 
@@ -499,8 +501,8 @@ def biome_terrain(biome):
 _FOLIAGE_SHAPE_KEYS = (
     "seed", "levels", "height", "segments", "branch_segments", "profile_segments",
     "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
-    # The wood-shaping terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four are
-    # inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
+    # The wood-shaping terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four
+# are inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
     "taper_curve", "flare", "collar", "lobe",
     "cards", "card_size", "card_width", "droop", "card_spread",
     # Where the leaves sit on the wood, rather than how they look. Also inert by default: leaf_level
@@ -584,12 +586,13 @@ _FOLIAGE_SET_PARAMS = (("atlas", "leaf atlas set"), ("bark_set", "bark set"))
 def foliage_missing_sets(name):
     """[(param, label, set_name)] for the texture sets a species NAMES that no pack provides.
 
-    Split out of `validate_foliage_species` because it is a different KIND of finding, and that is what
-    made the difference matter. The other warnings are authoring mistakes -- a typo, an inert level
-    block, an unknown kind -- and are always wrong. This one is the ordinary state of a preset whose
-    bark has not been generated yet: no placeholder bark set ships, deliberately, because a hand-made
-    one would hide the grain-direction problem generation actually has (docs/FOLIAGE.md 4.4), so the
-    conifer and broadleaf presets name the bark they want and resolve it the moment it exists.
+    Split out of `validate_foliage_species` because it is a different KIND of finding, and that is
+    what made the difference matter. The other warnings are authoring mistakes -- a typo, an inert
+    level block, an unknown kind -- and are always wrong. This one is the ordinary state of a preset
+    whose bark has not been generated yet: no placeholder bark set ships, deliberately, because a
+    hand-made one would hide the grain-direction problem generation actually has (docs/FOLIAGE.md
+    4.4), so the conifer and broadleaf presets name the bark they want and resolve it the moment it
+    exists.
 
     A caller that wants "is this preset well authored" filters these out; a caller that wants "what
     does this tree still need" reads exactly these. `validate_foliage_species` reports both, with
@@ -654,8 +657,9 @@ def validate_foliage_species(name):
         warnings.append(f"{name}: meta.kind '{kind}' unknown {list(FOLIAGE_KINDS)}")
     for key, label, value in foliage_missing_sets(name):
         # Named, absent, and generatable -- so say which tool makes it rather than only that it is
-        # gone. A bark-less tree renders as a solid-tint BobShader, which is the block-out convention
-        # everywhere else in the suite, so this is a note about what is missing and not a failure.
+# gone. A bark-less tree renders as a solid-tint BobShader, which is the block-out
+# convention everywhere else in the suite, so this is a note about what is missing and not a
+# failure.
         tool = "comfy_leaf_atlas" if key == "atlas" else "comfy_bark_set"
         warnings.append(f"{name}: {label} missing: textures/{value} (in any pack); "
                         f"generate it with {tool}, or the tree renders as a solid tint")

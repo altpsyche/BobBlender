@@ -52,8 +52,8 @@ _HANDLERS = {
     "build_snow_cover": atmosphere.build_snow_cover,
     "apply_season": atmosphere.apply_season,
     "scene_preset": atmosphere.scene_preset,
-    # Generation, the Blender half (docs/GENERATION.md, Ops and MCP). Everything that talks to ComfyUI
-    # runs in the MCP process with no bpy; these three are the steps that need Blender.
+    # Generation, the Blender half (docs/GENERATION.md, Ops and MCP). Everything that talks to
+# ComfyUI runs in the MCP process with no bpy; these three are the steps that need Blender.
     "apply_texture_set": shading.apply_texture_set,
     "import_generated": gen_assets.import_generated_op,
     "export_control": gen_assets.export_control_op,

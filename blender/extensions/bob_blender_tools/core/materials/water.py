@@ -22,14 +22,15 @@ _ICE_ROUGHNESS = 0.32                     # frosted-glassy ice (vs the near-mirr
 
 
 def set_water_render_flags(mat):
-    """Make a water material actually read as water in EEVEE-Next (EEVEE refraction): raytraced refraction so the
-    0.92 Transmission bends what is behind the surface instead of reading flat grey. These are 5.2
-    material datablock flags (probed live, not guessed): use_raytrace_refraction is the EEVEE-Next
-    name (use_screen_refraction is the retained 4.x alias, set too for safety); show_transparent_back
-    off drops the doubled back face; DITHERED keeps the surface refraction-capable (BLENDED alpha
-    cannot refract). No-op / harmless in Cycles, which refracts from the Transmission weight alone.
-    The scene's eevee.use_raytracing must also be on -- see enable_eevee_refraction, called from the
-    addon build path (a scene setting, out of a material builder's remit)."""
+    """Make a water material actually read as water in EEVEE-Next: raytraced
+    refraction so the 0.92 Transmission bends what is behind the surface instead of reading flat
+    grey. These are 5.2 material datablock flags (probed live, not guessed):
+    use_raytrace_refraction is the EEVEE-Next name (use_screen_refraction is the retained 4.x
+    alias, set too for safety); show_transparent_back off drops the doubled back face; DITHERED
+    keeps the surface refraction-capable (BLENDED alpha cannot refract). No-op / harmless in
+    Cycles, which refracts from the Transmission weight alone. The scene's eevee.use_raytracing
+    must also be on -- see enable_eevee_refraction, called from the addon build path (a scene
+    setting, out of a material builder's remit)."""
     if mat is None:
         return
     for flag in ("use_raytrace_refraction", "use_screen_refraction"):
@@ -45,10 +46,11 @@ def set_water_render_flags(mat):
 
 
 def enable_eevee_refraction(scene):
-    """Turn on the scene-level EEVEE-Next ray tracing that raytraced refraction needs to show (EEVEE refraction).
-    A no-op unless the active engine is EEVEE, and it only ever switches the toggle ON (never off, so
-    it will not fight a user who wants it off). Cycles needs nothing here. Kept out of the material
-    builder because it mutates the scene; the addon calls it when it builds/assigns water."""
+    """Turn on the scene-level EEVEE-Next ray tracing that raytraced refraction needs to show (EEVEE
+    refraction). A no-op unless the active engine is EEVEE, and it only ever switches the toggle
+    ON (never off, so it will not fight a user who wants it off). Cycles needs nothing here. Kept
+    out of the material builder because it mutates the scene; the addon calls it when it
+    builds/assigns water."""
     if scene is None:
         return
     eng = getattr(getattr(scene, "render", None), "engine", "")
@@ -61,14 +63,14 @@ def enable_eevee_refraction(scene):
 def water_master_group():
     """The water-surface master (see the section comment). The surface animates live off a
     frame-driven Value node, no bake:
-      - Waves (the multi-scale waves): three flow-advected noise octaves (a slow swell, the main ripple, a fine chop)
+      - Waves: three flow-advected noise octaves (a slow swell, the main ripple, a fine chop)
         chained into one normal. Each octave is sampled at TWO phases half a cycle apart and blended
         by a triangle wave, the flow-map trick, so the advection resets without a visible pop even
         where bbt_flow diverges (banks vs mid-channel, rapids). All three fade out as it freezes.
-      - Foam (the foam): bbt_foam (banks + rapids) is lifted by a shore term (shallow water near the banks,
+      - Foam: bbt_foam (banks + rapids) is lifted by a shore term (shallow water near the banks,
         from bbt_shore), broken up by a flow-scrolled noise, and thresholded to crisp lines whose
         sharpness is Foam Crispness -- not a flat white wash. Foam also roughens the surface.
-      - Freeze (the freeze term): a manual Frozen input OR the env below-0 term freezes the water: the flow normal
+      - Freeze: a manual Frozen input OR the env below-0 term freezes the water: the flow normal
         collapses to glassy-flat, cracked-ice detail fades in (a Voronoi distance-to-edge bump),
         transmission drops to opaque, and (manual path) the albedo tints icy blue-white. The shared
         S_Weather frost term adds the winter sheen on the env-cold path.
@@ -80,16 +82,18 @@ def water_master_group():
     _gin(g, "Shallow Color", "NodeSocketColor", _WATER_SHALLOW)
     _gin(g, "Deep Color", "NodeSocketColor", _WATER_DEEP)
     _gin(g, "Depth", "NodeSocketFloat", 1.5, 0.0)
-    # the depth interaction depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of water column):
-    # Absorption is the Beer-Lambert extinction per metre (deep water reads darker/deeper-coloured),
-    # Depth Opacity fades the transmission out with depth (deep = more opaque, so the bed hides),
-    # Shoreline Fade is the metres of water column over which the edge dissolves to transparent (a
-    # soft waterline instead of a hard cut). All degrade gracefully to the old shore look at depth 0.
+    # Depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of
+# water column): Absorption is the Beer-Lambert extinction per metre (deep water reads
+# darker/deeper-coloured), Depth Opacity fades the transmission out with depth (deep = more
+# opaque, so the bed hides), Shoreline Fade is the metres of water column over which the edge
+# dissolves to transparent (a soft waterline instead of a hard cut). All degrade gracefully to
+# the old shore look at depth 0.
     _gin(g, "Depth Absorption", "NodeSocketFloat", 0.5, 0.0)
     _gin(g, "Depth Opacity", "NodeSocketFloat", 0.5, 0.0, 1.0)
-    # Shoreline Fade: fraction of the half-width (from the bank inward) over which the surface fades to
-    # transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present, so a
-    # a pre-depth ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon vanish).
+    # Shoreline Fade: fraction of the half-width (from the bank inward) over which the surface fades
+# to transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present,
+# so a a pre-depth ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon
+# vanish).
     _gin(g, "Shoreline Fade", "NodeSocketFloat", 0.15, 0.0, 1.0)
     _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
     _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
@@ -101,8 +105,8 @@ def water_master_group():
     _gin(g, "Ripple Scale", "NodeSocketFloat", 1.8, 0.0)
     _gin(g, "Wave Detail", "NodeSocketFloat", 0.5, 0.0, 1.0)
     # Surface Texture (issue 3): strength of a tiling multi-scale normal sampled in the ribbon's
-    # flow-space UV (bbt_water_uv), scrolled downstream. Gives the surface real detail texture instead
-    # of reading flat; 0 = the old plain procedural look.
+# flow-space UV (bbt_water_uv), scrolled downstream. Gives the surface real detail texture
+# instead of reading flat; 0 = the old plain procedural look.
     _gin(g, "Surface Texture", "NodeSocketFloat", 0.6, 0.0, 2.0)
     _gin(g, "Foam Color", "NodeSocketColor", _WATER_FOAM)
     _gin(g, "Foam Amount", "NodeSocketFloat", 1.2, 0.0, 2.0)
@@ -132,8 +136,9 @@ def water_master_group():
     I, O = gi.outputs, go.inputs
 
     # Live env: Temperature drives the freeze term (shared group, driven from bbt_env by the panel;
-    # 15 C default when Firmament is absent, so env cold -> 0 and the water never freezes standalone
-    # -- which is why the manual Frozen input exists). frozen = max(manual, env cold); liquid = 1 - it.
+# 15 C default when Firmament is absent, so env cold -> 0 and the water never freezes standalone
+# -- which is why the manual Frozen input exists). frozen = max(manual, env cold); liquid = 1 -
+# it.
     env = g.nodes.new("ShaderNodeGroup")
     env.node_tree = env_state_group()
     env.location = (-1900, -900)
@@ -151,10 +156,11 @@ def water_master_group():
     flow = _geo_attr("bbt_flow", 380)
     foam_a = _geo_attr("bbt_foam", 240)
     shore_a = _geo_attr("bbt_shore", 100)
-    depth_a = _geo_attr("bbt_depth", -40)  # metres of water column (the depth interaction); 0 on a pre-depth ribbon
+    depth_a = _geo_attr("bbt_depth", -40)  # metres of water column; 0 on a pre-depth ribbon
 
     # Beer-Lambert depth extinction: depth_fac 0 at the shoreline (bbt_depth 0) rising toward 1 in
-    # deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity below.
+# deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity
+# below.
     depth_fac = _mmath(g, "SUBTRACT", 1.0,
                        _mmath(g, "EXPONENT",
                               _mmath(g, "MULTIPLY", -1.0,
@@ -241,12 +247,12 @@ def water_master_group():
     n_fine = _wave_bump(fine_h, fine_str, n_mid, (400, 320))
 
     # UV-space detail normal (issue 3): sample a tiling multi-scale noise in the ribbon's flow-space
-    # UV (bbt_water_uv: U = arc length downstream in metres, V = across-width 0..1), scrolled along U
-    # by the frame time so the detail travels DOWNSTREAM in the surface's own frame. Flow-aligned by
-    # construction, not a world-space advection, so it does NOT comb into hair streaks like the earlier
-    # advected bump. V is stretched (x6) so the noise varies across the width too instead of streaking
-    # purely along flow. A pre-batch-1 ribbon reads the attribute as 0 -> flat, a safe no-op. Strength
-    # = Surface Texture, faded out as it freezes.
+# UV (bbt_water_uv: U = arc length downstream in metres, V = across-width 0..1), scrolled along
+# U by the frame time so the detail travels DOWNSTREAM in the surface's own frame. Flow-aligned
+# by construction, not a world-space advection, so it does NOT comb into hair streaks like the
+# earlier advected bump. V is stretched (x6) so the noise varies across the width too instead of
+# streaking purely along flow. A pre-batch-1 ribbon reads the attribute as 0 -> flat, a safe
+# no-op. Strength = Surface Texture, faded out as it freezes.
     uv_a = _geo_attr("bbt_water_uv", -160)
     uvsep = g.nodes.new("ShaderNodeSeparateXYZ")
     uvsep.location = (-1300, -160)
@@ -283,9 +289,10 @@ def water_master_group():
     ice_str = _mmath(g, "MULTIPLY", frozen, 0.35, (500, 40))
     normal = _wave_bump(voro.outputs["Distance"], ice_str, n_fine, (680, 200))
 
-    # Depth colour: shallow near the shoreline, deep in the body. On a the depth interaction ribbon the driver is the
-    # real Beer-Lambert depth_fac (metres of column); the old shore proxy (1-shore)*Depth is kept as a
-    # floor so a a pre-depth ribbon (bbt_depth 0 everywhere) still reads with the shore gradient it had.
+    # Depth colour: shallow near the shoreline, deep in the body. On a depth-carrying ribbon
+# the driver is the real Beer-Lambert depth_fac (metres of column); the old shore proxy
+# (1-shore)*Depth is kept as a floor so a a pre-depth ribbon (bbt_depth 0 everywhere) still
+# reads with the shore gradient it had.
     shore_deep = g.nodes.new("ShaderNodeMath")
     shore_deep.operation = "MULTIPLY"
     shore_deep.use_clamp = True
@@ -295,8 +302,9 @@ def water_master_group():
     deepness = _mmath(g, "MAXIMUM", depth_fac, shore_deep.outputs["Value"], (-820, -260))
     col = _mixcol(g, deepness, I["Shallow Color"], I["Deep Color"], (-620, -300))
 
-    # Foam (the foam). Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise breaks
-    # it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam Crispness.
+    # Foam. Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise
+# breaks it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam
+# Crispness.
     foam_wash = _mmath(g, "MULTIPLY", foam_a.outputs["Fac"], I["Foam Amount"], (-1000, -480))
     shore_shallow = _mrange(g, shore_a.outputs["Fac"], 0.6, 1.0, 0.0, 1.0, (-1000, -640))
     shore_foam = _mmath(g, "MULTIPLY", shore_shallow, I["Shore Foam"], (-820, -640))
@@ -320,14 +328,15 @@ def water_master_group():
     rough = _lerp(g, I["Water Roughness"], 0.6, foam, (620, -820))
     rough = _lerp(g, rough, _ICE_ROUGHNESS, frozen, (620, -980))
     # Ice tint: icy blue-white as the water freezes, driven by the FULL frozen term (env cold OR
-    # manual Frozen), not the manual input alone. The old code tinted only I["Frozen"] and delegated
-    # the env-cold tint to the S_Weather frost term -- but frost is gated by clear sky and calm air,
-    # so an overcast or windy freeze dropped the tint entirely and the river rendered glassy, opaque,
-    # and dark (physically wrong for thick ice). To avoid doubling with the frost tint where frost
-    # DOES fire, the ice tint is complemented by the same frost gate (frost point * clear * calm):
-    # where frost is active (cold + clear + calm) it backs off and the frost term tints; where frost
-    # is suppressed (overcast / windy) the ice tint carries the full look. So exactly one icy tint
-    # applies on any surface, never zero and never both. Gate math mirrors weather_group's frost gate.
+# manual Frozen), not the manual input alone. The old code tinted only I["Frozen"] and delegated
+# the env-cold tint to the S_Weather frost term -- but frost is gated by clear sky and calm air,
+# so an overcast or windy freeze dropped the tint entirely and the river rendered glassy,
+# opaque, and dark (physically wrong for thick ice). To avoid doubling with the frost tint where
+# frost DOES fire, the ice tint is complemented by the same frost gate (frost point * clear *
+# calm): where frost is active (cold + clear + calm) it backs off and the frost term tints;
+# where frost is suppressed (overcast / windy) the ice tint carries the full look. So exactly
+# one icy tint applies on any surface, never zero and never both. Gate math mirrors
+# weather_group's frost gate.
     frost_pt = _mrange(g, env.outputs["Temperature"], 1.0, -5.0, 0.0, 1.0, (440, -300))
     clear = _mmath(g, "SUBTRACT", 1.0, env.outputs["Cloud"], (440, -420))
     calm = _mrange(g, env.outputs["Wind"], 4.0, 0.5, 0.0, 1.0, (440, -540))
@@ -362,10 +371,10 @@ def water_master_group():
                       _mmath(g, "MULTIPLY", I["Depth Opacity"], depth_fac, (800, -1120)), (980, -1120))
     trans = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", I["Transmission"], depth_op, (1160, -1120)),
                    liquid, (1340, -1120))
-    # Alpha: a soft shoreline (the depth interaction) fades the surface to transparent over the outer Shoreline Fade
-    # fraction of the half-width (shore 1 = bank), so the waterline dissolves into the bank instead of
-    # cutting a hard line. Keyed to bbt_shore so a a pre-depth ribbon stays visible. The old lateral Edge
-    # Fade still composes. Frozen ice is fully opaque.
+    # Alpha: a soft shoreline fades the surface to transparent over the
+# outer Shoreline Fade fraction of the half-width (shore 1 = bank), so the waterline dissolves
+# into the bank instead of cutting a hard line. Keyed to bbt_shore so a a pre-depth ribbon stays
+# visible. The old lateral Edge Fade still composes. Frozen ice is fully opaque.
     shore_fade = _mrange(g, shore_a.outputs["Fac"],
                          _mmath(g, "SUBTRACT", 1.0, I["Shoreline Fade"], (800, -1300)), 1.0,
                          1.0, 0.0, (980, -1300))
@@ -387,11 +396,12 @@ def water_master_group():
 
 
 def water_material(mat_name):
-    """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines, the water channel.3). The
-    widened _build_wrapper drives the master's Transmission / IOR / Alpha / Normal into the
-    Principled BSDF on top of the usual Base Color / Roughness / Metallic. get-or-create, so a
-    re-Build keeps tuned inputs. The material's EEVEE refraction/transparency flags are set here so
-    the Transmission actually refracts (EEVEE refraction); the scene-level ray tracing toggle is the addon's job."""
+    """A water-surface wrapper (S_WaterMaster) for a river/stream ribbon (BobSplines, the water
+    channel.3). The widened _build_wrapper drives the master's Transmission / IOR / Alpha /
+    Normal into the Principled BSDF on top of the usual Base Color / Roughness / Metallic.
+    get-or-create, so a re-Build keeps tuned inputs. The material's EEVEE refraction/transparency
+    flags are set here so the Transmission actually refracts; the scene-level
+    ray tracing toggle is the addon's job."""
     mat = _build_wrapper(mat_name, water_master_group(), "water", None)
     set_water_render_flags(mat)
     return mat

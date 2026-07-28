@@ -4,8 +4,7 @@
 Stamps the manifest version (optional), validates the manifest, then runs Blender's extension
 builder to produce `bob_blender_tools-<version>.zip`. The extension folder is already the whole
 product, and the terrain compute is committed inside it rather than copied from a venv, so there is
-nothing to
-vendor -- this just validates and zips.
+nothing to vendor -- this just validates and zips.
 
 Usage:
   uv run --project tools python tools/scripts/build_extension.py [--version X.Y.Z] [--output-dir DIR]
