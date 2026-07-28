@@ -1,0 +1,12 @@
+# Substrings `check_no_phase_labels.py` may skip. One per line, with the reason.
+#
+# This file is for GENUINE EXTERNAL NAMES that happen to look like a letter-number label, and for
+# nothing else. It is not a place to silence a real phase label: if a line needs suppressing to
+# pass, the line needs rewriting instead. See docs/CONVENTIONS.md.
+#
+# Deliberately short. Most external names (`SDXL`, `TRELLIS.2`, `Blender 5.2`, `CC-BY-NC-4.0`,
+# `glTF 2.0`) never match the label pattern in the first place, because it requires a word
+# boundary on both sides of a single capital letter plus its number. Adding them here would only
+# hide a future real hit that happens to sit on the same line.
+
+P3-SAM                  # Hunyuan3D-Part's segmentation model, an upstream name
