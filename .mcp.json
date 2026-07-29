@@ -11,7 +11,9 @@
         "mcp",
         "bob-mcp"
       ],
-      "env": {}
+      "env": {
+        "BOB_COMFY_DIR": "/home/siva/dev/ComfyUI"
+      }
     }
   }
 }

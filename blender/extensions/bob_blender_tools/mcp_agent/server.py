@@ -228,8 +228,12 @@ def comfy_bark_set(
             of ten -- but a shaggy species shot in raking light does.
 
     Returns {ok, set, dir, maps, grain, seam, flatness, warnings, seconds, pack_dir} or
-    {ok: false, error}. `grain.off_vertical_deg` is the verdict: under about 25 is usable, and it is
-    gated by tools/scripts/headless_foliage.py rather than left to taste.
+    {ok: false, error}. `grain.off_vertical_deg` is the verdict, under about 25 is usable, and over it
+    `warnings` says so in a sentence -- read the warnings rather than the number. It used to be gated
+    only in `tools/scripts/headless_foliage.py`, which meant a set could ship with its grain running
+    across the trunk and a clean receipt; the gate script still asserts that the prompt CLAUSE works,
+    which is a fact about the code, while the receipt now judges the set, which is a fact about the
+    asset.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
@@ -238,7 +242,8 @@ def comfy_bark_set(
         return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
                 "grain": info.get("grain"), "seam": info.get("seam"),
                 "flatness": info.get("flatness"),
-                "warnings": _gen_receipt().flatness_warning(info.get("flatness")),
+                "warnings": (_gen_receipt().flatness_warning(info.get("flatness"))
+                             + _gen_receipt().grain_warning(info.get("grain"))),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")
@@ -300,7 +305,8 @@ def comfy_leaf_atlas(
                 "clear_fraction": info.get("clear_fraction"),
                 "flatness": info.get("flatness"),
                 "warnings": (_gen_receipt().flatness_warning(info.get("flatness"), leafy=True)
-                             + _gen_receipt().orientation_warning(info.get("cells"))),
+                             + _gen_receipt().orientation_warning(info.get("cells"))
+                             + _gen_receipt().blank_cell_warning(info.get("cells"))),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")

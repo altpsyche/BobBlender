@@ -612,6 +612,64 @@ CONTROL_RETURN_TURN = undo_exports(1)
 CONTROL_POINTS = 8192
 
 
+def _barycentric(rings=4):
+    """Interior sample weights for a triangle, so a shared edge or a corner never decides whether a
+    face is hidden."""
+    return [(i / (rings + 1.0), j / (rings + 1.0))
+            for i in range(1, rings + 1) for j in range(1, rings + 1)
+            if i / (rings + 1.0) + j / (rings + 1.0) < 1.0]
+
+
+def hidden_surface(obj, eps=1e-4, rings=4):
+    """{surface_area_m2, hidden_area_m2, hidden_fraction}: how much of `obj`'s surface is INSIDE it.
+
+    The one property of a control mesh that no render, bounding box or footprint can show, and the one
+    that decides whether a block-out conditions on the shape it looks like. `Hy3DOmniPointGenerate`
+    samples the control AREA-WEIGHTED, so an enclosed face is a conditioning point describing a
+    surface that is not there. Measured on the shipped shed: built as a wall cube plus a roof prism,
+    56.0 m of hidden wall top and 67.0 m of hidden roof underside put 29.6% of every control point on
+    a solid slab at wall height, and the generation came back an A-frame with its walls gone. Built as
+    one shell, the same silhouette measures 0.9%.
+
+    Ray parity on a triangulated BVH from points nudged along each face normal, sampled ACROSS the
+    face rather than at its centroid: the two are different measurements wherever geometry is
+    coincident, and one jamb post covering 6% of a wall triangle charged that whole triangle to the
+    hidden column at 33.60 m against a true 2.95.
+
+    Lives here rather than in the block-out gate because `export_control` takes ANY object. The gate
+    only ever sees the shipped shapes, and an artist's own block-out is the normal case.
+    """
+    import bmesh
+    from mathutils.bvhtree import BVHTree
+
+    weights = _barycentric(rings)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    matrix = obj.matrix_world
+    bmesh.ops.transform(bm, matrix=matrix, verts=bm.verts[:])
+    tree = BVHTree.FromBMesh(bm)
+    total = hidden = 0.0
+    for face in bm.faces:
+        area = face.calc_area()
+        total += area
+        a, b, c = (v.co for v in face.verts)
+        inside = 0
+        for u, v in weights:
+            at, crossings = a + (b - a) * u + (c - a) * v + face.normal * eps, 0
+            for _ in range(64):
+                hit = tree.ray_cast(at, face.normal)
+                if hit[0] is None:
+                    break
+                crossings += 1
+                at = hit[0] + face.normal * eps
+            inside += crossings % 2
+        hidden += area * inside / len(weights)
+    bm.free()
+    return {"surface_area_m2": round(total, 4), "hidden_area_m2": round(hidden, 4),
+            "hidden_fraction": round(hidden / total, 5) if total else 0.0}
+
+
 def export_control(obj, path, *, points=CONTROL_POINTS):
     """Export a block-out proxy as the control signal a control-conditioned graph (`mesh_geom_ctrl`)
     takes.
@@ -626,10 +684,18 @@ def export_control(obj, path, *, points=CONTROL_POINTS):
     a `TRIMESH` and samples it, so `Trellis2LoadMesh` reads whatever `unit_normalise_export` wrote
     and `points` decides the density. Returns that dict plus the control metadata.
     """
+    from . import gen_receipt  # bpy-free; imported here for the reason `comfy` is elsewhere
+
     info = unit_normalise_export(obj, path)
+    # Measured on the way out, on whatever object the caller handed over, and WARNED about here rather
+    # than left for a gate script to notice about the shipped shapes only. An interior face is a
+    # conditioning point describing a surface that is not there, and this is the last moment anything
+    # can say so: after the export the points are sampled and the asset just comes back the wrong shape.
+    hidden = hidden_surface(obj)
     info.update(points=int(points), footprint=[round(d, 5) for d in dimensions(obj)],
                 footprint_ratio=[round(r, 5) for r in footprint_ratio(obj)],
-                bbox=control_bbox(obj))
+                bbox=control_bbox(obj), hidden_surface=hidden,
+                warnings=gen_receipt.control_surface_warning(hidden))
     return info
 
 

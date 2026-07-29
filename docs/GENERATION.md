@@ -104,7 +104,10 @@ it, which is why every route ships with one and why the nulls below are as impor
 | Failure mode | What it looks like | The check that catches it |
 |---|---|---|
 | a control signal that never reaches the model | generation ignores the block-out entirely and returns a plausible unconditioned asset, silently. Measured 0.010 voxel IoU before the fix, 0.53 after | `blockout-control` part B, scored against a swapped-control null |
+| a block-out with surface INSIDE it | `Hy3DOmniPointGenerate` samples the control area-weighted, so a shape built as overlapping solids conditions on faces that are not there. The shed's wall-box top (56.0 m) and roof-prism underside (67.0 m) put **29.6%** of every control point on a solid slab at wall height, and the generation came back an A-frame. Invisible in a render, in a bbox and in a footprint | `blockout-control` part A ray-casts each face's own surface for parity and gates the interior fraction at 5%. Rebuilt as one shell the shed measures 0.9%, all of it jamb boxes against the wall, at the same bbox |
+| a generation that keeps the plan and loses the STOREY | an A-frame and the barn it should have been share a ground plan and a bounding box: footprint IoU **0.8376**, aspect within 2%. Every shape figure the gate had was blind to it | `plan_profile` bands the plan area by height and gates the largest band deviation at 0.10: 0.0146 for a shape against itself, 0.2551 for an A-frame. The intuitive lower-half ratio is reported and NOT gated, because it reads 1.1127 on the A-frame -- a roof slope at knee height covers more plan than a wall ring |
 | a mesh handed over at metre scale | Trellis2EncodeMesh voxelises in unit-cube space, so the mesh lands outside the grid and the albedo comes back fully BLACK. 172 s for a black texture against 10 s for a correct one | `assets` (the albedo must not be near-constant), `geometry-ab` |
+| a mesh handed over in the WRONG unit cube | the same failure with nothing at metre scale anywhere and every Bob-side round trip correct. Omni returns [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and `mesh_simplify_uv` rescaled nothing, so the block-out route's control was unit-normalised, its geometry came back at 1.99361 and `mesh_texture` was handed 1.99333. Third distinct cause of the same black albedo | the normalise now runs in BOTH graphs that feed `mesh_texture`, asserted over them as a set; `blockout-control` part C reads the POSITION extents of every staged file and gates the one handed over (1.99333 to 0.99985, albedo spread 3.46 to 59.3) |
 | an opaque reference PNG | the geometry graphs feed `LoadImage`'s inverted mask into conditioning, so an opaque frame makes the whole square the subject | `assets` (the alpha must be a real 0.000-1.000 cutout) |
 | a deepcopied model under dynamic VRAM staging | the SECOND decode of a session takes the whole server down, from inside `partially_load` | the version tripwire in `bbox-control` and `voxel-control` part A |
 | a tiling graph leaving the shared model padded | the next subject image comes back wrapped: seam ratio 1.059 where an untiled frame is 3.9 to 8.5 | `ensure_untiled`, asserted in `variants-maps` |
@@ -748,10 +751,23 @@ Unlike `mesh_texture` it cannot texture a mesh Bob already has, only geometry it
 `mesh_texture` stays the track-B route. Benchmarked against `mesh_geom_trellis` plus `mesh_simplify_uv` plus `mesh_texture` on ten prompts by the route A/B and it
 won; numbers and the verdict in [the one-shot-against-staged baseline](GENERATION-BASELINES.md#one-shot-against-the-staged-chain).
 
-**`mesh_simplify_uv.json`.** `Trellis2Simplify` then `Trellis2UVUnwrap` as
-their own graph. Built to be A/B'd against Blender; it WON that A/B and is now pipeline steps 3
-and 4 outright. Five nodes and no model load at all, so it runs in about 1 s per mesh and is also
-the cheapest way to smoke-test the mesh transport.
+**`mesh_simplify_uv.json`.** `GeomPackNormalizeMeshToBBox(1.0)` then `Trellis2Simplify` then
+`Trellis2UVUnwrap` as their own graph. Built to be A/B'd against Blender; it WON that A/B and is now
+pipeline steps 3 and 4 outright. Six nodes and no model load at all, so it runs in about 1 s per mesh
+and is also the cheapest way to smoke-test the mesh transport.
+
+The normalise is `mesh_process`'s, and it was missing here until the block-out route needed it.
+`Trellis2Simplify` rescales nothing, so this graph's output arrives in whatever space its input did,
+and its only consumer is `mesh_texture`, whose encoder voxelises in the unit cube -- so the input
+space IS the encoder's space. That was a precondition nobody had to meet while the only caller was
+`mesh_geom_trellis` at [-0.5, 0.5], and a defect the moment `mesh_geom_ctrl` became one: Omni returns
+[-1, 1], measured **1.99361** out of the geometry stage and still **1.99333** out of this graph, and
+the finished asset shipped a 2048-square basecolor at spread 3.46 and mean 0.06 with 3,886 faces, 0.0
+UV overlap, no boundary edges and a 0.8383 footprint IoU beside it. With the normalise in: simplified
+mesh 0.99985, albedo spread **59.3** and mean 172.05, footprint IoU 0.8270 -- so the block-out's shape
+survives the rescale, which it must, the scale being isotropic and centred. Measured by
+`blockout-control` part C, which now reads the POSITION extents of every staged file and gates the one
+handed to `mesh_texture`.
 
 Derived from `refinement` alone. `mesh_audit`, which this plan also named as a source, is built on
 `PulseMeshAudit` from a pack that is not installed and is not in `ComfyUI-TRELLIS2`'s declared
@@ -1378,6 +1394,19 @@ does to a card. The earlier answered ones, with what answered them, are in
   give back, and the generation workers are separate processes. The floors turn that into a sentence
   before 90 seconds are spent; they do not recover the card. Bob will not restart a server it did
   not start.
+
+  **And one thing the floors CANNOT turn into a sentence, measured 2026-07-29 on two fresh servers in
+  a row: once the Omni control route has run, the SDXL atlas route OOMs whatever the card reports
+  free.** The floor is read and it is TRUE when read -- `comfy_status` said 6530 MiB free, over the
+  3000 texture floor -- and then the main process expanded to 12.80 GiB of 15.48 as the job started
+  and BiRefNet died with 162 MiB left. Same shape on the previous server: 5588 reported, 325 at the
+  point of failure, `comfy_free` recovering 32 MiB of a 12.4 GiB hold. A preflight cannot fix this,
+  because there is no number to read at queue time that predicts it; only an ordering can.
+  `mesh_geom_ctrl` is heavier in this respect than the TRELLIS.2 mesh route it sits beside, which is
+  why the original asset gate got away with textures last (12,261 free at the start, 5,686 after every
+  mesh, atlases fine). **So gate A's order has an exception: generate the ATLASES and texture sets
+  before the block-out-conditioned structure, not after it.** The brief's "hero structure first, while
+  the card is emptiest" is right about TRELLIS.2 and backwards about Omni.
 - **The dead-wood routing rule: the foliage guardrail is copy in three places, and the foliage
   generator is a separate subsystem. Answered 2026-07-27: the quiet version, all three edits, no
   contract change. Landed.** The measurements needed no repeating (the asset gate, the route A/B and

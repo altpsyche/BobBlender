@@ -207,6 +207,94 @@ def orientation_warning(cells):
             f"specimen: the twig is what both cues read"]
 
 
+# A cell with no sprite in it. `leaf_atlas` measures `opaque` per cell and the bar has existed since
+# the foliage gate -- `all(c["opaque"] > 0.02)` in `headless_foliage.py` -- which is the problem: an
+# atlas that ships a blank cell has a clean RECEIPT, and the card built on that cell renders as
+# nothing. The brief calls it out in words ("a cell with `opaque: 0.0` is a card that renders as
+# nothing") and nothing turned those words into a sentence the artist gets. Same bar, moved to where
+# it reaches somebody.
+CELL_OPAQUE_MIN = 0.02
+
+
+def blank_cell_warning(cells):
+    """Atlas cells that carry no sprite, as a list of zero or one sentence.
+
+    Separate from `orientation_warning` because they fail differently and are fixed differently: a
+    misoriented cell is a card hanging by its tips, a blank cell is a card that is not there. A cell
+    can be blank and perfectly "oriented", so one function cannot carry both.
+    """
+    judged = [c for c in (cells or []) if c.get("opaque") is not None]
+    blank = [c for c in judged if c["opaque"] < CELL_OPAQUE_MIN]
+    if not judged or not blank:
+        return []
+    figures = "; ".join(f"cell {c['cell']} at {c['opaque'] * 100:.1f}% opaque" for c in blank)
+    return [f"{len(blank)} of {len(judged)} cells carry no sprite ({figures}), against a "
+            f"{CELL_OPAQUE_MIN * 100:.0f}% bar. A card whose cell is empty renders as NOTHING -- not "
+            f"as a smaller leaf -- so a tree carding onto it loses that share of its canopy with "
+            f"nothing in the frame to say so. Reroll the set, or use a smaller grid: fewer cells that "
+            f"are all filled beats a grid with a hole in it"]
+
+
+# Bark grain that runs across the trunk instead of along it. The bar is 25 degrees off vertical and it
+# is measured on every bark set -- and until now it was gated only in `headless_foliage.py`, with
+# `comfy_bark_set`'s own description telling the artist so. A tileable SDXL pass has no reason to keep
+# an axis: measured, "rough conifer bark" with no clause came back polygonal mud cracks 84 degrees off
+# vertical, and the shipped clause holds it inside 18 across species and seeds. The gate script is the
+# right place to assert the CLAUSE still works; it is the wrong place to tell somebody their bark is
+# sideways.
+GRAIN_OFF_VERTICAL_MAX = 25.0
+
+
+def grain_warning(grain):
+    """Bark whose grain is not running along the trunk, as a list of zero or one sentence."""
+    off = (grain or {}).get("off_vertical_deg")
+    if off is None or off <= GRAIN_OFF_VERTICAL_MAX:
+        return []
+    coherence = (grain or {}).get("coherence")
+    return [f"the bark grain runs {off:.1f} degrees off vertical against a "
+            f"{GRAIN_OFF_VERTICAL_MAX:.0f} bar"
+            + (f" (coherence {coherence:.3f})" if coherence is not None else "")
+            + ": on a trunk this reads as bark wrapping the wrong way round, and no bark scale hides "
+              "it. Name the FEATURE and its direction in the prompt -- \"vertical bark, deep furrows "
+              "running top to bottom\" is the wording that measured 17.6 degrees worst case where "
+              "naming the direction alone measured 71.3 and no clause at all 83.8 -- or reroll"]
+
+
+# How much of a block-out's surface may be INSIDE it. The control is read as an area-weighted surface
+# sample (`Hy3DOmniPointGenerate`), so an interior face is a conditioning point describing a surface
+# that is not there. Measured: a shed built as a wall cube plus a roof prism put 125.94 m of 425.98,
+# 29.6%, on a solid slab at wall height, and the generation came back an A-frame with its walls gone.
+# Built as one shell the same shape measures 2.95 of 313.98, 0.9%.
+#
+# The bar lives here rather than in the block-out gate for the reason the whole module exists: the
+# gate only ever sees the SHIPPED shapes, and an artist's own block-out -- which is the normal case,
+# since `export_control` takes any object -- was measured by nothing at all.
+CONTROL_HIDDEN_MAX = 0.05
+
+
+def control_surface_warning(control):
+    """A block-out conditioning on its own interior, as a list of zero or one sentence.
+
+    Reads the `hidden_surface` block `gen_assets.export_control` folds into its result. Deliberately
+    about the CONTROL rather than about the generated mesh: by the time the mesh exists the points
+    have already been sampled, and no figure on the asset says why it came back the wrong shape.
+    """
+    fraction = (control or {}).get("hidden_fraction")
+    if fraction is None or fraction <= CONTROL_HIDDEN_MAX:
+        return []
+    area = (control or {}).get("hidden_area_m2")
+    total = (control or {}).get("surface_area_m2")
+    return [f"{fraction * 100:.1f}% of this block-out's surface is INSIDE it"
+            + (f" ({area:.2f} m of {total:.2f})" if area is not None and total is not None else "")
+            + f", against a {CONTROL_HIDDEN_MAX * 100:.0f}% bar. The control is sampled area-weighted, "
+              f"so those faces are conditioning points describing surfaces that are not there, and "
+              f"nothing about the render, the bounding box or the footprint shows it. Build the shape "
+              f"as a SHELL rather than as overlapping solids -- boolean-union the parts, or delete the "
+              f"faces that end up enclosed. Measured on the shipped shed: 29.6% built as a wall cube "
+              f"plus a roof prism, which generated as an A-frame with no walls, and 0.9% built as one "
+              f"shell at the same silhouette"]
+
+
 # How faithfully a baked basecolor has to reproduce the texture it came from before the difference
 # is worth saying out loud. Set from both sides of the coincident-bake fix, on three generated
 # assets re-finished through the same code twice, `gen_assets.map_fidelity` in-chart over the whole
@@ -514,9 +602,14 @@ MESH_INFORMATIONAL = {
 
 # The same declaration for a TEXTURE receipt, which crosses a different bridge (`mcp_agent.server`'s
 # texture, bark and atlas tools) and is judged by the two functions the mesh receipt never reaches.
+# A value may name ONE reader or several. `cells` needs two because its measurements fail in ways that
+# are fixed differently and can happen independently: a cell can be blank and perfectly "oriented",
+# and a cell can be full and upside down. One sentence covering both would name the wrong remedy half
+# the time.
 TEXTURE_GATED = {
     "flatness": "flatness_warning",
-    "cells": "orientation_warning",
+    "cells": ("orientation_warning", "blank_cell_warning"),
+    "grain": "grain_warning",
 }
 
 TEXTURE_INFORMATIONAL = {
@@ -524,7 +617,6 @@ TEXTURE_INFORMATIONAL = {
     "dir": "where it landed",
     "maps": "the map files written",
     "seam": "the wrap measurement; `seam_report` has no bar because a set is used tiled or not",
-    "grain": "bark direction, gated in `headless_foliage.py` rather than in a receipt sentence",
     "atlas": "the grid the set carries, read by `assets.atlas_grid()` rather than judged",
     "cell_distinctness": "how different the cells are; a stuck index is visible, not measurable",
     "clear_fraction": "how much of the sheet is cut away, context for `cells`",

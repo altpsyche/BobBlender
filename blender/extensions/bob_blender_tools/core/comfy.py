@@ -1319,6 +1319,46 @@ BARK_SUFFIX = "vertical bark, deep furrows running top to bottom"
 
 # The leaf-atlas sprite clause. Appended in front of `SUBJECT_SUFFIX`, which already asks for one
 # centred uncropped subject on a plain background -- exactly what one atlas cell is.
+#
+# Every clause here is MEASURED, and the measurement is a class pass rate rather than one atlas:
+# `headless_gen_class_rates.py --classes atlas` runs eight ordinary requests and counts how many come
+# back with an empty receipt. On the previous wording that rate was **0 of 4**, and the two failures it
+# split into are what the three additions answer.
+#
+#   the WOODY TWIG. `orient_sprite` has two cues and both read the twig: the green/brown split gives a
+#     direct axis, and a fan of needles against a solid stub gives the fallback. The previous wording
+#     asked for "the cut end of its stem", which a diffusion model honours as a crop rather than as a
+#     twig -- measured, woody fraction 0.000 to 0.002 against a 0.01 floor across four cells, so
+#     `_woody_axis` returned None on every one and each sprite was turned by the principal axis of a
+#     round shape: +91, +71, +103 and -11 degrees, arbitrary, with nothing in the receipt saying so.
+#     With a twig actually asked for, the same seed measured 0.108 to 0.254 and 4 of 4 resolved.
+#   FRESH GREEN foliage against the brown twig, which is the clause that looks redundant and is not.
+#     The woody cue is a green/brown SPLIT, so it needs green to split from: a birch atlas came back
+#     autumn-coloured, one cell measured woody fraction 0.554 -- over half the sprite reading as wood --
+#     and the split became meaningless. 1 of 4 cells resolved. Asking for green took the same seed to
+#     4 of 4.
+#   the FLATBED SCAN. `SUBJECT_SUFFIX` already asks for even diffuse studio lighting and it is not
+#     enough: measured 1.317 stops of light ramping across a sprite against a 0.55 bar, delighting ran
+#     and did not clear it. Naming the imaging method rather than the lighting took the same seed and
+#     prompt to 0.627. A card is lit from both sides, so a key baked into a sprite has no camera angle
+#     that hides it.
+#
+# "flat lay" is gone, and deliberately: it is one step from "pressed flat like a herbarium specimen",
+# which is the wording that removed the stem AND the elongation and cost an approval gate. The scan
+# clause carries the perpendicular camera without asking for a flattened subject.
+# MEASURED AND REVERTED, kept here because the null is the useful part. The three clauses above were
+# tried as a suffix and re-measured on the same four prompts: the rate stayed 0 of 4 and the light got
+# WORSE, `baked-light` firing on 4 samples against 2 before, with `orientation-guess` still on 3. The
+# hand-tuned wins those clauses came from were real -- they are quoted above with their figures -- and
+# they were wins on ONE prompt at ONE seed, which is not the same claim as a suffix that helps every
+# request. Shipping it on the strength of the hand runs would have made the shared clause worse for
+# everyone and looked like progress.
+#
+# What the null points at instead: if four ordinary requests out of four fail the same bar, the bar is
+# the more likely defect. `gen_receipt.LEAF_RAMP_STOPS_MAX = 0.55` rests on two points, one of them
+# synthetic, and docs/ROADMAP.md already lists it as needing a second batch -- this is that batch, and
+# it says the bar rejects the entire class. A gate no ordinary sample can pass is a blocked route
+# wearing a gate's clothes.
 ATLAS_SPRITE_SUFFIX = ("a single sprig, the cut end of its stem at the bottom of the frame, "
                        "foliage fanning upward, flat lay")
 
@@ -1457,7 +1497,29 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
     out_dir = os.path.join(textures, set_name)
     cells_dir = os.path.join(out_dir, "cells")
     os.makedirs(cells_dir, exist_ok=True)
+    # A failed generation must not keep the name it asked for. The directory has to exist before the
+    # first sprite is written, and `unique_set_name` hands out the next free suffix, so without this a
+    # call that dies mid-generation leaves an EMPTY set holding the name and sends the retry to `_02`.
+    # Measured the hard way: three OOMed atlas calls left `leaf_conifer`, `leaf_conifer_02` and
+    # `leaf_conifer_03` as empty shells, and `leaf_conifer` is the name the conifer species preset
+    # resolves BY NAME with no assignment step (the atlas naming rule). A set that resolves zero maps
+    # renders as a solid tint with every receipt still reporting success, so the next foliage build
+    # would have worn a flat green card and said it was fine.
+    import shutil
 
+    try:
+        return _leaf_atlas(prompt_text, out_dir, set_name, cells_dir, route=route, cols=cols,
+                           rows=rows, size=size, seed=seed, negative=negative, url=url,
+                           timeout=timeout, on_progress=on_progress, on_cell=on_cell,
+                           delight=delight)
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+
+
+def _leaf_atlas(prompt_text, out_dir, set_name, cells_dir, *, route, cols, rows, size, seed,
+                negative, url, timeout, on_progress, on_cell, delight):
+    """`leaf_atlas`'s body, split out so the caller can free the set name if this raises. See there."""
     t0 = time.time()
     sources = []
     orientations = []
@@ -2054,9 +2116,19 @@ def control_route(mode=None, control=None, control_bbox=None):
 
 def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mesh_simplify_uv",
                      timeout=900, on_progress=None, on_queued=None, preflight_graph=True):
-    """`mesh_simplify_uv`: `Trellis2Simplify` then `Trellis2UVUnwrap`, the ComfyUI side of the steps 3
-    and 4 A/B. No model is loaded, so the wall clock here is the algorithm and not a checkpoint
-    read."""
+    """`mesh_simplify_uv`: normalise into the unit cube, then `Trellis2Simplify` and
+    `Trellis2UVUnwrap`, the ComfyUI side of the steps 3 and 4 A/B. No model is loaded, so the wall
+    clock here is the algorithm and not a checkpoint read.
+
+    The normalise is `mesh_process`'s, for `mesh_process`'s reason, and it was missing here until the
+    block-out route needed it. `Trellis2Simplify` rescales nothing, so this graph's output arrives in
+    whatever space its input did, and its only consumer is `mesh_texture`, whose encoder voxelises in
+    the unit cube. That was a latent precondition while the one caller was `mesh_geom_trellis` at
+    [-0.5, 0.5] and a defect the moment `mesh_geom_ctrl` became one: Omni returns [-1, 1], measured
+    1.99361 out of the geometry stage and 1.99333 out of this one, and the finished barn shipped a
+    2048-square basecolor at spread 3.46 and mean 0.06 -- black, faithfully baked, with 3,886 faces,
+    0.0 UV overlap and a 0.8383 footprint IoU beside it.
+    """
     graph, prov = load_workflow(workflow)
     values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)},
               "BOB_SIMPLIFY": {"target_face_count": int(faces)}}

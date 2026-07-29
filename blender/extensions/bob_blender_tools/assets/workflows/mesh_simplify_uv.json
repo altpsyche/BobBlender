@@ -8,12 +8,13 @@
       "Trellis2RefineMesh, Trellis2EncodeMesh, Trellis2GetConditioning, LoadImage and LoadTrellis2Models are all dropped. Refinement needs the 4B model loaded; simplify and unwrap do not, so this graph runs with no model resident at all, which is what makes it a fair timing comparison against Blender.",
       "mesh_audit.json was named as a second source in the plan and is NOT usable: it is built on PulseMeshAudit, from a pack that is not installed and is not a declared dependency of ComfyUI-TRELLIS2.",
       "GeomPackLoadMesh replaced by Trellis2LoadMesh for the free-form path, same reason as mesh_texture.",
-      "Trellis2ExportTrimesh plus Preview3D for the retrievable output."
+      "Trellis2ExportTrimesh plus Preview3D for the retrievable output.",
+      "GeomPackNormalizeMeshToBBox(1.0) runs FIRST, for the reason mesh_process already carries it and measured on this graph the same way. Trellis2Simplify rescales nothing, so whatever space the mesh arrives in is the space mesh_texture is handed, and Trellis2EncodeMesh voxelises in the unit cube: a mesh outside it is a mesh the encoder cannot see and the albedo comes back BLACK with every other figure in the receipt healthy. It was a latent precondition while the only caller was TRELLIS.2 at [-0.5, 0.5], and the block-out route made it a defect -- Hunyuan3D-Omni returns [-1, 1], measured 1.99361 through mesh_geom_ctrl and still 1.99333 after this graph, and the asset shipped a 2048 square at spread 3.46 and mean 0.06. Isotropic and centred, so proportions survive and the footprint IoU the block-out route exists for is untouched."
     ],
-    "requires_nodes": ["Trellis2LoadMesh", "Trellis2Simplify", "Trellis2UVUnwrap", "Trellis2ExportTrimesh"],
-    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT)",
+    "requires_nodes": ["Trellis2LoadMesh", "GeomPackNormalizeMeshToBBox", "Trellis2Simplify", "Trellis2UVUnwrap", "Trellis2ExportTrimesh"],
+    "requires_pack": "ComfyUI-TRELLIS2 (PozzettiAndrea, MIT) plus ComfyUI-GeometryPack (GPL-3.0) for the normalise, which mesh_texture -- this graph's only consumer -- already needs",
     "runtime_inputs": ["BOB_MESH.mesh_path"],
-    "notes": "No model load, so this is also the cheapest graph to smoke-test the mesh transport with."
+    "notes": "No model load, so this is also the cheapest graph to smoke-test the mesh transport with. The output is unit-normalised, which is what mesh_texture's encoder requires and what nothing on the block-out route was providing."
   },
   "prompt": {
     "1": {
@@ -25,10 +26,20 @@
         "title": "BOB_MESH"
       }
     },
+    "6": {
+      "class_type": "GeomPackNormalizeMeshToBBox",
+      "inputs": {
+        "trimesh": ["1", 0],
+        "target_size": 1.0
+      },
+      "_meta": {
+        "title": "BOB_NORM"
+      }
+    },
     "2": {
       "class_type": "Trellis2Simplify",
       "inputs": {
-        "trimesh": ["1", 0],
+        "trimesh": ["6", 0],
         "target_face_count": 4000,
         "fill_holes": false,
         "fill_holes_perimeter": 0.03,

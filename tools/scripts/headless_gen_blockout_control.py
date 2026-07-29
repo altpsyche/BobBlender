@@ -5,10 +5,14 @@ block-out proxy still recognisably own the result**. So every figure here is sco
 BLOCK-OUT, with no rotation search, because an asset that fits the layout only after being turned
 does not fit the layout.
 
-  A. **Which way does each exporter face?** A load-and-export round trip through a gate-only graph
-     with no model in it, on an asymmetric block-out, over all 24 axis-aligned rotations. That pins
-     `gen_assets.CONTROL_RETURN_TURN` by measurement rather than by reading the exporter's source,
-     and it is cheap enough to run every time.
+  A. **Which way does each exporter face, and is every block-out a surface with nothing behind it?**
+     A load-and-export round trip through a gate-only graph with no model in it, on an asymmetric
+     block-out, over all 24 axis-aligned rotations. That pins `gen_assets.CONTROL_RETURN_TURN` by
+     measurement rather than by reading the exporter's source, and it is cheap enough to run every
+     time. Beside it, and needing no server at all, the HIDDEN SURFACE of every shipped block-out
+     shape: the control is read as an area-weighted surface sample, so a shape built as overlapping
+     solids spends part of its point budget on faces that are inside it, and nothing about a render,
+     a bbox or a footprint can show that.
   B. **`mesh_geom_ctrl` against `mesh_geom_mv_trellis` on the same block-outs.** Three proxies, one of them asymmetric front-to-back,
      each conditioning Omni on its shape (`mesh_geom_ctrl`) and TRELLIS.2 on four Blender-rendered
      views of it (`mesh_geom_mv_trellis`, the multi-view baseline). Scored WITHOUT the rotation
@@ -17,7 +21,11 @@ does not fit the layout.
      beside each.
   C. **Does the finished asset still pass the checks it inherits from the asset gate?** One block-out through
      `mesh_geom_ctrl`, `mesh_simplify_uv` and `mesh_texture` and then all of steps 6 to 8: face
-     budget, UV overlap, height, origin, LODs, BobShader.
+     budget, UV overlap, height, origin, LODs, BobShader. Plus the two the black-albedo defect
+     needed, because every check in the list above passed on an asset that was a black box: the
+     POSITION extents of every staged file, gated on the one handed to `mesh_texture` being in the
+     unit cube its encoder voxelises in, and the SPREAD of the albedo that shipped rather than its
+     presence.
   D. **Can the Omni wrapper share a session with SDXL?** The card is 16.3 GB and the stylise gate measured the
      stylise route peaking at 14.2 of it, so this is a residency question with a yes or no answer.
 
@@ -34,13 +42,16 @@ import argparse
 import json
 import math
 import os
+import struct
 import subprocess
 import sys
 import threading
 import time
 
+import bmesh
 import bpy
 import numpy as np
+from mathutils.bvhtree import BVHTree
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
@@ -48,6 +59,7 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
     gen_assets,
+    gen_receipt,
     gen_views,
     materials,
     proxies,
@@ -74,6 +86,33 @@ RESOLUTION = 1024
 FACES = 4000
 GRID = 48
 SAMPLES = 8000
+
+# How much of a block-out's surface may be INSIDE it. A control mesh is read as an area-weighted
+# surface sample, so an interior face is a conditioning point that describes nothing, and the bar is
+# on the fraction rather than the area because that is what decides how much of the point budget goes
+# to it. The shed built as a wall cube plus a roof prism measured 125.94 m of 425.98, 29.6%, and came
+# back an A-frame; built as one shell it measures 2.95 of 313.98, 0.9%, all of it the doorway jamb
+# boxes' backs against the wall. 5% leaves room for that kind of proud detail and no room for a
+# hidden storey.
+HIDDEN_AREA_MAX = 0.05
+
+# How many height bands `plan_profile` cuts a shape into, and how far any one band may drift before
+# "this is a different building" is the honest reading. Calibrated on a synthetic A-frame -- the
+# failure mode as geometry, roof planes carried to the ground at the shed's own 8.7 x 7.7 x 7.5 m
+# bbox -- against the shipped shed block-out:
+#
+#                            max band deviation   lower-half ratio   footprint IoU
+#   shed against itself      0.0146               1.0101             --
+#   shed against an A-frame  0.2551               1.1127             0.8376
+#
+# So the bar is on the DEVIATION, at 0.10: seven times the self-agreement floor and under half the
+# A-frame's. The lower-half ratio is reported and NOT gated, because the calibration says it cannot do
+# this job -- it reads 1.11 on the A-frame, i.e. above 1.0, because a roof slope at knee height covers
+# more plan than a thin wall ring does, so every "did the walls survive" bar written on it would pass
+# the exact shape it was written to catch. The discrimination lives in the upper bands, where the shed
+# holds 0.37 to 0.43 and the A-frame has already fallen to 0.16 to 0.18.
+PROFILE_SLICES = 8
+PROFILE_DEVIATION_MAX = 0.10
 
 # Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP,
 # not FAIL.
@@ -156,6 +195,77 @@ class Vram:
 
 
 # -- Shape maths, scored where it lands -----------------------------------------------------------
+def glb_extents(path):
+    """The POSITION accessor extents of a glb's first primitive, read out of its JSON chunk.
+
+    Pure struct and json, because it has to work in Blender's interpreter with no mesh library. It
+    is here to measure the SPACE each staged file arrives in, which is the one property the chain
+    has to agree on and the only one nothing was reading: `Trellis2EncodeMesh` voxelises in the unit
+    cube, so a file whose longest extent is not about 1.0 is a file `mesh_texture` cannot see.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    _magic, _version, total = struct.unpack("<III", data[:12])
+    offset, doc = 12, None
+    while offset < total and doc is None:
+        length, kind = struct.unpack("<II", data[offset:offset + 8])
+        if kind == 0x4E4F534A:
+            doc = json.loads(data[offset + 8:offset + 8 + length].decode("utf-8"))
+        offset += 8 + length
+    prim = doc["meshes"][0]["primitives"][0]
+    acc = doc["accessors"][prim["attributes"]["POSITION"]]
+    return [round(acc["max"][i] - acc["min"][i], 5) for i in range(3)]
+
+
+def _barycentric(rings=4):
+    """Interior sample weights for a triangle, so a shared edge or a corner never decides whether a
+    face is hidden."""
+    return [(i / (rings + 1.0), j / (rings + 1.0))
+            for i in range(1, rings + 1) for j in range(1, rings + 1)
+            if i / (rings + 1.0) + j / (rings + 1.0) < 1.0]
+
+
+HIDDEN_WEIGHTS = _barycentric()
+
+
+def hidden_surface(obj, eps=1e-4):
+    """(total area, hidden area) in square metres: how much of this mesh's surface is INSIDE it.
+
+    The property a block-out has to have that no render, bbox or footprint can see.
+    `Hy3DOmniPointGenerate` samples the control mesh area-weighted, so an interior face is a
+    conditioning point like any other -- a shape built as overlapping solids spends part of its point
+    budget describing surfaces that are not there, and the barn's block-out spent 29.6% of it that
+    way while looking exactly right in every view.
+
+    Ray parity on a triangulated BVH from points nudged along the face normal, sampled over the face
+    rather than at its centroid: the two are different measurements where geometry is coincident, and
+    one jamb post covering 6% of a wall triangle would otherwise charge that whole triangle to the
+    hidden column (measured, it charged 33.60 m of a true 2.95).
+    """
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    tree = BVHTree.FromBMesh(bm)
+    total = hidden = 0.0
+    for face in bm.faces:
+        area = face.calc_area()
+        total += area
+        a, b, c = (v.co for v in face.verts)
+        inside = 0
+        for u, v in HIDDEN_WEIGHTS:
+            at, crossings = a + (b - a) * u + (c - a) * v + face.normal * eps, 0
+            for _ in range(64):
+                hit = tree.ray_cast(at, face.normal)
+                if hit[0] is None:
+                    break
+                crossings += 1
+                at = hit[0] + face.normal * eps
+            inside += crossings % 2
+        hidden += area * inside / len(HIDDEN_WEIGHTS)
+    bm.free()
+    return total, hidden
+
+
 def mesh_points(obj, count=SAMPLES, seed=0):
     """Area-weighted surface samples, centred and divided by ONE scale so the aspect ratio survives.
 
@@ -203,6 +313,51 @@ def footprint(points, grid=GRID):
     plan = np.zeros((grid, grid), dtype=bool)
     plan[idx[:, 0], idx[:, 1]] = True
     return plan
+
+
+def plan_profile(points, slices=PROFILE_SLICES, grid=GRID):
+    """The XY plan AREA at each height band, as a fraction of the widest band.
+
+    The figure that tells a walled building from an A-frame, and neither the footprint IoU nor the
+    bbox aspect can: an A-frame and a barn have the same ground plan and the same bounding box, and
+    differ entirely in WHERE the plan narrows. The barn's control holds full plan up to the eaves and
+    then tapers; the A-frame that came back tapers from the floor.
+
+    Normalised by the widest band rather than by the control's own areas, so the profile is a shape
+    and not a scale, and a candidate that came back 3% smaller is not read as a different building.
+    """
+    z = points[:, 2]
+    low, high = float(z.min()), float(z.max())
+    span = max(high - low, 1e-9)
+    out = []
+    for i in range(slices):
+        band = (z >= low + span * i / slices) & (z <= low + span * (i + 1) / slices)
+        out.append(float(footprint(points[band], grid).sum()) if band.sum() else 0.0)
+    widest = max(out) or 1.0
+    return [round(v / widest, 4) for v in out]
+
+
+def profile_agreement(proxy_points, candidate_points, slices=PROFILE_SLICES):
+    """The candidate's height profile against the block-out's, band by band.
+
+    `max_deviation` is the figure to read and the one `PROFILE_DEVIATION_MAX` gates: the largest
+    single-band difference, 0.0146 for a shape against itself and 0.2551 for an A-frame against the
+    shed it was supposed to be.
+
+    `wall_band_ratio` -- the candidate's mean plan area over the lower half against the proxy's -- is
+    reported and deliberately not gated. It was the intuitive answer to "did the walls survive" and
+    the calibration killed it: it reads 1.1127 on the A-frame, ABOVE 1.0, because a roof slope at
+    knee height covers more of the plan than a thin wall ring does. It is kept because a figure that
+    is known not to discriminate is worth more on the receipt than a figure nobody has checked.
+    """
+    want = plan_profile(proxy_points, slices)
+    got = plan_profile(candidate_points, slices)
+    half = max(1, slices // 2)
+    want_low = sum(want[:half]) / half
+    got_low = sum(got[:half]) / half
+    return {"proxy_profile": want, "candidate_profile": got,
+            "wall_band_ratio": round(got_low / (want_low or 1.0), 4),
+            "max_deviation": round(max(abs(g - w) for g, w in zip(got, want)), 4)}
 
 
 def iou(a, b):
@@ -380,6 +535,22 @@ def omni_available(info):
 # -- Part A: the orientation convention, pinned ---------------------------------------------------
 def part_a(args, reachable):
     section("A. Which way each exporter faces, measured on an asymmetric block-out")
+
+    # Every SHIPPED block-out shape, measured for surface that is not on the outside. No server and
+    # no model, so this runs on any machine and every time -- which matters, because it is the one
+    # property of a control that a render cannot show and the one that cost the barn its walls.
+    for shape, make in sorted(proxies.BLOCKOUTS.items()):
+        empty_scene()
+        candidate = make(f"Blockout_{shape}")
+        bpy.context.scene.collection.objects.link(candidate)
+        total, inside = hidden_surface(candidate)
+        fraction = inside / total if total else 0.0
+        check(f"the {shape!r} block-out has no surface behind its own surface",
+              fraction <= HIDDEN_AREA_MAX,
+              f"{inside:.2f} m of {total:.2f} m is interior, {100.0 * fraction:.1f}% of every "
+              f"area-weighted control point against a {100.0 * HIDDEN_AREA_MAX:.0f}% bar. Built as "
+              f"overlapping solids the shed measured 29.6%, and the generation lost its walls")
+
     obj = blockout("notched")
     proxy_points = mesh_points(obj, seed=1)
     # The ceiling first, because without it every IoU below reads as a failure: a surface-voxel IoU
@@ -628,6 +799,21 @@ def part_c(args, reachable, ready):
         return
     note("mesh_simplify_uv plus mesh_texture", f"{time.time() - t0:.1f} s")
 
+    # The SPACE each hop arrives in, and the check that reads it. `Trellis2EncodeMesh` voxelises in
+    # the unit cube, so the mesh `mesh_texture` is handed has to have a longest extent of about 1.0.
+    # Omni returns [-1, 1] where TRELLIS.2 returns [-0.5, 0.5], and `Trellis2Simplify` rescales
+    # nothing, so on this route -- the only one that pairs a Hunyuan-scale mesh with
+    # `mesh_simplify_uv` -- the encoder saw a mesh entirely outside its grid and painted a black
+    # texture set, faithfully baked, with every other figure in the receipt healthy. Measured per
+    # file rather than asserted about the route, because the frame is what the chain is agreeing on.
+    for label, path in (("control", control), ("raw", raw), ("simp", simp), ("tex", tex)):
+        note(f"{label} glb extents", str(glb_extents(path)))
+    handed = max(glb_extents(simp))
+    check("the mesh handed to mesh_texture is in the unit cube the encoder voxelises in",
+          abs(handed - 1.0) < 0.05,
+          f"longest extent {handed:.4f} against 1.0; over it the encoder sees nothing and the "
+          f"albedo comes back black")
+
     # Through the SHIPPED function that decides the per-file turns, not a hand-written mapping, so
     # the gate fails if `stage_exports` and the chain ever disagree.
     exports = comfy.stage_exports({"meta": {"control": control}, "simplified_mesh": simp,
@@ -655,18 +841,40 @@ def part_c(args, reachable, ready):
     check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
+    # And that it carries a PICTURE. Presence was the whole of this check once, and it passed on a
+    # 2048 square of pure black: the map existed, the bake was faithful to it, `bake_fidelity`
+    # declined to answer on two flat images and `warnings` came back empty. Read the spread on the
+    # file that shipped, through the same bar the receipt gates on.
+    spread = ((report.get("map_stats") or {}).get("basecolor") or {}).get("std")
+    mean = ((report.get("map_stats") or {}).get("basecolor") or {}).get("mean")
+    check("the albedo that shipped carries a picture rather than one flat tone",
+          spread is not None and spread >= gen_receipt.MAP_SPREAD_MIN,
+          f"spread {spread} against a {gen_receipt.MAP_SPREAD_MIN} bar, mean {mean}, where every "
+          f"honest map in the pack measures 33 to 58")
     check("the material is a BobShader",
           materials.master_type(obj_final.active_material) is not None,
           str(materials.master_type(obj_final.active_material)))
     # And the point of the whole phase: the FINISHED asset, not just the raw mesh, still owns the
     # block-out's ground plan.
-    agree = fixed_agreement(proxy_points, mesh_points(obj_final, seed=2))
+    final_points = mesh_points(obj_final, seed=2)
+    agree = fixed_agreement(proxy_points, final_points)
     check("the finished asset still keeps the block-out's footprint",
           agree["footprint_iou"] > 0.5,
           f"footprint IoU {agree['footprint_iou']:.4f}, IoU {agree['iou']:.4f}, "
           f"aspect {agree['aspect']}")
+    # And WHERE it keeps it, which the footprint IoU cannot say: a synthetic A-frame at the shed's own
+    # bbox scores 0.8376 on the line above, which is the score the rejected barn got with its walls
+    # replaced by roof planes carried to the ground. Same plan, same box, different building.
+    profile = profile_agreement(proxy_points, final_points)
+    check("the block-out's height profile survived, band for band",
+          profile["max_deviation"] <= PROFILE_DEVIATION_MAX,
+          f"max band deviation {profile['max_deviation']:.4f} against a {PROFILE_DEVIATION_MAX} bar "
+          f"(0.0146 for a shape against itself, 0.2551 for an A-frame); lower-half ratio "
+          f"{profile['wall_band_ratio']:.4f}, ungated, see PROFILE_DEVIATION_MAX; proxy "
+          f"{profile['proxy_profile']} against {profile['candidate_profile']}")
     with open(os.path.join(OUT, "part_c.json"), "w") as fh:
-        json.dump({"report": report, "agreement": agree}, fh, indent=2, sort_keys=True, default=str)
+        json.dump({"report": report, "agreement": agree, "profile": profile}, fh, indent=2,
+                  sort_keys=True, default=str)
 
 
 # -- Part D: can Omni share the card with SDXL ----------------------------------------------------

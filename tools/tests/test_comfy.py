@@ -1312,6 +1312,87 @@ def test_w8p_normalises_before_it_processes(mods):
     assert not [k for k in bound[by_title["BOB_PROCESS"]]["inputs"] if k.startswith("remesh.")]
 
 
+def test_a_failed_atlas_does_not_keep_the_name_it_asked_for(mods, monkeypatch, tmp_path):
+    """A generation that dies must free the set name, or the retry cannot have it back.
+
+    `unique_set_name` never overwrites, and the set directory has to exist before the first sprite is
+    written, so a failed call leaves an EMPTY set holding the name and sends the retry to `_02`.
+    Measured: three OOMed atlas calls left `leaf_conifer`, `leaf_conifer_02` and `leaf_conifer_03` as
+    empty shells. That name is the one the conifer species preset resolves BY NAME with no assignment
+    step, and a set resolving zero maps renders as a solid tint with every receipt reporting success --
+    so the next foliage build wears a flat green card and nothing says so.
+    """
+    comfy, _ = mods
+    pack = tmp_path / "pack"
+    textures = pack / "textures"
+
+    def boom(*args, **kwargs):
+        raise comfy.ComfyError("CUDA out of memory")
+
+    monkeypatch.setattr(comfy, "atlas_sprite", boom)
+    for _attempt in range(3):
+        with pytest.raises(comfy.ComfyError):
+            comfy.leaf_atlas("spruce needles", str(pack), name="leaf_conifer", cols=2, rows=2)
+        assert not (textures / "leaf_conifer").exists(), "the failed set kept its name"
+        assert sorted(p.name for p in textures.iterdir()) == [], "a failed set left litter behind"
+
+    # And the name is genuinely reclaimable: the next successful call gets the plain stem, not `_04`.
+    assert comfy.unique_set_name(str(textures), "leaf_conifer") == "leaf_conifer"
+
+
+def test_w9c_normalises_before_it_simplifies(mods):
+    """`mesh_simplify_uv` carries the same normalise for the same reason, and it is the fix for the
+    block-out route's black texture.
+
+    `Trellis2Simplify` rescales nothing and this graph's only consumer is `mesh_texture`, whose
+    encoder voxelises in the unit cube, so the input space IS the encoder's space. TRELLIS.2 at
+    [-0.5, 0.5] made that a precondition nobody had to meet; Omni at [-1, 1] made it a defect --
+    measured 1.99361 out of `mesh_geom_ctrl`, still 1.99333 out of this graph, and the finished asset
+    shipped a black 2048 square at spread 3.46 against the receipt's 6.0 bar.
+
+    Both halves are asserted: that the node is there, and that the simplify reads IT rather than the
+    loader, because a normalise wired in parallel is a normalise that changes nothing.
+    """
+    comfy, _ = mods
+    graph, prov = comfy.load_workflow("mesh_simplify_uv")
+    by_title = comfy.titles(graph)
+    norm = graph[by_title["BOB_NORM"]]
+    assert norm["class_type"] == "GeomPackNormalizeMeshToBBox"
+    assert norm["inputs"]["target_size"] == 1.0, "1.0 is a [-0.5, 0.5] box"
+    assert norm["inputs"]["trimesh"] == [by_title["BOB_MESH"], 0]
+    simplify = graph[by_title["BOB_SIMPLIFY"]]
+    assert simplify["class_type"] == "Trellis2Simplify"
+    assert simplify["inputs"]["trimesh"] == [by_title["BOB_NORM"], 0]
+    assert graph[by_title["BOB_UV"]]["inputs"]["trimesh"] == [by_title["BOB_SIMPLIFY"], 0]
+    assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_UV"], 0]
+    assert prov["runtime_inputs"] == ["BOB_MESH.mesh_path"]
+    assert "GeomPackNormalizeMeshToBBox" in prov["requires_nodes"]
+
+
+def test_every_mesh_texture_feed_arrives_unit_normalised(mods):
+    """The precondition stated as a property of the graphs rather than of a route.
+
+    `mesh_texture` is fed by exactly two graphs, and BOTH have to normalise or the encoder sees
+    nothing on whichever one does not. `mesh_process` always did; `mesh_simplify_uv` did not, which
+    is the whole of the block-out route's black albedo. Written as a loop so a third feed cannot be
+    added without meeting it.
+    """
+    comfy, _ = mods
+    for name in ("mesh_simplify_uv", "mesh_process"):
+        graph, _prov = comfy.load_workflow(name)
+        by_title = comfy.titles(graph)
+        norm = graph[by_title["BOB_NORM"]]
+        assert norm["class_type"] == "GeomPackNormalizeMeshToBBox", name
+        assert norm["inputs"]["trimesh"] == [by_title["BOB_MESH"], 0], name
+        # Nothing may reach the exporter around the normalise: every consumer of the loaded mesh has
+        # to be downstream of it, or part of the graph is still in the input's space.
+        loader = by_title["BOB_MESH"]
+        readers = [nid for nid, node in graph.items()
+                   if nid != by_title["BOB_NORM"]
+                   and [loader, 0] in [v for v in node["inputs"].values() if isinstance(v, list)]]
+        assert readers == [], f"{name}: {readers} read the un-normalised mesh"
+
+
 def test_the_alt_chain_stages_the_same_keys_as_the_staged_one(mods, monkeypatch, tmp_path):
     """The challenger is a route and not a pipeline: same three staged files, so `finish_passes`,
     `stage_exports` and `finish_asset` need no case for it."""

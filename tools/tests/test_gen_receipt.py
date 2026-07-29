@@ -108,9 +108,12 @@ def test_no_measurement_can_reach_a_receipt_without_a_reader(mods):
     for gated, known, label in ((receipt.MESH_GATED, receipt.MESH_INFORMATIONAL, "mesh"),
                                 (receipt.TEXTURE_GATED, receipt.TEXTURE_INFORMATIONAL, "texture")):
         assert not set(gated) & set(known), f"{label}: a key cannot be both gated and informational"
-        for key, fn in gated.items():
-            assert callable(getattr(receipt, fn, None)), \
-                f"{label}: {key} names {fn}, which is not a function in this module"
+        for key, fns in gated.items():
+            # One key may declare several readers, because one measurement can fail in ways that are
+            # fixed differently: an atlas cell can be blank OR upside down, independently.
+            for fn in ((fns,) if isinstance(fns, str) else fns):
+                assert callable(getattr(receipt, fn, None)), \
+                    f"{label}: {key} names {fn}, which is not a function in this module"
         for key, why in known.items():
             assert isinstance(why, str) and len(why) > 10, \
                 f"{label}: {key} is declared informational with no reason worth reading"
@@ -430,3 +433,81 @@ def test_a_generated_material_claiming_to_be_metal_says_so(mods):
         "the wrong cause is not offered once the right one is known"
     assert receipt.bake_fidelity_warning({"correlation": 0.9974, "mean_abs_diff": 2.3},
                                        metalness=structure) == []
+
+
+def test_a_blank_atlas_cell_gets_a_sentence(mods):
+    """The bar existed since the foliage gate -- `all(c["opaque"] > 0.02)` in `headless_foliage.py` --
+    and lived only there, so an atlas could ship a cell with no sprite in it and a clean receipt. The
+    card built on that cell renders as NOTHING, which is a canopy with a hole and nothing in the frame
+    to say why.
+
+    Separate from `orientation_warning` on purpose: a cell can be blank and perfectly oriented, and
+    full and upside down, so one sentence would name the wrong remedy half the time.
+    """
+    receipt, _ = mods
+    good = [{"cell": i, "opaque": 0.10 + i * 0.02} for i in range(4)]
+    assert receipt.blank_cell_warning(good) == []
+    assert receipt.blank_cell_warning([]) == [], "no cells is not a verdict"
+    assert receipt.blank_cell_warning([{"cell": 0}]) == [], "a cell with no figure is not judged"
+
+    # The real case: the atlas that was passed over for this at the asset gate had a cell at 3%
+    # opacity, which is over the bar; 0.0 is the one that renders as nothing.
+    dead = good[:3] + [{"cell": 3, "opaque": 0.0}]
+    line = receipt.blank_cell_warning(dead)
+    assert len(line) == 1
+    assert "1 of 4" in line[0]
+    assert "cell 3" in line[0]
+    assert "renders as NOTHING" in line[0]
+    assert "smaller grid" in line[0], "the remedy that is not a reroll is named"
+    assert receipt.blank_cell_warning([{"cell": 0, "opaque": 0.03}]) == [], \
+        "3% opaque is a thin sprite and was shipped once; the bar is 2%"
+
+
+def test_bark_grain_running_sideways_gets_a_sentence(mods):
+    """Moved out of `headless_foliage.py`, where it was the only reader. `comfy_bark_set`'s own
+    description used to tell the artist the bar lived in a gate script, which meant a set could ship
+    with its grain across the trunk and nothing in the receipt objected.
+
+    The gate script keeps its version, and the split is the point: there it asserts the prompt CLAUSE
+    still works, which is a fact about the code; here it judges the set, which is a fact about the
+    asset.
+    """
+    receipt, _ = mods
+    assert receipt.grain_warning(None) == []
+    assert receipt.grain_warning({}) == [], "nothing measured is not a failure"
+    # The two shipped bark sets measured 14.43 and 1.31 degrees off vertical.
+    assert receipt.grain_warning({"off_vertical_deg": 14.43}) == []
+    assert receipt.grain_warning({"off_vertical_deg": 1.31}) == []
+    assert receipt.grain_warning({"off_vertical_deg": 25.0}) == [], "the bar itself passes"
+
+    # And the measured failure: "rough conifer bark" with no clause came back polygonal mud cracks.
+    line = receipt.grain_warning({"off_vertical_deg": 83.8, "coherence": 0.21})
+    assert len(line) == 1
+    assert "83.8 degrees off vertical" in line[0]
+    assert "0.210" in line[0], "coherence is carried when it was measured"
+    assert "furrows" in line[0], "the wording that measured best is named, not just 'reroll'"
+    assert "17.6" in line[0] and "71.3" in line[0], "the alternatives are quantified"
+
+
+def test_a_block_out_conditioning_on_its_own_interior_gets_a_sentence(mods):
+    """The check that had to leave the block-out gate to be worth anything. `export_control` takes ANY
+    object, so an artist's own block-out is the normal case, and the gate only ever saw the shipped
+    shapes -- which is how a shed built as a wall cube plus a roof prism reached a generation with 29.6%
+    of its control points describing a slab inside the building.
+    """
+    receipt, _ = mods
+    assert receipt.control_surface_warning(None) == []
+    assert receipt.control_surface_warning({}) == []
+    # Built as one shell: 2.95 m of 313.98, all of it the doorway jamb boxes against the wall.
+    assert receipt.control_surface_warning(
+        {"hidden_fraction": 0.0094, "hidden_area_m2": 2.95, "surface_area_m2": 313.98}) == []
+
+    # Built as overlapping solids: 125.94 of 425.98, and the generation came back an A-frame.
+    line = receipt.control_surface_warning(
+        {"hidden_fraction": 0.2956, "hidden_area_m2": 125.94, "surface_area_m2": 425.98})
+    assert len(line) == 1
+    assert "29.6%" in line[0]
+    assert "125.94 m of 425.98" in line[0]
+    assert "area-weighted" in line[0], "the mechanism is named, not just the number"
+    assert "A-frame" in line[0], "what it actually produced is named"
+    assert "SHELL" in line[0], "the fix is named"

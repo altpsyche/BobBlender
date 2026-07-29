@@ -117,21 +117,46 @@ _KINDS = {
 # to try before the one that needs the brief amended. Measured, a point control holds a footprint
 # IoU of 0.9106 against 0.5766 for the bbox control, so the silhouette it is given is the one it
 # keeps.
+#
+# One rule follows from HOW the control is read, and it is not the rule a modeller would assume: a
+# block-out has to be a surface with nothing behind it. `Hy3DOmniPointGenerate` samples the mesh
+# area-weighted, so hidden interior faces are conditioning points like any other, and a shape built
+# as overlapping solids spends a third of its point budget describing surfaces that are not there.
+# That is invisible in a render and invisible in a bbox, which is why `blockout-control` part A
+# measures it directly and why the shapes here are built as shells rather than as unions.
 
 
 def _shed(name, width=8.0, depth=7.0, wall_h=4.2, ridge_h=7.5, eave=0.35, door_w=2.6,
           door_h=3.0, jamb=0.12):
-    """A gabled shed: a wall box, a real roof prism over it, and a doorway jamb standing proud.
+    """A gabled shed: walls, soffit and roof as ONE closed shell, and a doorway jamb standing proud.
 
     Not a finished building, and deliberately not: everything here is silhouette. The gable ENDS
     face -y and +y, so the ridge runs along y and the doorway sits in the -y gable, which is the
     elevation a three-quarter camera reads.
 
+    **Every face here is on the outside, and that is the whole construction rather than a detail.**
+    The first version built the walls as a cube and the roof as its own prism sitting on top, which
+    is a shape that renders identically and conditions differently: `Hy3DOmniPointGenerate` samples
+    the control mesh's surface AREA-WEIGHTED, so the wall box's hidden top face (56.0 m) and the roof
+    prism's hidden underside (67.0 m) put **29.6% of every control point** -- 125.94 m of 425.98 --
+    on a solid horizontal slab at wall height, inside the building. The comment those faces were
+    built under said an overlapping union samples the same surface as a clean one, and that is
+    exactly wrong for a route whose control is a point cloud. The generation came back an A-frame:
+    roof planes carried to the ground, walls and doorway gone.
+
+    So the shell is built explicitly: a floor, four wall sides, a mitred soffit ring out to the eave
+    line, two roof slopes and two gable triangles. Measured against the version it replaces: 313.98 m
+    of surface with 2.95 hidden, **0.9%**, at the same 8.7 x 7.7 x 7.5 m bbox and the same zero
+    non-manifold edges. The silhouette is untouched and the conditioning is a different signal.
+
     `jamb` is the one piece of relief rather than silhouette, and it is here because the artist's own
     note on the failed generation was that the doorway "reads as a flat pale slab rather than a pair
     of doors". A doorway drawn only in the texture has nothing to catch a practical light; a jamb
     standing 12 cm proud is over one triangle's worth of surface at the budgets this route uses, so
-    it is detail the control can actually carry.
+    it is detail the control can actually carry. The three jamb boxes stay closed boxes and their
+    back faces stay coincident with the wall they stand on, which is the whole of the 2.95 m residue
+    above -- measured rather than assumed away, and left alone because a frame drawn as one open
+    shell would be a hole in the wall rather than a jamb on it.
 
     `width` and `depth` are the WALL box; the roof overhangs by `eave` on each of the four sides, so
     the overall footprint is width + 2*eave by depth + 2*eave, which is the figure the op reports back.
@@ -143,23 +168,34 @@ def _shed(name, width=8.0, depth=7.0, wall_h=4.2, ridge_h=7.5, eave=0.35, door_w
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
     half_w, half_d = width / 2.0, depth / 2.0
-
-    bmesh.ops.create_cube(bm, size=1.0, matrix=(Matrix.Translation((0, 0, wall_h / 2.0))
-                                                @ Matrix.Diagonal((width, depth, wall_h, 1))))
-
-    # The roof as its own solid: a prism with the ridge along y and an overhang on all four sides,
-    # so the eave line is a real edge with a shadow under it rather than a painted stripe.
     roof_w, roof_d = half_w + eave, half_d + eave
-    verts = [bm.verts.new(co) for co in (
-        (-roof_w, -roof_d, wall_h), (roof_w, -roof_d, wall_h),
-        (roof_w, roof_d, wall_h), (-roof_w, roof_d, wall_h),
-        (0.0, -roof_d, ridge_h), (0.0, roof_d, ridge_h))]
-    for face in ((0, 1, 4), (2, 3, 5), (0, 4, 5, 3), (1, 2, 5, 4), (0, 3, 2, 1)):
-        bm.faces.new([verts[i] for i in face])
+
+    # Eight corners of the wall box, the four eave corners at wall height, and the two ridge ends.
+    # Indices are named rather than counted because the winding matters: every face below is wound
+    # so its normal points OUT, which is what `openness_report` and the point sampler both read.
+    floor = [bm.verts.new(co) for co in ((-half_w, -half_d, 0.0), (half_w, -half_d, 0.0),
+                                         (half_w, half_d, 0.0), (-half_w, half_d, 0.0))]
+    top = [bm.verts.new(co) for co in ((-half_w, -half_d, wall_h), (half_w, -half_d, wall_h),
+                                       (half_w, half_d, wall_h), (-half_w, half_d, wall_h))]
+    eaves = [bm.verts.new(co) for co in ((-roof_w, -roof_d, wall_h), (roof_w, -roof_d, wall_h),
+                                         (roof_w, roof_d, wall_h), (-roof_w, roof_d, wall_h))]
+    ridge = [bm.verts.new(co) for co in ((0.0, -roof_d, ridge_h), (0.0, roof_d, ridge_h))]
+
+    bm.faces.new(floor[::-1])                                   # the floor, facing down
+    for i in range(4):                                          # the four wall sides
+        j = (i + 1) % 4
+        bm.faces.new((floor[i], floor[j], top[j], top[i]))
+    for i in range(4):                                          # the soffit ring, mitred, facing down
+        j = (i + 1) % 4
+        bm.faces.new((top[i], top[j], eaves[j], eaves[i]))
+    bm.faces.new((eaves[0], eaves[1], ridge[0]))                # the -y gable
+    bm.faces.new((eaves[2], eaves[3], ridge[1]))                # the +y gable
+    bm.faces.new((eaves[1], eaves[2], ridge[1], ridge[0]))      # the +x slope
+    bm.faces.new((eaves[3], eaves[0], ridge[0], ridge[1]))      # the -x slope
 
     # The doorway jamb, proud of the -y gable wall: a frame, not a slab, so the opening reads as an
-    # opening. Three boxes rather than a boolean, because a block-out is a control signal and an
-    # overlapping union samples exactly the same surface as a clean one.
+    # opening. Three boxes rather than a boolean, because each is a closed shell of its own and only
+    # the face it stands against is hidden -- the residue the docstring quantifies.
     post = max(0.18, door_w * 0.12)
     for matrix in (
         Matrix.Translation((-(door_w / 2.0 + post / 2.0), -(half_d + jamb / 2.0), door_h / 2.0))
