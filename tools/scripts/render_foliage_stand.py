@@ -3,11 +3,10 @@
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
         --python tools/scripts/render_foliage_stand.py -- [--samples 32] [--width 1280]
 
-Writes `_generated/foliage_stand.png`. The point of the framing is the comparison: the redwood run
-of 2026-07-27 (`_generated/redwood_03.png`) put a camera at eye level among generated trunks and got
-the faceted fan with the flared root skirt that started this whole track, so this puts a camera in
-the same place among procedural ones. Same scatter, same terrain vocabulary, same eye height; the
-trees are the only thing that changed.
+Writes `_generated/foliage_stand.png`. The point of the framing is the comparison: a whole-scene
+run put a camera at eye level among GENERATED trunks and got the faceted fan with the flared root
+skirt that started this whole track, so this puts a camera in the same place among procedural ones.
+Same scatter, same terrain vocabulary, same eye height; the trees are the only thing that changed.
 
 The stand is eight LIVE variants (docs/FOLIAGE.md 2.5), so it is also blowing while it is being
 photographed -- which a still frame cannot show, and which is the whole reason a variant is not an
@@ -43,8 +42,8 @@ def main(argv):
     args = ap.parse_args(argv)
 
     # The repo's generated pack, on the search path. The shipped species name a generated bark set
-# and a generated leaf atlas, and this addon is imported rather than registered, so without this
-# the stand is grown with the block-out fallbacks and the shot is about the wrong thing.
+    # and a generated leaf atlas, and this addon is imported rather than registered, so without this
+    # the stand is grown with the block-out fallbacks and the shot is about the wrong thing.
     pack = os.path.join(REPO, "packs", "generated")
     if os.path.isdir(pack):
         assets.add_pack_root(pack)
@@ -100,7 +99,7 @@ def main(argv):
         bg.inputs["Color"].default_value = (0.42, 0.53, 0.68, 1.0)
         bg.inputs["Strength"].default_value = 1.1
 
-    # Eye level among the trunks, which is the redwood run's framing and the only one that shows
+    # Eye level among the trunks, which is that run's framing and the only one that shows
     # whether a crown reads: an overhead shot of any canopy is a green rug. The height is measured
     # off the terrain rather than guessed, or the camera ends up inside a ridge -- which is what
     # a fixed Z did on the first pass, and it renders as a very dark forest.

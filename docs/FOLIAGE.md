@@ -20,7 +20,7 @@ inside two metres of one tree.
 
 **Origin.** Raised out of
 [GENERATION.md's Foliage section](GENERATION.md#foliage-what-image-to-3d-is-for-and-what-it-is-not-for),
-which was written after a whole-scene redwood run of 2026-07-27 put the foliage limit in front of a
+which was written after a whole-scene run of 2026-07-27 put the foliage limit in front of a
 camera instead of in a gate table. That section is the evidence; this is the answer to it. The
 dead-wood routing rule closed the near-term half -- say out loud that generation makes trunks, not
 crowns -- and left the generator itself as a subsystem of its own, which is this.
@@ -43,7 +43,7 @@ From the measurements, not from taste. TRELLIS.2 returns one mesh from one image
 of a leaf card, an atlas, or a branch hierarchy, and the opacity channel it emits only becomes a
 real cutout when the plausibility rule in `gen_assets.source_opacity` fires.
 
-On the redwood run it fired on nothing:
+On that run it fired on nothing:
 
 | Asset | Verdict | In-chart alpha |
 |---|---|---|
@@ -59,7 +59,7 @@ flared root skirt.
 Two further facts decide the shape of the fix, and both are about SURFACES:
 
 - **The route is very good at surfaces.** `comfy_texture_set` is the strong half of the suite
-  (measured seam ratio 1.02 to 1.11 on the redwood sets). Bark and an atlas are both surfaces.
+  (measured seam ratio 1.02 to 1.11 over that run's sets). Bark and an atlas are both surfaces.
 - **`mesh_subject` already emits genuine cutout alpha** — range 0.000 to 1.000, mean 0.175 measured —
   because a subject image is matted, not voxelised. The alpha Bob cannot get out of a mesh it can
   get out of a picture, which is the whole reason cards are affordable.
@@ -89,8 +89,8 @@ first:
   that skeleton. There is no version of the generator where the trunk is opaque geometry.
 - **"Good at bark" was extrapolated, not measured.** The solids result covers rocks, boulders, logs,
   stumps and debris. A log is a short cylinder at a 4,000-face budget; a 44 m standing trunk at the
-  same budget is a different problem, and the one time it was tried — the redwood run — the result
-  carried the flared root skirt that the scatter `Z Offset` knob now exists to hide. No measurement
+  same budget is a different problem, and the one time it was tried — that whole-scene run — the
+  result carried the flared root skirt that the scatter `Z Offset` knob now exists to hide. No measurement
   says a generated trunk reads at 2 m.
 - **Bark relief at these budgets is a normal map either way.** The dense mesh was measured buying no
   needle-scale detail at scatter budgets; the same argument applies to bark grain. If the detail
@@ -583,8 +583,8 @@ anything else. Solved as follows, and gated.
   exactly 1/n.
 
 - **The shear, measured and then fixed.** Acknowledging it as inherent was right about the mechanism
-  and wrong about the size, and leaving it unmeasured is how it reached a hero render: the
-  forest-barn gate reported *bark wrapping wrong at the foot of the conifer trunk*.
+  and wrong about the size, and leaving it unmeasured is how it reached a hero render: the artist
+  reported *bark wrapping wrong at the foot of the conifer trunk*.
 
   Measured per quad, in tiles of sideways slide, on the shipped conifer at the size that scene used
   — median **0.0000** and p95 **0.068** over 8,235 bark quads, and **1.713** in one band. All of it
@@ -652,7 +652,7 @@ in this family across two phases, all found by writing a check rather than by lo
   the graph at all: a GN-generated mesh **ignores the object's material slots entirely**, so
   `Set Material Index` alone renders grey.
 
-  The modifier-order rule the redwood work landed ([SYSTEMS.md](SYSTEMS.md#rebuilding-in-place)) is
+  The modifier-order rule that scene work landed ([SYSTEMS.md](SYSTEMS.md#rebuilding-in-place)) is
   sidestepped rather than obeyed: because both `Set Material` nodes are inside the recipe, this
   object needs no `BBT_Material` modifier and therefore has nothing that can end up in the wrong
   place. An `assign_material` call on a foliage object would flatten it back to one material.
@@ -841,7 +841,7 @@ fallback above: a generated set is regenerable in seconds, weighs several megaby
 whoever generated it, so what ships is the NAME. The seeds that measured well are recorded here
 because they are the part that is not cheap to rediscover:
 
-    comfy_bark_set(name="bark_conifer",    prompt="shaggy fibrous redwood bark, reddish brown",   seed=7)
+    comfy_bark_set(name="bark_conifer",    prompt="shaggy fibrous cedar bark, reddish brown",     seed=7)
     comfy_bark_set(name="bark_broadleaf",  prompt="grey brown oak bark, deep cracked ridges",     seed=31)
     comfy_leaf_atlas(name="leaf_conifer",  prompt="single spruce needle spray, dark green needles on one twig", seed=7)
     comfy_leaf_atlas(name="leaf_broadleaf",prompt="single oak leaf cluster on one short twig, green summer leaves", seed=7)
@@ -1041,7 +1041,7 @@ at all: drop a folder in a pack and it is in the picker. There is no import step
 for hand-made against generated, which is the point.
 
 Beside each picker is a Generate button, the same pairing the Generate Asset row already uses.
-Generated sets land in the generated pack, and the `pack_dir` plumbing the redwood fixes added makes
+Generated sets land in the generated pack, and the `pack_dir` plumbing that scene work added makes
 them resolvable from Blender the moment they are written. A placeholder atlas ships in the block-out
 pack, so a tree is never blocked on a server.
 
@@ -1050,7 +1050,7 @@ pack, so a tree is never blocked on a server.
 the script is there so it is reproducible rather than mysterious. It is deliberately the smallest
 thing that exercises every property the real atlas will have: a 2×2 grid, so a broken cell pick
 cannot pass; straight alpha with a genuine cutout (**81.3% transparent**, measured, versus the
-mean-0.998 opacity that made the redwood run's leaves solid); four visibly different sprays, so a
+mean-0.998 opacity that made a whole-scene run's leaves solid); four visibly different sprays, so a
 stuck index is visible rather than plausible; and each spray growing from the BOTTOM edge of its
 cell, because a card's v is 0 at the attachment and a centred spray would float off its twig.
 
@@ -1109,7 +1109,7 @@ between them where they already are.
 Two invariants the gate holds, because this is copy and copy drifts: every kind whose note points at
 the Foliage panel must actually resolve a species (a note pointing somewhere nothing grows is a worse dead
 end than the refusal it replaced), and the routing half — every noted kind is a real kind, rocks carries
-no note — stays owned by `headless_redwood.py`.
+no note — stays owned by `headless_scene_seams.py`.
 
 The loop closes in the other direction too: Make Variants reports which collection it
 filled, so the artist ends up back at the Scatter panel holding the assets they just grew. It is
@@ -1213,7 +1213,14 @@ until you look at its edge. Only a number tells them apart, which is why each ro
 | `Leaf Level` unclamped on a LOD rung | a bald rung: leaves requested at a depth the rung does not build | `Leaf Level` is clamped to the rung's own depth |
 | a flared, lobed base below the ground plane | a tree sunk 0.031 m into the terrain | the base-offset check, after flare and lobing |
 | the bark UV shearing across the flare | grain fanning out and smearing across the bottom metre of a trunk, at correct scale and correct direction everywhere else, so both existing bark measures pass | `check_bark_shear`, per-quad sideways slide: conifer 1.713 tiles before, 0.184 after, against a 0.5 bar, on the shipped presets |
-| a generated albedo with the light baked in | a surface that looks right in the reference and cannot be relit, plus a leaf card lit from the wrong side on whichever face is dark | `comfy_maps.flatness_report` (0.075 bar) and `mask_stops` (one stop inside the cutout); `comfy.flatness_warning` carries the verdict |
+| a sprite the composer could not orient | a leaf hanging by its tips, or a petiole pointing
+sideways, in an atlas whose every per-cell figure passes -- the cell is full, the sprite reaches the
+bottom edge, and `base_taper` reads narrow-at-the-base because a compact leaf IS narrow at whichever
+edge it was set down on | `comfy_maps.sprite_orientation` and `gen_receipt.orientation_warning`: whether
+the CUE could be read, not whether the result looks right. On the three atlases the second artist
+rejection named it flags broadleaf 4 of 4, conifer 1 of 4 (the top-right cell, turned -171 degrees)
+and grass 3 of 4 |
+| a generated albedo with the light baked in | a surface that looks right in the reference and cannot be relit, plus a leaf card lit from the wrong side on whichever face is dark | `comfy_maps.flatness_report` (0.075 bar) and `mask_stops` (one stop inside the cutout); `gen_receipt.flatness_warning` carries the verdict |
 
 Two of these are worth reading as method rather than as bugs.
 
@@ -1254,14 +1261,28 @@ Measured end to end on a warm 5080: a 2x2 atlas in 9.9 s, a bark set in 4.9 s, b
 the ordinary pack resolver onto a preset-built conifer that renders at luminance range 0.48.
 
 The stand: 8 variants at 17,256 verts, **945 trees over 260 m** drawing on all 8, written to
-`_generated/foliage_stand.png` beside `_generated/redwood_03.png`, which is the frame that started
-this. Reproduce it with `tools/scripts/render_foliage_stand.py`, and shoot the per-species contact
+`_generated/foliage_stand.png` beside the whole-scene run's own eye-level frame, which is what
+started this. Reproduce it with `tools/scripts/render_foliage_stand.py`, and shoot the per-species contact
 sheets with `tools/scripts/render_foliage_gallery.py`.
 
 ## Open questions
 
 Status only: **Answered**, **Open**, or **Deferred, and why**. The two still open are neither on the
 critical path nor blocking anything.
+
+- **Answered.** Is the 1.0 in-mask stops bar right for a needle spray, or should it be per-species?
+  Neither: the bar was measuring two different things at once and there does not need to be a
+  species table. A conifer sprig spans 1.143 stops inside its cutout, of which at most 0.48 is light
+  — the rest is one needle shadowing the next, which is real geometry a flat card cannot carry and
+  therefore belongs in the albedo, which is the artist's own reading of it.
+  `comfy_maps.mask_light_split` fits a plane to log luminance over the masked texels and reports the
+  plane's span (the light ramping across the sprite) apart from its residual (the sprite's own
+  relief). Only the ramp is gated, at `gen_receipt.LEAF_RAMP_STOPS_MAX`. The proof that this is a split
+  rather than a reweighting is that a synthetic key baked across the same sprites moves the ramp
+  figure stop for stop and leaves the detail figure unchanged to two decimal places. Five atlases
+  were generated chasing the old bar, and the prompt rewrite that finally moved it is what broke the
+  sprite orientation — an unmeasured property regressing while a measured one improved, which is the
+  failure class this whole section is about.
 
 - **Answered.** What master does a leaf card use? The `surface` master with a cutout wired
   straight to the Principled, not a fourth master. See

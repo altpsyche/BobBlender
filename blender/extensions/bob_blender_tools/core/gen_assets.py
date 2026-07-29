@@ -128,6 +128,250 @@ def boundary_edges(obj):
     return sum(1 for n in counts.values() if n == 1)
 
 
+def map_stats(paths):
+    """{role: {mean, std}} for the maps that were WRITTEN, in 0-255.
+
+    Read off the files rather than off the images in memory, because what ships is the file, and
+    because the failure this catches came from a stage that reported success: the block-out route's
+    `mesh_texture` returned an all-black texture set, the bake carried the black through faithfully,
+    and every check in the receipt passed. `gen_receipt.empty_map_warning` is the gate that reads this.
+    """
+    import numpy as np
+
+    out = {}
+    for role, path in (paths or {}).items():
+        try:
+            image = bpy.data.images.load(str(path), check_existing=False)
+        except RuntimeError:
+            continue
+        try:
+            count = len(image.pixels)
+            if not count:
+                continue
+            px = np.empty(count, dtype=np.float32)
+            image.pixels.foreach_get(px)
+            rgb = px.reshape(-1, max(1, image.channels))[:, :3] * 255.0
+            out[role] = {"mean": round(float(rgb.mean()), 2), "std": round(float(rgb.std()), 2)}
+        finally:
+            bpy.data.images.remove(image)
+    return out
+
+
+def openness_report(obj, height_m=None, weld_distance=1e-5):
+    """Split a mesh's boundary loops into pits, see-through holes and open shell edges.
+
+    `boundary_edges` counts openness and cannot say what KIND, and the difference is the whole
+    argument about the generated ground rock. Its reference is a vesicular rock, so most of its 60
+    boundary edges are the openings of real gas pockets -- surface, not damage, and raising the face
+    budget does not close them (a moss mound went 4.3% at 3,500 faces to 3.8% at 9,000, where a solid
+    with pinholes went 1.3% to 0.58%). One count cannot separate "this rock is pitted" from "you can
+    see through this shell", so a fraction tuned to catch the second always cries wolf about the
+    first, and an artist warned about a rock twice stops reading the warnings.
+
+    What separates them is not the size of the opening, it is what is BEHIND it. A ray cast in through
+    a pit's mouth hits the floor of the dimple, which is still the outside of the solid and reads as
+    surface. The same ray through a hole in a dual-contoured shell passes into the hollow and hits the
+    far wall FROM BEHIND, and a backface is what a hole looks like in a render. So the classifier is
+    the sign of the hit normal, not a distance, and it needs no bar at all.
+
+    Measured on five generated meshes, per boundary loop:
+
+        mesh          faces   boundary edges   pit   see-through   open shell edge
+        ground rock   3,493         60          50        10              0
+        stump         6,542         43          26         1             16
+        structure     8,839         19          11         8              0
+        fallen log    3,979          4           1         3              0
+        boulder       3,901          2           2         0              0
+
+    The rock the artist was warned about twice is 83% pits, and the gabled structure -- which passed
+    the old fraction with room to spare -- carries one see-through loop 1.59 m across, a black wedge
+    under the left eave that was visible in a three-quarter render. That is the "headless checks
+    cannot catch what looks wrong" case turning out to be catchable after all.
+
+    `largest_seethrough` is reported as a length and as a share of the object's longest dimension,
+    because a big hole has FEW edges: that wedge is 5 edges of 8,839 faces, which no edge-count
+    fraction will ever fire on. `height_m` scales the length into the metres the asset will SHIP at,
+    because this runs before `rescale_to_height` and a unit-cube mesh's spans are not metres --
+    without it the first control-conditioned structure reported a "1.47 m" opening on a mesh 2 m
+    tall. The fraction needs no scaling and is the figure the gate reads.
+
+    Welds its own copy first, and that is not a detail: glTF splits a vertex at every UV seam, so on
+    an unwelded mesh every chart border reads as a boundary loop. Measured on that
+    control-conditioned structure, which arrives unwelded from `mesh_simplify_uv`: 1,187 boundary
+    edges in 14 "see-through" loops before the weld, and 24 in 4 loops after it. The weld is on a
+    bmesh copy, so the shipped mesh is untouched and this stays a measurement rather than a repair.
+    """
+    import bmesh
+    from mathutils.bvhtree import BVHTree
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    if weld_distance:
+        bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=float(weld_distance))
+    bm.edges.ensure_lookup_table()
+    open_edges = [e for e in bm.edges if len(e.link_faces) == 1]
+    out = {"loops": 0, "pit_edges": 0, "seethrough_edges": 0, "open_edges": 0,
+           "seethrough_loops": 0, "largest_seethrough_m": 0.0, "largest_seethrough_fraction": 0.0,
+           "welded": bool(weld_distance)}
+    if not open_edges:
+        bm.free()
+        return out
+
+    tree = BVHTree.FromBMesh(bm)
+    size = max(max(obj.dimensions), 1e-6)
+    # Still unit-scale here, so a span is only metres once it is put at its shipping height.
+    to_metres = (float(height_m) / size) if height_m else 1.0
+    pool = {e.index for e in open_edges}
+    seen = set()
+    for edge in open_edges:
+        if edge.index in seen:
+            continue
+        stack, group = [edge], []
+        seen.add(edge.index)
+        while stack:                                   # the loop this edge belongs to
+            current = stack.pop()
+            group.append(current)
+            for vert in current.verts:
+                for other in vert.link_edges:
+                    if other.index in pool and other.index not in seen:
+                        seen.add(other.index)
+                        stack.append(other)
+        verts = {v for e in group for v in e.verts}
+        centre = mathutils.Vector((0.0, 0.0, 0.0))
+        for vert in verts:
+            centre += vert.co
+        centre /= len(verts)
+        normal = mathutils.Vector((0.0, 0.0, 0.0))
+        for e in group:
+            for face in e.link_faces:
+                normal += face.normal
+        if normal.length < 1e-9:                       # no outward direction to cast along
+            continue
+        normal.normalize()
+        out["loops"] += 1
+        extent = max((vert.co - centre).length for vert in verts) * 2.0
+        # Start OUTSIDE the opening, far enough out that the rim's own faces are behind the ray.
+        start = centre + normal * max(size * 1e-3, extent * 0.6)
+        hit, hit_normal, _index, _distance = tree.ray_cast(start, -normal, size * 3.0)
+        if hit is None:
+            out["open_edges"] += len(group)             # encloses nothing here: an open shell edge
+        elif hit_normal.dot(-normal) > 0.0:
+            out["seethrough_edges"] += len(group)      # a backface behind the opening: a hole
+            out["seethrough_loops"] += 1
+            out["largest_seethrough_m"] = max(out["largest_seethrough_m"], float(extent))
+        else:
+            out["pit_edges"] += len(group)             # the floor of a dimple: surface
+    out["largest_seethrough_fraction"] = round(out["largest_seethrough_m"] / size, 4)
+    out["largest_seethrough_m"] = round(out["largest_seethrough_m"] * to_metres, 4)
+    bm.free()
+    return out
+
+
+def metalness_report(obj):
+    """What a generated material CLAIMS about metalness: the factor, the map's mean, and the product.
+
+    Nothing in the pipeline looked at this, and it cost the first generated structure a diagnosis.
+    Image-to-3D decides PBR channels from the reference photograph, and that structure's reference
+    is weathered silvered siding, which reads as metal: the glTF came back with `metallicFactor`
+    1.0 and a metallic map averaging 0.83. A diffuse bake of a metal surface is black, so the albedo
+    baked at a mean of 14.9 against the source's 47.3 and `bake_fidelity` read 0.9108 -- the check fired correctly and its text said the
+    colour pass "resampled the surface rather than carrying it", which sent the diagnosis down the
+    wrong path for an afternoon.
+
+    So the claim is measured where it is made, and `gen_receipt.metalness_warning` carries it. The mean is
+    over the metallic channel the glTF importer wired: it packs metalness into the BLUE channel of the
+    metallicRoughness image, which the importer splits out through a Separate Color, so that image's
+    blue channel is the figure. An unlinked socket is just its scalar.
+
+    `effective` is what the Principled BSDF actually renders with -- the map's mean where one is
+    wired, the scalar where it is not -- and it is the number to read. It is None when a map is wired
+    and cannot be read, because "unknown" and "not metal" are different answers. Returns None when
+    there is no Principled material to ask.
+    """
+    import numpy as np
+
+    for slot in obj.material_slots:
+        mat = slot.material
+        if mat is None or not mat.use_nodes or mat.node_tree is None:
+            continue
+        bsdf = next((n for n in mat.node_tree.nodes
+                     if n.bl_idname == "ShaderNodeBsdfPrincipled"), None)
+        if bsdf is None:
+            continue
+        socket = bsdf.inputs.get("Metallic")
+        if socket is None:
+            continue
+        out = {"material": mat.name, "factor": round(float(socket.default_value), 4),
+               "map_mean": None}
+        if not socket.links:
+            out["effective"] = out["factor"]
+            out["linked"] = False
+            return out
+
+        # Upstream to the first image, keeping whichever channel a Separate Color picked out. A
+        # bounded walk rather than a fixed shape, because the importer inserts a Math multiply when
+        # `metallicFactor` is not 1 and there is no reason to be brittle about node count.
+        #
+        # Through an ALLOWLIST of node types, which is not fussiness: the first version walked "the
+        # first linked input" and on a BobShaded material -- where Metallic comes out of the master
+        # GROUP -- it wandered into the roughness image and reported every finished asset in the
+        # pack as metalness 1.0. A group has many inputs and no reason to prefer one, so a walk that
+        # reaches one has lost the thread and the honest answer is unknown. The MULTIPLY nodes on
+        # the way are picked up as they pass, because that is where the glTF factor lives: with
+        # `metallicFactor` 1.0 the importer links the channel straight through, and with anything
+        # else it inserts `Math MULTIPLY` carrying the factor on its second input. Reading only the
+        # map's mean therefore reported every finished asset in the pack as metalness 1.0 -- they
+        # declare `metallicFactor` 0 with an ORM texture whose blue channel is full white, so the
+        # map is 1.0 and the material is not metal at all.
+        walkable = ("ShaderNodeSeparateColor", "ShaderNodeSeparateRGB", "ShaderNodeMath",
+                    "ShaderNodeMix", "ShaderNodeMixRGB", "ShaderNodeTexImage")
+        source = socket.links[0].from_socket
+        channel, image, hops, multiplier = None, None, 0, 1.0
+        while source is not None and hops < 8:
+            hops += 1
+            node = source.node
+            if node.bl_idname not in walkable:
+                break
+            if node.bl_idname == "ShaderNodeMath" and getattr(node, "operation", "") == "MULTIPLY":
+                for scalar in node.inputs[:2]:
+                    if not scalar.links:
+                        multiplier *= float(scalar.default_value)
+            if channel is None:
+                channel = {"Blue": 2, "Green": 1, "Red": 0}.get(source.name)
+            if getattr(node, "image", None) is not None:
+                image = node.image
+                break
+            nxt = next((s for s in node.inputs if s.links), None)
+            source = nxt.links[0].from_socket if nxt is not None else None
+        out["factor"] = round(multiplier, 4)
+
+        # `has_data` is FALSE for an image packed inside a GLB until something touches its pixels,
+        # so it cannot be the guard: checking it first read every staged structure as metalness 0.0
+        # when the glTF says `metallicFactor` 1.0 with a metallicRoughness texture wired.
+        if image is not None:
+            out["map"] = image.name
+            try:
+                count = len(image.pixels)
+            except (RuntimeError, AttributeError):
+                count = 0
+            if count:
+                px = np.empty(count, dtype=np.float32)
+                image.pixels.foreach_get(px)
+                px = px.reshape(-1, max(1, image.channels))
+                out["map_mean"] = round(float(px[:, min(2 if channel is None else channel,
+                                                        px.shape[1] - 1)].mean()), 4)
+        # A linked socket ignores its own scalar in Blender's Principled, so the claim is the map
+        # times whatever factor the chain multiplies it by. Where the map cannot be read the answer
+        # is UNKNOWN rather than zero: the socket's default_value on a linked socket is whatever the
+        # importer left there, and reporting that as the effective metalness is how a fully metal
+        # structure reads as dielectric.
+        out["effective"] = (None if out["map_mean"] is None
+                            else round(multiplier * out["map_mean"], 4))
+        out["linked"] = True
+        return out
+    return None
+
+
 def weld(obj, distance=1e-5):
     """Merge coincident vertices, and return how many went. Undoes the glTF importer's per-vertex
     split, which is not cosmetic: an unwelded mesh is topologically shredded, so Decimate cannot
@@ -546,13 +790,13 @@ def decimate_to(obj, faces, passes=3, tolerance=0.1):
         bpy.ops.object.modifier_apply(modifier=mod.name)
         if face_count(obj) >= have:
             # A pass that removed nothing means Decimate has hit a topological floor, and every
-# further pass costs the same tens of seconds to do the same nothing. Measured on the
-# The asset gate meshes, that floor is well above a 4,000-face budget, which is most of
-# why the steps 3 and 4 A/B went the way it did.
+            # further pass costs the same tens of seconds to do the same nothing. Measured on the
+            # asset gate's meshes, that floor is well above a 4,000-face budget, which is most of
+            # why the steps 3 and 4 A/B went the way it did.
             break
     # Decimate-collapse on an open surface leaves an INVALID mesh, and the only place it surfaced
     # was as "Mesh <name>_LOD1 is not valid, and may be exported wrongly" from the glTF exporter, on
-    # a line an artist never reads. Measured on the forest-barn assets before any of this session's
+    # a line an artist never reads. Measured on the generated assets before any of this session's
     # changes: the rock slab's and the stump's LOD1 and LOD2 both needed repair, straight off the
     # shipped route. `validate` fixes it in place and is a no-op on a clean mesh, so it belongs
     # where the damage is made rather than at the export.
@@ -577,9 +821,9 @@ def quadriflow_to(obj, faces):
     else:
         reason = "the mesh must be manifold with consistent face normals"
     # It CANCELS, it does not raise. Blender's Quadriflow reports "the mesh needs to be manifold and
-# have face normals that point in a consistent direction" as a warning and returns CANCELLED, so
-# a try/except alone leaves the mesh at its original half a million faces and the caller never
-# learns. Measured on all five the asset gate meshes: Quadriflow refused every one.
+    # have face normals that point in a consistent direction" as a warning and returns CANCELLED, so
+    # a try/except alone leaves the mesh at its original half a million faces and the caller never
+    # learns. Measured on all five the asset gate meshes: Quadriflow refused every one.
     if "FINISHED" not in result:
         decimate_to(obj, faces)
         return face_count(obj), f"quadriflow refused this mesh ({reason}); decimated instead"
@@ -813,12 +1057,12 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     (`comfy.geometry_is_final`) and not something to infer here. On that route there is no dense
     mesh and no transfer: the colour, the roughness and the surface normal are all already in the
     low mesh's own UVs, and every ray a cage projection sends is looking for the surface it started
-    from. Sending them anyway is what shredded the forest-barn roof -- correlation 0.817 against the
-    source over the roof charts and a mean absolute difference of 10.4 of 255, reported as a chevron
-    hash over the shingles -- and it also wrote a normal map that was not flat where flat was the
-    only correct answer (52% of the barn's texels and 87% of the stump's deviating past one 8-bit
-    step, from `high` being welded and `low` not). So `coincident` self-bakes the colour roles and
-    drops NORMAL entirely; AO is kept, because a mesh occluding itself is a real measurement of that
+    from. Sending them anyway is what shredded a gabled structure's roof -- correlation 0.817
+    against the source over the roof charts and a mean absolute difference of 10.4 of 255, reported as a
+    chevron hash over the shingles -- and it also wrote a normal map that was not flat where flat
+    was the only correct answer (52% of that structure's texels and 87% of the stump's deviating
+    past one 8-bit step, from `high` being welded and `low` not). So `coincident` self-bakes the
+    colour roles and drops NORMAL entirely; AO is kept, because a mesh occluding itself is a real measurement of that
     mesh whichever way round the pair is.
 
     `stats`, when a dict is passed, collects `bake_fidelity` -- `map_fidelity` of the basecolor
@@ -860,25 +1104,25 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     written = {}
     wanted = roles or _BAKE_ROLES
     # Where each kind of map comes from, and it is not one answer. Normal and AO are a TRANSFER and
-# need a genuinely denser mesh; colour and roughness are the generated PBR and live wherever the
-# texture landed. Four cases, all of them real:
-#
-# - the two meshes are ONE file (`mesh_geom_texture`, the one-shot route): `coincident`. Nothing to
-# transfer at all -- see the docstring. The colour roles self-bake, NORMAL is dropped, AO stays.
-# - only the LOW mesh is textured (`mesh_geom_ctrl` then `mesh_texture`, and any chain whose
-# geometry graph is geometry-only): the colour is ALREADY in the low mesh's own UVs, so it is a
-# self-bake with no cage. Measured by the control gate: Omni returns geometry with no material at
-# all, so without this the block-out route shipped an asset with `mesh_texture`'s albedo silently
-# dropped. - the dense mesh is textured and is a different mesh: transfer everything, which is what
-# a cage is for. - neither is textured (`mesh_geom_trellis` alone): skip the colour roles. A DIFFUSE
-# bake would write a solid black basecolor and a ROUGHNESS bake the Principled default, and both are
-# worse than absent because the material wiring would then read a map that says "this object is
-# black".
-#
-# `coincident` comes in as a fact about the route. `colour_from_low` is still an inference, and it
-# is a safe one: "only the low mesh carries a texture" cannot be true of a pair that is one file.
-# What was NOT safe was leaving the one-file case to be inferred from the same test, which read it
-# as an ordinary transfer and baked a cage projection of a mesh onto itself.
+    # need a genuinely denser mesh; colour and roughness are the generated PBR and live wherever the
+    # texture landed. Four cases, all of them real:
+    #
+    # - the two meshes are ONE file (`mesh_geom_texture`, the one-shot route): `coincident`. Nothing to
+    # transfer at all -- see the docstring. The colour roles self-bake, NORMAL is dropped, AO stays.
+    # - only the LOW mesh is textured (`mesh_geom_ctrl` then `mesh_texture`, and any chain whose
+    # geometry graph is geometry-only): the colour is ALREADY in the low mesh's own UVs, so it is a
+    # self-bake with no cage. Measured by the control gate: Omni returns geometry with no material at
+    # all, so without this the block-out route shipped an asset with `mesh_texture`'s albedo silently
+    # dropped. - the dense mesh is textured and is a different mesh: transfer everything, which is what
+    # a cage is for. - neither is textured (`mesh_geom_trellis` alone): skip the colour roles. A DIFFUSE
+    # bake would write a solid black basecolor and a ROUGHNESS bake the Principled default, and both are
+    # worse than absent because the material wiring would then read a map that says "this object is
+    # black".
+    #
+    # `coincident` comes in as a fact about the route. `colour_from_low` is still an inference, and it
+    # is a safe one: "only the low mesh carries a texture" cannot be true of a pair that is one file.
+    # What was NOT safe was leaving the one-file case to be inferred from the same test, which read it
+    # as an ordinary transfer and baked a cage projection of a mesh onto itself.
     colour_from_low = coincident or (has_textures(low) and not has_textures(high))
     if not has_textures(high) and not colour_from_low:
         wanted = [r for r in wanted if r[1] in ("NORMAL", "AO")]
@@ -1110,7 +1354,8 @@ def _resolve_pass(spec, argument):
 
 def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=False,
                 keep_source_uv=False, low_glb=None, report=None, on_progress=None,
-                fill_pinholes=True, simplified_glb=None, exports=None, repair_low=False):
+                fill_pinholes=True, simplified_glb=None, exports=None, repair_low=False,
+                height_m=None):
     """Steps 3 and 4 on the main thread: import the dense mesh, make the low one, unwrap it, and
     optionally export the low as a unit-scale GLB for the `mesh_texture` texture pass to consume.
 
@@ -1127,7 +1372,7 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
 
     `repair_low` is `comfy.geometry_is_final(staged)`: the server-simplified mesh IS the mesh that
     ships, so the weld and the pinhole fill have to run on it. Without it those two steps ran on
-    nothing on both production routes, and the forest-barn gate shipped five meshes carrying 48 to
+    nothing on both production routes, and five generated meshes shipped carrying 48 to
     229 boundary edges with a clean receipt. It does NOT turn the decimate or the unwrap back on:
     the mesh already arrives at its budget with the generator's chart layout, and re-unwrapping it
     would throw away the layout its own texture is painted in.
@@ -1144,8 +1389,8 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
 
     if simplified_glb:
         # Steps 3 and 4 already happened, on the ComfyUI side (`mesh_simplify_uv`). Nothing to
-# decimate and nothing to unwrap; the mesh arrives at its budget with a chart layout already
-# on it.
+        # decimate and nothing to unwrap; the mesh arrives at its budget with a chart layout already
+        # on it.
         low = import_glb(simplified_glb, name=name,
                          orient=undo_exports(exports.get("simplified")))
         if repair_low:
@@ -1154,7 +1399,7 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
             # reads as thousands of one-face edges (stump 3,646 against a real 229) and Fill Holes
             # would sew the chart borders shut. The UV layout survives the weld -- UVs live on the
             # corner domain, and `uv_overlap` measured 0.000075 either side of it on the stump and
-            # 0.000008 on the barn -- which is why this is a weld and not a copy-and-weld.
+            # 0.000008 on the structure -- which is why this is a weld and not a copy-and-weld.
             report["low_welded_verts"] = weld(low)
             if fill_pinholes:
                 report["pinholes_closed"] = close_pinholes(low)
@@ -1193,12 +1438,15 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
             report["uv_source"] = "smart_uv_project"
     report["uv_overlap"] = uv_overlap(low)
     # Counted on the mesh AS IT SHIPS, and honest only where that mesh has been welded. glTF splits
-# a vertex at every UV seam, so an UNWELDED import reads as several times its real openness (the
-# asset gate's correction 9, from the other side): the gate stump measured 3,646 one-face edges
-# against a real 229. `repair_low` welds, so this is the true figure on the one-shot route and on
-# anything Bob retopologised itself; a route that neither welds nor repairs leaves it inflated, and
-# `source_boundary_edges` is the figure to read there.
+    # a vertex at every UV seam, so an UNWELDED import reads as several times its real openness (the
+    # asset gate's correction 9, from the other side): the gate stump measured 3,646 one-face edges
+    # against a real 229. `repair_low` welds, so this is the true figure on the one-shot route and
+    # on anything Bob retopologised itself; a route that neither welds nor repairs leaves it
+    # inflated, and `source_boundary_edges` is the figure to read there.
     report["low_boundary_edges"] = boundary_edges(low)
+    # And WHAT that openness is, which is the figure the warning gates on: a pitted rock and a shell
+    # you can see through score the same on the count above.
+    report["low_openness"] = openness_report(low, height_m=height_m)
 
     if low_glb:
         _select_only([low], low)
@@ -1238,7 +1486,8 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
     inference into a fact. It runs the weld and the pinhole fill on the mesh that actually ships
     (see `prepare_low`), and it tells the bake that the dense and low meshes are ONE file, so the
     colour is already in the low mesh's own UVs and there is nothing to transfer. Both were wrong on
-    the default route until the forest-barn gate: see `bake_high_to_low`'s `self_bake`.
+    the default route until the first batch of generated assets: see `bake_high_to_low`'s
+    `self_bake`.
 
     `exports` is `comfy.stage_exports(staged)`: how many `Trellis2ExportTrimesh` writes to undo on
     each incoming file. It does two jobs at once, and both are load-bearing. It puts the dense and
@@ -1275,6 +1524,7 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
                             # to send; a finished path means it already ran.
                             low_glb=low_glb if callable(texture_pass) else None,
                             report=report, on_progress=on_progress, exports=exports,
+                            height_m=height_m,
                             repair_low=geometry_is_final)
     step("prepare")
 
@@ -1304,16 +1554,26 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
     alpha, report["opacity"] = source_opacity(low, size=bake_size, force=force_opacity)
     report["opacity"]["wired"] = alpha is not None
     # The dead-wood routing rule: say out loud that a leaf-shaped asset landed with no cutout
-# channel. The measurement was already in the report; nothing read it (docs/FOLIAGE.md).
-    from . import comfy as _comfy  # bpy-free, and imported lazily for the same reason as below
-    report["warnings"] += _comfy.leaf_opacity_warning(kind, report["opacity"])
+    # channel. The measurement was already in the report; nothing read it (docs/FOLIAGE.md).
+    from . import gen_receipt  # bpy-free; imported here for the same reason `comfy` is below
+    report["warnings"] += gen_receipt.leaf_opacity_warning(kind, report["opacity"])
     # And the same treatment for the openness of the mesh that ships: computed since the asset gate,
-    # read by nobody until the forest-barn gate found the stump's holes in a render.
-    report["warnings"] += _comfy.open_surface_warning(kind, report)
+    # read by nobody until a stump's holes turned up in a render.
+    report["warnings"] += gen_receipt.open_surface_warning(kind, report)
+    # What the generated material claims about metalness, read while it is still ON the mesh: the
+    # bake replaces the material outright, and a metal claim is both a defect of its own and the
+    # reason `bake_fidelity` fires, so it has to be measured before either.
+    report["metalness"] = metalness_report(low)
+    report["warnings"] += gen_receipt.metalness_warning(kind, report["metalness"])
     maps = bake_high_to_low(high, low, tex_dir, stem, size=bake_size, device=bake_device,
                             alpha=alpha, coincident=geometry_is_final, stats=report)
     report["maps"] = maps
-    report["warnings"] += _comfy.bake_fidelity_warning(report.get("bake_fidelity"))
+    # What the files actually carry. After the write because it needs them written, and separate
+    # from `bake_fidelity` because a comparison of two empty images has nothing to report.
+    report["map_stats"] = map_stats(maps)
+    report["warnings"] += gen_receipt.bake_fidelity_warning(report.get("bake_fidelity"),
+                                                            metalness=report.get("metalness"))
+    report["warnings"] += gen_receipt.empty_map_warning(kind, report["map_stats"])
     if not maps:
         report["warnings"].append("no map baked; the asset ships with a flat material")
     step("bake")
@@ -1411,9 +1671,9 @@ def import_generated(name, kind="rocks", pack_dir=None):
         raise ValueError(f"no mesh in {os.path.basename(path)}")
 
     # `collection`, not `ensure_collection`: the pool is where this asset goes, and populating an
-# empty pool with procedural block-out proxies would put three blobs in the scatter beside the
-# asset the caller just generated (measured by the agent-surface gate). Make Proxies is how
-# proxies get asked for.
+    # empty pool with procedural block-out proxies would put three blobs in the scatter beside the
+    # asset the caller just generated (measured by the agent-surface gate). Make Proxies is how
+    # proxies get asked for.
     target = proxies.collection(kind)
     lods = _lod_collection()
     lod0 = None
@@ -1475,7 +1735,8 @@ def import_generated_op(op: dict) -> dict:
     Every ComfyUI stage has already run by the time this is called, so `finish_asset`'s two
     callbacks are files rather than callables and nothing here touches the network.
     """
-    from . import comfy  # bpy-free; imported here so a bpy-less unit test can still read this module
+    from . import comfy, gen_receipt  # bpy-free; imported here so a bpy-less unit test can still
+    # read this module
 
     pack = _resolve_pack(op.get("pack_dir"))
     kind = op.get("kind") or "rocks"
@@ -1510,7 +1771,7 @@ def import_generated_op(op: dict) -> dict:
         # the height it asked for, the UV it needs, and every warning the finish raised.
         #
         # The second group is the openness and provenance of the mesh that SHIPPED, and it is here
-        # because leaving it out is what let the forest-barn gate pass five sieves with
+        # because leaving it out is what let five sieves pass with
         # `warnings: []`. Every one of these was already computed and then dropped at this line: the
         # stump shipped with 229 boundary edges and the reply said nothing, because the only figures
         # that crossed the bridge described a budget and a height that were never in doubt.
@@ -1518,13 +1779,7 @@ def import_generated_op(op: dict) -> dict:
         # and "trellis2_uvunwrap" mean the generator's topology and the generator's charts shipped,
         # which is the route working as designed and not something an agent should have to infer
         # from a face count matching a request.
-        data = {k: report[k] for k in
-                ("name", "faces", "lod_faces", "height_m", "uv_overlap", "origin_above_base",
-                 "master_type", "opacity", "maps", "file", "warnings", "seconds",
-                 "source_faces", "source_boundary_edges", "low_boundary_edges", "pinholes_closed",
-                 "simplify_source", "uv_source", "welded_verts", "low_welded_verts",
-                 "textured_faces", "bake_rescale", "bake_fidelity")
-                if k in report}
+        data = {k: report[k] for k in gen_receipt.MESH_RECEIPT_KEYS if k in report}
         if op.get("cleanup", True) and staged.get("dir"):
             comfy.reject_variant(staged["dir"])  # the staged intermediates are spent
     else:

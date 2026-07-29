@@ -83,17 +83,17 @@ def water_master_group():
     _gin(g, "Deep Color", "NodeSocketColor", _WATER_DEEP)
     _gin(g, "Depth", "NodeSocketFloat", 1.5, 0.0)
     # Depth interaction, keyed to the ribbon's per-vertex bbt_depth (metres of
-# water column): Absorption is the Beer-Lambert extinction per metre (deep water reads
-# darker/deeper-coloured), Depth Opacity fades the transmission out with depth (deep = more
-# opaque, so the bed hides), Shoreline Fade is the metres of water column over which the edge
-# dissolves to transparent (a soft waterline instead of a hard cut). All degrade gracefully to
-# the old shore look at depth 0.
+    # water column): Absorption is the Beer-Lambert extinction per metre (deep water reads
+    # darker/deeper-coloured), Depth Opacity fades the transmission out with depth (deep = more
+    # opaque, so the bed hides), Shoreline Fade is the metres of water column over which the edge
+    # dissolves to transparent (a soft waterline instead of a hard cut). All degrade gracefully to
+    # the old shore look at depth 0.
     _gin(g, "Depth Absorption", "NodeSocketFloat", 0.5, 0.0)
     _gin(g, "Depth Opacity", "NodeSocketFloat", 0.5, 0.0, 1.0)
     # Shoreline Fade: fraction of the half-width (from the bank inward) over which the surface fades
-# to transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present,
-# so a a pre-depth ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon
-# vanish).
+    # to transparent, so the waterline dissolves into the bank. Keyed to bbt_shore (always present,
+    # so a a pre-depth ribbon is safe), not bbt_depth (0 there would make a mis-paired old ribbon
+    # vanish).
     _gin(g, "Shoreline Fade", "NodeSocketFloat", 0.15, 0.0, 1.0)
     _gin(g, "Water Roughness", "NodeSocketFloat", 0.04, 0.0, 1.0)
     _gin(g, "IOR", "NodeSocketFloat", 1.33, 1.0, 2.0)
@@ -105,8 +105,8 @@ def water_master_group():
     _gin(g, "Ripple Scale", "NodeSocketFloat", 1.8, 0.0)
     _gin(g, "Wave Detail", "NodeSocketFloat", 0.5, 0.0, 1.0)
     # Surface Texture (issue 3): strength of a tiling multi-scale normal sampled in the ribbon's
-# flow-space UV (bbt_water_uv), scrolled downstream. Gives the surface real detail texture
-# instead of reading flat; 0 = the old plain procedural look.
+    # flow-space UV (bbt_water_uv), scrolled downstream. Gives the surface real detail texture
+    # instead of reading flat; 0 = the old plain procedural look.
     _gin(g, "Surface Texture", "NodeSocketFloat", 0.6, 0.0, 2.0)
     _gin(g, "Foam Color", "NodeSocketColor", _WATER_FOAM)
     _gin(g, "Foam Amount", "NodeSocketFloat", 1.2, 0.0, 2.0)
@@ -136,9 +136,9 @@ def water_master_group():
     I, O = gi.outputs, go.inputs
 
     # Live env: Temperature drives the freeze term (shared group, driven from bbt_env by the panel;
-# 15 C default when Firmament is absent, so env cold -> 0 and the water never freezes standalone
-# -- which is why the manual Frozen input exists). frozen = max(manual, env cold); liquid = 1 -
-# it.
+    # 15 C default when Firmament is absent, so env cold -> 0 and the water never freezes standalone
+    # -- which is why the manual Frozen input exists). frozen = max(manual, env cold); liquid = 1 -
+    # it.
     env = g.nodes.new("ShaderNodeGroup")
     env.node_tree = env_state_group()
     env.location = (-1900, -900)
@@ -159,8 +159,8 @@ def water_master_group():
     depth_a = _geo_attr("bbt_depth", -40)  # metres of water column; 0 on a pre-depth ribbon
 
     # Beer-Lambert depth extinction: depth_fac 0 at the shoreline (bbt_depth 0) rising toward 1 in
-# deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity
-# below.
+    # deep water, = 1 - exp(-Absorption * depth). Drives the depth colour and the depth opacity
+    # below.
     depth_fac = _mmath(g, "SUBTRACT", 1.0,
                        _mmath(g, "EXPONENT",
                               _mmath(g, "MULTIPLY", -1.0,
@@ -247,12 +247,12 @@ def water_master_group():
     n_fine = _wave_bump(fine_h, fine_str, n_mid, (400, 320))
 
     # UV-space detail normal (issue 3): sample a tiling multi-scale noise in the ribbon's flow-space
-# UV (bbt_water_uv: U = arc length downstream in metres, V = across-width 0..1), scrolled along
-# U by the frame time so the detail travels DOWNSTREAM in the surface's own frame. Flow-aligned
-# by construction, not a world-space advection, so it does NOT comb into hair streaks like the
-# earlier advected bump. V is stretched (x6) so the noise varies across the width too instead of
-# streaking purely along flow. A pre-batch-1 ribbon reads the attribute as 0 -> flat, a safe
-# no-op. Strength = Surface Texture, faded out as it freezes.
+    # UV (bbt_water_uv: U = arc length downstream in metres, V = across-width 0..1), scrolled along
+    # U by the frame time so the detail travels DOWNSTREAM in the surface's own frame. Flow-aligned
+    # by construction, not a world-space advection, so it does NOT comb into hair streaks like the
+    # earlier advected bump. V is stretched (x6) so the noise varies across the width too instead of
+    # streaking purely along flow. A pre-batch-1 ribbon reads the attribute as 0 -> flat, a safe
+    # no-op. Strength = Surface Texture, faded out as it freezes.
     uv_a = _geo_attr("bbt_water_uv", -160)
     uvsep = g.nodes.new("ShaderNodeSeparateXYZ")
     uvsep.location = (-1300, -160)
@@ -290,9 +290,9 @@ def water_master_group():
     normal = _wave_bump(voro.outputs["Distance"], ice_str, n_fine, (680, 200))
 
     # Depth colour: shallow near the shoreline, deep in the body. On a depth-carrying ribbon
-# the driver is the real Beer-Lambert depth_fac (metres of column); the old shore proxy
-# (1-shore)*Depth is kept as a floor so a a pre-depth ribbon (bbt_depth 0 everywhere) still
-# reads with the shore gradient it had.
+    # the driver is the real Beer-Lambert depth_fac (metres of column); the old shore proxy
+    # (1-shore)*Depth is kept as a floor so a a pre-depth ribbon (bbt_depth 0 everywhere) still
+    # reads with the shore gradient it had.
     shore_deep = g.nodes.new("ShaderNodeMath")
     shore_deep.operation = "MULTIPLY"
     shore_deep.use_clamp = True
@@ -303,8 +303,8 @@ def water_master_group():
     col = _mixcol(g, deepness, I["Shallow Color"], I["Deep Color"], (-620, -300))
 
     # Foam. Base = max(bbt_foam*Foam Amount, shallow-shore foam). A flow-scrolled noise
-# breaks it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam
-# Crispness.
+    # breaks it up, then a Map Range thresholds it to crisp lines whose width narrows with Foam
+    # Crispness.
     foam_wash = _mmath(g, "MULTIPLY", foam_a.outputs["Fac"], I["Foam Amount"], (-1000, -480))
     shore_shallow = _mrange(g, shore_a.outputs["Fac"], 0.6, 1.0, 0.0, 1.0, (-1000, -640))
     shore_foam = _mmath(g, "MULTIPLY", shore_shallow, I["Shore Foam"], (-820, -640))
@@ -328,15 +328,15 @@ def water_master_group():
     rough = _lerp(g, I["Water Roughness"], 0.6, foam, (620, -820))
     rough = _lerp(g, rough, _ICE_ROUGHNESS, frozen, (620, -980))
     # Ice tint: icy blue-white as the water freezes, driven by the FULL frozen term (env cold OR
-# manual Frozen), not the manual input alone. The old code tinted only I["Frozen"] and delegated
-# the env-cold tint to the S_Weather frost term -- but frost is gated by clear sky and calm air,
-# so an overcast or windy freeze dropped the tint entirely and the river rendered glassy,
-# opaque, and dark (physically wrong for thick ice). To avoid doubling with the frost tint where
-# frost DOES fire, the ice tint is complemented by the same frost gate (frost point * clear *
-# calm): where frost is active (cold + clear + calm) it backs off and the frost term tints;
-# where frost is suppressed (overcast / windy) the ice tint carries the full look. So exactly
-# one icy tint applies on any surface, never zero and never both. Gate math mirrors
-# weather_group's frost gate.
+    # manual Frozen), not the manual input alone. The old code tinted only I["Frozen"] and delegated
+    # the env-cold tint to the S_Weather frost term -- but frost is gated by clear sky and calm air,
+    # so an overcast or windy freeze dropped the tint entirely and the river rendered glassy,
+    # opaque, and dark (physically wrong for thick ice). To avoid doubling with the frost tint where
+    # frost DOES fire, the ice tint is complemented by the same frost gate (frost point * clear *
+    # calm): where frost is active (cold + clear + calm) it backs off and the frost term tints;
+    # where frost is suppressed (overcast / windy) the ice tint carries the full look. So exactly
+    # one icy tint applies on any surface, never zero and never both. Gate math mirrors
+    # weather_group's frost gate.
     frost_pt = _mrange(g, env.outputs["Temperature"], 1.0, -5.0, 0.0, 1.0, (440, -300))
     clear = _mmath(g, "SUBTRACT", 1.0, env.outputs["Cloud"], (440, -420))
     calm = _mrange(g, env.outputs["Wind"], 4.0, 0.5, 0.0, 1.0, (440, -540))
@@ -372,9 +372,9 @@ def water_master_group():
     trans = _mmath(g, "MULTIPLY", _mmath(g, "MULTIPLY", I["Transmission"], depth_op, (1160, -1120)),
                    liquid, (1340, -1120))
     # Alpha: a soft shoreline fades the surface to transparent over the
-# outer Shoreline Fade fraction of the half-width (shore 1 = bank), so the waterline dissolves
-# into the bank instead of cutting a hard line. Keyed to bbt_shore so a a pre-depth ribbon stays
-# visible. The old lateral Edge Fade still composes. Frozen ice is fully opaque.
+    # outer Shoreline Fade fraction of the half-width (shore 1 = bank), so the waterline dissolves
+    # into the bank instead of cutting a hard line. Keyed to bbt_shore so a a pre-depth ribbon stays
+    # visible. The old lateral Edge Fade still composes. Frozen ice is fully opaque.
     shore_fade = _mrange(g, shore_a.outputs["Fac"],
                          _mmath(g, "SUBTRACT", 1.0, I["Shoreline Fade"], (800, -1300)), 1.0,
                          1.0, 0.0, (980, -1300))

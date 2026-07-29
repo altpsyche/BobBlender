@@ -54,13 +54,13 @@ _CLOUD_EXTRA = atmosphere._CLOUD_EXTRA
 
 def _live_env_on(scene):
     """The one master Live Environment toggle now lives on the World panel (bbt_world);
- default on when World is absent (standalone verify)."""
+    default on when World is absent (standalone verify)."""
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 
 def _env_owned_note(layout):
     """A muted one-liner under a greyed knob group: the Live Environment driver owns these,
- so an edit here would be overwritten. Shown only when Live Environment is on."""
+    so an edit here would be overwritten. Shown only when Live Environment is on."""
     cap = layout.row()
     cap.enabled = False
     cap.label(text="Live Environment drives this; turn it off on World to edit")
@@ -68,9 +68,9 @@ def _env_owned_note(layout):
 
 def _from_env_row(layout, live, op_idname, object_name=None):
     """The copy-from-world branch shared by every subsystem's wind (and the snow) button (S6):
- when Live Environment is on a driver owns the input, so show the owned note and no button;
- else offer the one-shot copy-from-env button. Kept here (not helpers) because it is a
- Firmament-only idiom that reaches _env_owned_note."""
+    when Live Environment is on a driver owns the input, so show the owned note and no button;
+    else offer the one-shot copy-from-env button. Kept here (not helpers) because it is a
+    Firmament-only idiom that reaches _env_owned_note."""
     if live:
         _env_owned_note(layout)
         return
@@ -105,7 +105,7 @@ _DOMAIN_KNOBS = ["Domain Size", "Domain Height"]
 
 def _draw_knobs(layout, obj, names, enabled=True):
     """Draw each present modifier input by socket name (live, no rebuild). enabled=False greys
- the row (a live driver owns the input, so an edit would be silently overwritten)."""
+    the row (a live driver owns the input, so an edit would be silently overwritten)."""
     mod = _nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
@@ -122,7 +122,7 @@ def _draw_knobs(layout, obj, names, enabled=True):
 
 def _draw_knobs_mod(layout, mod, names, enabled=True):
     """Draw each present input of a specific modifier by socket name (live). enabled=False greys
- the row (a live driver owns the input)."""
+    the row (a live driver owns the input)."""
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
@@ -147,8 +147,8 @@ _solar = None
 
 def _reposition_sun(scene):
     """Aim the existing Sun lamp + set the sky node's sun angle from the current world state
- (geographic solar model, or the manual override). A no-op when no sun has been built.
- Cheap: no node-tree rebuild, so it is safe to call on every geographic edit."""
+    (geographic solar model, or the manual override). A no-op when no sun has been built.
+    Cheap: no node-tree rebuild, so it is safe to call on every geographic edit."""
     import math
     global _solar
     from ..core import world as W
@@ -181,7 +181,7 @@ def _reposition_sun(scene):
 
 def _sun_live_update(scene):
     """Reposition the sun on a geographic or override edit, when Live Environment is on. The
- env geo-hook (bbt_env fields) and the override-prop callbacks (this panel) both route here."""
+    env geo-hook (bbt_env fields) and the override-prop callbacks (this panel) both route here."""
     if scene is None or not _live_env_on(scene):
         return
     _reposition_sun(scene)
@@ -200,10 +200,10 @@ def _firmament_wind_objects(fm):
 
 def _apply_world(scene):
     """Atmosphere's world applier (subscribed with world): re-apply the atmosphere
- subsystems to the current world state. Installs or removes the live wind/snow drivers per
- the master Live Environment toggle, and re-applies the Quality level. A non-structural
- driver edit, safe from the rebuild re-entrancy the repo avoids for structural changes.
- Adding a new atmosphere subsystem needs no new toggle wiring: it just gets driven here."""
+    subsystems to the current world state. Installs or removes the live wind/snow drivers per
+    the master Live Environment toggle, and re-applies the Quality level. A non-structural
+    driver edit, safe from the rebuild re-entrancy the repo avoids for structural changes.
+    Adding a new atmosphere subsystem needs no new toggle wiring: it just gets driven here."""
     fm = getattr(scene, "bbt_firmament", None)
     if fm is None:
         return
@@ -285,8 +285,8 @@ class BBT_FirmamentProps(PropertyGroup):
     ground_albedo: FloatProperty(name="Ground Albedo", default=0.3, min=0.0, max=1.0)
 
     # Quality (Preview/Final) and the Live Environment master toggle moved to the World panel
-# (bbt_world); they are scene-wide, not atmosphere-specific (docs/CONVENTIONS.md, panel UX
-# conventions).
+    # (bbt_world); they are scene-wide, not atmosphere-specific (docs/CONVENTIONS.md, panel UX
+    # conventions).
 
     # Clouds: the cloud layer is one domain box; its knobs live on the modifier.
     cloud_object: StringProperty(name="Object", default="BOB_Clouds")
@@ -636,9 +636,9 @@ class BBT_PT_firmament(Panel):
 
     def draw(self, context):
         # Primary action first: the root is no longer empty. It shows the sky state and carries the
-# primary Build Sky, so the panel's main action is the first thing you see instead of buried
-# at the bottom of the Sky sub-panel under its ten inputs. Sky / Clouds / Fog / Weather tune
-# below.
+        # primary Build Sky, so the panel's main action is the first thing you see instead of buried
+        # at the bottom of the Sky sub-panel under its ten inputs. Sky / Clouds / Fog / Weather tune
+        # below.
         layout = self.layout
         built = bpy.data.objects.get("BOB_Sun") is not None
         layout.label(text="Sky built" if built else "No sky yet",
@@ -662,8 +662,8 @@ class BBT_PT_firmament_sky(Panel):
         layout = self.layout
 
         # These are the INPUTS to Build Sky (not live post-build knobs), so they show always. Build
-# Sky itself lives on the Atmosphere header above so the primary action comes first, not
-# repeated here; edit an input, then press Rebuild Sky up there.
+        # Sky itself lives on the Atmosphere header above so the primary action comes first, not
+        # repeated here; edit an input, then press Rebuild Sky up there.
         col = layout.column(align=True)
         col.label(text="Sun", icon="LIGHT_SUN")
         col.prop(fm, "use_override")
@@ -714,8 +714,8 @@ class BBT_PT_firmament_clouds(Panel):
             return
 
         # Instant preset: the look preset is instant (light: sets knobs), so it is gated behind
-# Build like the other knobs. It no longer sits above the gate where picking it would
-# silently build.
+        # Build like the other knobs. It no longer sits above the gate where picking it would
+        # silently build.
         helpers.preset_row(layout, "bob_blender_tools.firmament_cloud_preset")
 
         live = _live_env_on(context.scene)
@@ -778,7 +778,7 @@ class BBT_PT_firmament_fog(Panel):
             return
 
         # Instant preset: instant look preset, gated behind Build so picking it never silently
-# builds.
+        # builds.
         helpers.preset_row(layout, "bob_blender_tools.firmament_fog_preset")
 
         col = layout.column(align=True)
@@ -890,9 +890,9 @@ class BBT_PT_firmament_weather(Panel):
         if snow_mod is not None:
             live = _live_env_on(context.scene)
             # Snow (amount) is driven from bbt_env when Live Environment is on, so grey it. The
-# world-Z Altitude/Falloff are the snow line, set from the env on build/sync (Use Env
-# Snow), so they show as author-owned; the slope band and occlusion are author-owned
-# too.
+            # world-Z Altitude/Falloff are the snow line, set from the env on build/sync (Use Env
+            # Snow), so they show as author-owned; the slope band and occlusion are author-owned
+            # too.
             _draw_knobs_mod(box, snow_mod, ["Snow"], enabled=not live)
             _draw_knobs_mod(box, snow_mod, ["Slope Threshold", "Slope Falloff", "Altitude",
                                             "Altitude Falloff", "Occlusion", "Occlusion Distance"])
@@ -940,7 +940,7 @@ def register():
     # time/date/place re-places the sun (the override props carry their own update callback).
     _env.register_geo_hook(_sun_live_update)
     # Subscribe the atmosphere applier so the World master toggle / quality drive it (quality
-# scaling).
+    # scaling).
     world.register_applier(_apply_world)
 
 

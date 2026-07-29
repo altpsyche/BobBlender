@@ -186,8 +186,8 @@ class BBT_ScatterLayer(PropertyGroup):
         description="Emitter vertex group that paints where this layer scatters "
                     "(blank = off); applied on Build")
     # Curve binding (BobSplines, the scatter mask). clear/keep read the terrain's baked
-# bbt_curve_mask; along switches the layer to the scatter_along recipe (instances placed on the
-# curve itself).
+    # bbt_curve_mask; along switches the layer to the scatter_along recipe (instances placed on the
+    # curve itself).
     curve_mode: EnumProperty(
         name="Curve",
         items=[("none", "None", "Ignore curves"),
@@ -219,7 +219,7 @@ class BBT_ScatterProps(PropertyGroup):
     summary: StringProperty(default="")
 
     # Generate Asset (docs/GENERATION.md, mesh generation). Scatter-grade by default and the panel
-# says so; `gen_hero` swaps Decimate for Quadriflow and doubles the bake resolution.
+    # says so; `gen_hero` swaps Decimate for Quadriflow and doubles the bake resolution.
     gen_prompt: StringProperty(
         name="Prompt", default="",
         description="What to generate, e.g. 'a mossy granite boulder'. The single-subject "
@@ -267,8 +267,8 @@ def _generated_pack():
 
 def _comfy_reachable_cached():
     """The last known ComfyUI state, never a probe: a socket call from `draw` would freeze the
- UI for the timeout in exactly the case the row exists to report (found the first time a
- generation blocked the UI)."""
+    UI for the timeout in exactly the case the row exists to report (found the first time a
+    generation blocked the UI)."""
     from .shaders import _COMFY_STATE
 
     return _COMFY_STATE
@@ -284,9 +284,9 @@ class BBT_OT_scatter_generate_asset(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     # One operator, two entries in the box, because the difference between them is one input. With
-# `from_control` the ACTIVE object's shape conditions the geometry (`mesh_geom_ctrl`) instead of
-# the reference image alone (`mesh_geom_texture`), and the block-out's own height replaces the
-# Height field, since a proxy that was placed in a layout already says how big the asset is.
+    # `from_control` the ACTIVE object's shape conditions the geometry (`mesh_geom_ctrl`) instead of
+    # the reference image alone (`mesh_geom_texture`), and the block-out's own height replaces the
+    # Height field, since a proxy that was placed in a layout already says how big the asset is.
     from_control: BoolProperty(
         name="From Block-out", default=False, options={"SKIP_SAVE"},
         description="Condition the geometry on the active object's shape, so the result keeps its "
@@ -334,15 +334,15 @@ class BBT_OT_scatter_generate_asset(Operator):
         foliage = comfy.is_foliage(kind)
 
         # ONE worker job for the whole ComfyUI half (`mesh_subject` then `mesh_geom_texture` by
-# default), then one main-thread finish. They do not interleave, because whichever route
-# runs hands over a mesh that is already at its budget with UVs, so Blender has nothing to
-# contribute in between. Nothing in `generate` touches bpy; everything in `landed` does and
-# nothing there touches the network.
-#
-# The route is a value, not a branch: `comfy.asset_chain` takes the kind and the control and
-# picks the staging function, and `comfy.finish_passes` maps whatever it staged onto the two
-# finish callbacks, so no route needs a second operator or a widget. The route A/B decided
-# the default and the geometry A/B decided which asset classes leave it.
+        # default), then one main-thread finish. They do not interleave, because whichever route
+        # runs hands over a mesh that is already at its budget with UVs, so Blender has nothing to
+        # contribute in between. Nothing in `generate` touches bpy; everything in `landed` does and
+        # nothing there touches the network.
+        #
+        # The route is a value, not a branch: `comfy.asset_chain` takes the kind and the control and
+        # picks the staging function, and `comfy.finish_passes` maps whatever it staged onto the two
+        # finish callbacks, so no route needs a second operator or a widget. The route A/B decided
+        # the default and the geometry A/B decided which asset classes leave it.
         def generate(job):
             chain = comfy.asset_chain(kind=kind, control=control, control_bbox=control_bbox)
             return chain(prompt, pack, seed=seed, tier="default",
@@ -445,10 +445,10 @@ class BBT_OT_scatter_add(Operator):
 
         spec = LAYER_TYPES[self.kind]
         # The layer build (proxies + the scatter recipe + weathering the assets) lives in
-# core/scatter_build; the panel keeps the emitter resolution, the active-index write, and
-# the report. add_layer weathers the assets (convert=True) so a fresh layer reacts to the
-# world with no hunt for Shaders > Convert, the same first-class-shader path Build Biome
-# takes.
+        # core/scatter_build; the panel keeps the emitter resolution, the active-index write, and
+        # the report. add_layer weathers the assets (convert=True) so a fresh layer reacts to the
+        # world with no hunt for Shaders > Convert, the same first-class-shader path Build Biome
+        # takes.
         obj, _assets = scatter_build.add_layer(
             emitter, self.kind, scene=context.scene, camera=scn.camera)
         coll = emitter.bbt_scatter_coll
@@ -579,8 +579,8 @@ _SEED_KNOBS = ("Seed", "Noise Seed")  # knobs that get a reshuffle button, each 
 
 def _draw_knobs(layout, obj, names, enabled=True):
     """Draw each present socket's live value, by name. Skips absent sockets. A seed knob (placement
- Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
- enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
+    Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
+    enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
     mod = _nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
@@ -625,7 +625,7 @@ class BBT_PT_scatter(Panel):
         emitter = scn.emitter
 
         # The context header, or the empty state: what we scatter on + which layer we edit, or the
-# empty-state hint.
+        # empty-state hint.
         layer = _active_layer(context)
         hdr = None
         if emitter is not None:
@@ -738,15 +738,15 @@ class BBT_OT_scatter_grow_foliage(Operator):
         if warn:
             print("[bob_blender_tools] foliage species warnings:", warn)
         # A texture set the species names but no pack ships is the ORDINARY pre-generation state,
-# not a mistake: no placeholder bark set ships on purpose (docs/FOLIAGE.md 4.4), so a fresh
-# conifer is a solid-tint trunk until someone generates its bark. Say which set is missing,
-# because otherwise the tree just looks flat and there is nothing on screen explaining why.
+        # not a mistake: no placeholder bark set ships on purpose (docs/FOLIAGE.md 4.4), so a fresh
+        # conifer is a solid-tint trunk until someone generates its bark. Say which set is missing,
+        # because otherwise the tree just looks flat and there is nothing on screen explaining why.
         missing = ", ".join(v for _k, _label, v in assets.foliage_missing_sets(species))
         note = f"; solid tint until {missing} is generated" if missing else ""
         # Now that the Foliage panel exists, the report names it. It used to point at the object's
-# modifier stack, which was honest while there was nowhere better and is a worse answer now:
-# the modifier stack is not an authoring surface, and the artist is one panel away from the
-# thirty knobs grouped and labelled.
+        # modifier stack, which was honest while there was nowhere better and is a worse answer now:
+        # the modifier stack is not an authoring surface, and the artist is one panel away from the
+        # thirty knobs grouped and labelled.
         self.report({"INFO"}, f"Grew {name} ({preset['meta'].get('name', species)}); "
                               f"tune it in the Foliage panel{note}")
         return {"FINISHED"}
@@ -754,7 +754,7 @@ class BBT_OT_scatter_grow_foliage(Operator):
 
 def _draw_generate(layout, scn, active=None):
     """Generate Asset, beside the proxy and biome routes rather than in a panel of its own: it is
- a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
+    a third way to fill BOB_Assets_<Kind>, and the artist chooses between them in one place."""
     state = _comfy_reachable_cached()
     box = layout.box()
     row = box.row()
@@ -790,8 +790,8 @@ def _draw_generate(layout, scn, active=None):
     run.enabled = ready
     run.operator("bob_blender_tools.scatter_generate_asset", icon="PLAY")
     # The block-out route (`mesh_geom_ctrl`): the same press with the active object's shape as a
-# second input, so it is a second button and not a second panel. Shown only when there is a mesh
-# to condition on, which is the adaptive rule the rest of the suite follows.
+    # second input, so it is a second button and not a second panel. Shown only when there is a mesh
+    # to condition on, which is the adaptive rule the rest of the suite follows.
     blockout = active if (active is not None and active.type == "MESH") else None
     if blockout is not None:
         run = box.row()
@@ -825,15 +825,15 @@ class BBT_PT_scatter_layer(Panel):
         spec = LAYER_TYPES.get(lay.kind, LAYER_TYPES["empty"])
         layout.label(text=spec["label"], icon=spec["icon"])
 
-        # Structural group : assets/align/mask/curve apply on a Build (a rebuild), not from a
+        # Structural group: assets/align/mask/curve apply on a Build (a rebuild), not from a
         # callback. Marked so the split from the live knobs below is explicit.
         box = layout.box()
         # S7: no STRUCTURAL_ICON on the caption; the structural_action button in this box already
         # carries it, so it would show twice a few pixels apart.
         box.label(text="Structural (Build to apply)")
         # Curve binding (BobSplines: the scatter mask and the verge band): clear/keep read the
-# terrain's baked curve mask (all paths at once); along places instances along the chosen
-# curve; verge keeps to ONE path's edge ring -- it needs a curve (empty scatters nothing).
+        # terrain's baked curve mask (all paths at once); along places instances along the chosen
+        # curve; verge keeps to ONE path's edge ring -- it needs a curve (empty scatters nothing).
         box.prop(lay, "curve_mode")
         if along:
             box.prop(lay, "curve")
@@ -851,7 +851,7 @@ class BBT_PT_scatter_layer(Panel):
         helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
-        # Live group : the modifier's own inputs, edited in place, no rebuild.
+        # Live group: the modifier's own inputs, edited in place, no rebuild.
         if _nodes_mod(obj) is None:
             layout.label(text="No scatter modifier", icon="ERROR")
             return

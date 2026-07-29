@@ -23,15 +23,16 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
 from bob_blender_tools.core import assets, materials, shading  # noqa: E402
 
-FAILURES = []
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("texture-set check")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
 OUT = os.path.join(REPO, "_generated", "texset_check")
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
 
 
 def upstream(socket):
@@ -209,11 +210,7 @@ def main():
             print(f"[SKIP] {label} could not render in this environment")
 
     print()
-    if FAILURES:
-        print(f"{len(FAILURES)} FAILED: " + "; ".join(FAILURES))
-    else:
-        print("all checks passed")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

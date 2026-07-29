@@ -97,6 +97,121 @@ _KINDS = {
 }
 
 
+# -- Structure block-outs (the control-conditioned geometry route) ---------------------------------
+# A different job from the scatter proxies above, and here for the same reason they are: a shape
+# built out of primitives standing in for something better. The proxies stand in for an ASSET; a
+# block-out stands in for a SILHOUETTE, and it is consumed by `gen_assets.export_control` and then
+# by `comfy_mesh(control=...)` rather than by a scatter.
+#
+# It exists because of the second artist rejection, where a gabled timber structure came back
+# bulging and edgeless for three generations across two runs. A building is close to the worst case
+# for image-to-3D and the reasons are structural, not a bad roll: hard planar surfaces, right
+# angles, repeated structure and thin proud detail, against geometry that comes back as a
+# dual-contoured shell rounding every edge it touches. 8,617 triangles over an 8.7 m building is
+# about 12 cm of surface per triangle, so a window frame standing 4 cm proud cannot survive the
+# sampling whatever the model does.
+#
+# So the walls, the roof pitch and the footprint come from primitives, where a right angle is
+# exactly a right angle, and the generator supplies only the surface. This stays inside the brief's
+# division of labour -- the structure still comes from `comfy_mesh` -- which is why it is the route
+# to try before the one that needs the brief amended. Measured, a point control holds a footprint
+# IoU of 0.9106 against 0.5766 for the bbox control, so the silhouette it is given is the one it
+# keeps.
+
+
+def _shed(name, width=8.0, depth=7.0, wall_h=4.2, ridge_h=7.5, eave=0.35, door_w=2.6,
+          door_h=3.0, jamb=0.12):
+    """A gabled shed: a wall box, a real roof prism over it, and a doorway jamb standing proud.
+
+    Not a finished building, and deliberately not: everything here is silhouette. The gable ENDS
+    face -y and +y, so the ridge runs along y and the doorway sits in the -y gable, which is the
+    elevation a three-quarter camera reads.
+
+    `jamb` is the one piece of relief rather than silhouette, and it is here because the artist's own
+    note on the failed generation was that the doorway "reads as a flat pale slab rather than a pair
+    of doors". A doorway drawn only in the texture has nothing to catch a practical light; a jamb
+    standing 12 cm proud is over one triangle's worth of surface at the budgets this route uses, so
+    it is detail the control can actually carry.
+
+    `width` and `depth` are the WALL box; the roof overhangs by `eave` on each of the four sides, so
+    the overall footprint is width + 2*eave by depth + 2*eave, which is the figure the op reports back.
+    `ridge_h` is measured from the ground, not from the wall top.
+
+    Origin at the base and centred in plan, which is what `export_control` normalises from and what the
+    manifest origin rule wants of anything that lands in a scene.
+    """
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    half_w, half_d = width / 2.0, depth / 2.0
+
+    bmesh.ops.create_cube(bm, size=1.0, matrix=(Matrix.Translation((0, 0, wall_h / 2.0))
+                                                @ Matrix.Diagonal((width, depth, wall_h, 1))))
+
+    # The roof as its own solid: a prism with the ridge along y and an overhang on all four sides,
+    # so the eave line is a real edge with a shadow under it rather than a painted stripe.
+    roof_w, roof_d = half_w + eave, half_d + eave
+    verts = [bm.verts.new(co) for co in (
+        (-roof_w, -roof_d, wall_h), (roof_w, -roof_d, wall_h),
+        (roof_w, roof_d, wall_h), (-roof_w, roof_d, wall_h),
+        (0.0, -roof_d, ridge_h), (0.0, roof_d, ridge_h))]
+    for face in ((0, 1, 4), (2, 3, 5), (0, 4, 5, 3), (1, 2, 5, 4), (0, 3, 2, 1)):
+        bm.faces.new([verts[i] for i in face])
+
+    # The doorway jamb, proud of the -y gable wall: a frame, not a slab, so the opening reads as an
+    # opening. Three boxes rather than a boolean, because a block-out is a control signal and an
+    # overlapping union samples exactly the same surface as a clean one.
+    post = max(0.18, door_w * 0.12)
+    for matrix in (
+        Matrix.Translation((-(door_w / 2.0 + post / 2.0), -(half_d + jamb / 2.0), door_h / 2.0))
+        @ Matrix.Diagonal((post, jamb, door_h, 1)),
+        Matrix.Translation((door_w / 2.0 + post / 2.0, -(half_d + jamb / 2.0), door_h / 2.0))
+        @ Matrix.Diagonal((post, jamb, door_h, 1)),
+        Matrix.Translation((0.0, -(half_d + jamb / 2.0), door_h + post / 2.0))
+        @ Matrix.Diagonal((door_w + 2.0 * post, jamb, post, 1)),
+    ):
+        bmesh.ops.create_cube(bm, size=1.0, matrix=matrix)
+
+    bm.normal_update()
+    bm.to_mesh(mesh)
+    bm.free()
+    return _new_object(name, mesh, [_material("BOB_Blockout", (0.42, 0.40, 0.38))])
+
+
+BLOCKOUTS = {"shed": _shed}
+
+
+def make_blockout(op: dict) -> dict:
+    """MCP op: build a structure block-out in the scene, to be exported as a geometry control.
+
+    Linked into the scene collection rather than a `BOB_Assets_*` pool, because a building is placed
+    and not scattered, and because the next call is `export_control` on it by name.
+
+    Any dimension the shape takes can be overridden through `params`, so a shed is a shed, a byre and
+    a lean-to without a second recipe.
+    """
+    shape = str(op.get("shape") or "shed")
+    make = BLOCKOUTS.get(shape)
+    if make is None:
+        raise ValueError(f"unknown block-out shape {shape!r}; have {sorted(BLOCKOUTS)}")
+    name = op.get("name") or f"BOB_Blockout_{shape.capitalize()}"
+    existing = bpy.data.objects.get(name)
+    if existing is not None and not op.get("replace", False):
+        raise ValueError(f"an object named {name!r} already exists; pass replace=true to rebuild it")
+    if existing is not None:
+        bpy.data.objects.remove(existing, do_unlink=True)
+    params = {k: float(v) for k, v in (op.get("params") or {}).items()}
+    obj = make(name, **params)
+    bpy.context.scene.collection.objects.link(obj)
+    if op.get("location"):
+        obj.location = tuple(float(v) for v in op["location"])
+    dims = tuple(round(d, 4) for d in obj.dimensions)
+    return {"op": "make_blockout", "created": [obj.name],
+            "data": {"object": obj.name, "shape": shape, "dimensions": list(dims),
+                     "faces": len(obj.data.polygons)},
+            "info": f"{obj.name}: {shape}, {dims[0]} x {dims[1]} x {dims[2]} m, "
+                    f"{len(obj.data.polygons)} faces"}
+
+
 def _collection_name(kind):
     return f"BOB_Assets_{kind.capitalize()}"
 

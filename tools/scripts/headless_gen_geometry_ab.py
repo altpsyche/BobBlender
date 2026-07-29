@@ -24,7 +24,7 @@ Four parts, because they cost very different amounts of GPU time:
      Re-measured on the same assets the route A/B used, from the route A/B's cache, so it costs no
      GPU at all.
 
-Every generated mesh caches WITH its timing and its VRAM under `_generated/comfy_g7_check/gen/`, so
+Every generated mesh caches WITH its timing and its VRAM under `_generated/geometry_ab_check/gen/`, so
 `--no-gen` re-scores in minutes and `--fresh` regenerates. Reachability-gated: with no server every
 generation half prints SKIP and exits 0. Exit 0 = nothing failed.
 """
@@ -46,14 +46,22 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
 from bob_blender_tools.core import assets, comfy, gen_assets  # noqa: E402
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g7_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("geometry A/B")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "geometry_ab_check")
 GEN = os.path.join(OUT, "gen")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 # The route A/B's cache, which is where the shared subject images and the dense-mesh question's four
 # assets come from.
-G3B = os.path.join(REPO, "_generated", "comfy_g3b_check", "gen")
+G3B = os.path.join(REPO, "_generated", "route_ab_check", "gen")
 
 FACES = gen_assets.DEFAULT_FACES
 TEXTURE_SIZE = 1024
@@ -93,17 +101,6 @@ MODELS = ("trellis", "hunyuan")
 # The dense-mesh question's four, which are exactly the four the route A/B took through steps 6 to
 # 8.
 D11_KEYS = ("boulder", "fern", "leaf", "stump")
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def skip(label, value):
@@ -662,7 +659,7 @@ def part_d(limit=len(D11_KEYS)):
                   "textured_mesh": files["tex"]}
         one = {"raw_mesh": files["one"], "textured_mesh": files["one"]}
         runs = {"staged_aligned": (staged, comfy.stage_exports(staged)),
-                "staged_g3b": (staged, None),
+                "staged_route": (staged, None),
                 "oneshot": (one, comfy.stage_exports(one))}
         row = {}
         for label, (stage, exports) in runs.items():
@@ -696,11 +693,11 @@ def part_d(limit=len(D11_KEYS)):
             print(f"{key:<9} {label:<15} {r['faces']:>6} {r['source_faces']:>12} "
                   f"{fmt(r['normal_std'], 4):>11} {fmt(r['normal_detail'], 5):>14}")
 
-    # The one-shot arm ships NO baked normal, and that is the correction the forest-barn gate forced
+    # The one-shot arm ships NO baked normal, and that is the correction the asset gate forced
     # rather than a gap in this table. Its two meshes are one file, so a transfer has nothing to
-    # say; the figure this A/B used to score against was the weld boundary between a welded high
-    # and an unwelded low, which the comment below conceded and used as a baseline anyway. Measured
-    # on the shipped assets: 52% of the barn's texels and 87% of the stump's deviated past one 8-bit
+    # say; the figure this A/B used to score against was the weld boundary between a welded high and
+    # an unwelded low, which the comment below conceded and used as a baseline anyway. Measured on
+    # the shipped assets: 52% of a structure's texels and 87% of the stump's deviated past one 8-bit
     # step from a map whose only correct value was flat. So the control is now zero by construction,
     # and the question "does the dense mesh buy detail" is answered against its own misaligned bake.
     scored = [(k, r) for k, r in out.items()
@@ -708,16 +705,16 @@ def part_d(limit=len(D11_KEYS)):
     for key, r in scored:
         note(f"dense mesh, {key}",
              f"aligned detail {r['staged_aligned']['normal_detail']:.5f} against the route A/B's misaligned "
-             f"{fmt(r.get('staged_g3b', {}).get('normal_detail'), 5)}; the one-shot arm ships no "
+             f"{fmt(r.get('staged_route', {}).get('normal_detail'), 5)}; the one-shot arm ships no "
              f"normal map (one file for both meshes, nothing to transfer); std "
              f"{fmt(r['staged_aligned']['normal_std'], 4)} / "
-             f"{fmt(r['staged_g3b']['normal_std'], 4)}")
+             f"{fmt(r['staged_route']['normal_std'], 4)}")
     if scored:
         # "Buys detail" has to mean a margin rather than a difference. Against the one-shot route it
         # is now the whole of the staged route's detail, since that route writes no normal at all.
         fixed = [k for k, r in scored
-                 if r.get("staged_g3b", {}).get("normal_detail") is not None
-                 and r["staged_aligned"]["normal_detail"] > r["staged_g3b"]["normal_detail"] * 1.1]
+                 if r.get("staged_route", {}).get("normal_detail") is not None
+                 and r["staged_aligned"]["normal_detail"] > r["staged_route"]["normal_detail"] * 1.1]
         absent = [k for k, r in out.items() if r.get("oneshot", {}).get("normal_detail") is None]
         note("dense mesh, the answer",
              f"the aligned dense-mesh bake beats its own earlier misaligned bake on "
@@ -907,13 +904,12 @@ def main():
                            for (k, m), v in finished.items()}
     results["seconds"] = {e["key"]: e["seconds"] for e in entries}
     results["vram"] = {e["key"]: e["vram"] for e in entries}
-    with open(os.path.join(OUT, "g7_results.json"), "w") as fh:
+    with open(os.path.join(OUT, "geometry_ab_results.json"), "w") as fh:
         json.dump(results, fh, indent=2, sort_keys=True, default=str)
-    note("results", os.path.join(OUT, "g7_results.json"))
+    note("results", os.path.join(OUT, "geometry_ab_results.json"))
     if not args.keep and os.path.isdir(PACK):
         shutil.rmtree(PACK)
-    print(f"{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

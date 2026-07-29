@@ -3,7 +3,7 @@
 The one read-only op. Everything else in the vocabulary WRITES, and until this existed there was no
 way to ask what the scene already held: which objects are in it, which layer slot a curve band took,
 which texture set is on a terrain layer, what a terrain was built from, which curves carry which
-role and mask attribute. The redwood-scene run therefore guessed slot indices and rendered probe
+role and mask attribute. A scene run therefore guessed slot indices and rendered probe
 frames to read the scene back, which is slow, lossy, and wrong often enough to matter.
 
 What it reports is chosen by the same rule the op results follow: the values a NEXT call needs as
@@ -27,8 +27,8 @@ _TERRAIN_PROPS = (("heightmap", "bbt_heightmap"), ("size", "bbt_terrain_size"),
                   ("sea_level", "bbt_terrain_sea"), ("heightmap_clean", "bbt_heightmap_clean"))
 
 # Per-layer mask strengths worth reporting. A slot whose masks are all 0 and whose Enable is 1 is a
-# plain base fill; a slot with Curve Strength 1 is a curve band. This is how "which slot did the band
-# take" becomes readable without re-deriving apply_curve_surface's slot choice.
+# plain base fill; a slot with Curve Strength 1 is a curve band. This is how "which slot did the
+# band take" becomes readable without re-deriving apply_curve_surface's slot choice.
 _LAYER_MASKS = ("Slope Strength", "Height Strength", "Noise Strength", "Paint Strength",
                 "Curvature Strength", "Flow Strength", "Curve Strength", "Curve B Strength")
 

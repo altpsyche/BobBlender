@@ -31,7 +31,7 @@ every proxy's bounding box for free. So this gate is one comparison with a null 
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM under
-`_generated/comfy_g8_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
+`_generated/bbox_control_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
 shape maths, the block-outs and the VRAM sampler are imported from the control gate rather than
 copied, so both gates' numbers are the same measurement and not two implementations of it. Exit 0 =
 nothing failed.
@@ -60,8 +60,16 @@ from bob_blender_tools.core import (  # noqa: E402
     materials,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g8_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("bbox gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "bbox_control_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
@@ -88,17 +96,6 @@ WIN_THRESHOLD = 2
 # staged-copy fault). Its re-test trigger is a
 # fork update, so the version is the tripwire: same version, same install, nothing to re-test.
 AIMDO_MEASURED = "0.4.10"
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -171,9 +168,9 @@ def part_a(args, reachable):
           "classes: " + ", ".join(sorted({n["class_type"] for n in graph.values()})))
 
     # The mode is a value in ONE place, so the truth table is the test. A third mode reads the SAME
-# control file `mesh_geom_ctrl` does, so a mesh alone no longer names a mode and the default
-# breaks that tie too. Written against the constant rather than against "point", or this gate
-# fails the day the default moves for a reason the bbox gate did not measure.
+    # control file `mesh_geom_ctrl` does, so a mesh alone no longer names a mode and the default
+    # breaks that tie too. Written against the constant rather than against "point", or this gate
+    # fails the day the default moves for a reason the bbox gate did not measure.
     table = [({}, None, "no control at all"),
              ({"control": "/x.glb"}, comfy.DEFAULT_CONTROL_MODE, "a mesh and nothing else"),
              ({"control_bbox": [1, 1, 1]}, "bbox", "proportions and nothing else"),
@@ -217,7 +214,7 @@ def part_a(args, reachable):
           f"height {signal['height_m']:.3f} m, bbox {signal['bbox']}")
 
     # `mesh_geom_bbox`'s own binding, both ways, without a server: `auto_bbox` is the difference
-# between Bob's numbers and the node's guess, and it is bound from one argument being None.
+    # between Bob's numbers and the node's guess, and it is bound from one argument being None.
     for dims, auto in (([0.3, 1.0, 0.7], False), (None, True)):
         bound = comfy.template(comfy.load_workflow("mesh_geom_bbox")[0],
                                {"BOB_SEED": dict({"seed": SEED, "auto_bbox": dims is None},
@@ -231,7 +228,7 @@ def part_a(args, reachable):
               f"depth {node['inputs']['bbox_depth']}")
 
     # The staged-copy tripwire. The rule says re-test on a fork update; the version is what says
-# whether there was one, so a stale reminder becomes a check.
+    # whether there was one, so a stale reminder becomes a check.
     version = aimdo_version()
     check("comfy-aimdo is the version the segfault was measured on, so the staged-copy check needs no re-run",
           version in (None, AIMDO_MEASURED),
@@ -340,9 +337,9 @@ def part_b(args, reachable, ready):
                  f"{np.mean([s['aspect_error'] for s in got]):.3f}")
 
     # First, whether the control signal reaches the model at ALL. This is the control gate's failure
-# mode -- a wrapper that ignores its control and says nothing -- and it has to be separated from
-# "the control is not enough", which is a finding rather than a defect. A box can only control
-# PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
+    # mode -- a wrapper that ignores its control and says nothing -- and it has to be separated from
+    # "the control is not enough", which is a finding rather than a defect. A box can only control
+    # PROPORTIONS, so proportions are what it is asked to control, against the node's own guess.
     pairs = [(kind, scores.get((kind, "mesh_geom_bbox bbox")), scores.get((kind, "mesh_geom_bbox auto")))
              for kind in control_gate.PROMPTS]
     live = [(k, b, a) for k, b, a in pairs if b and a]
@@ -377,8 +374,8 @@ def part_b(args, reachable, ready):
               comfy.DEFAULT_CONTROL_MODE == verdict,
               f"shipped {comfy.DEFAULT_CONTROL_MODE!r}, rule {verdict!r}")
         # The adopted mode has to clear the control gate's own bar. The mode that lost does not, and
-# holding it to one would only encode a hope: what it has to do is be measured and be
-# documented.
+        # holding it to one would only encode a hope: what it has to do is be measured and be
+        # documented.
         adopted = "mesh_geom_bbox bbox" if comfy.DEFAULT_CONTROL_MODE == "bbox" else "mesh_geom_ctrl point"
         got = column(adopted)
         check(f"the shipped control mode ({adopted}) clears the control gate's footprint bar on every block-out",
@@ -455,7 +452,7 @@ def part_c(args, reachable, ready):
           materials.master_type(final.active_material) is not None,
           str(materials.master_type(final.active_material)))
     # The bake frame, which the geometry A/B made a number rather than a hope: a route that rescales
-# on the server and does not move its dense mesh bakes a flat normal and nothing errors.
+    # on the server and does not move its dense mesh bakes a flat normal and nothing errors.
     note("bake_rescale", str(report.get("bake_rescale")))
     normal = (report.get("maps") or {}).get("normal")
     detail = assets_gate.neighbour_detail(normal) if normal else 0.0
@@ -468,10 +465,10 @@ def part_c(args, reachable, ready):
          f"aspect {agree['aspect']}")
 
     # What steps 6 to 8 are on the hook for is PRESERVING whatever the control achieved, not
-# improving it, so the check is against this route's own raw mesh rather than against the
-# control gate's absolute bar. That bar belongs to the adopted mode and the control gate already
-# holds the point route to it; holding the mode that LOST to it would only record a
-# disappointment as a failure.
+    # improving it, so the check is against this route's own raw mesh rather than against the
+    # control gate's absolute bar. That bar belongs to the adopted mode and the control gate already
+    # holds the point route to it; holding the mode that LOST to it would only record a
+    # disappointment as a failure.
     control_gate.empty_scene()
     source = gen_assets.import_glb(raw, name="raw", orient=gen_assets.CONTROL_RETURN_TURN)
     gen_assets.weld(source)
@@ -582,11 +579,7 @@ def main():
         part_d(args, ok, ready)
 
     section("Summary")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(GATE.exit_code())
 
 
 if __name__ == "__main__":

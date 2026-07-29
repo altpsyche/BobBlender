@@ -53,7 +53,15 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 from bob_blender_tools.core import assets, materials  # noqa: E402
 from bob_blender_tools.core.dispatch import apply_op  # noqa: E402
 
-FAILURES = []
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("foliage gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
 OUT = os.path.join(REPO, "_generated", "foliage_check")
 
 # One explicit set of params, so every expected count below is arithmetic rather than a default that
@@ -62,13 +70,6 @@ OUT = os.path.join(REPO, "_generated", "foliage_check")
 # trees.
 BASE = {"levels": 3, "height": 20.0, "seed": 3, "segments": 14, "branch_segments": 6,
         "profile_segments": 6, "l1_branches": 9, "l2_branches": 5, "l3_branches": 4, "cards": 0}
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
 
 
 def build(name, **overrides):
@@ -469,9 +470,9 @@ def check_shape():
           f"at 25% height {flat[quarter][1]:.5f} m against {flared[quarter][1]:.5f} m")
 
     # 3. The branch collar: the same term on a branch, over a longer span. The invariant that
-# matters is that a collar CANNOT poke through the limb it grows from -- the base radius is the
-# parent's own radius times a ratio well under 1, so there is headroom, and this is the number
-# that says how much.
+    # matters is that a collar CANNOT poke through the limb it grows from -- the base radius is the
+    # parent's own radius times a ratio well under 1, so there is headroom, and this is the number
+    # that says how much.
     ev, mesh, _ = build("Collar", cards=0, collar=1.0)
     l1_plain = rings(mesh, 1, profile)
     parent = rings(mesh, 0, profile)
@@ -514,9 +515,9 @@ def check_shape():
           f"worst {max(gaps_on):.2e} m over {len(gaps_on)} cards")
 
     # 5. The sag, which adds a term in Z to the one place a term in Z is dangerous. The
-# attached-base invariant is the whole of an early version's discipline and a cantilever
-# weighted anything but 0 at the base breaks it silently -- a tree of floating boughs renders
-# perfectly.
+    # attached-base invariant is the whole of an early version's discipline and a cantilever
+    # weighted anything but 0 at the base breaks it silently -- a tree of floating boughs renders
+    # perfectly.
     ev, mesh, _ = build("Sag", cards=0, l1_sag=0.4, l2_sag=0.4, l3_sag=0.4)
     off = attr(mesh, "bbt_fol_off")
     t = attr(mesh, "bbt_fol_t")
@@ -538,9 +539,9 @@ def check_shape():
           f"{mean(l1_lifted):.3f} lifted")
 
     # 6. The lobe's foot. A flared base widens DOWNWARD, so its lowest ring's normal tilts down and
-# a displacement along it pushes vertices under the ground -- measured at -0.031 m on the
-# shipped conifer, which is the pack writer's origin-at-the-base invariant broken. LOBE_FOOT
-# fades the lobing in over the bottom 1.5%, and this is the number that says it worked.
+    # a displacement along it pushes vertices under the ground -- measured at -0.031 m on the
+    # shipped conifer, which is the pack writer's origin-at-the-base invariant broken. LOBE_FOOT
+    # fades the lobing in over the bottom 1.5%, and this is the number that says it worked.
     ev, mesh, _ = build("Foot", cards=0, flare=1.0, lobe=0.3)
     lowest = min(v.co.z for v in mesh.vertices)
     ev.to_mesh_clear()
@@ -558,8 +559,8 @@ def check_leaves():
     floor.
     """
     # 1. The defaults reproduce the old selection exactly, which is the only reason the card work's
-# card measurements are still quotable. `Leaf Start` 1 selects a limb's last point, and a limb's
-# last point IS its tip; `Leaf Level` 0 is every level, including the trunk's own tip.
+    # card measurements are still quotable. `Leaf Start` 1 selects a limb's last point, and a limb's
+    # last point IS its tip; `Leaf Level` 0 is every level, including the trunk's own tip.
     ev, mesh, params = build("LeafDefault", cards=4, card_size=0.5)
     tip_cards = len(card_faces(mesh))
     ev.to_mesh_clear()
@@ -567,7 +568,7 @@ def check_leaves():
           tip_cards == (1 + 9 + 45 + 180) * 4, f"{tip_cards} cards against 235 tips x 4")
 
     # 2. Leaf Start below 1 distributes them, and the count is the arithmetic rather than a
-# surprise: `branch_segments` points per twig, of which those past Leaf Start qualify.
+    # surprise: `branch_segments` points per twig, of which those past Leaf Start qualify.
     ev, mesh, _ = build("LeafAlong", cards=4, card_size=0.5, leaf_level=3, leaf_start=0.4)
     along = card_faces(mesh)
     gaps = card_anchor_gaps(mesh, along)
@@ -592,9 +593,9 @@ def check_leaves():
           levels_with_cards == {3}, f"cards found on levels {sorted(levels_with_cards)}")
 
     # 4. The clamp, which is the one that would have shipped a silent defect. A LOD rung rebuilds at
-# `levels - 1` (docs/FOLIAGE.md 2.6), so a species asking for leaves on level 3 asks LOD1 for a
-# level that does not exist. Unclamped the selection matches nothing and the rung comes back as
-# bare wood with its canopy gone -- and a rung is exactly the thing nobody looks at closely.
+    # `levels - 1` (docs/FOLIAGE.md 2.6), so a species asking for leaves on level 3 asks LOD1 for a
+    # level that does not exist. Unclamped the selection matches nothing and the rung comes back as
+    # bare wood with its canopy gone -- and a rung is exactly the thing nobody looks at closely.
     ev, mesh, _ = build("LeafClamp", levels=2, cards=4, card_size=0.5, leaf_level=3, leaf_start=0.4)
     clamped = card_faces(mesh)
     clamped_levels = {mesh.attributes["bbt_fol_level"].data[v].value
@@ -605,9 +606,9 @@ def check_leaves():
           f"{sorted(clamped_levels)}")
 
     # 5. The atlas fallback. A card whose set does not resolve has no cutout AND no albedo, and its
-# tint is white, so the canopy renders as opaque white rectangles -- measured on the first the
-# wood shaping run against a generated atlas the resolver could not see. Bark has no such cliff,
-# which is why only the atlas falls back (`_atlas_set`).
+    # tint is white, so the canopy renders as opaque white rectangles -- measured on the first the
+    # wood shaping run against a generated atlas the resolver could not see. Bark has no such cliff,
+    # which is why only the atlas falls back (`_atlas_set`).
     apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Fallback",
               "params": dict(BASE, cards=4, atlas="no_such_atlas_anywhere"), "reset": True})
     card = bpy.data.materials.get("M_Fallback Leaf")
@@ -633,9 +634,9 @@ def check_cards():
           all(len(mesh.polygons[i].vertices) == 4 for i in faces))
 
     # Attached, the card analogue of an early version's base-offset invariant. The quad stands ON
-# the origin before it is instanced, so its base edge straddles the tip; a card that detached
-# would still render, hanging in the air beside its twig, which is exactly the kind of failure
-# that reads as "a bit sparse" rather than as a bug.
+    # the origin before it is instanced, so its base edge straddles the tip; a card that detached
+    # would still render, hanging in the air beside its twig, which is exactly the kind of failure
+    # that reads as "a bit sparse" rather than as a bug.
     gaps = card_base_gaps(mesh, faces, tips)
     check("every card's base sits exactly on a tip", gaps and max(gaps) < 1e-4,
           f"worst base gap {max(gaps):.2e} m over {len(gaps)} cards" if gaps else "no cards")
@@ -788,7 +789,7 @@ def check_atlas_ships():
     alpha = px[3::4]
     clear = sum(1 for a in alpha if a < 0.05) / len(alpha)
     opaque = sum(1 for a in alpha if a > 0.95) / len(alpha)
-    # The redwood run's whole finding was that generated meshes come back opaque. A leaf atlas that
+    # A whole-scene run's finding was that generated meshes come back opaque. A leaf atlas that
     # is mostly opaque is the same failure in a texture, and it renders as green rectangles.
     check("the atlas is mostly cutout, not a filled square", clear > 0.5,
           f"{clear * 100:.1f}% transparent, {opaque * 100:.1f}% opaque")
@@ -817,7 +818,7 @@ def check_bark_uv():
     and the seam is unmistakable.
 
     The shear then gets a check of its own, below, because leaving it merely acknowledged is how it
-    reached a hero render: the forest-barn gate reported "bark wrapping wrong at the foot of the
+    reached a hero render: the artist reported "bark wrapping wrong at the foot of the
     conifer trunk" and the cause was 1.713 tiles of sideways slide in the single quad band the root
     flare lands in. The two checks are the same defect measured at two scales and neither
     substitutes for the other.
@@ -864,7 +865,7 @@ def check_bark_uv():
 # different U and the texture shears. Some of that is unavoidable in a metres-based cylindrical UV;
 # the question is only how much.
 #
-# Measured on the shipped conifer at the size the forest-barn gate used, over 8,235 bark quads,
+# Measured on the shipped conifer at the gate's size, over 8,235 bark quads,
 # before and after the UV took its radius from the pre-swell taper:
 #
 #             median    p95     worst   where the worst is
@@ -962,9 +963,9 @@ def check_grain():
           f"block spread {n['block_spread_deg']:.1f} deg")
 
     # The atlas composer, on synthetic sprites: a wedge narrow at one end, at four orientations.
-# What must hold is that all four come out upright with the NARROW end at the bottom, because
-# that is the end a card attaches by. A bounding box cannot see this -- `base_taper` is what
-# does.
+    # What must hold is that all four come out upright with the NARROW end at the bottom, because
+    # that is the end a card attaches by. A bounding box cannot see this -- `base_taper` is what
+    # does.
     sprites = []
     for angle in (0.0, 45.0, 130.0, 260.0):
         sprite = np.zeros((128, 128, 4), np.uint8)
@@ -1072,9 +1073,9 @@ def check_species():
           assets.foliage_species("no_such_species") == {})
 
     # the texture sets: the tree species NAME the bark they want, and no placeholder bark set ships
-# (a hand-made one would hide the grain-direction problem generation actually has). So a bark
-# set that does not resolve is the ordinary pre-generation state and not an authoring mistake,
-# which is why `foliage_missing_sets` is separate from the rest of the validator.
+    # (a hand-made one would hide the grain-direction problem generation actually has). So a bark
+    # set that does not resolve is the ordinary pre-generation state and not an authoring mistake,
+    # which is why `foliage_missing_sets` is separate from the rest of the validator.
     for name in ("conifer", "broadleaf"):
         declared = assets.foliage_species(name)["params"].get("bark_set")
         check(f"species '{name}' names the bark set it wants", bool(declared), str(declared))
@@ -1088,8 +1089,8 @@ def check_species():
               str(assets.foliage_species_for_kind(kind)))
 
     # Sizes, because a preset that builds is not a preset that is right: an early version's own
-# defaults built perfectly and grew the wrong tree, and the same numbers at plant scale grew a
-# 1.7 m tuft.
+    # defaults built perfectly and grew the wrong tree, and the same numbers at plant scale grew a
+    # 1.7 m tuft.
     expected = {"conifer": (14.0, 30.0, 0.45), "broadleaf": (8.0, 20.0, 1.10),
                 "shrub": (0.5, 2.0, 1.40), "grass_tuft": (0.15, 0.8, 1.60)}
     for name in sorted(names):
@@ -1115,8 +1116,8 @@ def check_species():
         check(f"species '{name}' grows leaves", cards > 0, f"{cards} cards")
         ev.to_mesh_clear()
         # wind and season: how stiff a plant is belongs to its species the way its taper does, and a
-# preset value that never reaches the modifier is the inert-radius failure again in a new
-# knob.
+        # preset value that never reaches the modifier is the inert-radius failure again in a new
+        # knob.
         for knob, key in (("Sway", "sway"), ("Leaf Flutter", "leaf_flutter")):
             want = spec["params"].get(key)
             got = live_value(bpy.data.objects[f"sp_{name}"], knob)
@@ -1170,8 +1171,8 @@ def check_routing():
     """The Scatter panel's routing (docs/FOLIAGE.md 4.5), which is copy and therefore drifts.
 
     Held until the cards on purpose: until the cards existed, a panel that sent someone to the
-    Foliage panel for plants would have been recommending bare sticks. headless_redwood.py owns the
-    dead-wood half of this (that every noted kind is a real kind, and that trees names dead wood);
+    Foliage panel for plants would have been recommending bare sticks. `headless_scene_seams.py`
+    owns the dead-wood half of this (that every noted kind is a real kind, and that trees names dead wood);
     this owns the half that only became true with the cards -- that each note now points somewhere,
     and that the affordance it points at exists and resolves a species for every kind that carries
     the note.
@@ -1182,9 +1183,9 @@ def check_routing():
     check("every noted kind is a real kind",
           set(notes) <= {"trees", "rocks", "plants", "grass"}, f"{sorted(notes)}")
     # "the Foliage panel", matching that panel's actual HEADER rather than the track's name. The
-# note is a pointer, and a pointer naming something the artist cannot find on screen is the dead
-# end this copy replaced. Checked against the panel's own bl_label below, not against a literal
-# here, or the two drift apart and the check certifies the drift.
+    # note is a pointer, and a pointer naming something the artist cannot find on screen is the dead
+    # end this copy replaced. Checked against the panel's own bl_label below, not against a literal
+    # here, or the two drift apart and the check certifies the drift.
     from bob_blender_tools.ui import foliage as ui_foliage
 
     header = ui_foliage.BBT_PT_foliage.bl_label
@@ -1202,8 +1203,8 @@ def check_routing():
           hasattr(bpy.types, "BBT_OT_scatter_grow_foliage")
           or hasattr(ui_scatter, "BBT_OT_scatter_grow_foliage"))
     # The button is only drawn when the kind resolves a species, so a note pointing at the Foliage
-# panel for a kind nothing grows would be a dead end with an affordance-shaped hole where it
-# says so.
+    # panel for a kind nothing grows would be a dead end with an affordance-shaped hole where it
+    # says so.
     check("every kind the notes route to Foliage can actually be grown",
           all(ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")),
           str({k: ui_scatter._foliage_species_for(k) for k in ("trees", "plants", "grass")}))
@@ -1604,13 +1605,13 @@ def check_variants():
     verts = {o.name: pool_verts(o) for o in variants}
     budgets = sorted({len(v) for v in verts.values()})
     # WITHIN a per-mille of each other, not identical, and the wood shaping is why. Cards are
-# selected along a limb by `bbt_fol_t`, which is Spline Parameter's factor -- an ARC-LENGTH
-# fraction, measured after the bend and the sag have moved the points. So a different seed
-# genuinely puts a handful of interior points on the other side of `Leaf Start` and the budget
-# moves by a few cards. Measured on the shipped conifer: 17,240 / 17,248 / 17,256 verts over
-# four seeds, a spread of 16 in 17,000. Exact equality was the right check while cards grew only
-# on tips, where the selection is an index and cannot drift; asserting it now would be asserting
-# that the seed does nothing.
+    # selected along a limb by `bbt_fol_t`, which is Spline Parameter's factor -- an ARC-LENGTH
+    # fraction, measured after the bend and the sag have moved the points. So a different seed
+    # genuinely puts a handful of interior points on the other side of `Leaf Start` and the budget
+    # moves by a few cards. Measured on the shipped conifer: 17,240 / 17,248 / 17,256 verts over
+    # four seeds, a spread of 16 in 17,000. Exact equality was the right check while cards grew only
+    # on tips, where the selection is an index and cannot drift; asserting it now would be asserting
+    # that the seed does nothing.
     spread = (budgets[-1] - budgets[0]) / max(1, budgets[0])
     check("every variant built, and to within a per-mille of the same vertex budget",
           all(verts.values()) and spread < 0.001, f"budgets {budgets}, spread {spread * 100:.3f}%")
@@ -2125,7 +2126,7 @@ def check_panel():
     """The BobFoliage panel (docs/FOLIAGE.md 4.2), which is as gateable as a recipe.
 
     Registers the addon, which everything above deliberately does not: this is the only section
-    that needs the ui module, and `headless_redwood.py` does the same for the curve ops. It runs
+    that needs the ui module, and `headless_scene_seams.py` does the same for the curve ops. It runs
     LAST for that reason -- once `bbt_env` exists, a build seeds its wind from the world, and every
     measurement above was taken on a still tree.
 
@@ -2192,7 +2193,7 @@ def check_panel():
           foliage_build.species_of(grown))
 
     # 5. A structural rebuild keeps tuned live knobs (the reason Build is a press and not a
-# callback).
+    # callback).
     foliage_build.live_input(second, "Droop").value = 0.81
     foliage_build.rebuild(second, overrides={"profile_segments": 4}, scene=scene)
     check("a structural rebuild keeps the tuned live knobs",
@@ -2221,8 +2222,8 @@ def check_panel():
                for o in foliage_build.foliage_objects(scene)]))
 
     # 7. The two texture pickers exist, their Generate buttons are real operators, and Make Variants
-# is HERE now: wind and season kept it off the panel rather than shipping it greyed, and the
-# variant pass brings it with the thing it does (docs/FOLIAGE.md 6).
+    # is HERE now: wind and season kept it off the panel rather than shipping it greyed, and the
+    # variant pass brings it with the thing it does (docs/FOLIAGE.md 6).
     from bob_blender_tools.ui import foliage as ui_foliage
     props = {p for p in ui_foliage.BBT_FoliageProps.__annotations__}
     check("the panel carries both texture-set pickers", {"bark_set", "atlas"} <= props,
@@ -2235,8 +2236,8 @@ def check_panel():
           str(sorted(props & {"variant_count", "variant_lods", "variant_pack"})))
 
     # 8. the variant pass's own panel checks. The operator has to bake through core and nothing
-# else, and the baked pool has to feel the world -- which is the half that is easy to lose,
-# because BOB_Assets_<Kind> is not in the scene and `scene.objects` walks straight past it.
+    # else, and the baked pool has to feel the world -- which is the half that is easy to lose,
+    # because BOB_Assets_<Kind> is not in the scene and `scene.objects` walks straight past it.
     scene.bbt_foliage.variant_count = 3
     scene.bbt_foliage.variant_lods = False
     scene.bbt_foliage.variant_pack = False
@@ -2334,9 +2335,9 @@ def check_generation(args):
         opacity = comfy_maps.read_png(fh.read())
     alpha = opacity.astype(np.float32) / 255.0
     clear = float((alpha < 0.05).mean())
-    # The redwood run's whole finding was that generated meshes come back opaque (mean alpha 0.998).
-# `mesh_subject`'s matte is the thing that is not, and this is where that claim gets re-measured
-# per run.
+    # A whole-scene run's finding was that generated meshes come back opaque (mean alpha 0.998).
+    # `mesh_subject`'s matte is the thing that is not, and this is where that claim gets re-measured
+    # per run.
     check("the generated atlas is a real cutout, not a filled square", clear > 0.35,
           f"{clear * 100:.1f}% clear, {float((alpha > 0.95).mean()) * 100:.1f}% opaque")
     cells = comfy_maps.atlas_cells(opacity, cols, rows)
@@ -2379,8 +2380,8 @@ def check_generation(args):
           f"block spread {grain['block_spread_deg']:.1f} deg over {len(grain['block_axes'])} blocks")
 
     # 3. The round trip. A species preset already NAMES bark_conifer, so this is the wiring the
-# presets were pointed at: generate it, rebuild, and the tree is wearing it with no assignment
-# step anywhere. That is the check that the preset edit was more than a string.
+    # presets were pointed at: generate it, rebuild, and the tree is wearing it with no assignment
+    # step anywhere. That is the check that the preset edit was more than a string.
     check("the conifer preset's bark set now resolves",
           not [k for k, _l, _v in assets.foliage_missing_sets("conifer") if k == "bark_set"],
           str(assets.foliage_missing_sets("conifer")))
@@ -2475,8 +2476,8 @@ def main(argv=None):
           f"{counts} against {expected}")
 
     # 3. The attached-base invariant, which is the one that silently ruins a tree. The bend offset
-# is weighted by the branch's own spline factor, so a point at factor 0 must not have moved --
-# it is the point that coincides with the parent point it was instanced on.
+    # is weighted by the branch's own spline factor, so a point at factor 0 must not have moved --
+    # it is the point that coincides with the parent point it was instanced on.
     t = attr(mesh, "bbt_fol_t")
     off = attr(mesh, "bbt_fol_off")
     base = [o for o, factor in zip(off, t) if factor < 1e-4]
@@ -2488,15 +2489,15 @@ def main(argv=None):
           f"max offset {max(upper):.4f} at the tips")
 
     # 4. The tip flag reaches exactly one ring per curve, which is what the cards instances cards
-# on.
+    # on.
     tips = sum(1 for v in attr(mesh, "bbt_fol_tip") if v > 0.5)
     total_curves = sum(expected.values())
     check("one tip ring per curve", tips == total_curves * params["profile_segments"],
           f"{tips} tip verts against {total_curves} curves x {params['profile_segments']}")
 
     # 5. Parent length reaches the children: a level-3 twig must be far shorter than the trunk. The
-# failure this catches is a level scaling by its OWN length, which makes every branch
-# trunk-sized.
+    # failure this catches is a level scaling by its OWN length, which makes every branch
+    # trunk-sized.
     plen = attr(mesh, "bbt_fol_plen")
     levels = attr(mesh, "bbt_fol_level")
     by_level = {}
@@ -2549,14 +2550,14 @@ def main(argv=None):
           f"profile 3 -> {coarse} verts, profile 12 -> {fine}")
 
     # -- the cards: cards, atlas, UVs, materials, and the routing that waited on them
-# -------------------
+    # -------------------
     check_radius()
     check_scale_invariance()
     check_crown()
 
     # -- the wood shaping: what stops a limb being a pipe, and where the leaves sit on it
-# ----------------------- Before the card checks, because `check_leaves` establishes that the
-# default selection is still the tip-only one those checks measure.
+    # ----------------------- Before the card checks, because `check_leaves` establishes that the
+    # default selection is still the tip-only one those checks measure.
     check_shape()
     check_leaves()
 
@@ -2569,13 +2570,13 @@ def main(argv=None):
     check_routing()
 
     # -- the texture sets: the bark UV seam, the grain measure, the atlas sidecar, and the two jobs
-# --------------
+    # --------------
     check_bark_uv()
     check_grain()
     check_atlas_sidecar()
 
     # -- wind and season: the wind, what it costs the shared groups, the translucency, the season,
-# the panel ----
+    # the panel ----
     check_wind()
     check_wind_phase()
     check_no_master_change()
@@ -2584,8 +2585,8 @@ def main(argv=None):
     check_render()      # deletes everything but its own tree to get a clean frame
 
     # -- the variant pass: the variants, the ladder, the pack writer and the stand
-# ------------------------------ After the render, because each of these wipes the scene to bake
-# into a clean pool.
+    # ------------------------------ After the render, because each of these wipes the scene to bake
+    # into a clean pool.
     check_variants()
     check_variants_alive()
     check_variant_phase()
@@ -2595,7 +2596,7 @@ def main(argv=None):
         check_variant_pack(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    check_stand()       # a terrain, a real density, and the frame beside the redwood reference
+    check_stand()       # a terrain, a real density, and the frame beside the scene reference
 
     check_season()      # renders its own frames the same way, one per season
     check_generation(args)  # needs a server; renders its own frame
@@ -2604,11 +2605,7 @@ def main(argv=None):
     check_panel()
 
     print()
-    if FAILURES:
-        print(f"{len(FAILURES)} FAILED: " + "; ".join(FAILURES))
-    else:
-        print("all checks passed")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

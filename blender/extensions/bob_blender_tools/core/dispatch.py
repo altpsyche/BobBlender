@@ -53,9 +53,10 @@ _HANDLERS = {
     "apply_season": atmosphere.apply_season,
     "scene_preset": atmosphere.scene_preset,
     # Generation, the Blender half (docs/GENERATION.md, Ops and MCP). Everything that talks to
-# ComfyUI runs in the MCP process with no bpy; these three are the steps that need Blender.
+    # ComfyUI runs in the MCP process with no bpy; these three are the steps that need Blender.
     "apply_texture_set": shading.apply_texture_set,
     "import_generated": gen_assets.import_generated_op,
+    "make_blockout": proxies.make_blockout,
     "export_control": gen_assets.export_control_op,
     # Typed paths + water + erosion (core/splines_build.py)
     "make_curve": splines_build.make_curve,

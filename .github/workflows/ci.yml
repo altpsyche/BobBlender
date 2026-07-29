@@ -24,23 +24,23 @@ jobs:
       - name: Phase-label guard (identifiers describe features, not build phases)
         run: python tools/scripts/check_no_phase_labels.py
 
+      - name: Scene-name guard (evidence names its asset class, not a throwaway scene)
+        run: python tools/scripts/check_no_scene_names.py
+
       # --extra gpu is intentionally omitted: cupy-cuda13x needs a CUDA runtime the
       # runner lacks, and the GPU tests skip themselves when cupy is unimportable.
       - name: Unit tests
         run: uv run --with pytest --extra all --project tools pytest tools/tests -q
 
-  # In-Blender geometry tests run against the ONLY supported target, Blender 5.2.
-  # Disabled because the entry point it invokes does not exist yet: this job needs
-  # tools/tests/run_blender_tests.py, an in-Blender runner that imports the extension
-  # under its bl_ext name and drives the geometry tests inside bpy. Everything in
-  # tools/tests today runs in the plain venv against the pure-python core, which is
-  # why the fast gate above can stay honest without Blender. Kept a separate job so
-  # that fast gate is never blocked on the heavy Blender download.
+  # In-Blender geometry tests, against the ONLY supported target, Blender 5.2.
+  # Everything in tools/tests runs in the plain venv against the pure-python core,
+  # which is what lets the fast gate above stay honest without Blender -- and it
+  # meant no geometry assertion ran in CI at all. tools/tests/run_blender_tests.py
+  # drives the bpy-only gates (85 checks, about 6 s of Blender) and owns which ones
+  # qualify. A separate job so the fast gate is never blocked on the heavy download.
   blender-headless:
     name: Blender 5.2 headless geometry tests
     runs-on: ubuntu-latest
-    # Flip to always-on once tools/tests/run_blender_tests.py exists.
-    if: false
     steps:
       - uses: actions/checkout@v4
         with:

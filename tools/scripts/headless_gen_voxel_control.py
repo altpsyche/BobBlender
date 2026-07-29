@@ -30,7 +30,7 @@ gate ran, with a third real column and a different null.
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0. Generated meshes cache WITH their timing and VRAM under
-`_generated/comfy_g9_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
+`_generated/voxel_control_check/gen/`, so `--no-gen` re-scores in minutes and `--fresh` regenerates. The
 shape maths, the block-outs, the VRAM sampler and the caching are imported from the control gate and
 the normal-detail read from the asset gate, so all three control gates' numbers are one measurement
 rather than three implementations of it. Exit 0 = nothing failed.
@@ -58,8 +58,16 @@ from bob_blender_tools.core import (  # noqa: E402
     materials,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g9_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("voxel gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "voxel_control_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
@@ -100,17 +108,6 @@ FOOTPRINT_BAR = 0.5
 # What the agent-surface gate measured the `comfy_aimdo` segfault on (docs/GENERATION.md, the
 # staged-copy fault), the same tripwire the bbox gate sets.
 AIMDO_MEASURED = "0.4.10"
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -426,7 +423,7 @@ def part_b(args, reachable, ready):
                            for k, c in sorted(swap_cross.items())))
 
     # Then the verdict, on the same rule shape the bbox gate uses, so the two are directly
-# comparable.
+    # comparable.
     pairs = [(k, scores.get((k, "mesh_geom_voxel voxel")), scores.get((k, "mesh_geom_ctrl point"))) for k in control_gate.PROMPTS]
     live = [(k, v, p) for k, v, p in pairs if v and p]
     if live:
@@ -628,11 +625,7 @@ def main():
         part_d(args, ok, ready)
 
     section("Summary")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(GATE.exit_code())
 
 
 if __name__ == "__main__":

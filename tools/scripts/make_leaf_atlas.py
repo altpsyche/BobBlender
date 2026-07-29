@@ -10,7 +10,7 @@ the plumbing. So this writes the smallest thing that exercises every property th
 - a grid of cells (2x2), because the card picks a cell from a random index and a one-cell atlas
   would let a broken pick pass,
 - straight alpha with a genuine cutout (most of each cell is transparent), because opaque leaves
-  are the exact failure the redwood run measured and the reason cards exist,
+  are the exact failure a whole-scene run measured and the reason cards exist,
 - each spray growing from the BOTTOM edge of its cell, because a card's UV has v=0 at the
   attachment point and v=1 at the free tip, so a spray drawn centred would float off its twig,
 - four visibly different sprays, so "the cell pick does nothing" is visible rather than plausible.

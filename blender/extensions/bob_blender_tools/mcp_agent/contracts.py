@@ -56,12 +56,12 @@ class DrapeCurve(BaseModel):
     op: Literal["drape_curve"] = "drape_curve"
     name: str = "Path"  # an existing curve object
     # Re-sample the terrain's heightmap at each control point and set its Z to the surface, in
-# place, so a hand-drawn or moved curve follows the current ground (the counterpart to
-# make_path's drape). `terrain` is the way to call this: the object records the four values it
-# was built with and they are read off it, so there is nothing to restate and nothing to get
-# wrong. The explicit keys still win when given (for a heightfield no terrain has been built
-# from yet) and a value that disagrees with the terrain's own record comes back in the result's
-# warnings.
+    # place, so a hand-drawn or moved curve follows the current ground (the counterpart to
+    # make_path's drape). `terrain` is the way to call this: the object records the four values it
+    # was built with and they are read off it, so there is nothing to restate and nothing to get
+    # wrong. The explicit keys still win when given (for a heightfield no terrain has been built
+    # from yet) and a value that disagrees with the terrain's own record comes back in the result's
+    # warnings.
     terrain: str | None = None
     heightmap: str | None = None
     size: float | None = None
@@ -127,9 +127,9 @@ class Render(BaseModel):
     device: Literal["GPU", "CPU"] = "GPU"  # Cycles only; EEVEE ignores it
     file_format: str = "PNG"
     # Drop Blender's render buffers and orphan datablocks after the frame is written (the
-# VRAM-handback rule). On by default because an agent that generates and renders in one session
-# is the normal case and the two halves fight over one card; False keeps them warm for a second
-# render.
+    # VRAM-handback rule). On by default because an agent that generates and renders in one session
+    # is the normal case and the two halves fight over one card; False keeps them warm for a second
+    # render.
     release_gpu: bool = True
 
 
@@ -160,17 +160,17 @@ class SetEnv(BaseModel):
 class ApplyWorld(BaseModel):
     op: Literal["apply_world"] = "apply_world"
     # No arguments: re-apply every world consumer to the CURRENT bbt_env, changing no values. For
-# the case where the world is right and the scene is new (a material built after the last world
-# change carries no drivers until something re-installs them).
+    # the case where the world is right and the scene is new (a material built after the last world
+    # change carries no drivers until something re-installs them).
 
 
 class DescribeScene(BaseModel):
     op: Literal["describe_scene"] = "describe_scene"
     # The one READ-ONLY op: report objects (transform, modifier stack in order, materials, the
-# heightmap/size/height/sea_level a terrain was built with), materials (master kind, terrain
-# layer slots with their texture sets, which maps actually resolve on disk, and the masks keying
-# each slot), curves (role, shape params, mask + edge attribute names), collections, the world
-# state (including whether the shared env drivers are installed) and the pack search path.
+    # heightmap/size/height/sea_level a terrain was built with), materials (master kind, terrain
+    # layer slots with their texture sets, which maps actually resolve on disk, and the masks keying
+    # each slot), curves (role, shape params, mask + edge attribute names), collections, the world
+    # state (including whether the shared env drivers are installed) and the pack search path.
     objects: list[str] | None = None  # else every object in the scene
     include: list[str] | None = None  # objects/materials/collections/world/packs; else all
 
@@ -212,10 +212,10 @@ class ApplyTextureSet(BaseModel):
     material: str | None = None  # a material by name, else the object's active material
     index: int = 0  # terrain layer slot; ignored by a surface master, which has one set
     # The pack the set came from, which is what comfy_texture_set returns in its `apply_op`.
-# Declared here because an undeclared field is DROPPED by model_dump: the tool returned
-# pack_dir, the op never saw it, and a freshly generated set was unreachable from Blender. The
-# Blender side registers it on the pack search path (core/assets.add_pack_root), so it also
-# stays resolvable across the material rebuilds a later Shaders edit triggers.
+    # Declared here because an undeclared field is DROPPED by model_dump: the tool returned
+    # pack_dir, the op never saw it, and a freshly generated set was unreachable from Blender. The
+    # Blender side registers it on the pack search path (core/assets.add_pack_root), so it also
+    # stays resolvable across the material rebuilds a later Shaders edit triggers.
     pack_dir: str | None = None
 
 
@@ -234,6 +234,20 @@ class ImportGenerated(BaseModel):
     hero: bool = False  # 2K bake and 2048 texture rather than 1K/1024
     pack_dir: str | None = None  # else the registered or $BOB_GENERATED generated pack
     cleanup: bool = True  # delete the staged intermediates once the asset is written
+
+
+class MakeBlockout(BaseModel):
+    op: Literal["make_blockout"] = "make_blockout"
+    # A silhouette built from primitives, for `export_control` to hand `comfy_mesh` as a geometry
+    # control. The route to reach for on anything with right angles and planar faces: image-to-3D
+    # returns a dual-contoured shell that rounds every edge, so the walls and the roof pitch come
+    # from primitives and the generator supplies only the surface (core/proxies.py).
+    shape: str = "shed"  # see proxies.BLOCKOUTS
+    name: str | None = None
+    # Any dimension the shape takes: width, depth, wall_h, ridge_h, eave, door_w, door_h, jamb.
+    params: dict[str, float] | None = None
+    location: list[float] | None = None
+    replace: bool = False  # rebuild in place rather than refusing a name that exists
 
 
 class ExportControl(BaseModel):
@@ -406,6 +420,7 @@ Operation = Annotated[
         SnowShell,
         ApplyTextureSet,
         ImportGenerated,
+        MakeBlockout,
         ExportControl,
         ApplyBiome,
         WorldBiome,
@@ -439,9 +454,9 @@ class OpResult(BaseModel):
     created: list[str] = Field(default_factory=list)
     info: str = ""
     # Machine-readable result, for the ops whose output the NEXT call needs: export_control's
-# control path and height, import_generated's face count, UV overlap, height and warnings.
-# `info` is the sentence a human reads; this is what an agent checks instead of trusting it.
-# Empty for the ops whose whole result is the objects they created.
+    # control path and height, import_generated's face count, UV overlap, height and warnings.
+    # `info` is the sentence a human reads; this is what an agent checks instead of trusting it.
+    # Empty for the ops whose whole result is the objects they created.
     data: dict = Field(default_factory=dict)
 
 
@@ -451,9 +466,9 @@ class BuildResult(BaseModel):
     results: list[OpResult] = Field(default_factory=list)
     error: str | None = None
     # Live-bridge only. `batch` is the idempotency key the ops ran under: re-sending it COLLECTS
-# that batch rather than re-running it, which is what makes a retry safe after a slow batch.
-# `status` is "done" for a finished batch (ok says whether it succeeded) or "running" when the
-# batch is still on Blender's main thread -- which is NOT a failure, and the ops must not be
-# re-sent.
+    # that batch rather than re-running it, which is what makes a retry safe after a slow batch.
+    # `status` is "done" for a finished batch (ok says whether it succeeded) or "running" when the
+    # batch is still on Blender's main thread -- which is NOT a failure, and the ops must not be
+    # re-sent.
     batch: str | None = None
     status: str | None = None

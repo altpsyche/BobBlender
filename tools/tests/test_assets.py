@@ -145,7 +145,7 @@ def test_generated_root_is_a_search_root(assets, tmp_path):
     assert assets.texture_set_dir("ai_moss") == str(pref / "textures" / "ai_moss")
 
 
-# -- Op pack roots and stem-tolerant map resolution (the redwood run, items 3 and 4) -------------
+# -- Op pack roots and stem-tolerant map resolution (a whole-scene run's findings) ---------------
 # Both halves of "a generated texture set is invisible to Blender". The pack the generator wrote
 # into was not on the search path, and the workaround for THAT (a renamed symlink) tripped a second
 # bug in map resolution which reported success and rendered a solid tint.

@@ -273,14 +273,14 @@ def test_seed_knob_varies_generators():
 
 def test_mesa_reads_as_tableland():
     # Mesa's landform signature: a large near-flat CAP fraction sitting above steep CLIFFS --
-# distinct from mountains (steep but not flat-capped) and hills (gentle, no cliffs). This gates
-# the mesa generator (strata + scarp); it is a diagnostic, backed by a 3D render in review,
-# never a stat asserted on its own.
+    # distinct from mountains (steep but not flat-capped) and hills (gentle, no cliffs). This gates
+    # the mesa generator (strata + scarp); it is a diagnostic, backed by a 3D render in review,
+    # never a stat asserted on its own.
     bk = backend.select("auto")
     def flat_cliff(name):
         # size=256 keeps this a MACRO diagnostic (amplify.to == run resolution, so the cascade
-# no-ops): the mesa signature is a property of the strata+scarp generator, not the detail
-# pass.
+        # no-ops): the mesa signature is a property of the strata+scarp generator, not the detail
+        # pass.
         h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
         gy, gx = np.gradient(h)
         s = np.hypot(gx, gy)
@@ -294,9 +294,9 @@ def test_mesa_reads_as_tableland():
 
 def test_canyon_incises_a_plateau():
     # Canyon's landform signature: flat plateau RIMS (unlike mountains/hills) that are DEEPLY
-# INCISED below the rim by confined channels (unlike a solid mesa cap). Gates the canyon
-# generator (strata plateau + fluvial hero); a diagnostic, render-verified, not a stat on its
-# own.
+    # INCISED below the rim by confined channels (unlike a solid mesa cap). Gates the canyon
+    # generator (strata plateau + fluvial hero); a diagnostic, render-verified, not a stat on its
+    # own.
     bk = backend.select("auto")
     def flat_deep(name):
         # size=256 keeps this a MACRO diagnostic (the amplify cascade no-ops at the run resolution).
@@ -316,11 +316,11 @@ def test_canyon_incises_a_plateau():
 
 def test_badlands_is_densely_rilled():
     # Badlands' landform signature: DENSE, closely-spaced fine gullies -- a high drainage density
-# that stream-power fluvial (which coarsens into a few graded valleys) cannot make. Measured as
-# the fraction of cells that are local channel minima at a small radius: many closely-spaced
-# minima = dense rilling. Gates the rill op (anisotropic downslope grooves); a diagnostic,
-# render-verified, never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO
-# diagnostic).
+    # that stream-power fluvial (which coarsens into a few graded valleys) cannot make. Measured as
+    # the fraction of cells that are local channel minima at a small radius: many closely-spaced
+    # minima = dense rilling. Gates the rill op (anisotropic downslope grooves); a diagnostic,
+    # render-verified, never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO
+    # diagnostic).
     from scipy.ndimage import minimum_filter
     bk = backend.select("auto")
     def rill_density(name):
@@ -334,11 +334,11 @@ def test_badlands_is_densely_rilled():
 
 def test_plateau_is_a_continuous_tableland():
     # Plateau's landform signature: a broad flat top that is CONTINUOUS -- one connected tableland
-# -- unlike mesa, whose equally-flat caps are dissected into scattered isolated buttes. Measured
-# as the largest connected flat component as a fraction of the tile: plateau keeps most of its
-# flat area in ONE piece, mesa splits it up. Gates the plateau generator; a diagnostic,
-# render-verified, never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO
-# diagnostic).
+    # -- unlike mesa, whose equally-flat caps are dissected into scattered isolated buttes. Measured
+    # as the largest connected flat component as a fraction of the tile: plateau keeps most of its
+    # flat area in ONE piece, mesa splits it up. Gates the plateau generator; a diagnostic,
+    # render-verified, never a stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO
+    # diagnostic).
     from scipy.ndimage import label
     bk = backend.select("auto")
     def flat_and_biggest(name):
@@ -357,13 +357,13 @@ def test_plateau_is_a_continuous_tableland():
 
 def test_glacial_carves_u_valleys():
     # Glacial's landform signature: broad FLAT-FLOORED U-valleys, where an equally rugged FLUVIAL
-# mountain (alpine) cuts V-valleys whose slope continues right down to the thalweg. Measured as
-# the fraction of valley-bottom cells that are near-flat: a glacier planes a wide flat floor, so
-# this is high; a river V has no flat floor, so it is low. Gates the glacial op (ice-flux
-# abrasion + ice-width floor planing); a diagnostic, backed by a 3D render in review, never a
-# stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO diagnostic). Compared to
-# alpine, NOT to a gentle lowland preset, whose low ground is naturally flat for reasons
-# unrelated to glaciation.
+    # mountain (alpine) cuts V-valleys whose slope continues right down to the thalweg. Measured as
+    # the fraction of valley-bottom cells that are near-flat: a glacier planes a wide flat floor, so
+    # this is high; a river V has no flat floor, so it is low. Gates the glacial op (ice-flux
+    # abrasion + ice-width floor planing); a diagnostic, backed by a 3D render in review, never a
+    # stat on its own. size=256 keeps the amplify cascade a no-op (a MACRO diagnostic). Compared to
+    # alpine, NOT to a gentle lowland preset, whose low ground is naturally flat for reasons
+    # unrelated to glaciation.
     bk = backend.select("auto")
     def floor_flatfrac(name):
         h = engine.run_stack(np.zeros((256, 256)), params.resolve_stack(name, seed=5, size=256), bk, seed=5)
@@ -452,8 +452,8 @@ def test_amplify_wiring_macro_and_preview_sizes():
     assert params.macro_size(amp_stack, 768) == params.AMPLIFY_BASE
     assert pipeline._preview_size({"preset": "alpine"}) == params.AMPLIFY_PREVIEW
     # a stack without amplify runs whole at the bake size and previews at PREVIEW_SIZE (every preset
-# amplifies now, so the negative case is an explicit non-amplify stack, e.g. a
-# carve-then-erode).
+    # amplifies now, so the negative case is an explicit non-amplify stack, e.g. a
+    # carve-then-erode).
     plain = [{"kind": "noise"}, {"kind": "fluvial", "iterations": 10}]
     assert not params.has_amplify(plain)
     assert params.macro_size(plain, 768) == 768
@@ -521,9 +521,9 @@ def test_resolution_independence_through_erosion():
     bk = backend.select("auto")
     def bake(N):
         # size=N pins amplify.to to the run resolution so the cascade no-ops: this asserts the MACRO
-# is resolution-independent (the property the amplify cascade relies on to register a
-# preview against a full bake). preview==final of the cascade itself is
-# test_amplify_preview_*.
+        # is resolution-independent (the property the amplify cascade relies on to register a
+        # preview against a full bake). preview==final of the cascade itself is
+        # test_amplify_preview_*.
         return engine.run_stack(np.zeros((N, N)), params.resolve_stack("hills", seed=5, size=N),
                                 bk, seed=5)
     lo, hi = bake(96), bake(288)

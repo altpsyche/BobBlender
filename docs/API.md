@@ -36,7 +36,7 @@ the path is what `comfy_mesh(control=...)` takes. `import_generated` returns the
 
 `data` is a free-form dict in the contract (`mcp_agent/contracts.py`, `OpResult.data`), so a handler
 may add keys without a schema change and without an `/mcp reconnect`; only a Reload Builders is
-needed. The forest-barn gate spent that freedom, because the receipt it got was true and useless:
+needed. The asset gate spent that freedom, because the receipt it got was true and useless:
 `warnings: []` on five meshes with holes in them. `import_generated` now also returns the openness
 and the provenance of the mesh that actually shipped —
 

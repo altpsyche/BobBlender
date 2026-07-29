@@ -20,7 +20,7 @@ Reachability-gated for the server half and always-run for the rest, the same sha
 `headless_gen_variants_maps.py` uses, because "ComfyUI is never required" is itself under test. Exit
 0 = nothing failed.
 
-Generation is cached between runs in `_generated/comfy_g3_check/gen/`: a raw GLB that is already
+Generation is cached between runs in `_generated/asset_gate_check/gen/`: a raw GLB that is already
 there is reused, so re-running the Blender half costs seconds instead of another 90 s per asset.
 `--fresh` overrides that.
 """
@@ -39,11 +39,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
 from bob_blender_tools.core import (  # noqa: E402
-    assets, comfy, comfy_jobs, gen_assets, materials, proxies, scatter_build,
+    assets, comfy, comfy_jobs, gen_assets, gen_receipt, materials, proxies,
+    scatter_build,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g3_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("asset gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "asset_gate_check")
 GEN = os.path.join(OUT, "gen")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
@@ -68,17 +77,6 @@ SUBJECTS = [
 # measurement, which is the case TRELLIS.2 exists to handle and Hunyuan structurally cannot.
 OPEN_BOUNDARY_EDGES = 500
 THIN_AXIS_RATIO = 0.25
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -134,8 +132,8 @@ def generate_sources(reachable, fresh, limit):
         raw = os.path.join(GEN, subject["key"] + "_raw.glb")
         png = os.path.join(GEN, subject["key"] + "_subject.png")
         # The generation timings are cached with the mesh. Without this a re-run reports a per-asset
-# total that silently omits `mesh_subject` and `mesh_geom_trellis`, i.e. the two slowest
-# stages, and the five-minute budget check would be measuring the wrong thing.
+        # total that silently omits `mesh_subject` and `mesh_geom_trellis`, i.e. the two slowest
+        # stages, and the five-minute budget check would be measuring the wrong thing.
         stamp = os.path.join(GEN, subject["key"] + "_gen.json")
         entry = dict(subject, raw=raw, subject_png=png, seconds={})
         if not fresh and os.path.isfile(raw) and os.path.isfile(png):
@@ -285,8 +283,8 @@ def assert_finished(entry, report):
     if "normal" in report["maps"]:
         mean, std, lo, hi = image_stats(report["maps"]["normal"])
         # NOT std: a perfectly flat tangent-space normal is (0.5, 0.5, 1.0), whose channel spread
-# gives std 0.2357, so the "not flat" check this gate shipped with could not fail. The
-# geometry
+        # gives std 0.2357, so the "not flat" check this gate shipped with could not fail. The
+        # geometry
     # A/B found
         # that on a route whose bake really did write a flat map. The honest measure is the mean
         # absolute neighbour difference, which is 0.0 on a constant image by construction.
@@ -296,21 +294,22 @@ def assert_finished(entry, report):
     elif report.get("simplify_source") == "trellis2" and report.get("low_welded_verts") is not None:
         # The coincident route has no dense mesh, so a normal map is not something it withheld: the
         # two meshes are one file and a transfer has nothing to say. Asserting one here would be
-        # asserting the defect the forest-barn gate found -- 52% of the barn's texels and 87% of the
+        # asserting the defect the asset gate found -- 52% of a structure's texels and 87% of the
         # stump's deviating from flat, off a bake of a mesh onto a copy of itself.
         note("SKIP", f"{key}: no baked normal, and none is owed (one file for both meshes)")
     else:
         check(f"{key}: a baked normal exists", False, "no normal map written")
 
-    # The two numbers the forest-barn gate had no equivalent of. Both were the same failure shape: a
+    # The two numbers the first generated assets had no equivalent of. Both were the same failure
+    # shape: a
     # step that ran, degraded its input and reported success.
     if not entry["foliage"]:
         # A solid kind must ship closed. The stump shipped 229 boundary edges with `warnings: []`
         # and the holes were found in a render.
         open_edges = report.get("low_boundary_edges")
         faces_shipped = report.get("faces") or faces
-        threshold = max(comfy.OPEN_SURFACE_FLOOR,
-                        int(faces_shipped * comfy.OPEN_SURFACE_FRACTION))
+        threshold = max(gen_receipt.OPEN_SURFACE_FLOOR,
+                        int(faces_shipped * gen_receipt.OPEN_SURFACE_FRACTION))
         if open_edges is None:
             note("SKIP", f"{key}: no shipped boundary-edge count in the report")
         elif report.get("simplify_source") == "trellis2" \
@@ -326,11 +325,11 @@ def assert_finished(entry, report):
         note("SKIP", f"{key}: no colour to compare, so no bake fidelity")
     else:
         check(f"{key}: the baked colour is the colour it came from",
-              fidelity["correlation"] >= comfy.BAKE_FIDELITY_MIN
-              and fidelity["mean_abs_diff"] <= comfy.BAKE_DIFF_MAX,
+              fidelity["correlation"] >= gen_receipt.BAKE_FIDELITY_MIN
+              and fidelity["mean_abs_diff"] <= gen_receipt.BAKE_DIFF_MAX,
               f"correlation {fidelity['correlation']}, mean absolute difference "
               f"{fidelity['mean_abs_diff']} of 255 over {fidelity['coverage']} of the sheet, "
-              f"against a {comfy.BAKE_FIDELITY_MIN} / {comfy.BAKE_DIFF_MAX} bar")
+              f"against a {gen_receipt.BAKE_FIDELITY_MIN} / {gen_receipt.BAKE_DIFF_MAX} bar")
     check(f"{key}: the sidecar records provenance",
           os.path.isfile(report["sidecar"]), report["sidecar"])
 
@@ -645,7 +644,7 @@ def main():
         table = run_ab(entries, ok)
         ab_verdict(table, gen_assets.DEFAULT_FACES)
     if args.ab_only:
-        return 0 if not FAILURES else 1
+        return GATE.exit_code()
 
     section("per-asset pipeline, prompt to scattered prop")
     reports = {}
@@ -703,8 +702,7 @@ def main():
     section("summary")
     if not args.keep and os.path.isdir(PACK):
         shutil.rmtree(PACK)
-    print(f"{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

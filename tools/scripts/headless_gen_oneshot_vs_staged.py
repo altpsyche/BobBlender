@@ -17,7 +17,7 @@ Two questions the asset gate left measurable and did not answer:
 
 Reachability-gated for the generation half, the same shape `headless_gen_assets.py` uses, and it
 caches every generated mesh AND its timings and VRAM figures under
-`_generated/comfy_g3b_check/gen/`, so re-running the measurement half costs seconds rather than
+`_generated/route_ab_check/gen/`, so re-running the measurement half costs seconds rather than
 another half hour. Exit 0 = nothing failed.
 """
 
@@ -38,8 +38,16 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
 from bob_blender_tools.core import assets, comfy, gen_assets  # noqa: E402
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g3b_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("route A/B")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "route_ab_check")
 GEN = os.path.join(OUT, "gen")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
@@ -75,17 +83,6 @@ SUBJECTS = [
 ]
 
 ROUTES = ("staged", "oneshot")
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -396,8 +393,8 @@ def normal_stats(path):
 
     That same-topology bake is no longer taken: `comfy.geometry_is_final` drops the role when the
     two meshes are one file, so this now only ever reads a genuine transfer. The number it used to
-    produce was the defect it describes, and it shipped -- 52% of the barn's texels and 87% of the
-    stump's deviated past one 8-bit step from a map whose only correct value was flat.
+    produce was the defect it describes, and it shipped -- 52% of a structure's texels and 87% of
+    the stump's deviated past one 8-bit step from a map whose only correct value was flat.
     """
     img = bpy.data.images.load(path, check_existing=False)
     px = np.empty(len(img.pixels), dtype=np.float32)
@@ -421,7 +418,7 @@ def finish_route(entry, route, *, hero=False, force_opacity=False):
       the simplified mesh and there is no dense surface left to bake from. `comfy.geometry_is_final`
       is what says so, and it is what makes this route repair the mesh it ships (weld, pinhole fill)
       and skip a transfer that has nothing to transfer. Without it this benchmark measures a route
-      that no longer exists: the forest-barn gate found the one-shot arm shipping the generator's
+      that no longer exists: the asset gate found the one-shot arm shipping the generator's
       holes and a cage projection of a mesh onto itself.
     """
     empty_scene()
@@ -791,7 +788,7 @@ def main():
     verdict(entries, cells, summary, finished, floors)
 
     section("summary")
-    with open(os.path.join(OUT, "g3b_results.json"), "w") as fh:
+    with open(os.path.join(OUT, "route_ab_results.json"), "w") as fh:
         json.dump({"summary": summary,
                    "cells": {f"{k}/{r}": v for (k, r), v in cells.items()},
                    "seconds": {e["key"]: e["seconds"] for e in entries},
@@ -799,11 +796,10 @@ def main():
                    "finished": {f"{k}/{r}": {kk: vv for kk, vv in v.items() if kk != "maps"}
                                 for (k, r), v in finished.items()},
                    "decimate_floors": floors}, fh, indent=2, sort_keys=True, default=str)
-    note("results", os.path.join(OUT, "g3b_results.json"))
+    note("results", os.path.join(OUT, "route_ab_results.json"))
     if not args.keep and os.path.isdir(PACK):
         shutil.rmtree(PACK)
-    print(f"{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

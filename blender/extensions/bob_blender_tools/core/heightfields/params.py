@@ -182,11 +182,11 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["iterations"] = _clampi(op.get("iterations", 60) * erode, 4, 400)
         elif kind == "rill":
             # Erosion knob deepens the dissection by adding groove iterations (more, denser
-# gullies).
+            # gullies).
             op["iterations"] = _clampi(op.get("iterations", 10) * erode, 2, 40)
         elif kind == "glacial":
             # Erosion knob scales the ice-sculpting passes (more abrasion + planing = deeper
-# troughs).
+            # troughs).
             op["iterations"] = _clampi(op.get("iterations", 60) * erode, 12, 160)
         elif kind == "thermal":
             op["iterations"] = _clampi(op.get("iterations", 4) * erode, 0, 60)
@@ -194,8 +194,8 @@ def resolve_stack(preset, *, relief=0.5, detail=0.5, erosion=0.5, warp=0.5, seed
             op["amount"] = op.get("amount", 0.5) * sharp
         elif kind == "amplify":
             # amplify climbs to the bake resolution; the Detail knob scales its detail amplitude,
-# matching how it scales sharpen. `relief` makes the aeolian repose settle
-# scale-correct.
+            # matching how it scales sharpen. `relief` makes the aeolian repose settle
+            # scale-correct.
             op["to"] = int(size)
             op["relief"] = relief_ratio
             op["strength"] = op.get("strength", 0.025) * sharp

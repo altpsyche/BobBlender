@@ -2,7 +2,7 @@
   "meta": {
     "name": "Conifer",
     "kind": "trees",
-    "description": "A narrow spruce or redwood: a flared bole that stays near-cylindrical for most of its height, whorls of short limbs that sag under their own sprays, and a crown well under half its height wide. The default shape of the track, and the one the redwood run could not generate."
+    "description": "A narrow spruce or fir: a flared bole that stays near-cylindrical for most of its height, whorls of short limbs that sag under their own sprays, and a crown well under half its height wide. The default shape of the track, and the one image-to-3D could not generate."
   },
   "params": {
     "levels": 3,

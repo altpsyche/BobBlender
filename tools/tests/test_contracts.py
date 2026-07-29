@@ -132,7 +132,7 @@ def test_import_generated_takes_either_shape():
         assert contracts.BuildRequest(output_file="x.blend", ops=[payload]).ops[0].kind == "trees"
 
 
-# -- Every field an op actually reads has to be DECLARED (the redwood run, item 3) ---------------
+# -- Every field an op actually reads has to be DECLARED (a whole-scene run's finding) -----------
 # The bug this class of test exists for: `comfy_texture_set` returned `pack_dir` in its `apply_op`,
 # `ApplyTextureSet` did not declare the field, and `model_dump` dropped it silently. The tool was
 # right, the op was right, and the value never crossed between them -- so a freshly generated

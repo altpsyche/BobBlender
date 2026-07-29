@@ -31,6 +31,29 @@ Behavioural identifiers are exempt because they are not prose: op names, MCP too
 names, GN socket names, param keys, `bbt_*` attributes, collection names, manifest fields,
 `S_GROUP_VER`. None of them carries a phase code today; keep it that way.
 
+## Evidence names its asset class, not the scene it was measured in
+
+The sibling rule, enforced by `tools/scripts/check_no_scene_names.py` in CI. A throwaway scene is a
+private index for exactly the reason a phase label is: "the such-and-such gate found it" tells a
+reader who was not there nothing, and it dates the evidence to a project rather than attaching it to
+the thing it generalises over.
+
+- **Name the asset class and the sample size.** "Measured on the such-and-such sets" becomes
+  "Measured over ten generated texture sets"; "the such-and-such barn" becomes "a gabled timber
+  structure"; a staged set name with a seed suffix becomes "one silvered-timber reference".
+- **Every figure stays.** Only the attribution changes. An edit that drops a number to satisfy the
+  guard has made the repo worse, and a bar with no evidence behind it is the failure mode this repo
+  avoids everywhere.
+- **Engineering artifacts keep their names**, because they name a check rather than a project: `the
+  control gate`, `the bbox gate`, `the asset gate`, `the geometry A/B`, `the pack install`,
+  `scene-seams`. A gate is named after what it measures, so a file named after a scene is renamed
+  after its gate.
+- **Data keeps its name.** A texture set's folder, a fixture path, an example argument: those are
+  identifiers on disk, and renaming one in prose only breaks the lookup.
+- **`projects/` is exempt**, because a scene name is the correct name for a scene.
+- The deny-list lives in the guard and grows the day someone names a third scene. Ordinary English
+  words are not on it and are swept by hand instead.
+
 ## Naming
 
 - Projects: kebab-case, descriptive, no dates. Use `voronoi-cities`, not

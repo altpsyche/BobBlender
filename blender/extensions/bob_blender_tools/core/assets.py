@@ -185,9 +185,9 @@ def asset_roots():
     raw += _OP_ROOTS
     raw += _PREF_ROOTS
     # generated_root(), not _GENERATED_ROOT: the env fallback has to reach the RESOLVER, or a set
-# generated in a process the addon never registered in is written into a pack that
-# texture_set_dir cannot see (measured at the agent-surface gate, where the apply step failed on
-# a set that existed).
+    # generated in a process the addon never registered in is written into a pack that
+    # texture_set_dir cannot see (measured at the agent-surface gate, where the apply step failed on
+    # a set that existed).
     generated = generated_root()
     if generated:
         raw.append(generated)
@@ -273,7 +273,7 @@ def texture_set_maps(name):
 
     Resolution is by ROLE SUFFIX, not by the folder name. The convention is still
     `<set>_<role>.<ext>` and that is tried first, but a set whose folder was RENAMED (or symlinked
-    under a friendlier name, which is what the redwood run did to reach the generated pack) used to
+    under a friendlier name, which is what a scene run did to reach the generated pack) used to
     resolve to zero maps and read on screen as a solid tint with no error anywhere -- the folder
     existed, so every check upstream passed. Falling back to any `*_<role>.<ext>` and then a bare
     `<role>.<ext>` makes a rename cosmetic instead of silently destructive.
@@ -502,7 +502,7 @@ _FOLIAGE_SHAPE_KEYS = (
     "seed", "levels", "height", "segments", "branch_segments", "profile_segments",
     "trunk_radius", "taper", "lean", "gnarl", "shade_smooth",
     # The wood-shaping terms (docs/FOLIAGE.md 2.9): what stops a limb being a smooth cone. All four
-# are inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
+    # are inert at the recipe's defaults, so they exist ONLY as things a species says about itself.
     "taper_curve", "flare", "collar", "lobe",
     "cards", "card_size", "card_width", "droop", "card_spread",
     # Where the leaves sit on the wood, rather than how they look. Also inert by default: leaf_level
@@ -572,7 +572,7 @@ def foliage_species(name):
 
 def foliage_species_for_kind(kind):
     """The first species whose meta.kind matches, or None. What the Scatter panel's Grow in
-    BobFoliage button resolves a scatter kind through, so 'grass' grows a tuft and not a redwood."""
+    BobFoliage button resolves a scatter kind through, so 'grass' grows a tuft and not a conifer."""
     for name in list_foliage_species():
         if foliage_species(name).get("meta", {}).get("kind") == kind:
             return name
@@ -657,9 +657,9 @@ def validate_foliage_species(name):
         warnings.append(f"{name}: meta.kind '{kind}' unknown {list(FOLIAGE_KINDS)}")
     for key, label, value in foliage_missing_sets(name):
         # Named, absent, and generatable -- so say which tool makes it rather than only that it is
-# gone. A bark-less tree renders as a solid-tint BobShader, which is the block-out
-# convention everywhere else in the suite, so this is a note about what is missing and not a
-# failure.
+        # gone. A bark-less tree renders as a solid-tint BobShader, which is the block-out
+        # convention everywhere else in the suite, so this is a note about what is missing and not a
+        # failure.
         tool = "comfy_leaf_atlas" if key == "atlas" else "comfy_bark_set"
         warnings.append(f"{name}: {label} missing: textures/{value} (in any pack); "
                         f"generate it with {tool}, or the tree renders as a solid tint")

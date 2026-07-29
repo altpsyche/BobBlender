@@ -98,9 +98,9 @@ def _restore_knobs(mod, snap):
 
 # A heightmap_terrain build's params, recorded on the object as `bbt_*` custom props so everything
 # downstream can READ the numbers the terrain was actually built with instead of being handed them
-# again. (op param -> object prop, default). Two things went wrong without this: `drape_curve` had to
-# be passed the same heightmap/size/height/sea_level by hand with nothing checking they matched, and
-# `_has_bake` read False, so `curve_build` carved at the curve's own Z and cut a trench through
+# again. (op param -> object prop, default). Two things went wrong without this: `drape_curve` had
+# to be passed the same heightmap/size/height/sea_level by hand with nothing checking they matched,
+# and `_has_bake` read False, so `curve_build` carved at the curve's own Z and cut a trench through
 # rising ground. The panel bake has always stamped these; the op is now the same.
 _TERRAIN_STAMP = (("heightmap", "bbt_heightmap", ""),
                   ("size", "bbt_terrain_size", 90.0),
@@ -172,7 +172,7 @@ def build_geonodes(op: dict) -> dict:
     reset = op.get("reset", False)
     # Where the object goes, and which collection it joins. Both live in `params` rather than being
     # op fields so they need no contract change, and both are honoured on a rebuild as well as on a
-    # first build: an op list that says where a barn stands has to put it there every time it is
+    # first build: an op list that says where a building stands has to put it there every time it is
     # replayed, or the second run quietly keeps wherever the first one left it. See `place`.
     location = params.get("location")
     collection = params.get("collection")
@@ -212,8 +212,9 @@ def build_geonodes(op: dict) -> dict:
             if old.users == 0:
                 bpy.data.node_groups.remove(old)
             new_ng.name = old_name  # reclaim the clean name
-            # The recipe modifier came back at the OLD index, which on an already-shaded terrain sits
-            # behind the Set-Material modifier. Put that back at the end or the rebuild renders grey.
+            # The recipe modifier came back at the OLD index, which on an already-shaded terrain
+            # sits behind the Set-Material modifier. Put that back at the end or the rebuild renders
+            # grey.
             _keep_set_material_last(obj)
             _stamp_terrain_params(obj, recipe_name, params)
             if location is not None:

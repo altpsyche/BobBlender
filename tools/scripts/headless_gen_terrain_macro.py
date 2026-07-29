@@ -31,7 +31,7 @@ by eye:
 
 Reachability-gated: with no server every generation half prints SKIP and exits 0, which is itself
 the check that ComfyUI is never required. Generated masks cache WITH their timing and VRAM under
-`_generated/comfy_g5_check/gen/`, so a re-measured table is not a table of zeros. Exit 0 = nothing
+`_generated/terrain_macro_check/gen/`, so a re-measured table is not a table of zeros. Exit 0 = nothing
 failed.
 """
 
@@ -53,8 +53,16 @@ from bob_blender_tools.core import comfy, comfy_maps  # noqa: E402
 from bob_blender_tools.core import heightfields as hf  # noqa: E402
 from bob_blender_tools.core.heightfields import ops_erode  # noqa: E402
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g5_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("macro-mask gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "terrain_macro_check")
 GEN = os.path.join(OUT, "gen")
 
 # One that erosion should FIGHT (an isolated steep massif has no drainage network to agree with),
@@ -77,17 +85,6 @@ TILE_M = 180.0
 # VISIBLE, and a step that a 512-pixel frame cannot show is not one an artist will find.
 RENDER_PX = 512
 RENDER_SAMPLES = 32
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -623,10 +620,10 @@ def part_c(args, reachable, masks):
               "re-run part b with --fresh")
         return
     # The reference is the FLOAT derivation, not the file Bob ships. The generation is 8-bit per
-# channel, but the derivation averages three channels over a box of radius width/12, so the
-# float mask carries far more precision than any sample in the source did. That is what makes
-# the terracing question answerable: the question is not what the diffusion model could express,
-# it is what the last 8-bit step between the derivation and the op stack costs.
+    # channel, but the derivation averages three channels over a box of radius width/12, so the
+    # float mask carries far more precision than any sample in the source did. That is what makes
+    # the terracing question answerable: the question is not what the diffusion model could express,
+    # it is what the last 8-bit step between the derivation and the op stack costs.
     float_mask = comfy_maps.macro_field(comfy_maps.read_png(open(source, "rb").read()))
     note("distinct levels in the float derivation",
          f"{len(np.unique(np.round(float_mask, 6)))} against 256 in the shipped file")
@@ -866,11 +863,7 @@ def main():
         part_e(args, ok)
 
     section("result")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

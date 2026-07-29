@@ -1,7 +1,7 @@
-"""Headless gate for the thirteen defects the redwood-scene run exposed (docs/GENERATION.md).
+"""Headless gate for the thirteen defects a whole-scene run exposed (docs/GENERATION.md).
 
     ~/.steam/steam/steamapps/common/Blender/blender --background --factory-startup \
-        --python tools/scripts/headless_redwood.py
+        --python tools/scripts/headless_scene_seams.py
 
 Exit code 0 = every check passed. One script, two halves, because the two throwaway probes that
 found these were a scene each: `main_scene` covers the pack/terrain/curve/material/world seams
@@ -36,15 +36,16 @@ from bob_blender_tools.core import assets, materials  # noqa: E402
 from bob_blender_tools.core import splines_build  # noqa: E402
 from bob_blender_tools.core.dispatch import apply_op  # noqa: E402
 
-FAILURES = []
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("scene-seams gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
 HEIGHTMAP = os.path.join(REPO, "library", "textures", "grass", "grass_height.png")
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
 
 
 def build_terrain(name="Terrain", reset=False):
@@ -256,7 +257,7 @@ def foliage_note():
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="bob_redwood_")
+    tmp = tempfile.mkdtemp(prefix="bob_scene_seams_")
     try:
         main_scene(tmp)
         scatter_scene()
@@ -264,11 +265,7 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print()
-    if FAILURES:
-        print(f"{len(FAILURES)} FAILED: " + "; ".join(FAILURES))
-    else:
-        print("all checks passed")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

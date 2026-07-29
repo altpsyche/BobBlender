@@ -69,7 +69,7 @@ def clear_scene(op: dict) -> dict:
 
 # Fields that are STRUCTURAL: writing them changes nothing on its own, because what they mean is a
 # rebuild rather than a driven value. Named here so the op result can SAY which op finishes the job,
-# instead of reporting success on a change that produced no pixels (the redwood run's finding 5).
+# instead of reporting success on a change that produced no pixels (a scene run's finding).
 _STRUCTURAL_ENV = {"season": "apply_season"}
 
 

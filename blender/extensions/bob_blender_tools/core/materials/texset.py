@@ -101,7 +101,7 @@ def texset_sampler_group():
     go.location = (620, 0)
     I = gi.outputs
 
-    # Albedo times AO, and it STAYS times AO. The forest-barn gate raised this as a suspected
+    # Albedo times AO, and it STAYS times AO. The generated-texture gate raised this as a suspected
     # double-count -- a generated albedo carries baked light, `comfy_maps.ao_from` derives occlusion
     # from that same luminance, and the product would then count the shading twice -- and the
     # measurement says otherwise, so nothing here changes and `AO_STRENGTH` stays where it is.

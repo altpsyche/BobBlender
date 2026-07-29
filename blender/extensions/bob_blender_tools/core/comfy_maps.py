@@ -406,12 +406,11 @@ def flatness_report(rgb, fraction=DELIGHT_FRACTION):
     it has a lot. Scale-free by construction, so a dark set and a pale set are on the same axis --
     which is the whole reason it is a ratio and not a spread in 8-bit steps.
 
-    The measure the texture family had no equivalent of, and the largest thing the forest-barn gate
-    found. Every other property of a generated set is measured -- `seam_report` for the wrap,
-    `grain_report` for bark direction, atlas cell opacity for a card -- and the one that decides
-    whether the surface can be RELIT was not, so a lit albedo reached a hero render before anyone
-    said so. Measured across the ten sets that gate shipped, and the spread is wide enough to gate
-    on:
+    The measure the texture family had no equivalent of, and the largest thing this round of
+    generated sets found. Every other property of a generated set is measured -- `seam_report` for
+    the wrap, `grain_report` for bark direction, atlas cell opacity for a card -- and the one that
+    decides whether the surface can be RELIT was not, so a lit albedo reached a hero render before
+    anyone said so. Measured across ten generated sets, and the spread is wide enough to gate on:
 
         bark_conifer                              0.0247   flat, and the prompt clause worked
         very_dark_green_damp_forest_moss           0.0355
@@ -455,7 +454,7 @@ def mask_stops(rgb, opacity, floor=200, percentiles=(5.0, 95.0)):
 
     Stops rather than a ratio of standard deviations, because that is the unit the answer is obvious
     in: a real leaf varies by a fraction of a stop in colour, so anything over about one stop is the
-    sprite's own key and shadow. Measured on the three atlases the forest-barn gate shipped -- 1.21
+    sprite's own key and shadow. Measured on three generated atlases -- 1.21
     (broadleaf), 1.82 (conifer), 1.84 (grass).
 
     Returns None when the mask is empty or the darker percentile lands at zero, which is the honest
@@ -475,6 +474,83 @@ def mask_stops(rgb, opacity, floor=200, percentiles=(5.0, 95.0)):
     if lo <= 0.5:
         return None
     return round(float(np.log2(hi / lo)), 3)
+
+
+def mask_light_split(rgb, opacity, floor=200, percentiles=(5.0, 95.0)):
+    """(ramp stops, detail stops) inside an opacity mask: the light on a sprite, and its own relief.
+
+    `mask_stops` answers "how much does this sprite vary", and the gate treated the whole of that as
+    baked light. For a needle spray that is wrong, and the artist said so: most of a conifer sprig's
+    variation is one needle shadowing the next, which is real geometry a flat card cannot carry and
+    therefore belongs in the albedo. What cannot be relit is a RAMP -- a key across the sprite, a
+    gradient out of the reference photograph -- and that is a different frequency.
+
+    So a least-squares plane is fitted to log2 luminance over the masked texels and the two parts
+    are reported apart: the plane's p5..p95 span is the ramp, the residual's is the relief. A plane
+    rather than a blur because a blur needs a radius as a fraction of something, and a sprite is a
+    thin shape in a mostly empty cell, so "a fraction of the cell" measures the wrong scale and "a
+    fraction of the sprite" is a second knob. A plane has no scale.
+
+    Measured on the gate's three atlases, per cell, and on the conifer with a synthetic key baked
+    across each cell to prove the split:
+
+        atlas                     ramp                    detail
+        leaf_broadleaf            0.16 0.13 0.44 0.09     0.47 0.74 0.30 0.28
+        leaf_conifer              0.48 0.17 0.33 0.24     0.98 0.88 1.15 1.14
+        leaf_grass                0.35 0.45 0.30 0.13     0.61 1.76 0.49 0.63
+        conifer + 1.0 stop key    0.72 0.65 0.54 0.21     0.99 0.89 1.16 1.15
+        conifer + 2.0 stop key    0.99 1.12 0.75 0.44     0.99 0.89 1.17 1.15
+
+    The detail column does not move under a key the ramp column tracks stop for stop, which is what
+    makes this a split and not a reweighting. `leaf_conifer` is the case in question: 1.143 stops
+    total against the old 1.0 bar, of which 0.48 at most is light.
+
+    Returns (None, None) when the mask holds too little to fit, which is the honest answer.
+    """
+    rgb = np.asarray(rgb)
+    if rgb.ndim == 2:
+        rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+    lum = luminance(np.ascontiguousarray(rgb[:, :, :3], dtype=np.uint8)) * 255.0
+    mask = np.asarray(opacity)
+    if mask.ndim == 3:
+        mask = mask[:, :, -1]
+    ys, xs = np.nonzero(mask >= floor)
+    if len(ys) < 64:
+        return None, None
+    value = lum[ys, xs]
+    lit = value > 0.5              # log2 of a black texel is not a light level
+    ys, xs, value = ys[lit], xs[lit], value[lit]
+    if len(value) < 64:
+        return None, None
+    logs = np.log2(value.astype(np.float64))
+    basis = np.stack([np.ones(len(ys)), ys.astype(np.float64), xs.astype(np.float64)], axis=1)
+    coefficients, *_ = np.linalg.lstsq(basis, logs, rcond=None)
+    plane = basis @ coefficients
+    lo, hi = (float(v) for v in np.percentile(plane, percentiles))
+    rlo, rhi = (float(v) for v in np.percentile(logs - plane, percentiles))
+    return round(hi - lo, 3), round(rhi - rlo, 3)
+
+
+def cell_light_split(rgb, opacity, cols, rows, floor=200):
+    """`mask_light_split` per atlas cell, cell 0 bottom-left, row-major upward.
+
+    Per cell rather than per sheet, because a sheet's own answer is dominated by four sprites being
+    four different greens, which is `cell_distinctness` doing its job and not a light on any card.
+    """
+    a = np.asarray(opacity)
+    if a.ndim == 3:
+        a = a[:, :, -1]
+    cols, rows = int(cols), int(rows)
+    h, w = a.shape
+    ch, cw = h // rows, w // cols
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            y0, x0 = h - (r + 1) * ch, c * cw
+            ramp, detail = mask_light_split(np.asarray(rgb)[y0:y0 + ch, x0:x0 + cw],
+                                            a[y0:y0 + ch, x0:x0 + cw], floor=floor)
+            out.append({"cell": r * cols + c, "ramp_stops": ramp, "detail_stops": detail})
+    return out
 
 
 def delight(rgb, fraction=DELIGHT_FRACTION, strength=DELIGHT_STRENGTH):
@@ -576,11 +652,11 @@ def _blend_axis(array, pad):
     periodic along that axis. Assumes the input came from `wrap_pad`."""
     core = array[pad:array.shape[0] - pad].astype(np.float32)
     # The last `pad` rows of the padded array are a second, independently processed render of the
-# core's FIRST `pad` rows. Fading from that copy into this one puts the continuous join on the
-# wrap line and pushes the discontinuity into the middle of the band, where the ramp absorbs it
-# -- the offset-blend trick, but between two renders of the same content rather than between
-# unrelated pixels, which is why it costs far less contrast than the first spike measurement of
-# the WAS blend did.
+    # core's FIRST `pad` rows. Fading from that copy into this one puts the continuous join on the
+    # wrap line and pushes the discontinuity into the middle of the band, where the ramp absorbs it
+    # -- the offset-blend trick, but between two renders of the same content rather than between
+    # unrelated pixels, which is why it costs far less contrast than the first spike measurement of
+    # the WAS blend did.
     alt = array[array.shape[0] - pad:].astype(np.float32)
     ramp = np.linspace(0.0, 1.0, pad, endpoint=False, dtype=np.float32)
     ramp = ramp.reshape((pad,) + (1,) * (core.ndim - 1))
@@ -821,14 +897,191 @@ def _woody_axis(rgba, mask):
     return -delta / length          # green -> woody is base-ward, so the tip is the other way
 
 
-def orient_sprite(rgba, floor=0.5):
+# Whether the GEOMETRIC cue is readable at all, which is the question the orienter never asked. Both
+# cues can be absent at once and `_mask_axis` still returns a direction, so a sprite with no axis to
+# speak of is rotated by an arbitrary angle and every check downstream passes: the cell is full, the
+# sprite reaches the bottom edge, and `base_taper` reads narrow-at-the-base because a compact leaf
+# IS narrow at whichever edge it was set down on. That is how the gate shipped three atlases with
+# the petiole pointing sideways. Both bars come off the twelve cells of those atlases:
+#
+#   anisotropy  sqrt of the mask covariance's eigenvalue ratio -- how much longer than wide
+#     readable:   10.67, 4.49, 4.35, 2.56, 2.28, 2.20   (a spray, a blade, a sprig)
+#     arbitrary:   1.51, 1.46, 1.25, 1.18, 1.12, 1.04   (a pressed cluster, two crossed blades)
+#   end_ratio   the narrow end's RMS width over the wide end's -- how much taper there is to read
+#     readable:    0.17, 0.38, 0.44, 0.46, 0.53, 0.66
+#     arbitrary:   0.89, 0.90, 0.92, 0.94, 0.99         (both ends alike: no stem end at all)
+#
+# 1.6 and 0.75 sit in the gap on both figures (1.51 against 2.20, 0.66 against 0.89). Wanted
+# TOGETHER, because either alone passes a shape with no attaching end: a symmetric ellipse is
+# anisotropic with equal ends, and a lopsided blob tapers along an axis that is noise.
+AXIS_ANISOTROPY_MIN = 1.6
+AXIS_TAPER_MAX = 0.75
+
+# The third condition, which is about the axis cue being WRONG rather than unreadable. Its
+# assumption is "the narrow end is the cut stub", and a needle spray breaks it: a fir sprig tapers
+# at BOTH ends, so the tip can be narrower than the stub and the sprite comes back exactly upside
+# down with healthy taper figures. That is the gate's `leaf_conifer` top-right cell, turned -171
+# degrees at anisotropy 2.56 and end ratio 0.44, both well inside the bars above.
+#
+# What separates the ends is not width, it is whether one is a FAN: a cut stub is one solid strand
+# and a needle tip is several. Counted as the median number of gaps-apart runs a slice across the
+# band cuts, over the same twelve cells:
+#
+#   stub / fan, and the cue is right   1/4, 1/3, 1/8   (conifer 0 and 2, grass 1)
+#   no fan at either end, so no cue    1/1, 1/1        (conifer 3, the cell that shipped upside
+#                                                      down, and grass 0)
+#   fanned at BOTH ends                5/4, 2/2        (conifer 1, broadleaf 0)
+#
+# So the wide end has to be at least two strands wider than the narrow one, which every right answer
+# clears and no wrong one does.
+AXIS_STRAND_CONTRAST_MIN = 2
+
+# With one escape, because a fan is not the only honest stub cue: a single broad leaf on a petiole
+# is one strand at both ends and its taper is still unmistakable, and failing it would flag the very
+# subject this fix wants the prompt to ask for. Provisional, and the one bar here not read off a
+# separating pair: it sits under the thinnest measured end ratio that also had a fan (0.38) and over
+# the one solidly tapered cell in the twelve (0.17). One point, one batch (docs/ROADMAP.md).
+AXIS_STRONG_TAPER_MAX = 0.25
+
+# The gap, across the axis, that separates one strand from the next. A fraction of the mask's own
+# diagonal so a 512 cell and a 2048 one count the same needles, with a floor because two touching
+# needles are one strand at any resolution.
+STRAND_GAP_FRACTION = 0.01
+STRAND_GAP_FLOOR = 2.0
+
+
+def _mask_anisotropy(mask):
+    """How much longer than wide a boolean mask is: sqrt of its covariance eigenvalue ratio.
+
+    1.0 is a mask with no long axis, and for such a mask `_mask_axis`'s eigenvector is the direction
+    whatever noise broke the tie in, not the direction the sprite grows in.
+    """
+    ys, xs = np.nonzero(mask)
+    if len(ys) < 8:
+        return 0.0
+    dy, dx = ys - ys.mean(), xs - xs.mean()
+    cov = np.array([[float((dy * dy).mean()), float((dy * dx).mean())],
+                    [float((dy * dx).mean()), float((dx * dx).mean())]])
+    vals = np.linalg.eigvalsh(cov)
+    lo, hi = float(vals.min()), float(vals.max())
+    return float(np.sqrt(hi / lo)) if lo > 1e-9 else float("inf")
+
+
+def _strand_counts(mask, centroid, axis, band=AXIS_END_BAND):
+    """(strands at the narrow end, strands at the wide end) along an oriented principal axis.
+
+    `axis` points base-to-tip as `_mask_axis` returns it, so the narrow end is at the low end of the
+    projection. Counted on slices rather than over the whole band, because a band held together by
+    one needle crossing it is still a fan.
+    """
+    ys, xs = np.nonzero(mask)
+    if len(ys) < 8:
+        return 0, 0
+    cy, cx = centroid
+    dy, dx = ys - cy, xs - cx
+    along = dy * axis[0] + dx * axis[1]
+    across = -dy * axis[1] + dx * axis[0]
+    span = float(along.max() - along.min()) or 1.0
+    diagonal = float(np.hypot(ys.max() - ys.min(), xs.max() - xs.min())) or 1.0
+    gap = max(STRAND_GAP_FLOOR, STRAND_GAP_FRACTION * diagonal)
+    counts = []
+    for selected in (along <= along.min() + band * span, along >= along.max() - band * span):
+        sub_across, sub_along = across[selected], along[selected]
+        if len(sub_across) < 8:
+            counts.append(0)
+            continue
+        edges = np.linspace(float(sub_along.min()), float(sub_along.max()), 12)
+        runs = []
+        for start, stop in zip(edges[:-1], edges[1:]):
+            row = np.sort(sub_across[(sub_along >= start) & (sub_along <= stop)])
+            if len(row) >= 3:
+                runs.append(1 + int((np.diff(row) > gap).sum()))
+        counts.append(int(np.median(runs)) if runs else 0)
+    return counts[0], counts[1]
+
+
+def sprite_orientation(rgba, floor=0.5):
+    """Which cue decided this sprite's up, and whether that cue could be read at all.
+
+    The diagnosis `orient_sprite` acts on, returned separately so the atlas receipt can carry it. It
+    exists because of the second artist rejection: the orienter had two cues and no way to say
+    it had neither. A prompt rewritten from "cluster on one short twig" to "pressed flat like a
+    herbarium specimen" -- made to bring `flatness.in_mask_stops` down, and it did, 1.82 stops to
+    0.657 -- removed the brown stem AND the elongation, so `_woody_axis` returned None on every cell
+    (woody fraction 0.000 to 0.002 against a 0.01 floor) and `_mask_axis` fell back to the principal
+    axis of a round shape (anisotropy 1.04 to 1.25). Every cell was turned by an arbitrary angle,
+    +91, +71, +103 and -11 degrees, and nothing in the receipt said so.
+
+    Keys:
+
+      `cue`        "woody" (the green/brown split, the direct cue), "axis" (the principal axis's
+                   narrow end, a proxy) or "none" (the mask is too small for either).
+      `resolved`   whether the deciding cue was readable. FALSE means the rotation is arbitrary and
+                   the sprite is as likely sideways or upside down as upright -- the one thing no
+                   bounding box, coverage figure or `base_taper` can see.
+      `angle_deg`  how far the sprite was turned to stand up, signed, in the image frame.
+      `conflict_deg`  how far the two cues disagreed, when both applied. Not a failure on its own:
+                   measured on the gate's conifer they were 125 degrees apart on the one cell whose
+                   twig stuck out sideways, and the woody cue was right.
+
+    plus the cues' own figures: `woody_fraction`, `woody_separation`, `anisotropy`, `end_ratio`,
+    `strands` (narrow end, wide end) and their `strand_contrast`.
+    """
+    src = np.asarray(rgba)
+    if src.ndim != 3 or src.shape[2] != 4:
+        raise ValueError(f"sprite_orientation wants (h, w, 4), got {src.shape}")
+    mask = src[:, :, 3].astype(np.float32) / 255.0 > floor
+    out = {"cue": "none", "resolved": False, "angle_deg": 0.0, "conflict_deg": None,
+           "woody_fraction": 0.0, "woody_separation": None,
+           "anisotropy": _mask_anisotropy(mask), "end_ratio": None,
+           "strands": (0, 0), "strand_contrast": 0}
+
+    rgb = src[:, :, :3].astype(np.float32)
+    excess = rgb[:, :, 1] - (rgb[:, :, 0] + rgb[:, :, 2]) / 2.0
+    total = float(mask.sum())
+    if total:
+        out["woody_fraction"] = float((mask & (excess <= WOODY_EXCESS)).sum()) / total
+
+    found = _mask_axis(mask)
+    if found is None:
+        return out
+    (cy, cx), axis, (lo, hi) = found
+    out["end_ratio"] = float(lo / hi) if hi else None
+    narrow, wide = _strand_counts(mask, (cy, cx), axis)
+    out["strands"] = (int(narrow), int(wide))
+    out["strand_contrast"] = int(wide - narrow)
+
+    woody = _woody_axis(src, mask)
+    if woody is not None:
+        out["conflict_deg"] = float(np.degrees(np.arccos(
+            float(np.clip(np.dot(woody, axis), -1.0, 1.0)))))
+        axis = woody
+        out["cue"] = "woody"
+        out["resolved"] = True
+    else:
+        ratio = out["end_ratio"]
+        out["cue"] = "axis"
+        out["resolved"] = bool(out["anisotropy"] >= AXIS_ANISOTROPY_MIN
+                               and ratio is not None and ratio <= AXIS_TAPER_MAX
+                               and (out["strand_contrast"] >= AXIS_STRAND_CONTRAST_MIN
+                                    or ratio <= AXIS_STRONG_TAPER_MAX))
+    out["angle_deg"] = float(np.degrees(np.arctan2(float(axis[1]), -float(axis[0]))))
+    out["centroid"] = (float(cy), float(cx))
+    out["axis"] = (float(axis[0]), float(axis[1]))
+    return out
+
+
+def orient_sprite(rgba, floor=0.5, report=None):
     """Rotate an RGBA sprite so it stands upright with the end that ATTACHES at the bottom.
 
     Returned on a square canvas big enough that nothing rotates out of frame; the caller crops to
     the alpha box. A sprite whose mask is too small to have an axis comes back untouched.
 
     The attaching end is found by `_woody_axis` when the sprite is a green fan on a brown stem, and
-    by the principal axis's narrow end (`_mask_axis`) otherwise.
+    by the principal axis's narrow end (`_mask_axis`) otherwise. Which of the two decided, and
+    whether it was readable, is `sprite_orientation`, collected into `report` when a dict is passed.
+    This rotates by the same answer either way -- a guess still beats leaving a sideways sprite
+    alone, and the receipt is where "that was a guess" belongs.
 
     Why Bob rotates rather than the prompt asking for it: `mesh_subject` was asked for "the cut end
     of the twig at the bottom of the frame, needles fanning upward" and returned sprays lying
@@ -845,17 +1098,16 @@ def orient_sprite(rgba, floor=0.5):
     if src.ndim != 3 or src.shape[2] != 4:
         raise ValueError(f"orient_sprite wants (h, w, 4), got {src.shape}")
     h, w = src.shape[:2]
-    mask = src[:, :, 3].astype(np.float32) / 255.0 > floor
-    found = _mask_axis(mask)
+    diagnosis = sprite_orientation(src, floor=floor)
+    if report is not None:
+        report.update(diagnosis)
     size = int(np.ceil(np.hypot(h, w)))
-    if found is None:
+    if "axis" not in diagnosis:
         out = np.zeros((size, size, 4), np.uint8)
         out[(size - h) // 2:(size - h) // 2 + h, (size - w) // 2:(size - w) // 2 + w] = src
         return out
-    (cy, cx), axis, _widths = found
-    woody = _woody_axis(src, mask)
-    if woody is not None:
-        axis = woody
+    cy, cx = diagnosis["centroid"]
+    axis = diagnosis["axis"]
     # The base-to-tip axis must end up pointing at image "up", which is -y. The map below is the
     # INVERSE rotation (destination offset to source offset), so its first column is where
     # destination "down" comes from: the axis, negated. Hence ca = -axis_y and sa = axis_x, and the
@@ -886,7 +1138,7 @@ def orient_sprite(rgba, floor=0.5):
                           axis=2).astype(np.uint8)
 
 
-def place_sprite(rgba, size, margin=ATLAS_MARGIN, floor=0.5):
+def place_sprite(rgba, size, margin=ATLAS_MARGIN, floor=0.5, report=None):
     """One oriented sprite cropped to its alpha box and dropped BOTTOM-ANCHORED into a square cell.
 
     Nearest-neighbour on the way down, deliberately: a matte wants no colours that were not already
@@ -894,7 +1146,7 @@ def place_sprite(rgba, size, margin=ATLAS_MARGIN, floor=0.5):
     one. Horizontally centred on the sprite's own base, not on its bounding box, so a spray that
     leans still hangs from the middle of the cell's bottom edge.
     """
-    src = orient_sprite(rgba, floor=floor)
+    src = orient_sprite(rgba, floor=floor, report=report)
     alpha = src[:, :, 3].astype(np.float32) / 255.0
     ys, xs = np.nonzero(alpha > floor)
     out = np.zeros((int(size), int(size), 4), np.uint8)
@@ -948,22 +1200,34 @@ def alpha_bleed(rgb, alpha, passes=ATLAS_BLEED_PASSES, floor=ATLAS_OPAQUE):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def atlas_compose(sprites, cols, rows, size, margin=ATLAS_MARGIN):
+def atlas_compose(sprites, cols, rows, size, margin=ATLAS_MARGIN, orientations=None):
     """Compose oriented, bottom-anchored sprites into (basecolor RGB, opacity grey) of `size`.
 
     Cell 0 is the BOTTOM-LEFT and the order is row-major upward, matching the recipe's cell-to-UV
     map and the placeholder atlas (`tools/scripts/make_leaf_atlas.py`). `sprites` shorter than
     cols*rows leaves the remaining cells empty, which `atlas_cells` then reports rather than hides.
+
+    `orientations`, when a list is passed, collects one `sprite_orientation` per cell in cell order.
+    It is the only place the rotation's confidence survives: once a sprite is composed into the
+    grid, its cell looks the same whether it was turned by a cue or by a coin toss.
     """
     cols, rows, size = int(cols), int(rows), int(size)
     cell = size // max(cols, rows)
     canvas = np.zeros((cell * rows, cell * cols, 4), np.uint8)
     for i, sprite in enumerate(sprites[:cols * rows]):
         if sprite is None:
+            if orientations is not None:
+                orientations.append({"cell": i, "cue": "none", "resolved": False})
             continue
         r, c = divmod(i, cols)
         y0 = cell * rows - (r + 1) * cell  # row 0 at the BOTTOM, the way UV space runs
-        canvas[y0:y0 + cell, c * cell:(c + 1) * cell] = place_sprite(sprite, cell, margin=margin)
+        report = {} if orientations is not None else None
+        canvas[y0:y0 + cell, c * cell:(c + 1) * cell] = place_sprite(sprite, cell, margin=margin,
+                                                                    report=report)
+        if orientations is not None:
+            # `centroid` and `axis` built the rotation; they are not figures to read.
+            orientations.append({"cell": i, **{k: v for k, v in report.items()
+                                               if k not in ("centroid", "axis")}})
     alpha = canvas[:, :, 3].astype(np.float32) / 255.0
     return alpha_bleed(canvas[:, :, :3], alpha), canvas[:, :, 3].copy()
 

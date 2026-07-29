@@ -146,19 +146,19 @@ def bobshade_material(mat, variation=0.15):
     met_src, met_val = capture("Metallic")
 
     # AO from the packed arm map: glTF splits metallicRoughness through a Separate Color (G ->
-# roughness, B -> metallic) and drops the R (AO) channel. When Roughness comes from that
-# Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so the
-# crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
-#
-# DELIBERATE ASSUMPTION (a deliberate audit finding, kept as-is): this treats the
-# metallicRoughness R channel as occlusion, which is true for ORM/"arm" packs (Poly Haven, our
-# shipped biome assets -- verified to render correctly) but UNDEFINED per the glTF spec for a
-# plain metallicRoughness texture. A non-ORM asset whose R is 0 would multiply albedo to black,
-# and an asset with AO already baked into its albedo would double-darken. We keep the heuristic
-# because every asset the library ships is ORM; revisit with importer-aware occlusion-source
-# detection (only route AO when the arm image is also the material's occlusionTexture) if a
-# non-ORM asset is ever imported. Legacy ShaderNodeSeparateRGB exposes this channel as "R", not
-# "Red", so AO is silently skipped for those older imports (harmless: falls back to 1.0).
+    # roughness, B -> metallic) and drops the R (AO) channel. When Roughness comes from that
+    # Separate Color, its Red output is the unused occlusion; route it into the AO Map socket so the
+    # crevices read. No Separate Color (a plain roughness map, or a value) -> no AO, stays 1.0.
+    #
+    # DELIBERATE ASSUMPTION (a deliberate audit finding, kept as-is): this treats the
+    # metallicRoughness R channel as occlusion, which is true for ORM/"arm" packs (Poly Haven, our
+    # shipped biome assets -- verified to render correctly) but UNDEFINED per the glTF spec for a
+    # plain metallicRoughness texture. A non-ORM asset whose R is 0 would multiply albedo to black,
+    # and an asset with AO already baked into its albedo would double-darken. We keep the heuristic
+    # because every asset the library ships is ORM; revisit with importer-aware occlusion-source
+    # detection (only route AO when the arm image is also the material's occlusionTexture) if a
+    # non-ORM asset is ever imported. Legacy ShaderNodeSeparateRGB exposes this channel as "R", not
+    # "Red", so AO is silently skipped for those older imports (harmless: falls back to 1.0).
     ao_src = None
     if rgh_src is not None and rgh_src.node.bl_idname in ("ShaderNodeSeparateColor", "ShaderNodeSeparateRGB"):
         ao_src = rgh_src.node.outputs.get("Red")

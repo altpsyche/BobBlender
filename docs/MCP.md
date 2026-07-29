@@ -188,7 +188,7 @@ BobSplines is live-bridge-only today. The same is true of anything reading `bbt_
 `bbt_world`. Two ways out, neither taken yet: the headless runner registers the addon, or the
 per-curve and per-layer state moves out of `ui/` into `core/`. The second matches the "core is the
 acyclic root" rule the codebase already follows and is the honest answer; it is also the bigger
-change. Note that `tools/scripts/headless_redwood.py` calls `bob_blender_tools.register()` for
+change. Note that `tools/scripts/headless_scene_seams.py` calls `bob_blender_tools.register()` for
 exactly this reason, which is what a gate covering curve ops has to do until the gap closes.
 
 Use `build_live` for those, or pass explicit params (`build_sky` with a `time_of_day` works
@@ -326,6 +326,14 @@ Two more notes:
 - **A block-out can drive the shape.** `export_control` writes an existing proxy out as a control mesh
   and returns its path and height in `data`; pass that path to `comfy_mesh(control=...)` and the
   generated asset keeps the silhouette and footprint of the object you placed.
+- **And `make_blockout` builds the proxy to export.** A silhouette out of primitives — `shape: "shed"`
+  is a wall box, a real gabled roof prism with an eave overhang, and a doorway jamb standing proud —
+  with every dimension overridable through `params`. The route to reach for on anything with right
+  angles and planar faces, because image-to-3D returns a dual-contoured shell that rounds every edge
+  it touches: measured on a gabled timber structure, the free generation is a rounded loaf with bulging
+  walls and the conditioned one has flat roof planes and a crisp eave, at the same footprint to
+  within 9 cm. Read [ROADMAP.md](ROADMAP.md) before using it on a structure: the texture pass on
+  this route currently returns an all-black set.
 - **The same op also returns `bbox`, and that is the weaker control.** `comfy_mesh(control_bbox=...)`
   conditions on the proxy's three proportions instead of its surface, uploads nothing and saves about
   7 s. Measured against the mesh control on three block-outs: footprint IoU **0.5766** against

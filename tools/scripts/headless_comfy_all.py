@@ -54,7 +54,7 @@ GATES = [
     # terrain, water, scatter and shading. Listed here because this is the runner anyone actually
     # invokes, and a gate nobody runs guards nothing. Needs no server and no card, so it is in
     # every --fast sweep.
-    {"key": "scene-seams", "script": "headless_redwood.py",
+    {"key": "scene-seams", "script": "headless_scene_seams.py",
      "covers": "the seams a whole-scene run found between subsystems",
      "fast": [], "slow": 1, "server": False},
     # BobFoliage. Its geometry never needs a server -- that is the point of the subsystem -- and its

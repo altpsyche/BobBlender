@@ -38,8 +38,16 @@ from bob_blender_tools.core import (  # noqa: E402
     assets, comfy, comfy_jobs, comfy_maps, materials, shading,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g2_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("variants/maps gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "variants_maps_check")
 PACK = os.path.join(OUT, "pack")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
@@ -55,13 +63,6 @@ PROMPTS = [
     "pine needle litter over dark humus",
     "fine wind-rippled dune sand",
 ]
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
 
 
 def section(title):
@@ -115,7 +116,7 @@ def _an_api_node(info):
 
 
 # -- 5. roughness contrast ---------------------------------------------------------------------
-def g1_roughness(rgb, band=(0.45, 0.95)):
+def first_spike_roughness(rgb, band=(0.45, 0.95)):
     """The global-band roughness verbatim, so the comparison is against the real thing rather than a
     memory of it: desaturate, invert, remap into the band."""
     inv = 1.0 - comfy_maps.luminance(rgb)
@@ -125,7 +126,7 @@ def g1_roughness(rgb, band=(0.45, 0.95)):
 
 def roughness_comparison(albedo):
     section("roughness contrast, same image")
-    old, new = g1_roughness(albedo), comfy_maps.roughness_from(albedo)
+    old, new = first_spike_roughness(albedo), comfy_maps.roughness_from(albedo)
     rows = []
     for label, m in (("global band", old), ("local stretch", new)):
         rows.append((label, int(m.min()), int(m.max()), float(m.mean()), float(m.std())))
@@ -300,12 +301,12 @@ def addon_surface():
               for h in bpy.app.handlers.load_post))
 
     # The property that matters: the panel body reads cached state, so drawing it with no server
-# costs nothing. A socket call here would freeze the UI for the timeout. A stand-in UILayout. It
-# has to answer every layout verb the panel body uses, and the list grew since: the stylise
-# block calls `column` and `prop`, and `enabled` is assigned on a returned row. A stub that is
-# missing one of them fails the gate with an AttributeError instead of a verdict, which is how
-# this was found -- by the one-command suite, not by anyone re-running this gate. `__getattr__`
-# would hide the next such drift, so the verbs are listed explicitly.
+    # costs nothing. A socket call here would freeze the UI for the timeout. A stand-in UILayout. It
+    # has to answer every layout verb the panel body uses, and the list grew since: the stylise
+    # block calls `column` and `prop`, and `enabled` is assigned on a returned row. A stub that is
+    # missing one of them fails the gate with an AttributeError instead of a verdict, which is how
+    # this was found -- by the one-command suite, not by anyone re-running this gate. `__getattr__`
+    # would hide the next such drift, so the verbs are listed explicitly.
     class _Stub:
         enabled = True
 
@@ -365,15 +366,11 @@ def main():
         first = assets.texture_set_maps(report["sets"]["names"][0])["basecolor"]
         with open(first, "rb") as fh:
             report["roughness"] = roughness_comparison(comfy_maps.read_png(fh.read()))
-        with open(os.path.join(OUT, "g2_report.json"), "w") as fh:
+        with open(os.path.join(OUT, "variants_maps_report.json"), "w") as fh:
             json.dump(report, fh, indent=2, default=str)
 
     print()
-    if FAILURES:
-        print(f"{len(FAILURES)} FAILED: " + "; ".join(FAILURES))
-    else:
-        print("all checks passed")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

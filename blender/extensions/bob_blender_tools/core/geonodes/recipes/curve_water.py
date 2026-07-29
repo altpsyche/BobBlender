@@ -37,7 +37,7 @@ from ..scaffold import add_input
 from . import recipe
 
 _PROFILE_COUNT = 17  # cross-width points; enough for a smooth shore->centre depth-colour gradient
-#                      and for the angled Gerstner cross-waves to read (a coarse profile facets them)
+# and for the angled Gerstner cross-waves to read (a coarse profile facets them)
 _RAPIDS_SPEED = 2.5  # how much a steep (descending) section speeds the flow up
 _SHORE_SLOW = 0.35   # relative flow speed at the banks (mid-channel is 1.0)
 
@@ -134,15 +134,15 @@ def build(ng, out, params: dict):
     # surface stays above the bed; bigger = a deeper channel showing above the water.
     add_input(ng, "Water Depth", "NodeSocketFloat", float(params.get("water_depth", 0.4)), 0.0)
     # Bed Depth: the full channel depth below the rim (the overlay's Path Depth). The water COLUMN
-# thickness is (Bed Depth - Water Depth) mid-channel, thinning to 0 at the banks; stored per
-# vertex as bbt_depth (metres) so the water shader can absorb/tint by real depth (the depth
-# interaction) instead of a lateral proxy. Synced from bbt_curve.depth alongside Water Depth.
+    # thickness is (Bed Depth - Water Depth) mid-channel, thinning to 0 at the banks; stored per
+    # vertex as bbt_depth (metres) so the water shader can absorb/tint by real depth (the depth
+    # interaction) instead of a lateral proxy. Synced from bbt_curve.depth alongside Water Depth.
     add_input(ng, "Bed Depth", "NodeSocketFloat", float(params.get("bed_depth", 1.2)), 0.0)
     # Width Variation: fraction the half-width wanders along the spline (0 = a constant-width strip,
-# the old behaviour). A low-frequency noise sampled at the centreline scales the swept profile
-# about the centreline, so the banks meander instead of running dead parallel. The SAME
-# multiplier (same WIDTH_NOISE_SCALE) scales the overlay's carved bench, so bed and surface
-# widen together.
+    # the old behaviour). A low-frequency noise sampled at the centreline scales the swept profile
+    # about the centreline, so the banks meander instead of running dead parallel. The SAME
+    # multiplier (same WIDTH_NOISE_SCALE) scales the overlay's carved bench, so bed and surface
+    # widen together.
     add_input(ng, "Width Variation", "NodeSocketFloat",
               float(params.get("width_var", 0.0)), 0.0, 0.95)
     add_input(ng, "Flow Base", "NodeSocketFloat", float(params.get("flow_base", 1.0)), 0.0)
@@ -152,29 +152,29 @@ def build(ng, out, params: dict):
     # taper, so the water does not jut out past where the channel is cut (which read as floating).
     add_input(ng, "End Taper", "NodeSocketFloat", float(params.get("end_taper", 0.0)), 0.0)
     # Gerstner waves: real crest/trough vertex displacement (not just a normal), animated by Scene
-# Time so it moves on playback with no bake. Amplitude flattens toward the banks; 0 = flat
-# water.
+    # Time so it moves on playback with no bake. Amplitude flattens toward the banks; 0 = flat
+    # water.
     add_input(ng, "Wave Amplitude", "NodeSocketFloat", float(params.get("wave_amp", 0.08)), 0.0)
     add_input(ng, "Wave Length", "NodeSocketFloat", float(params.get("wave_len", 4.5)), 0.05)
     add_input(ng, "Wave Steepness", "NodeSocketFloat", float(params.get("wave_steep", 0.4)), 0.0, 1.0)
     add_input(ng, "Wave Speed", "NodeSocketFloat", float(params.get("wave_speed", 0.6)), 0.0)
     # Wave Chop domain-warps the wave phase by a large-scale noise so the crossing sine trains do
-# not lock into a rigid regular lattice (mechanical chevrons); the crests meander like real
-# chop.
+    # not lock into a rigid regular lattice (mechanical chevrons); the crests meander like real
+    # chop.
     add_input(ng, "Wave Chop", "NodeSocketFloat", float(params.get("wave_chop", 0.7)), 0.0, 1.0)
     # Freeze (0..1): flattens the wave displacement as the water freezes, so a frozen river is still
-# ice, not a moving surface. Driven live from bbt_env.temperature by the splines panel (the
-# water shader freezes the LOOK; this stops the GEOMETRY animating). 0 = liquid, 1 = fully
-# frozen flat.
+    # ice, not a moving surface. Driven live from bbt_env.temperature by the splines panel (the
+    # water shader freezes the LOOK; this stops the GEOMETRY animating). 0 = liquid, 1 = fully
+    # frozen flat.
     add_input(ng, "Freeze", "NodeSocketFloat", float(params.get("freeze", 0.0)), 0.0, 1.0)
 
     gi = nodes.new("NodeGroupInput")
     gi.location = (-1500, 0)
 
     # Ribbon XY route: a flat line the channel wide, swept along the curve. Force the curve normal
-# to world-Z so the profile stays HORIZONTAL across the width (no roll to a near-vertical wall
-# on a descending curve). Guarded on both counts: a 5.2 mode-socket makes the property set a
-# no-op, and an unavailable node is skipped (the swept Z is overwritten below anyway).
+    # to world-Z so the profile stays HORIZONTAL across the width (no roll to a near-vertical wall
+    # on a descending curve). Guarded on both counts: a 5.2 mode-socket makes the property set a
+    # no-op, and an unavailable node is skipped (the swept Z is overwritten below anyway).
     curve_geo = object_geometry(ng, curve, (-1300, 300))
     try:
         setnorm = nodes.new("GeometryNodeSetCurveNormal")
@@ -205,11 +205,11 @@ def build(ng, out, params: dict):
     resample.inputs["Count"].default_value = _PROFILE_COUNT
 
     # Flow-space UV (issue 3, docs/SPLINES.md 7): capture arc-length U along the centreline and the
-# across-width factor V on the profile BEFORE the sweep, so both transfer to the swept mesh (a
-# captured curve/profile attribute survives Curve to Mesh). Stored as bbt_water_uv for the
-# shader's flow-aligned detail normal. vfac (0 at one bank, 1 at the other) also gives the
-# width-INDEPENDENT shore below, so the shore gradient no longer reads the world distance (which
-# the width variation would otherwise distort).
+    # across-width factor V on the profile BEFORE the sweep, so both transfer to the swept mesh (a
+    # captured curve/profile attribute survives Curve to Mesh). Stored as bbt_water_uv for the
+    # shader's flow-aligned detail normal. vfac (0 at one bank, 1 at the other) also gives the
+    # width-INDEPENDENT shore below, so the shore gradient no longer reads the world distance (which
+    # the width variation would otherwise distort).
     _pf, _pl = _spline_factor(ng, (-980, -620))
     resample_geo, vfac = _capture(ng, resample.outputs["Curve"], _pf, "FLOAT", "POINT", (-760, -560))
     _cf, arclen = _spline_factor(ng, (-1120, 460))
@@ -228,11 +228,11 @@ def build(ng, out, params: dict):
     _dist, near, path_z, end_dist, _side, tangent = curve_field(ng, curve, (-1100, -1000))
 
     # Width variation (issue 1): a low-frequency noise sampled at the centreline (near.xy) scales
-# the swept profile ABOUT the centreline, so the banks wander instead of running parallel.
-# wmul_noise is 1 +/- Width Variation; the identical construction (WIDTH_NOISE_SCALE) runs in
-# curve_overlay so the carved bench tracks. End Taper folds in as a smooth width -> 0 over the
-# last N metres at each end (issue 2), matching the carve's smooth_falloff taper instead of a
-# hard length clip.
+    # the swept profile ABOUT the centreline, so the banks wander instead of running parallel.
+    # wmul_noise is 1 +/- Width Variation; the identical construction (WIDTH_NOISE_SCALE) runs in
+    # curve_overlay so the carved bench tracks. End Taper folds in as a smooth width -> 0 over the
+    # last N metres at each end (issue 2), matching the carve's smooth_falloff taper instead of a
+    # hard length clip.
     nsep = _separate(ng, near, (-360, -520))
     wmul_noise = width_multiplier(ng, near, gi.outputs["Width Variation"], (-1500, -700))
     # End taper: smooth 0..1 over the last End Taper metres (0 at the tip). Guard a 0-width range.
@@ -241,8 +241,8 @@ def build(ng, out, params: dict):
     wmul = math_node(ng, "MULTIPLY", wmul_noise, taper_end, (540, -700))
 
     # Surface Z = path_z - Water Depth. XY = centreline + (swept lateral) * wmul, so the ribbon
-# widens about the centreline. path_z is ~constant across the narrow width, so the surface stays
-# flat.
+    # widens about the centreline. path_z is ~constant across the narrow width, so the surface stays
+    # flat.
     water_z = math_node(ng, "SUBTRACT", path_z, gi.outputs["Water Depth"], (-360, -160))
     rsep = _separate(ng, position(ng, (-360, -320)), (-180, -320))
     new_x = math_node(ng, "ADD", nsep.outputs["X"],
@@ -322,9 +322,9 @@ def build(ng, out, params: dict):
     geo = _store(ng, geo, "bbt_shore", shore, "FLOAT", (1700, 40))
 
     # Water-column depth (metres) per vertex: (Bed Depth - Water Depth) mid-channel, thinning to 0
-# at the banks (via 1 - shore), clamped >= 0. The shader reads bbt_depth for real Beer-Lambert
-# absorption plus a soft shoreline, so colour/opacity track actual depth,
-# not just lateral position -- a wide shallow stream and a narrow deep one read differently.
+    # at the banks (via 1 - shore), clamped >= 0. The shader reads bbt_depth for real Beer-Lambert
+    # absorption plus a soft shoreline, so colour/opacity track actual depth,
+    # not just lateral position -- a wide shallow stream and a narrow deep one read differently.
     col_mid = math_node(ng, "MAXIMUM",
                         math_node(ng, "SUBTRACT", gi.outputs["Bed Depth"], gi.outputs["Water Depth"],
                                   (1520, -240)), 0.0, (1700, -240))
@@ -421,7 +421,7 @@ def build(ng, out, params: dict):
     geo = smooth.outputs["Mesh"]
 
     # End taper is no longer a hard length clip (DeleteGeometry): the ribbon width is pulled
-# smoothly to 0 over the last End Taper metres above (wmul * taper_end), so the surface tapers
-# to a point in step with the carve's smooth embankment fade instead of stopping at an abrupt
-# cut (issue 2).
+    # smoothly to 0 over the last End Taper metres above (wmul * taper_end), so the surface tapers
+    # to a point in step with the carve's smooth embankment fade instead of stopping at an abrupt
+    # cut (issue 2).
     links.new(geo, out.inputs["Geometry"])

@@ -69,7 +69,7 @@ STACKS = {
         # diffusion so it reads as rock fluting, not sharp notches biting the aretes.
         {"kind": "amplify", "mode": "fluvial", "strength": 0.012, "iterations": 18, "diffusion": 0.08},
         # knock the amplify's undrainable noise beads off the sharp crests without flattening
-# troughs.
+        # troughs.
         {"kind": "thermal", "talus": 0.012, "factor": 0.5, "iterations": 1},
     ],
     "foothills": [
@@ -88,8 +88,8 @@ STACKS = {
                  recompute=40, fill_iters=500, acc_iters=500),
         {"kind": "smooth", "sigma": 1.0},
         # gentle amplify for soft lowlands: low strength so the incision reads as fine drainage, and
-# diffusion > 0 relaxes the channels into smooth swales (no cliffs here to keep crisp) so
-# they do not read as sharp cracks.
+        # diffusion > 0 relaxes the channels into smooth swales (no cliffs here to keep crisp) so
+        # they do not read as sharp cracks.
         {"kind": "amplify", "mode": "fluvial", "strength": 0.014, "iterations": 16, "diffusion": 0.12},
     ],
     "plains": [
@@ -124,11 +124,11 @@ STACKS = {
          "talus": 0.14, "open_size": 6},
         {"kind": "thermal", "talus": 0.14, "factor": 0.5, "iterations": 1},
         # amplify the coarse cliffs into fluted rock faces; flat caps carry no slope so they stay
-# flat. A small diffusion breaks the stream-power rills that a CLEAN planar scarp wall
-# otherwise combs into an evenly-spaced vertical picket-fence; with it the faces read as
-# varied buttresses and furrows, not a uniform comb. (Canyon needs no diffusion -- its
-# fluvial-carved walls are already varied, so the rills follow real topology instead of
-# aligning on a flat wall.)
+        # flat. A small diffusion breaks the stream-power rills that a CLEAN planar scarp wall
+        # otherwise combs into an evenly-spaced vertical picket-fence; with it the faces read as
+        # varied buttresses and furrows, not a uniform comb. (Canyon needs no diffusion -- its
+        # fluvial-carved walls are already varied, so the rills follow real topology instead of
+        # aligning on a flat wall.)
         {"kind": "amplify", "mode": "fluvial", "strength": 0.025, "iterations": 20, "diffusion": 0.06},
     ],
     "canyon": [   # dendritic canyons incised into a high layered PLATEAU: flat rims survive, the
@@ -158,19 +158,19 @@ STACKS = {
     ],
     "plateau": [   # a continuous elevated tableland with cliff edges: layered strata lifted so one
                    # broad high bench survives across most of the tile (NOT dissected into isolated
-# buttes like mesa, NOT deeply incised like canyon), light scarp cutting the rim
-# cliffs, then fluvial amplify fluting the cliff faces. Reuses the mesa/canyon
-# ops.
+                   # buttes like mesa, NOT deeply incised like canyon), light scarp cutting the rim
+                   # cliffs, then fluvial amplify fluting the cliff faces. Reuses the mesa/canyon
+                   # ops.
         {"kind": "strata", "layers": 2, "dissection": 0.55, "base_freq": 1.8, "smooth": 6.0},
         # push the field toward two flat levels: flattens the table top and turns the lone
-# noise-peak (the strata riser ramps a point up to the top terrace) into a flat-capped
-# remnant butte instead of a spurious cone.
+        # noise-peak (the strata riser ramps a point up to the top terrace) into a flat-capped
+        # remnant butte instead of a spurious cone.
         {"kind": "curve", "contrast": 0.85},
         {"kind": "scarp", "iterations": 4, "cap_slope": 0.12, "undercut": 0.0015,
          "talus": 0.13, "open_size": 16},
         {"kind": "thermal", "talus": 0.13, "factor": 0.5, "iterations": 1},
         # diffusion breaks the picket-fence comb a clean planar scarp otherwise rills into (see
-# mesa).
+        # mesa).
         {"kind": "amplify", "mode": "fluvial", "strength": 0.02, "iterations": 20, "diffusion": 0.06},
     ],
     # --- Dunes ---
@@ -182,8 +182,8 @@ STACKS = {
         {"kind": "dunes", "wind": 35, "frequency": 8, "sharpness": 0.62, "warp": 0.14,
          "variation": 0.5, "mix": "replace"},
         # settle the lee to the real sand slip-face repose (~34 deg) at ANY bake resolution: talus
-# is derived from repose_deg, not a fixed value that would clip at a different angle per
-# size.
+        # is derived from repose_deg, not a fixed value that would clip at a different angle per
+        # size.
         {"kind": "thermal", "repose_deg": 34, "factor": 0.5, "iterations": 1},
         # aeolian amplification: add windward ripples/dunelets and settle to the sand repose (the op
         # defaults repose to 34 deg). NOT fluvial -- sand has no rivers, so stream-power incision

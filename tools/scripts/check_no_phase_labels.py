@@ -63,6 +63,26 @@ LABEL_RE = re.compile(
     r")\b"
 )
 
+# The same labels LOWERCASED inside a snake_case identifier or a path string, which `LABEL_RE`
+# cannot see because `\b` plus a capital letter is the whole of its shape. That blind spot was real
+# rather than theoretical: eleven gate output directories were named after generation phases, and
+# six test functions were named after the workflow-route numbers `docs/CONVENTIONS.md` explicitly
+# retires, and the guard passed on every commit that added one.
+#
+# Only the `g` and `w` families, and that is a false-positive decision rather than an oversight. The
+# others collide with things this repo legitimately writes in snake_case: `_s41` is a seed suffix,
+# `p95` is a percentile, `q16` is a quantisation, `_02` is the naming rule's uniquifier. `g` and `w`
+# have no such use, so they can be banned outright; add a family here the day one earns it.
+#
+# The label has to be EMBEDDED in a longer name: a directory stem, a filename, a result key. A bare
+# `w0` is not a phase label, it is a barycentric weight, and a bare `g1`/`g2` are two heightfield
+# bakes being compared -- those live in real code here, and banning them would be a guard that
+# trains people to ignore it.
+LOWER_LABEL_RE = re.compile(
+    r"(?<=[a-z0-9])_(?:g|w)(?:1[0-4]|[0-9])[a-c]?(?=[._])"     # trailing: <name>_<label>_ or .ext
+    r"|(?<![a-z0-9_])(?:g|w)(?:1[0-4]|[0-9])[a-c]?_(?=[a-z])"  # leading: <label>_<name>
+)
+
 # Filenames that were named after a phase or a phase artifact rather than a feature.
 BAD_NAME_RE = re.compile(
     r"(_g[0-9][a-c]?\.py$|-HANDOVER\.md$|-AUDIT\.md$|-FINDINGS\.md$|-CRITIQUE\.md$"
@@ -97,7 +117,7 @@ def check_text(text: str, allowlist: list[str]) -> list[tuple[int, str]]:
     """[(lineno, source_line), ...] for lines carrying a label no allowlist entry covers."""
     hits = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        matches = list(LABEL_RE.finditer(line))
+        matches = list(LABEL_RE.finditer(line)) + list(LOWER_LABEL_RE.finditer(line))
         if not matches:
             continue
         spans = allowed_spans(line, allowlist)
@@ -117,6 +137,18 @@ def walk(paths: list[pathlib.Path]):
                 yield child
 
 
+def relative(path: pathlib.Path) -> pathlib.Path:
+    """`path` relative to the repo when it is inside it, else `path` unchanged.
+
+    An explicit path argument is allowed to point anywhere -- a pre-commit hook or a one-off check
+    on a scratch file -- so a path outside the repo has to print rather than raise.
+    """
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("paths", nargs="*", help="files or directories, else every documented area")
@@ -130,7 +162,7 @@ def main(argv=None) -> int:
 
     total, bad_names, per_area = 0, [], {}
     for path in walk(roots):
-        rel = path.relative_to(REPO_ROOT) if path.is_absolute() else path
+        rel = relative(path)
         if BAD_NAME_RE.search(path.name):
             bad_names.append(str(rel))
         try:

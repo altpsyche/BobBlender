@@ -79,8 +79,8 @@ def build(ng, out, params: dict):
     count = math_node(ng, "FLOOR", count, None, (-480, 420))
     count = math_node(ng, "MAXIMUM", count, 1.0, (-400, 420))
     # Cap the instance count so a tiny Spacing on a long curve (Spacing min is 0.01) cannot request
-# ~100x the curve length in points and hang the eval. _MAX_ALONG is far above any real
-# fence/row.
+    # ~100x the curve length in points and hang the eval. _MAX_ALONG is far above any real
+    # fence/row.
     count = math_node(ng, "MINIMUM", count, float(_MAX_ALONG), (-320, 420))
 
     c2p = nodes.new("GeometryNodeCurveToPoints")
@@ -154,8 +154,8 @@ def build(ng, out, params: dict):
     links.new(coll.outputs["Instances"], domain.inputs["Geometry"])
     max_index = math_node(ng, "SUBTRACT", domain.outputs["Instance Count"], 1, (1880, -420))
     # Decorrelated seed streams: asset pick, scale, and random spin each shift the seed by a
-# distinct offset (jitter already uses +11/+23), so the biggest rock does not always take the
-# same scale or facing. Same base Seed -> reproducible; different streams -> independent.
+    # distinct offset (jitter already uses +11/+23), so the biggest rock does not always take the
+    # same scale or facing. Same base Seed -> reproducible; different streams -> independent.
     index = random_value(ng, "INT", 0, max_index,
                          math_node(ng, "ADD", seed, 31, (1880, -520)), (2060, -420))
 

@@ -278,10 +278,10 @@ def _build_wrapper(mat_name, master, sig, wire):
         if old_node is not None and old_node.type == "GROUP" \
                 and old_node.node_tree is master and mat.get("bbt_sig") == sig:
             # Structure unchanged, so tuned inputs are kept -- but if the shared master group was
-# rebuilt in place (version bump), this instance's sockets were left at type-zero.
-# Re-seed them to the new interface defaults so an upgrade costs a revert-to-default,
-# not a black base layer / silently-off snow. No-op when the master version is
-# unchanged.
+            # rebuilt in place (version bump), this instance's sockets were left at type-zero.
+            # Re-seed them to the new interface defaults so an upgrade costs a revert-to-default,
+            # not a black base layer / silently-off snow. No-op when the master version is
+            # unchanged.
             if mat.get("bbt_master_ver") != master_ver:
                 _seed_inputs_from_interface(old_node)
                 mat["bbt_master_ver"] = master_ver
@@ -307,7 +307,7 @@ def _build_wrapper(mat_name, master, sig, wire):
     nt.links.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     nt.links.new(grp.outputs["Metallic"], bsdf.inputs["Metallic"])
     # Water master (the water look): also drive Transmission / IOR / Alpha / Normal when the master
-# exposes them. A no-op for surface / terrain masters (their groups carry no such outputs).
+    # exposes them. A no-op for surface / terrain masters (their groups carry no such outputs).
     for out_name, candidates in _WRAPPER_EXTRA_OUTPUTS:
         src = grp.outputs.get(out_name)
         if src is None:

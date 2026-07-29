@@ -6,7 +6,7 @@ slot in the pipeline instead of being buried in a Firmament sub-panel. This pane
 place to drive the world, which resolves the old Apply-Season confusion (several overlapping ways to
 change the world across panels).
 
-Two labelled groups make the live-vs-structural split visible :
+Two labelled groups make the live-vs-structural split visible:
 - World now: time/place and the live continuous conditions (weather, temperature, wetness,
  snow, cloud cover, wind). The conditions drive every consumer instantly via drivers.
 - Set up a look: Season + Apply Season and Scene Presets, which are STRUCTURAL (they build or
@@ -51,7 +51,7 @@ def unregister_applier(fn):
 
 def apply_all(scene):
     """Re-apply every subscribed consumer to the current world state. Called when a world
- control changes; a consumer that errors never blocks the others."""
+    control changes; a consumer that errors never blocks the others."""
     for fn in list(_appliers):
         try:
             fn(scene)
@@ -113,8 +113,8 @@ def _biome_apply_items(self, context):
 
 def _sky_built():
     """True when a sky+sun has been built. BobFirmament's build_sky creates the BOB_Sun
- object (bbmcp/world.py SUN_NAME), so its presence is the "a sky exists" marker the
- World first-build affordance and the Time-and-place caption key off."""
+    object (bbmcp/world.py SUN_NAME), so its presence is the "a sky exists" marker the
+    World first-build affordance and the Time-and-place caption key off."""
     return bpy.data.objects.get("BOB_Sun") is not None
 
 
@@ -129,7 +129,7 @@ def _has_any_biome():
 
 class BBT_WorldProps(PropertyGroup):
     """World-level UI state: the scene-wide controls that drive every consumer. The world
- DATA is Scene.bbt_env (bbmcp/env.py); this is only the master toggles that sit above it."""
+    DATA is Scene.bbt_env (bbmcp/env.py); this is only the master toggles that sit above it."""
 
     live_env: BoolProperty(
         name="Live Environment", default=True, update=_on_world_change,
@@ -181,8 +181,8 @@ class BBT_OT_world_biome_world(Operator):
             self.report({"ERROR"}, f"Biome '{biome}' has no world block")
             return {"CANCELLED"}
         # The bbt_env setattr loop lives in core/biome.apply_world (shared with the MCP world_biome
-# handler); the panel keeps the staged-pick resolution, the applier re-run, and the sky
-# build.
+        # handler); the panel keeps the staged-pick resolution, the applier re-run, and the sky
+        # build.
         from ..core import biome
         res = biome.apply_world(context.scene.bbt_env, world)
         applied = res["applied"]
@@ -315,7 +315,7 @@ class BBT_PT_biome(Panel):
         layout.label(text="A biome presets terrain + scatter + world together", icon="INFO")
 
         # The active thing: the mesh Build Biome shades and scatters onto (Scatter emitter, or
-# active mesh).
+        # active mesh).
         target = _apply_target(context)
         helpers.context_header(
             layout, "Active mesh", target.name if target else None,
@@ -359,11 +359,11 @@ class BBT_PT_world(Panel):
         layout.label(text="World, Terrain, Paths, Scatter, Shaders, Atmosphere", icon="INFO")
 
         # Scene-wide masters. With Firmament off there is no env state, so nothing for Quality or
-# Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
-# Unreachable branch: in the shipped single addon this branch never fires
-# (firmament.register always registers bbt_env at load). It is kept deliberately for the
-# planned polyrepo split, where World can ship without Firmament and bbt_env is then
-# genuinely absent.
+        # Live Environment to drive (no atmosphere subsystems, no shader env feed): grey them.
+        # Unreachable branch: in the shipped single addon this branch never fires
+        # (firmament.register always registers bbt_env at load). It is kept deliberately for the
+        # planned polyrepo split, where World can ship without Firmament and bbt_env is then
+        # genuinely absent.
         firmament_off = _env is None or _env.get_env(context.scene) is None
         row = layout.row(align=True)
         row.enabled = not firmament_off
@@ -394,8 +394,8 @@ class BBT_PT_world(Panel):
             note="sets snow/wetness/temperature; winter builds falling snow + coverage")
 
         # -- World now: the live conditions, on top of the season. Time/place (the set-once sun geo
-# inputs) moved to the collapsed "Time and place" sub-panel below, so this stays day-to-day.
-# --
+        # inputs) moved to the collapsed "Time and place" sub-panel below, so this stays day-to-day.
+        # --
         box = layout.box()
         col = box.column(align=True)
         col.label(text="Conditions (live)", icon="FORCE_WIND")

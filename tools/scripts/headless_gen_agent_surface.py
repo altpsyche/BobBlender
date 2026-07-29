@@ -30,7 +30,7 @@ signature, a contract model or a handler is wrong, this fails where a `core`-lev
 
 Reachability-gated: with no ComfyUI, parts B, C and D print SKIP and the script still exits 0, which
 is the "ComfyUI is never required" property. Exit 0 = nothing failed. The op lists and the renders
-are written under `_generated/comfy_g6_check/` so the gate's claims can be audited against
+are written under `_generated/agent_surface_check/` so the gate's claims can be audited against
 artifacts.
 """
 
@@ -47,7 +47,7 @@ REPO = Path(__file__).resolve().parents[2]
 EXT = REPO / "blender" / "extensions" / "bob_blender_tools"
 sys.path.insert(0, str(EXT))
 
-OUT = REPO / "_generated" / "comfy_g6_check"
+OUT = REPO / "_generated" / "agent_surface_check"
 PACK = OUT / "pack"
 
 # The MCP server sandboxes every output path under $BOB_WORKDIR and resolves the generated pack from
@@ -60,7 +60,15 @@ os.environ.setdefault("BOB_ASSET_PACKS", str(REPO / "library"))
 from mcp_agent import contracts, executor, paths, server  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-FAILURES: list[str] = []
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("agent-surface gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
 SEED = 4242
 PROMPT_ASSET = "a weathered granite boulder covered in lichen"
 PROMPT_TEX = "mossy forest floor with small stones and fallen needles"
@@ -69,13 +77,6 @@ PROMPT_MACRO = "one isolated steep massif in the north west, broad low valleys e
 
 def section(title: str) -> None:
     print(f"\n=== {title} " + "=" * max(0, 62 - len(title)))
-
-
-def check(label: str, ok: bool, detail: str = "") -> bool:
-    print(f"  [{'ok' if ok else 'FAIL'}] {label}" + (f": {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(f"{label} ({detail})" if detail else label)
-    return ok
 
 
 def rel(path) -> str:
@@ -315,7 +316,7 @@ def part_c(args, reachable: bool) -> dict:
         return {}
 
     # The bake takes the mask through the `macro` key the tool handed back, which is the whole
-# reason the macro-heightmap family needed no new op.
+    # reason the macro-heightmap family needed no new op.
     t0 = time.time()
     baked = server.bake_heightfield(rel(OUT / "c_terrain.png"), params={
         "preset": "alpine", "size": 768, "seed": SEED, **macro["bake_params"]}, force=True)
@@ -341,10 +342,10 @@ def part_c(args, reachable: bool) -> dict:
         {"op": "apply_texture_set", "object": "Terrain", "set": tex["set"], "index": 1,
          "pack_dir": tex["pack_dir"]},
         # No `set_env` here, and that is a finding rather than an omission: `Scene.bbt_env` is a
-# PropertyGroup the ADDON registers, and the headless runner imports `core` into a
-# --factory-startup Blender without enabling the addon, so every env-dependent op (set_env,
-# apply_season, scene_preset) raises there and works over `build_live`. The sky is given its
-# time explicitly for the same reason: with no params it reads the env it cannot see.
+        # PropertyGroup the ADDON registers, and the headless runner imports `core` into a
+        # --factory-startup Blender without enabling the addon, so every env-dependent op (set_env,
+        # apply_season, scene_preset) raises there and works over `build_live`. The sky is given its
+        # time explicitly for the same reason: with no params it reads the env it cannot see.
         {"op": "build_sky", "params": {"time_of_day": 15.0}},
         {"op": "add_camera", "name": "BOB_Camera", "location": [150.0, -150.0, 90.0],
          "look_at": [0.0, 0.0, 10.0], "lens": 42.0},
@@ -437,13 +438,9 @@ def main(argv=None) -> int:
     if "d" in parts:
         report["d"] = part_d(ok)
 
-    (OUT / "g6_report.json").write_text(json.dumps(report, indent=2, default=str))
+    (OUT / "agent_surface_report.json").write_text(json.dumps(report, indent=2, default=str))
     section("result")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    return 1 if FAILURES else 0
+    return GATE.exit_code()
 
 
 if __name__ == "__main__":

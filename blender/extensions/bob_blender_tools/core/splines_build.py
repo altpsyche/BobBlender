@@ -277,11 +277,11 @@ def _build_curve_overlay(terrain, curve, carve=True):
         res = _apply([{"op": "drape_curve", "name": curve.name, "terrain": terrain.name,
                        **role.get("drape", {})}])
         # A drape that failed (missing heightmap, curve entirely off the terrain) returns an
-# info-only dict with no "created"; do not then claim the curve was draped.
+        # info-only dict with no "created"; do not then claim the curve was draped.
         draped = bool(res and res[0].get("created"))
         # drape_curve clips points dragged off the terrain (else a river's monotonic solve carves a
-# runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back
-# on.
+        # runaway trench); flag it so Build/Bake & Erode can warn the artist to pull the curve back
+        # on.
         off_terrain = bool(res and res[0].get("dropped"))
     from .geonodes import build_geonodes_on_object
 
@@ -455,8 +455,8 @@ def _derived_water(cfg):
         g = _guarantee_depth(cfg)
         water_depth = g * (1.0 - cfg.water_level)
         # Reach the ribbon out to where the shallow guarantee bed's wall crosses the waterline (same
-# by-construction containment as the graded path, scaled to the guarantee depth), so the
-# edge sits at the waterline on the eroded bank, not low in the channel.
+        # by-construction containment as the graded path, scaled to the guarantee depth), so the
+        # edge sits at the waterline on the eroded bank, not low in the channel.
         reach = (g * cfg.water_level) / max(cfg.bank_slope, 0.05)
         fill = cfg.width + 2.0 * reach + 2.0 * _WATER_TUCK
         return fill, water_depth
@@ -642,9 +642,9 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
         result["did"].append(f"carved terrain ({note})" if do_terrain else "curve mask")
         if do_terrain and not note.startswith("draped"):
             # "curve Z" is not a neutral fallback: the overlay grades the bench to whatever Z the
-# control points happen to hold, so on rising ground it cuts a trench and on falling
-# ground it leaves the path in the air. Say so instead of reporting it as a success
-# mode.
+            # control points happen to hold, so on rising ground it cuts a trench and on falling
+            # ground it leaves the path in the air. Say so instead of reporting it as a success
+            # mode.
             result["warnings"].append(
                 "carved at the curve's own Z, not the terrain surface: the terrain carries no "
                 "bbt_heightmap, so there is nothing to drape onto. Build it from a bake "
@@ -656,9 +656,9 @@ def build_curve(curve, terrain, *, do_terrain, do_material, do_water,
         if slot is not None:
             result["surfaced"] = True
             # The SLOT is part of the result, not an internal detail: it is the `index` an
-# apply_texture_set has to name to put a real surface on the band, and there is no other
-# way to read it back (the redwood run guessed it and rendered probe frames). None for
-# the impose family, whose damp bed is a whole-material knob rather than a layer.
+            # apply_texture_set has to name to put a real surface on the band, and there is no
+            # other way to read it back (a scene run guessed it and rendered probe frames). None
+            # for the impose family, whose damp bed is a whole-material knob rather than a layer.
             result["slot"] = None if impose else slot
             result["did"].append("damp bed" if impose
                                  else f"surface band (layer {slot}, channel "
@@ -740,8 +740,8 @@ def run_bake_erode(terrain, curves, erode_params, *, host_bake=None, scatter_cb=
 
     if host_bake is None:
         # Best-effort: without a host bake we cannot rewrite the heightfield, so leave the terrain
-# as it is and report the curves that WOULD be re-imposed. The MCP handler lands here when
-# the host process is not reachable from this (e.g. headless) session.
+        # as it is and report the curves that WOULD be re-imposed. The MCP handler lands here when
+        # the host process is not reachable from this (e.g. headless) session.
         result["note"] = ("erosion skipped (no host bake available); "
                            f"{len(reimpose)} curve(s) ready to re-impose")
         return result
@@ -1020,9 +1020,9 @@ def curve_build(op: dict) -> dict:
         created.append(_water_name(curve))
     role = _role_of(curve)
     # `slot` and `draped` are the two things an agent cannot read back any other way: the layer
-# index an apply_texture_set must name to surface the band, and whether the carve used the
-# draped Z or the curve's own (which is the difference between a graded bench and a trench
-# through a hill).
+    # index an apply_texture_set must name to surface the band, and whether the carve used the
+    # draped Z or the curve's own (which is the difference between a graded bench and a trench
+    # through a hill).
     return {"op": "curve_build", "created": created, "info": info,
             "data": {"slot": res["slot"], "note": res["note"],
                      "draped": res["note"].startswith("draped"),

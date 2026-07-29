@@ -26,7 +26,7 @@ does not fit the layout.
 
 Reachability-gated: with no server, or with the Omni pack or its weights absent, every generation
 half prints SKIP and exits 0, which is itself the check that no wrapper is ever required. Generated
-meshes cache WITH their timing and VRAM under `_generated/comfy_g4c_check/gen/`, so a re-measured
+meshes cache WITH their timing and VRAM under `_generated/blockout_control_check/gen/`, so a re-measured
 table is not a table of zeros. Exit 0 = nothing failed.
 """
 
@@ -53,8 +53,16 @@ from bob_blender_tools.core import (  # noqa: E402
     proxies,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g4c_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("control gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "blockout_control_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
 
@@ -70,17 +78,6 @@ SAMPLES = 8000
 # Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP,
 # not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate")
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -366,7 +363,7 @@ ROUND_TRIP = {
     "1": {"class_type": "Trellis2LoadMesh", "inputs": {"mesh_path": ""},
           "_meta": {"title": "BOB_CONTROL"}},
     "2": {"class_type": "Trellis2ExportTrimesh",
-          "inputs": {"trimesh": ["1", 0], "filename_prefix": "bob_g4c_round_trip",
+          "inputs": {"trimesh": ["1", 0], "filename_prefix": "bob_control_round_trip",
                      "file_format": "glb"},
           "_meta": {"title": "BOB_OUT"}},
     "3": {"class_type": "Preview3D", "inputs": {"model_file": ["2", 0]},
@@ -402,7 +399,7 @@ def part_a(args, reachable):
           f"{exported['points']} points")
 
     # The round trip Bob's own export and import make on their own, with no server in it: this is
-# the baseline the exporter's turn is measured against.
+    # the baseline the exporter's turn is measured against.
     empty_scene()
     local = gen_assets.import_glb(control, name="Local")
     local_map = best_axis_map(proxy_points, mesh_points(local, seed=2))
@@ -520,9 +517,9 @@ def part_b(args, reachable, ready):
             points = mesh_points(got, seed=2)
             agree = fixed_agreement(proxy_points, points)
             # The diagnostic that keeps the comparison fair: how the same result would score if it
-# were allowed to be turned first. `mesh_geom_mv_trellis` was never asked to preserve an
-# orientation, so without this column its score reads as a geometry failure when part of
-# it is a frame.
+            # were allowed to be turned first. `mesh_geom_mv_trellis` was never asked to preserve an
+            # orientation, so without this column its score reads as a geometry failure when part of
+            # it is a frame.
             best = best_axis_map(proxy_points, points)
             at_best = fixed_agreement(proxy_points, best["points"])
             agree["best_iou"] = best["iou"]
@@ -653,8 +650,8 @@ def part_c(args, reachable, ready):
           f"base {low[2]:.4f}, origin {obj_final.location[2]:.4f}")
     check("the LOD chain exists", len(report["lod_faces"]) >= 3, str(report["lod_faces"]))
     # Omni returns geometry with NO material, so the colour roles have no dense mesh to transfer
-# from and have to come from the low mesh's own `mesh_texture` texture instead. Without that
-# they were silently absent and the asset shipped grey.
+    # from and have to come from the low mesh's own `mesh_texture` texture instead. Without that
+    # they were silently absent and the asset shipped grey.
     check("the mesh_texture albedo reached the finished asset",
           "basecolor" in (report.get("maps") or {}),
           "maps " + ", ".join(sorted((report.get("maps") or {}))))
@@ -696,7 +693,7 @@ def part_d(args, reachable, ready):
     sdxl = sampler.report()
     note("after mesh_subject (SDXL resident)", f"peak {sdxl['comfy_peak']} MiB, rise {sdxl['rise']}")
 
-    target = os.path.join(GEN, "residency_w7.glb")
+    target = os.path.join(GEN, "residency_mesh_geom_trellis.glb")
     if os.path.isfile(target):
         os.remove(target)
     with Vram() as sampler:
@@ -724,9 +721,9 @@ def part_d(args, reachable, ready):
           f"{info['seconds']:.1f} s")
 
     # The question the other way round, and it is the one that bites: the stylise gate measured that
-# route peaking at 14,194 MiB, and Omni's ~7 to 8 GB cannot be evicted by ComfyUI's model
-# management because the wrapper caches its pipeline in a module-level dict. `POST /free` cannot
-# reach it.
+    # route peaking at 14,194 MiB, and Omni's ~7 to 8 GB cannot be evicted by ComfyUI's model
+    # management because the wrapper caches its pipeline in a module-level dict. `POST /free` cannot
+    # reach it.
     comfy.free()
     time.sleep(6.0)
     card_after_free, procs = _gpu_sample()
@@ -807,11 +804,7 @@ def main():
         part_d(args, ok, ready)
 
     section("Summary")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(GATE.exit_code())
 
 
 if __name__ == "__main__":

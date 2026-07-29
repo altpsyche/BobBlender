@@ -183,9 +183,9 @@ def _build_params(obj, scn):
     if lay.vgroup:
         params["vgroup"] = lay.vgroup
     # clear/keep/verge read a terrain curve mask the overlay baked (BobSplines, the scatter mask/the
-# per-role surfaces); no proximity. verge keeps to ONE path's edge ring, so it needs a curve;
-# with none bound it reads a name nothing writes, so the layer scatters nothing (pick a path)
-# rather than covering every verge.
+    # per-role surfaces); no proximity. verge keeps to ONE path's edge ring, so it needs a curve;
+    # with none bound it reads a name nothing writes, so the layer scatters nothing (pick a path)
+    # rather than covering every verge.
     if lay.curve_mode in ("clear", "keep", "verge"):
         params["curve_mode"] = "clear" if lay.curve_mode == "clear" else "keep"
         if lay.curve_mode == "verge":

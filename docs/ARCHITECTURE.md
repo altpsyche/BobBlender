@@ -62,9 +62,12 @@ Same single-source rule as the terrain compute, for the same reason: the ComfyUI
 stdlib only and lives in the extension, because Blender's bundled Python has no `httpx`.
 `bobtools/comfyui.py` re-exports it rather than reimplementing it. Split by what
 they own: `core/comfy.py` is the HTTP client, the title templating, preflight, and the texture-set
-recipe; `core/comfy_jobs.py` is the scheduler (one worker thread, a `bpy.app.timers` tick draining
-a result queue, every `bpy` touch on the main thread, the registry cleared by a `@persistent`
-`load_post` handler); `core/comfy_maps.py` derives the texture maps in numpy; `core/comfy_ws.py` is a
+and mesh recipes; `core/gen_receipt.py` is the vocabulary that judges what those recipes produced --
+seven pure functions turning a report's measurements into sentences, plus the declaration of which
+receipt keys are gated and which are informational, so a measurement cannot reach a caller with no
+reader (`tools/tests/test_gen_receipt.py` fails when one does); `core/comfy_jobs.py` is the
+scheduler (one worker thread, a `bpy.app.timers` tick draining a result queue, every `bpy` touch
+on the main thread, the registry cleared by a `@persistent` `load_post` handler); `core/comfy_maps.py` derives the texture maps in numpy; `core/comfy_ws.py` is a
 minimal stdlib websocket reader for ComfyUI's `/ws`, which supplies per-node progress and NOTHING else
 — `comfy.wait()` still decides a job is finished from the jobs API, so a socket that never connects
 costs a progress bar and cannot cost a result. Shipped ComfyUI

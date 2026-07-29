@@ -464,8 +464,8 @@ def weather_group():
     # snow WITHOUT a frost sheet (0 = none). The physics gate above is unchanged; this is amount.
     cond = _mmath(g, "MULTIPLY", cond, env_frost, (1720, 640))
     # Patchy break-up: a low-frequency world-space noise so frost forms in patches instead of a
-# uniform blanket (real hoar frost varies with surface moisture, sky-view, thermal mass).
-# Floored so a frosted region reads as varied density, not holes.
+    # uniform blanket (real hoar frost varies with surface moisture, sky-view, thermal mass).
+    # Floored so a frosted region reads as varied density, not holes.
     ppatch = g.nodes.new("ShaderNodeTexNoise")
     ppatch.location = (1360, 300)
     ppatch.inputs["Detail"].default_value = 2.0
@@ -483,7 +483,7 @@ def weather_group():
     sparkle = _mmath(g, "MULTIPLY", _mrange(g, fnoise.outputs["Fac"], 0.62, 0.8, 0.0, 1.0, (1720, 800)),
                      frost, (1900, 760))
     # Thin cool sheen, then bright glints; the sheen is capped well below opaque (frost is not
-# snow).
+    # snow).
     col = _mixcol(g, _mmath(g, "MULTIPLY", frost, _FROST_MAX_OPACITY, (1900, 640)), col, _FROST_COLOR,
                   (2080, 560))
     col = _mixcol(g, _mmath(g, "MULTIPLY", sparkle, 0.7, (2080, 760)), col, (1.0, 1.0, 1.0, 1.0),

@@ -51,6 +51,20 @@ def _comfy():
     return comfy
 
 
+def _gen_receipt():
+    """The receipt-warning vocabulary from the extension's `core/`, imported lazily.
+
+    `_comfy`'s twin and lazy for the same reason: it imports `comfy` itself, so a toolset that never
+    generates anything pays for neither. It is what turns a texture set's measurements into the
+    `warnings` list the three texture tools return -- the same vocabulary `import_generated`'s
+    receipt is built from, so an agent reads one wording whichever half of the pipeline it called.
+    """
+    paths.add_core_to_path()
+    import gen_receipt  # noqa: E402  (resolved via <ext>/core on sys.path)
+
+    return gen_receipt
+
+
 def _unreachable(comfy, detail: str) -> dict:
     """The one shape every comfy_* tool returns when there is no server to talk to."""
     return {"ok": False, "url": comfy.base_url(), "error":
@@ -177,7 +191,8 @@ def comfy_texture_set(
         return {"set": name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
                 "seconds": info.get("seconds"), "seam": info.get("seam"),
                 "flatness": info.get("flatness"),
-                "warnings": comfy.flatness_warning(info.get("flatness")), "pack_dir": pack,
+                "warnings": _gen_receipt().flatness_warning(info.get("flatness")),
+                "pack_dir": pack,
                 "apply_op": {"op": "apply_texture_set", "set": name, "object": "<your mesh>",
                              "index": 0, "pack_dir": pack}}
 
@@ -199,9 +214,8 @@ def comfy_bark_set(
     conifer bark" on its own came back as polygonal mud cracks 84 degrees off vertical, and the
     shipped clause holds it inside 18 degrees across species and seeds (docs/FOLIAGE.md 3).
 
-    prompt: the species and its surface ("grey beech bark", "shaggy redwood bark"). The
-    vertical-grain
-            clause and the tiling and lighting clauses are added for you.
+    prompt: the species and its surface ("grey beech bark", "shaggy cedar bark"). The
+            vertical-grain clause and the tiling and lighting clauses are added for you.
     name:   the set's folder name. Pass the name a species preset asks for -- the shipped `conifer`
             wants `bark_conifer` and `broadleaf` wants `bark_broadleaf` -- and every tree of that
             species picks it up with no assignment step. Blank names it after the prompt.
@@ -224,7 +238,7 @@ def comfy_bark_set(
         return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
                 "grain": info.get("grain"), "seam": info.get("seam"),
                 "flatness": info.get("flatness"),
-                "warnings": comfy.flatness_warning(info.get("flatness")),
+                "warnings": _gen_receipt().flatness_warning(info.get("flatness")),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")
@@ -285,7 +299,8 @@ def comfy_leaf_atlas(
                 "cell_distinctness": info.get("cell_distinctness"),
                 "clear_fraction": info.get("clear_fraction"),
                 "flatness": info.get("flatness"),
-                "warnings": comfy.flatness_warning(info.get("flatness"), leafy=True),
+                "warnings": (_gen_receipt().flatness_warning(info.get("flatness"), leafy=True)
+                             + _gen_receipt().orientation_warning(info.get("cells"))),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")
@@ -319,7 +334,7 @@ def comfy_mesh(
     on the reference IMAGE and none of them reads your text. Describe the subject you want isolated
     on a plain background ("a bare-root douglas fir sapling, on a white studio sweep") rather than
     listing what you do not want: SDXL does not honour negations, and "no pot, no planter, no
-    container" returned a nursery pot twice on the redwood run where the bare-root phrasing fixed it
+    container" returned a nursery pot twice in testing where the bare-root phrasing fixed it
     first try. `negative` is the place for exclusions -- it reaches the reference image's negative
     conditioning, which is the only stage a negation works at.
 
@@ -362,10 +377,10 @@ def comfy_mesh(
     subject_only: stop after the reference image and return its path, so it can be LOOKED AT before
           any geometry is paid for. Use it on anything whose framing matters, which is anything
           hero. The economics are the whole argument: the reference stage costs about 8 s and the
-          geometry stage 40 to 200, and on the forest-barn barn three seeds were needed -- one came
-          back a cropped close-up of a wall, one a barn on a display plinth with a toy car beside it
-          -- whose geometry cost 81, 435 and 113 s. Two of those were spent on pictures an artist
-          would have rejected on sight. Accept one by passing its path straight back as `subject`,
+          geometry stage 40 to 200, and a gabled timber structure needed three seeds -- one came
+          back a cropped close-up of a wall, one the whole structure on a display plinth with a toy
+          car beside it -- whose geometry cost 81, 435 and 113 s. Two of those were spent on
+          pictures an artist would have rejected on sight. Accept one by passing its path straight back as `subject`,
           which runs the geometry against exactly the picture that was approved; reject one by
           calling again with a different seed.
     route: "oneshot" (default, `mesh_subject` then `mesh_geom_texture`), "staged" (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`; the only route that
@@ -428,8 +443,8 @@ def comfy_mesh(
     #
     # `subject_only` takes the TEXTURE floor, and that is the point rather than an oversight: it
     # runs SDXL and no geometry model, so holding it to the mesh floor would forbid the one call
-    # that exists to be cheap on exactly the card state where being cheap matters. The forest-barn
-    # gate ended at 3768 MiB free -- under the 5000 mesh floor, over the 3000 texture one -- so a
+    # that exists to be cheap on exactly the card state where being cheap matters. A measured run
+    # ended at 3768 MiB free -- under the 5000 mesh floor, over the 3000 texture one -- so a
     # reference can still be looked at there and only the geometry needs the restart.
     if subject_only:
         return _generation(run, route="texture")
@@ -558,8 +573,8 @@ def comfy_stylize(
             out_abs = comfy.unique_file_name(os.path.dirname(os.path.abspath(image_file)),
                                              stem + "_styled", ".png")
         # The route is a value in `core/comfy.py`: passing both passes selects `stylize_render` and
-# passing neither selects `stylize_render_est`, so there is no workflow argument to get
-# wrong here.
+        # passing neither selects `stylize_render_est`, so there is no workflow argument to get
+        # wrong here.
         info = comfy.stylize_render(image_file, out_abs, prompt, depth=depth, normal=normal,
                                     seed=int(seed), denoise=float(strength))
         return {"path": info["path"], "seconds": round(info["seconds"], 2),
@@ -763,10 +778,10 @@ def bake_heightfield(
         base.update(p)
         p = base
     # A preset's params dict arrives with its stack ALREADY resolved, so `macro` has to be composed
-# onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
-# and is idempotent, which is why this tool passes the key straight through instead of calling
-# `params.with_macro` here and risking a second application (docs/GENERATION.md, the macro-mask
-# gate correction 12).
+    # onto that stack rather than expanded from flat knobs. `pipeline._stack_for` does exactly that
+    # and is idempotent, which is why this tool passes the key straight through instead of calling
+    # `params.with_macro` here and risking a second application (docs/GENERATION.md, the macro-mask
+    # gate correction 12).
 
     try:
         out_abs = str(paths.resolve_output(out_file))

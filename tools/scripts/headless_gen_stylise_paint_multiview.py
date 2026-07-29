@@ -27,7 +27,7 @@ Four questions, each answered with a number rather than a screenshot:
 
 Reachability-gated: with no server it prints SKIP for the generation half and exits 0, which is
 itself the check that ComfyUI is never required. Every generated file is cached under
-`_generated/comfy_g4_check/`, so re-measuring costs seconds. Exit 0 = nothing failed.
+`_generated/stylise_paint_check/`, so re-measuring costs seconds. Exit 0 = nothing failed.
 """
 
 import argparse
@@ -54,27 +54,24 @@ from bob_blender_tools.core import (  # noqa: E402
     gen_views,
 )
 
-FAILURES = []
-OUT = os.path.join(REPO, "_generated", "comfy_g4_check")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import Gate  # noqa: E402
+
+# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
+# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
+# the Gate's own list, not a copy, so anything already reading it keeps working.
+GATE = Gate("stylise/paint gate")
+check, note, skip = GATE.check, GATE.note, GATE.skip
+FAILURES = GATE.failures
+OUT = os.path.join(REPO, "_generated", "stylise_paint_check")
 GEN = os.path.join(OUT, "gen")
 DUMP = os.path.join(REPO, "tools", "tests", "data", "object_info_min.json")
-G3B_GEN = os.path.join(REPO, "_generated", "comfy_g3b_check", "gen")
+G3B_GEN = os.path.join(REPO, "_generated", "route_ab_check", "gen")
 
 STYLE_PROMPT = "painted concept art, warm evening light, loose brushwork"
 PAINT_PROMPT = "mossy granite boulder, hand painted stylised game texture, saturated moss"
 SEED = 4242
 RESOLUTION = 1024
-
-
-def check(label, ok, detail=""):
-    print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f" -- {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(label)
-    return ok
-
-
-def note(label, value):
-    print(f"[----] {label} -- {value}")
 
 
 def section(title):
@@ -623,8 +620,8 @@ def part_a(args, reachable):
     scene = build_render_scene()
     started = time.time()
     # transparent=False on purpose: the look-dev stylise family makes a PITCH frame, so the sky
-# belongs in it, and a silhouette test against an empty background would be trivially passed by
-# black staying black.
+    # belongs in it, and a silhouette test against an empty background would be trivially passed by
+    # black staying black.
     shot = gen_views.render_passes(GEN, "scene", camera=scene["camera"], resolution=RESOLUTION,
                                   samples=48, engine="BLENDER_EEVEE", transparent=False)
     render_seconds = time.time() - started
@@ -1066,11 +1063,7 @@ def main():
         part_d(args, ok)
 
     section("Summary")
-    if FAILURES:
-        print(f"{len(FAILURES)} failure(s): " + "; ".join(FAILURES))
-    else:
-        print("no failures")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(GATE.exit_code())
 
 
 if __name__ == "__main__":

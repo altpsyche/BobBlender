@@ -409,7 +409,7 @@ it. A slot a tenth the area can be ten times brighter and still hold its colour.
 ### 21. A generated mesh's receipt now says whether it shipped closed. Read it.
 
 `import_generated` used to return a face count, a height and `warnings: []`, all true, and none of
-it described the surface. The forest-barn gate shipped five meshes carrying 48 to 229 boundary edges
+it described the surface. An asset gate shipped five meshes carrying 48 to 229 boundary edges
 on that receipt, and the stump's holes were found in a hero render.
 
 The route is fixed -- the weld and the pinhole fill now run on the mesh that ships -- but the
@@ -431,7 +431,7 @@ Two figures beside it, for reading the same receipt:
 
 Nothing else in the pipeline catches this, because a misaligned or resampled colour transfer still
 writes a plausible texture: the map has the right average, the right histogram and no error
-anywhere. The forest-barn barn shipped with its shingle courses shredded into a chevron hash, at
+anywhere. A generated gabled structure shipped with its shingle courses shredded into a chevron hash, at
 correlation **0.817** to the texture it came from, and every other check passed.
 
 `import_generated` now returns `bake_fidelity: {correlation, mean_abs_diff, coverage}`, measured
@@ -445,8 +445,8 @@ one the generator made and no amount of prompt work will fix it.
 geometry graph conditions on that picture and none of them reads your prompt, so the reference IS
 the asset, and a bad one is only visible as a bad mesh two hundred seconds later.
 
-The barn took three seeds: one came back a cropped close-up of a wall, one a whole barn standing on
-a display plinth with a toy car beside it, one was right. The subject stage cost about 8 s each and
+One gabled structure took three seeds: one came back a cropped close-up of a wall, one the whole
+structure standing on a display plinth with a toy car beside it, one was right. The subject stage cost about 8 s each and
 the geometry stage cost 81, 435 and 113 s. Two of those three geometry jobs were spent on pictures
 that would have been rejected on sight.
 
@@ -460,8 +460,8 @@ Use it for anything hero, and for any prompt where framing matters more than sur
 ### 24. A generated albedo is a photograph, and a photograph has light in it
 
 The prompts already ask for flat even lighting and the model does not always comply. Nothing said so
-until it reached a hero render: the barn's reference came back an overcast outdoor photograph with a
-sky gradient and an eave shadow baked into the siding.
+until it reached a hero render: a structure's reference came back an overcast outdoor photograph with
+a sky gradient and an eave shadow baked into the siding.
 
 Every texture tool now reports `flatness.low_freq_variation` and warns over **0.075**. Across ten
 sets the flat ones measured 0.025 to 0.074 and the two visibly lit ones 0.0965 and 0.0989. Pass

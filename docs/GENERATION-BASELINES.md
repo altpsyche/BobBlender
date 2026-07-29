@@ -283,7 +283,7 @@ that rule now lives, because these rules are most of what the integration became
 | **the cancellation rule** | `POST /interrupt` kills somebody else's job on a shared queue. | Use this fork's jobs API: poll `/api/jobs/{id}`, cancel `/api/jobs/{id}/cancel` (idempotent, atomic). `/history` plus `/interrupt` demoted to a fallback detected via `GET /features`. |
 | **the portability rule** | Workflows naming a checkpoint by filename are not portable. | Model nodes are templated (`BOB_CKPT`, `BOB_VAE`, `BOB_LORA`, `BOB_3D_MODEL`) and resolved from `/object_info` enums plus a preference. |
 | **the bit-depth floor** | An 8-bit PNG cannot carry a heightfield; 256 steps is visible terracing. | Treat diffusion output strictly as a low-frequency macro mask. **Measured by the macro-mask gate: terracing never arrives** (concentration 1.86 at 8 bits, 1.91 at 5, 1.93 at 16); the 8-bit write costs determinism, not precision. 16-bit node deferred on evidence. |
-| **the VRAM-floor rule** | `/free` alone does not fix 16 GB: the process and its allocator stay alive, and Blender holds VRAM too. | Three layers: `--reserve-vram` when Bob starts the server, single-model sequential workflows, a hard Stop Server. **Re-confirmed the hard way in 2026-07-27's redwood run**, which is the VRAM-handback rule. |
+| **the VRAM-floor rule** | `/free` alone does not fix 16 GB: the process and its allocator stay alive, and Blender holds VRAM too. | Three layers: `--reserve-vram` when Bob starts the server, single-model sequential workflows, a hard Stop Server. **Re-confirmed the hard way in 2026-07-27's whole-scene run**, which is the VRAM-handback rule. |
 | **the iteration rule** | No iteration UX; one Generate button that overwrites is the wrong shape. | N variants into staging, show them, Accept one into the pack; Reject is a delete. |
 | **the provenance rule** | Mesh provenance missing while texture provenance was specified. | A sidecar JSON beside every generated GLB: workflow, model, seed, prompt, licence. |
 | **the manifest origin rule** | Manifest schema fork risk from a second reader. | Extend `_norm_entries()` with defaulted fields. One reader, still. |
@@ -444,7 +444,7 @@ one-command suite exists to prevent.
   assign, render, and report the stage split. Gated on reachability, so with no server it prints
   SKIP and exits 0, which is itself the check that ComfyUI is never required.
 - `tools/scripts/headless_gen_assets.py`, the asset gate. **Shipped by the asset gate**, and it caches its
-  generated source meshes (with their timings) under `_generated/comfy_g3_check/gen/`, so re-running
+  generated source meshes (with their timings) under `_generated/asset_gate_check/gen/`, so re-running
   the Blender half costs seconds instead of another 90 s per asset; `--fresh` overrides that and
   `--no-ab` / `--ab-only` split the slow half off. Reachability-gated for the server half.
 - Headless, mesh generation: import a real generated GLB, run simplify through bake, then assert face count
@@ -497,7 +497,7 @@ one-command suite exists to prevent.
   scale. **D**: residency, with the per-process VRAM rule and what `POST /free` reclaims.
   **E**: `Generate Base` and then `Bake + Build` through the real operators and the real job queue,
   with the main-thread tick measured and the assertion that switching the mask off bakes the preset
-  exactly as before. Masks cache WITH their timing and VRAM under `_generated/comfy_g5_check/gen/`,
+  exactly as before. Masks cache WITH their timing and VRAM under `_generated/terrain_macro_check/gen/`,
   and part B keeps the raw generation beside each (`heightmap_macro(keep_source=True)`) because the
   8-bit claim can only be audited against the image the mask was derived from. Reachability-gated:
   with no server every generation half prints SKIP and exits 0.
@@ -514,7 +514,7 @@ one-command suite exists to prevent.
   can see. **C**: prompt to a shaded terrain, wall clock per stage, and the masked bake's recipe hash
   differenced against the unmasked one so "the mask reached the bake" is a measurement. **D**:
   websocket progress against status polling, counting updates and how many were per-node. The op lists
-  and renders land in `_generated/comfy_g6_check/` so the claims can be audited against artifacts.
+  and renders land in `_generated/agent_surface_check/` so the claims can be audited against artifacts.
 - `tools/scripts/comfy_omni_fix.py`, which is a test as much as a fix: `--check` reports whether the
   Omni control projection actually loaded and exits 1 when it did not. The control gate runs it, because
   it is the one failure in this integration that no graph-level check can see.
@@ -531,7 +531,7 @@ one-command suite exists to prevent.
   steps 6 to 8 on BOTH models against the asset gate asset checks. **D**: the dense-mesh question, the dense mesh re-measured with
   the bake alignment fixed, on the same four assets the route A/B used, read straight from the route A/B cache so it
   costs no GPU at all. Generated meshes cache WITH their timings and VRAM under
-  `_generated/comfy_g7_check/gen/`, subject images are reused from the route A/B cache so the TRELLIS.2
+  `_generated/geometry_ab_check/gen/`, subject images are reused from the route A/B cache so the TRELLIS.2
   column is directly comparable with that table, `--no-gen` re-scores and `--fresh` regenerates.
   Reachability-gated for the generation half. `--fast` is `--part a,d`, which is the whole
   no-GPU half of the gate.
@@ -549,7 +549,7 @@ one-command suite exists to prevent.
   8 against the asset gate asset checks, with the footprint checked against this route's own raw mesh rather
   than against the adopted mode's absolute bar. **D**: the transport claim, with `comfy_dir()` forced
   to None and the weights held fixed, so `mesh_geom_ctrl` failing and `mesh_geom_bbox` completing is one variable and not two.
-  Meshes cache WITH their timing and VRAM under `_generated/comfy_g8_check/gen/`, so `--no-gen`
+  Meshes cache WITH their timing and VRAM under `_generated/bbox_control_check/gen/`, so `--no-gen`
   re-scores in about a minute and `--fresh` regenerates. It imports the control gate's shape maths,
   block-outs and VRAM sampler rather than copying them, so the two phases' figures are the same
   measurement. Reachability-gated twice over: no server, or no Omni pack or weights, prints SKIP and
@@ -569,7 +569,7 @@ one-command suite exists to prevent.
   block-out through `mesh_geom_voxel`, `mesh_simplify_uv`, `mesh_texture` and steps 6 to 8 against the asset gate asset checks, footprint checked
   against this route's own raw mesh. **D**: transport, `comfy_dir()` forced to None with the weights
   held fixed, which is where `mesh_geom_voxel`'s one claimed advantage over `mesh_geom_ctrl` turned out not to exist. Meshes
-  cache with their timing and VRAM under `_generated/comfy_g9_check/gen/`; `--no-gen` re-scores,
+  cache with their timing and VRAM under `_generated/voxel_control_check/gen/`; `--no-gen` re-scores,
   `--fresh` regenerates, `--no-bbox` drops the column the bbox gate already measured. Imports the control gate's shape maths,
   block-outs, VRAM sampler and caching and the asset gate's normal-detail read rather than copying any of them.
   Reachability-gated twice over. `--fast` is `--part a`.
@@ -580,5 +580,5 @@ one-command suite exists to prevent.
   the baked normal's std AND its high-frequency content; then Blender's Decimate floor on the dense
   meshes; then the opacity channel, including one forced wiring that is followed through the glTF
   export and the re-import a scatter layer makes. It caches generated meshes, timings and VRAM under
-  `_generated/comfy_g3b_check/gen/`, so `--no-gen` re-measures the whole thing in about four minutes
+  `_generated/route_ab_check/gen/`, so `--no-gen` re-measures the whole thing in about four minutes
   and `--fresh` regenerates. Reachability-gated for the generation half.

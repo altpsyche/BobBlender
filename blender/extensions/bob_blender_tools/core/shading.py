@@ -421,8 +421,8 @@ def apply_texture_set(op: dict) -> dict:
 
     Both checks below are made because the folder existing is not the same as the maps resolving. A
     set folder with no readable map wires no sampler at all and the layer reads as a solid tint on
-    screen -- success in the receipt, nothing in the frame, which is the failure the redwood run
-    spent three texture sets on.
+    screen -- success in the receipt, nothing in the frame, which is the failure a scene run spent
+    three texture sets on.
     """
     name = (op.get("set") or "").strip()
     assets.add_pack_root(op.get("pack_dir"))

@@ -39,6 +39,14 @@ def jobs(mods):
     return importlib.import_module("comfy_jobs")
 
 
+@pytest.fixture(scope="module")
+def receipt(mods):
+    """`core.gen_receipt`, the vocabulary that judges what the recipes here produced. Its own tests
+    are `test_gen_receipt.py`; it is reachable from this file only where a test drives a whole
+    recipe and then asserts the sentence its measurements come out as."""
+    return importlib.import_module("gen_receipt")
+
+
 # -- comfy_maps: the PNG codec and the derivations -------------------------------------------
 def _paeth_png(rgb):
     """Encode with filter 4 on every row, which is what PIL (and therefore ComfyUI) emits. The
@@ -142,9 +150,9 @@ def test_height_is_a_wrap_safe_high_pass(mods):
 
 
 def test_flatness_separates_a_lighting_ramp_from_texture(mods, noise_rgb):
-    """The measure the texture family had no equivalent of, and the largest thing the forest-barn
-    gate found. It has to answer "is this a lit photograph" without answering "is this a busy
-    surface": a mossy floor SHOULD have plenty of total variation and no low-frequency variation."""
+    """The measure the texture family had no equivalent of, and the largest thing the generated
+    texture sets turned up. It has to answer "is this a lit photograph" without answering "is this
+    a busy surface": a mossy floor SHOULD have plenty of total variation and no low-frequency variation."""
     _, maps = mods
     flat = np.full((128, 128, 3), 110, dtype=np.uint8)
     assert maps.flatness_report(flat)["low_freq_variation"] < 0.001
@@ -372,6 +380,129 @@ def test_orient_sprite_ignores_the_colour_cue_on_a_uniform_sprite(mods):
     assert rows[-band:].sum() < rows[:band].sum()
 
 
+def _fan(size=128, strands=5, stem=True, lean=0.16):
+    """A spray: several separate strands out of one solid stub. The shape both cues read, and what a
+    "sprig on one short twig" prompt returns.
+
+    Longer than wide and splaying gently, because that is what the generated sprigs measured --
+    anisotropy 2.28 to 4.49 on the conifer atlas. A spray that splays as wide as it is tall has no
+    principal axis at all, which is a different test case (`_pressed`).
+    """
+    sprite = np.zeros((size, size, 4), np.uint8)
+    mid = size // 2
+    base, top = int(size * 0.90), int(size * 0.74)
+    sprite[top:base, mid - 2:mid + 3, :3] = (110, 70, 40) if stem else (40, 120, 40)
+    sprite[top:base, mid - 2:mid + 3, 3] = 255
+    for i in range(strands):
+        drift = (i - (strands - 1) / 2.0) * lean
+        for step in range(int(size * 0.68)):
+            yy, xx = top - step, int(mid + drift * step)
+            if 0 <= yy < size and 1 <= xx < size - 1:
+                sprite[yy, xx - 1:xx + 2, :3] = (40, 120, 40)
+                sprite[yy, xx - 1:xx + 2, 3] = 255
+    return sprite
+
+
+def _pressed(size=96):
+    """A round, all-green, flat specimen: no stem to find and no long axis either. What "pressed flat
+    like a herbarium specimen" returned, and the shape with no orientation cue at all."""
+    sprite = np.zeros((size, size, 4), np.uint8)
+    yy, xx = np.mgrid[0:size, 0:size]
+    disc = ((yy - size / 2) ** 2 + (xx - size / 2) ** 2) < (size * 0.34) ** 2
+    sprite[disc, :3] = (40, 120, 40)
+    sprite[disc, 3] = 255
+    return sprite
+
+
+def _spindle(size=128):
+    """A solid spindle: anisotropic, tapered at both ends, and ONE strand the whole way.
+
+    The conifer cell that shipped upside down, in a shape. Its end ratio and anisotropy both look
+    healthy, so the two width bars pass it and it is still 180 degrees out -- a fir sprig tapers at
+    both ends, so "the narrow end is the cut stub" picks whichever end the tip happened to be. Only
+    the absence of a fan says so.
+    """
+    sprite = np.zeros((size, size, 4), np.uint8)
+    lo, hi = int(size * 0.12), int(size * 0.88)
+    for row in range(lo, hi):
+        t = (row - lo) / float(hi - lo)
+        # Fatter toward the top than the bottom, so there IS a narrow end to be confident about.
+        half = max(1, int(size * 0.085 * np.sin(np.pi * t) * (1.4 - 0.8 * t)))
+        sprite[row, size // 2 - half:size // 2 + half + 1, :3] = (40, 120, 40)
+        sprite[row, size // 2 - half:size // 2 + half + 1, 3] = 255
+    return sprite
+
+
+def test_sprite_orientation_says_which_cue_decided_and_whether_it_could_be_read(mods):
+    """The measurement the second artist rejection asked for, and the one that did not exist.
+
+    `orient_sprite` always returns a rotation. When neither cue is readable that rotation is a coin
+    toss, and nothing downstream can tell: the sprite is still bottom-anchored, its cell is still
+    full, and `base_taper` still reads narrow-at-the-base because a compact leaf is narrow at
+    whichever edge it was set down on. So what is reported is the DECISION.
+    """
+    _, maps = mods
+    spray = maps.sprite_orientation(_fan())
+    assert spray["cue"] == "woody" and spray["resolved"], "a sprig on a twig is the readable case"
+
+    pressed = maps.sprite_orientation(_pressed())
+    assert pressed["cue"] == "axis" and not pressed["resolved"], \
+        "a round pressed specimen has no cue, and saying so is the whole point"
+    assert pressed["woody_fraction"] < maps.WOODY_MIN
+    assert pressed["anisotropy"] < maps.AXIS_ANISOTROPY_MIN
+
+    # Anisotropic and tapered, so the two width bars would both pass it, and still unreadable: a
+    # spray that tapers at both ends can come back exactly upside down with healthy-looking figures.
+    spindle = maps.sprite_orientation(_spindle())
+    assert spindle["anisotropy"] >= maps.AXIS_ANISOTROPY_MIN
+    assert spindle["end_ratio"] <= maps.AXIS_TAPER_MAX
+    assert spindle["strand_contrast"] < maps.AXIS_STRAND_CONTRAST_MIN
+    assert not spindle["resolved"], "no fan at either end means no stub cue"
+
+    # The all-green fan keeps the geometric cue on its own merits: a stub against separate strands.
+    green = maps.sprite_orientation(_fan(stem=False))
+    assert green["cue"] == "axis" and green["resolved"]
+    assert green["strand_contrast"] >= maps.AXIS_STRAND_CONTRAST_MIN
+
+
+def test_mask_light_split_separates_a_key_from_the_shading_between_needles(mods):
+    """The fix for the bar that cost a gate. A needle spray's variation is mostly one needle shadowing
+    the next, which is real geometry a flat card cannot carry and so belongs in the albedo; only a RAMP
+    across the sprite is light that cannot be relit. The proof that this is a split and not a
+    reweighting is that the detail figure does not move under a key the ramp figure tracks."""
+    _, maps = mods
+    sprite = _fan(size=192, strands=7)
+    rgb = sprite[:, :, :3].copy()
+    opacity = sprite[:, :, 3]
+    # Per-strand shading: alternate columns darker, which is what self-shadowing looks like.
+    rgb[:, ::3] = (rgb[:, ::3].astype(np.float32) * 0.45).astype(np.uint8)
+
+    flat_ramp, flat_detail = maps.mask_light_split(rgb, opacity)
+    assert flat_detail > flat_ramp * 2, "shading between needles is not a ramp"
+
+    for stops in (1.0, 2.0):
+        gain = 2.0 ** (np.linspace(-stops / 2.0, stops / 2.0, rgb.shape[1], dtype=np.float32))
+        lit = np.clip(rgb.astype(np.float32) * gain[None, :, None], 0, 255).astype(np.uint8)
+        ramp, detail = maps.mask_light_split(lit, opacity)
+        assert ramp > flat_ramp + 0.2 * stops, f"a {stops} stop key has to show in the ramp"
+        assert abs(detail - flat_detail) < 0.15, \
+            f"the relief figure moved with the light ({flat_detail} -> {detail})"
+
+
+def test_cell_light_split_answers_per_cell_rather_than_per_sheet(mods):
+    """Per cell, because a sheet's own answer is dominated by four sprites being four different greens,
+    which is `cell_distinctness` doing its job and not a light on any card."""
+    _, maps = mods
+    base, opacity = maps.atlas_compose([_fan(), _fan(strands=3), _fan(strands=7), _pressed()],
+                                       2, 2, 256)
+    split = maps.cell_light_split(base, opacity, 2, 2)
+    assert [c["cell"] for c in split] == [0, 1, 2, 3]
+    assert all(c["ramp_stops"] is not None for c in split)
+    # An empty cell is None rather than a number, which is the honest answer.
+    sparse_base, sparse = maps.atlas_compose([_fan(), None, None, None], 2, 2, 256)
+    assert maps.cell_light_split(sparse_base, sparse, 2, 2)[1]["ramp_stops"] is None
+
+
 def test_atlas_compose_fills_every_cell_bottom_anchored(mods):
     _, maps = mods
     sprites = [_sprig(a, woody=True) for a in (0.0, 50.0, 140.0, 250.0)]
@@ -446,7 +577,7 @@ def test_bark_and_atlas_suffixes_are_the_measured_ones(mods):
     assert comfy.DEFAULT_ATLAS_ROUTE == "cells"
     assert comfy.atlas_routes() == ("cells", "grid")
     # `mesh_subject`'s own negative forbids "multiple objects", which is right for one sprite and
-# wrong for a grid, so the atlas route carries its own.
+    # wrong for a grid, so the atlas route carries its own.
     assert "bunch" in comfy.ATLAS_NEGATIVE and "grid" in comfy.ATLAS_NEGATIVE
 
 
@@ -657,7 +788,7 @@ def test_client_against_a_fake_server(mods, fake_server):
     assert comfy.view(comfy.images(outputs)[0], url=fake_server) == b"png"
     assert comfy.cancel(pid, url=fake_server) is True
     # The jobs API was polled, not /history: the per-job primitive is the point (the cancellation
-# rule).
+    # rule).
     assert any(c.startswith("/api/jobs/p1") for c in _Fake.calls)
     assert not any(c.startswith("/history") for c in _Fake.calls)
 
@@ -688,8 +819,8 @@ OBJECT_INFO = {
         "input": {"required": {"ckpt_name": [["good.safetensors", "other.safetensors"]]}}},
     "UpscaleModelLoader": {
         # The NEWER combo shape, options hidden in the options dict. the first spike's reader saw
-# only the old one and would have passed a missing upscale model straight through to an HTTP
-# 400.
+        # only the old one and would have passed a missing upscale model straight through to an HTTP
+        # 400.
         "input": {"required": {"model_name": ["COMBO", {"options": ["4x-UltraSharp.pth"]}]}}},
     "KSampler": {"input": {"required": {"seed": ["INT", {}], "model": ["MODEL"]}}},
     "SaveImage": {"input": {"required": {"images": ["IMAGE"],
@@ -994,7 +1125,7 @@ def test_mesh_graphs_end_in_a_retrievable_output(mods):
     assert "SaveGLB" in {n["class_type"] for n in graph.values()}
 
 
-def test_w4_joins_the_cut_through_an_inverted_mask(mods):
+def test_mesh_subject_joins_the_cut_through_an_inverted_mask(mods):
     """The sign that decides whether `mesh_subject` saves the subject or the background.
 
     Trellis2RemoveBackground returns a FOREGROUND mask; JoinImageWithAlpha computes
@@ -1039,7 +1170,7 @@ def test_bind_process_selects_one_branch_and_can_carry_the_face_budget(mods):
         assert on is not graph
 
 
-def test_w9b_is_a_one_shot_route_beside_the_staged_one(mods):
+def test_mesh_geom_texture_is_a_one_shot_route_beside_the_staged_one(mods):
     """`mesh_geom_texture`'s shape, as the benchmark relies on it: one graph that conditions, generates
     a shape, simplifies and unwraps it, textures it, and exports THAT mesh -- with the PBR
     rasterised into the simplified mesh's own charts and projected through the pre-simplify
@@ -1080,7 +1211,7 @@ def test_the_route_is_a_value_and_maps_onto_the_finish_passes(mods):
 
 
 def test_one_file_for_both_meshes_is_declared_and_not_inferred(mods):
-    """The one thing `finish_passes` cannot say, and the forest-barn gate's two defects both came of
+    """The one thing `finish_passes` cannot say, and two shipped defects both came of
     nobody saying it: on the one-shot route the dense and the low mesh are ONE file, so there is a
     surface to repair and nothing to transfer.
 
@@ -1100,101 +1231,6 @@ def test_one_file_for_both_meshes_is_declared_and_not_inferred(mods):
     # two paths say: the low mesh is then a different mesh and the cage has a job.
     assert not comfy.geometry_is_final({"raw_mesh": "/p/a.glb", "simplified_mesh": "/p/s.glb",
                                         "textured_mesh": "/p/a.glb"})
-
-
-def test_a_solid_kind_shipping_open_says_so(mods):
-    """The companion to `leaf_opacity_warning`, and it exists because the boundary-edge count was
-    computed since the asset gate and read by nobody: the forest-barn gate shipped five meshes with
-    48 to 229 boundary edges and a `warnings: []` receipt, and the stump's holes were found in a
-    render.
-
-    The thresholds are the gate's own measurements, after the weld and the pinhole fill."""
-    comfy, _ = mods
-
-    def report(edges, faces, **extra):
-        return dict({"low_boundary_edges": edges, "faces": faces,
-                     "simplify_source": "trellis2", "low_welded_verts": 100}, **extra)
-
-    # The two the artist could see through, and the three that read as closed.
-    assert comfy.open_surface_warning("stump", report(73, 3840)), "1.9%"
-    assert comfy.open_surface_warning("slab", report(72, 2865)), "2.5%"
-    assert not comfy.open_surface_warning("log", report(17, 3911)), "0.4%"
-    assert not comfy.open_surface_warning("structure", report(11, 7502)), "0.15%"
-    assert not comfy.open_surface_warning("boulder", report(9, 3832)), "0.24%"
-    # A count alone is not the claim: the same 30 edges is a sieve on a small rock and nothing on a
-    # building.
-    assert comfy.open_surface_warning("rocks", report(30, 500))
-    assert not comfy.open_surface_warning("rocks", report(30, 40000))
-    # The floor, so a tiny mesh is not warned about two edges.
-    assert not comfy.open_surface_warning("rocks", report(comfy.OPEN_SURFACE_FLOOR, 10))
-    # Foliage is exempt: a leaf blade IS an open surface and the pinhole fill is off for it, so
-    # warning here would teach an artist to ignore the warning that means something.
-    for kind in comfy.FOLIAGE_KINDS:
-        assert not comfy.open_surface_warning(kind, report(5000, 4000))
-    # And the figure is only honest on a welded mesh, so an unwelded one stays quiet rather than
-    # reporting its UV seams as holes (stump: 3,646 one-face edges unwelded against a real 229).
-    assert not comfy.open_surface_warning("stump", {"low_boundary_edges": 3646, "faces": 3832,
-                                                    "simplify_source": "trellis2"})
-    assert comfy.open_surface_warning("stump", {"low_boundary_edges": 300, "faces": 3832,
-                                                "simplify_source": "decimate"}), \
-        "Bob's own retopo welds, so its count is honest with no marker"
-    assert not comfy.open_surface_warning("stump", report(0, 3832)), "closed says nothing"
-
-
-def test_a_colour_bake_that_returned_something_else_says_so(mods):
-    """The receipt warning for the defect that cannot fail loudly. A misaligned or jittered colour
-    transfer still writes a plausible texture, so nothing downstream notices and the artist finds it
-    in a hero render.
-
-    The pairs are the forest-barn assets re-finished through the same code either side of the
-    coincident-bake fix, so the bar is measured on both sides rather than picked."""
-    comfy, _ = mods
-
-    def fid(corr, diff):
-        return {"correlation": corr, "mean_abs_diff": diff, "coverage": 0.57}
-
-    for corr, diff in ((0.9015, 6.48), (0.9524, 5.96), (0.9793, 3.21)):  # cage onto itself
-        assert comfy.bake_fidelity_warning(fid(corr, diff)), f"{corr} should warn"
-    for corr, diff in ((0.9980, 2.28), (0.9985, 2.57), (0.9995, 1.12)):  # self-baked
-        assert not comfy.bake_fidelity_warning(fid(corr, diff)), f"{corr} should not"
-    # Either half of the bar is enough on its own: a map can track the source's shape and still be
-    # shifted in level, or match in level and have its detail moved about.
-    assert comfy.bake_fidelity_warning(fid(0.999, comfy.BAKE_DIFF_MAX + 0.1))
-    assert comfy.bake_fidelity_warning(fid(comfy.BAKE_FIDELITY_MIN - 0.01, 1.0))
-    # And nothing measured is not a failure: a geometry-only asset has no colour to compare.
-    assert comfy.bake_fidelity_warning(None) == []
-    assert comfy.bake_fidelity_warning({"coverage": 0.4}) == []
-
-
-def test_a_lit_albedo_says_so(mods):
-    """The third receipt warning, and the one with no measurement at all before that gate.
-    The prompts have always asked for flat light -- `PROMPT_SUFFIX` carries "flat even lighting" --
-    so the intent was right and the enforcement absent."""
-    comfy, _ = mods
-    assert "flat even lighting" in comfy.PROMPT_SUFFIX, "the intent, which was never the problem"
-
-    def flat(value, **extra):
-        return dict({"low_freq_variation": value}, **extra)
-
-    # The gate's own ten sets, either side of the bar.
-    for value in (0.0247, 0.0355, 0.0452, 0.0492, 0.0509, 0.0667, 0.0740, 0.0742):
-        assert not comfy.flatness_warning(flat(value)), f"{value} reads as flat"
-    for value in (0.0965, 0.0989):
-        assert comfy.flatness_warning(flat(value)), f"{value} is lit"
-    # The advice changes once delighting has been tried and did not help, because at that point the
-    # lighting is not a low-frequency ramp and correcting harder will not fix it.
-    assert "reroll" in comfy.flatness_warning(flat(0.2, delighted=True))[0]
-    assert "delight=True" in comfy.flatness_warning(flat(0.2))[0]
-
-    # A leaf card is the case that matters most, and it is measured in STOPS inside the cutout: an
-    # atlas can have a flat sheet and still span two stops within the sprite.
-    leafy = flat(0.02, in_mask_stops=1.84)
-    assert not comfy.flatness_warning(leafy), "the stops half only applies to a leafy caller"
-    assert comfy.flatness_warning(leafy, leafy=True)
-    assert "both sides" in comfy.flatness_warning(leafy, leafy=True)[0]
-    assert not comfy.flatness_warning(flat(0.02, in_mask_stops=0.92), leafy=True), \
-        "delighted broadleaf, under one stop"
-    assert comfy.flatness_warning(None) == []
 
 
 def test_the_per_class_verdict_is_one_table_and_a_control_still_wins(mods, monkeypatch):
@@ -1223,7 +1259,7 @@ def test_foliage_is_one_value_because_it_decides_two_stages(mods):
     assert not comfy.is_foliage(None) and not comfy.is_foliage("")
 
 
-def test_w8_composites_the_subject_onto_a_plate_before_the_vision_encoder(mods):
+def test_mesh_geom_alt_composites_the_subject_onto_a_plate_before_the_encoder(mods):
     """The one reason `mesh_geom_alt` exists beside `mesh_geom`. `mesh_subject` writes RGBA whose RGB
     is still the SDXL frame and `LoadImage` drops alpha rather than compositing it, so the
     challenger would be conditioned on a background TRELLIS.2 never sees, and the geometry A/B
@@ -1267,7 +1303,7 @@ def test_w8p_normalises_before_it_processes(mods):
     assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_PROCESS"], 0]
     assert prov["runtime_inputs"] == ["BOB_MESH.mesh_path"]
     # And it takes the same binding `mesh_geom_trellis` and `mesh_geom_texture` take, or the grid
-# would not be controlled.
+    # would not be controlled.
     values = {}
     bound = comfy.bind_process(graph, values, remesh=False, faces=4000)
     assert values["BOB_PROCESS"] == {"remesh": "off", "remesh.fill_holes": False,
@@ -1383,7 +1419,7 @@ def test_drop_node_removes_the_lora_and_rewires_its_consumers(mods):
     assert comfy.drop_node(graph, "BOB_NOT_THERE", {0: "model"}) is graph
 
 
-def test_w12_chains_both_controlnets_with_the_union_normal_head(mods):
+def test_stylize_render_chains_both_controlnets_with_the_union_normal_head(mods):
     """`stylize_render`'s shape, and the one thing about it that is not obvious: there is no standalone
     SDXL normal ControlNet on disk, so the normal hint goes through the UNION model plus
     SetUnionControlNetType, while depth uses the dedicated depth model."""
@@ -1406,7 +1442,7 @@ def test_w12_chains_both_controlnets_with_the_union_normal_head(mods):
                                            "BOB_NORMAL.image", "BOB_LORA.lora_name"}
 
 
-def test_w9_is_w12_plus_a_reference(mods):
+def test_mesh_paint_views_is_stylize_render_plus_a_reference(mods):
     """`mesh_paint_views` grows out of `stylize_render`, which is why `stylize_render` is built first:
     the difference is the IPAdapter that holds a palette across a turntable, and a lower denoise
     so the real render keeps dominating."""
@@ -1549,7 +1585,7 @@ def test_the_two_multi_view_graphs_take_the_same_four_views(mods):
     assert trellis[by_title["BOB_PROCESS"]]["inputs"]["trimesh"] == [by_title["BOB_SEED"], 0]
 
 
-def test_w7_conditions_on_a_control_mesh_and_ends_in_a_retrievable_output(mods):
+def test_mesh_geom_ctrl_conditions_on_a_mesh_and_ends_in_a_retrievable_output(mods):
     """`mesh_geom_ctrl`'s shape, and the three things about it that are easy to get wrong.
 
     The control is a MESH read by `Trellis2LoadMesh`, because the Omni pack ships no loader and its
@@ -1573,7 +1609,7 @@ def test_w7_conditions_on_a_control_mesh_and_ends_in_a_retrievable_output(mods):
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
     # Same retrievable tail as `mesh_geom_trellis`: the export node reports a STRING, Preview3D
-# makes it an output.
+    # makes it an output.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_OUT"]]["inputs"]["trimesh"] == [by_title["BOB_SEED"], 0]
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
@@ -1602,7 +1638,7 @@ def test_the_comfy_folder_falls_back_to_the_environment(mods, monkeypatch, tmp_p
     assert comfy.comfy_dir() == str(other)
 
 
-def test_w7_binds_the_local_weights_only_when_they_are_there(mods, monkeypatch, tmp_path):
+def test_mesh_geom_ctrl_binds_local_weights_only_when_they_are_there(mods, monkeypatch, tmp_path):
     """`omni_model_dir` is the portability rule rule in one function: a local absolute path when this
     machine has the weights, and the graph's own portable default when it does not."""
     comfy, _ = mods
@@ -1651,7 +1687,7 @@ def test_the_block_out_route_swaps_step_two_and_nothing_else(mods, monkeypatch, 
     assert staged["meta"]["model"] == "Hunyuan3D-Omni"
 
 
-def test_w7b_conditions_on_three_numbers_and_uploads_nothing(mods):
+def test_mesh_geom_bbox_conditions_on_three_numbers_and_uploads_nothing(mods):
     """`mesh_geom_bbox`'s shape. The control is not a socket at all: `Hy3DOmniBBoxGenerate` has no
     `control_mesh` input, so the graph has no mesh loader, which is what makes it the one Omni
     route that needs no ComfyUI folder to know (the geometry A/B's mesh-transport failure).
@@ -1674,7 +1710,7 @@ def test_w7b_conditions_on_three_numbers_and_uploads_nothing(mods):
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
     # `mesh_geom_ctrl`'s tail unchanged, so the same one export turn comes back and the same undo
-# applies.
+    # applies.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
     assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_OMNI.repo_or_path"}
@@ -1709,7 +1745,7 @@ def test_w7v_reads_the_same_control_and_does_not_turn_it(mods):
     assert not os.path.isabs(omni["inputs"]["repo_or_path"])
 
     # `mesh_geom_ctrl`'s tail unchanged, so the same one export turn comes back and the same undo
-# applies.
+    # applies.
     assert graph[by_title["BOB_OUT"]]["class_type"] == "Trellis2ExportTrimesh"
     assert graph[by_title["BOB_VIEW"]]["inputs"]["model_file"] == [by_title["BOB_OUT"], 0]
     assert set(prov["runtime_inputs"]) == {"BOB_IMAGE.image", "BOB_CONTROL.mesh_path",
@@ -2121,7 +2157,7 @@ def test_the_tiling_binding_is_a_value_in_one_place(mods):
     assert on[comfy.TILE_TITLE]["tiling"] == "enable"
     assert off[comfy.TILE_VAE_TITLE]["tiling"] == "disable"
     # BOTH nodes in place, and both of them matter: `tex_tileable` copies the UNet as well as the
-# VAE, so a fix that only spared the VAE would still deepcopy 5 GB of SDXL and still crash.
+    # VAE, so a fix that only spared the VAE would still deepcopy 5 GB of SDXL and still crash.
     assert on[comfy.TILE_TITLE]["copy_model"] == comfy.TILING_COPY_MODE
     assert on[comfy.TILE_VAE_TITLE]["copy_vae"] == comfy.TILING_COPY_MODE
     assert comfy.TILING_COPY_MODE == "Modify in place"
@@ -2146,7 +2182,8 @@ def test_a_texture_set_binds_tiling_on_and_marks_the_model_dirty(mods, monkeypat
     assert comfy._TILING_DIRTY[comfy.base_url(None)] is True, "the shared model is now padded"
 
 
-def test_a_texture_set_records_its_flatness_and_can_be_delit(mods, monkeypatch, tmp_path):
+def test_a_texture_set_records_its_flatness_and_can_be_delit(mods, receipt, monkeypatch,
+                                                             tmp_path):
     """The measurement rides on every set whether or not the correction ran, because the case it
     catches is silent: a lit albedo looks exactly like a flat one in every other number a set
     reports. Driven through `texture_variant` rather than through `comfy_maps` alone, so the wiring
@@ -2175,8 +2212,8 @@ def test_a_texture_set_records_its_flatness_and_can_be_delit(mods, monkeypatch, 
         "with delighting off, what shipped IS what was generated"
     assert delit["flatness"]["low_freq_variation"] < delit["flatness"]["as_generated"] * 0.6
     # The warning fires on the lit one and clears on the corrected one, which is the whole loop.
-    assert comfy.flatness_warning(plain["flatness"])
-    assert not comfy.flatness_warning(delit["flatness"])
+    assert receipt.flatness_warning(plain["flatness"])
+    assert not receipt.flatness_warning(delit["flatness"])
     # And it is on disk, not only in the return value: a set has to carry its own verdict.
     written = json.loads((tmp_path / "b" / "meta.json").read_text())
     assert written["flatness"]["delighted"] is True
@@ -2249,7 +2286,7 @@ def test_a_failed_reset_does_not_stop_the_generation(mods, monkeypatch, tmp_path
 
 
 # -- the VRAM-handback rule: the VRAM floors and the recovery report
-# ------------------------------------------------ The redwood run's first finding, as tests. The
+# ------------------------------------------------ A whole-scene run's first finding, as tests. The
 # old behaviour was a CUDA traceback from inside somebody else's worker process 90 seconds into a
 # job; the contract now is a sentence before the job is queued, and a Free VRAM that reports the
 # number it recovered instead of the word "Freed".
@@ -2350,25 +2387,9 @@ def test_recover_vram_survives_a_server_that_will_not_free(mods, card, monkeypat
 
 # -- the dead-wood routing rule: the leaf-opacity receipt warning
 # -------------------------------------------------------
-def test_leaf_opacity_warning_fires_on_the_kinds_whose_look_is_leaves(mods):
-    """LEAFY_KINDS deliberately differs from FOLIAGE_KINDS: that one is about keeping holes open
-    through remesh and pinhole fill (plants, grass); this one is about the finished LOOK, and a tree
-    is in it because the crown is the reason it was generated."""
-    comfy, _ = mods
-    assert set(comfy.LEAFY_KINDS) == {"trees", "plants", "grass"}
-    assert set(comfy.FOLIAGE_KINDS) < set(comfy.LEAFY_KINDS)
-    # The measured redwood verdicts, both of them.
-    for verdict in ("opaque", "implausible", None):
-        warns = comfy.leaf_opacity_warning("trees", {"verdict": verdict})
-        assert len(warns) == 1 and "reads as solid geometry" in warns[0]
-        assert str(verdict or "none") in warns[0], "the receipt names WHICH case this was"
-    assert comfy.leaf_opacity_warning("trees", {"verdict": "cutout"}) == []
-    # A rock has no crown to be wrong about, whatever its alpha says.
-    assert comfy.leaf_opacity_warning("rocks", {"verdict": "opaque"}) == []
-    assert comfy.leaf_opacity_warning("grass", {}) and comfy.leaf_opacity_warning("plants", None)
 
 
-# -- The two undocumented ceilings (the redwood run, item 13) ------------------------------------
+# -- The two undocumented ceilings a block-out run found ------------------------------------------
 def test_control_bbox_range_is_the_nodes_own_widget_bound(mods):
     """Not a Bob policy: `Hy3DOmniVoxelGenerate` declares min 0.1 max 3.0 on each of the three, and
     ComfyUI validates widget bounds server-side, so an out-of-range value is an HTTP 400 rather than
@@ -2382,9 +2403,9 @@ def test_control_bbox_range_is_the_nodes_own_widget_bound(mods):
 
 
 def test_a_mesh_not_found_failure_names_the_variable_that_causes_it(mods, monkeypatch):
-    """"Mesh file not found: input/3d/x.glb" names neither $BOB_COMFY_DIR nor the reason, and the
-    redwood run read it as a bad control mesh. The hint is attached only when the variable really is
-    unset, so a genuinely missing file on a configured machine is not misdiagnosed."""
+    """"Mesh file not found: input/3d/x.glb" names neither $BOB_COMFY_DIR nor the reason, and a
+    generated-foliage run read it as a bad control mesh. The hint is attached only when the variable
+    really is unset, so a genuinely missing file on a configured machine is not misdiagnosed."""
     comfy, _ = mods
     monkeypatch.setattr(comfy, "comfy_dir", lambda: None)
     hint = comfy._mesh_transport_hint("Mesh file not found: input/3d/proxy.glb")
@@ -2395,7 +2416,7 @@ def test_a_mesh_not_found_failure_names_the_variable_that_causes_it(mods, monkey
 
 
 # -- Prompt ergonomics: the negative reaches the one stage a negation works at -------------------
-def test_the_negative_reaches_w4_and_only_w4(mods, monkeypatch, tmp_path):
+def test_the_negative_reaches_mesh_subject_and_only_mesh_subject(mods, monkeypatch, tmp_path):
     """SDXL does not honour negations in the positive prompt ("no pot, no planter" returned a
     nursery pot twice), and the subject image is the only stage any text touches: every geometry
     graph downstream conditions on the picture. So the argument has to arrive at `mesh_subject`
@@ -2418,7 +2439,7 @@ def test_the_negative_reaches_w4_and_only_w4(mods, monkeypatch, tmp_path):
         assert "negative" in inspect.signature(fn).parameters, fn.__name__
 
 
-def test_a_supplied_subject_skips_w4_so_the_negative_is_moot(mods, tmp_path):
+def test_a_supplied_subject_skips_mesh_subject_so_the_negative_is_moot(mods, tmp_path):
     comfy, _ = mods
     got = comfy._stage_subject("a fir", str(tmp_path), subject="/tmp/mine.png", negative="pot")
     assert got["path"] == "/tmp/mine.png" and got["seconds"] == 0.0

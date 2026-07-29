@@ -82,16 +82,22 @@ The rename from the pre-restructure module names was Python-module-level, and sc
 `.blend` files should keep working. **Should** is doing work in that sentence. The smoke test is: open
 a scene saved before the refactor, re-run a build, diff the geometry.
 
-## Open: the in-Blender test job
+## Closed: the in-Blender test job
 
-`.github/workflows/ci.yml` carries a disabled `blender-headless` job. It needs an in-Blender entry
-point at `tools/tests/run_blender_tests.py` that imports the extension under its `bl_ext` name and
-drives the geometry tests inside `bpy`. Everything in `tools/tests` today runs in the plain venv
-against the pure-python core, which is why the fast gate stays honest without Blender — but it also
-means no geometry assertion runs in CI, and every geometry number in these docs comes from a local
-Blender run.
+`tools/tests/run_blender_tests.py` exists and `.github/workflows/ci.yml`'s `blender-headless` job is
+on. It drives the gates that need `bpy` and nothing else — the sun gate, the texture-set check and
+the scene-seams gate — for **85 checks in about 6 s of Blender**, one process per gate. Everything in
+`tools/tests` still runs in the plain venv against the pure-python core, which is what keeps the fast
+gate honest without Blender; this is the second job beside it rather than a replacement.
 
-## Open: the one thing the forest-barn gate measured and did not fix
+What is still not in CI, and the rule that decides it: a gate qualifies only when it needs `bpy` and
+nothing else. `headless_foliage.py` is the one that hurts — it is the largest gate in the repo — but
+it takes 150 s and reaches for ComfyUI when one is running, so on a CI box it would be slow AND
+measuring something different from what it measures locally. The generation gates are out for the
+same reason, one step further: they need a GPU and a ComfyUI. Those numbers still come from a local
+run, and the way to bring one in is to make it need less, not to let CI skip it quietly.
+
+## Open: the one thing the asset gate measured and did not fix
 
 Everything else that gate found is closed: the mesh repair and the coincident bake in
 [GENERATION.md](GENERATION.md) (the one-shot route), the lit albedo in its texture-set section, the
@@ -107,12 +113,65 @@ left for a reason rather than for time.
   alone is how the misaligned bake survived two gates. It needs one staged-route generation, which
   needs ComfyUI.
 
+## Open: the block-out control route paints black, and the walls do not survive it
+
+A second artist rejection sent a gabled timber structure down the control-conditioned route
+(`make_blockout` → `export_control` → `comfy_mesh(control=..., control_mode="point")`, chosen by the
+artist over building the structure from recipes). Two thirds of it works and the remaining third
+blocks the asset.
+Measured on one generation, seed 71, against a screened reference:
+
+- **The conditioning holds what it promised.** The finished mesh is 8.83 × 7.09 × 7.50 m against the
+  block-out's 8.74 × 7.08 × 7.50, so the footprint and height are the layout's rather than the
+  generator's. The clay renders are the argument worth keeping, and they are local rather than
+  tracked (`renders/` holds only a `.gitkeep`), so the comparison is stated here rather than cited:
+  the free generation is a rounded loaf with bulging walls, a lumpy ridge and no planar surface
+  anywhere, which is exactly what the artist rejected; the conditioned one has flat roof planes, a
+  straight ridge and a crisp eave edge. The defect the rejection named is a route problem and this
+  route fixes it.
+- **`mesh_texture` returns an all-black texture set on this route.** Measured on the staged GLB it
+  writes: both images 2048 square, mean 0.00, standard deviation 0.00, against 56.50 and 80.89 for
+  the same graph on the free route's own generation. The bake then carries the black through
+  faithfully, which
+  is why every other figure in the receipt is healthy. NOT diagnosed further: the next step is the
+  graph itself, and the suspect is the frame the mesh arrives in, because this route is the one
+  whose output is turned (`gen_assets.CONTROL_RETURN_TURN`) and whose black-albedo failure mode
+  already has a known cause on the sibling routes — an input the encoder cannot see comes back as a
+  plausible nothing rather than an error (`export_control`).
+- **The wall and roof split does not survive.** The generation is an A-frame: the roof planes run to
+  the ground and the block-out's walls, doorway and jamb are gone. So the point control carries
+  extent and silhouette and does not carry interior structure. Worth trying before concluding: fewer
+  overlapping solids in the block-out (the jamb boxes and the wall box's hidden top face are sampled
+  area-weighted along with everything else), `control_mode="voxel"` which encodes a coarse ground
+  plan rather than a surface, and a higher guidance scale.
+
+If the texture pass cannot be made to paint this route, the artist's second option — building the
+structure from recipes and generating only its textures — is the answer, and it needs the brief amended
+because [SCENE-BRIEF.md](../references/SCENE-BRIEF.md) says structures come from `comfy_mesh`.
+
 Two smaller calls were made deliberately and are recorded where they apply rather than here:
 `profile_segments` stays 5 on the shipped conifer, because the shear that argued for raising it is
 fixed and the remaining argument is faceting at hero distance (FOLIAGE.md); and `AO_STRENGTH` stays
 at 0.6 with Albedo × AO unchanged, because the suspected double-count measured as absent — the AO's
 source field is a high-pass at a thirty-second of the image and the delighting corrects at an
 eighth, so the two cannot overlap (GENERATION.md, and the comment in `core/materials/texset.py`).
+
+## Open: three generation bars rest on a single batch, and say so at the constant
+
+Every other bar in the generation vocabulary is set from a spread wide enough to argue with —
+`gen_receipt.METALNESS_MAX` from ten samples spanning 0.0002 to 0.83, `gen_receipt.MAP_SPREAD_MIN` from seven
+maps spanning 0.00 to 57.51. Three are not, and each of them caught a real defect, so they stay as
+gates. What they need is a second batch to be re-derived from, and until then the thinness of the
+evidence is written beside the number rather than left for a reader to discover:
+
+| Constant | Points behind it |
+|---|---|
+| `gen_receipt.LEAF_RAMP_STOPS_MAX = 0.55` | 2, and one is synthetic: 0.48 is the worst real cell over three atlases, 0.60 is that same cell with a half-stop key painted onto it |
+| `gen_receipt.SEETHROUGH_OPENING_FRACTION = 0.10` | 2: a ground rock's 0.07 opening the artist accepted as vesicular stone, and a gabled structure's 0.18 the artist rejected in a render |
+| `comfy_maps.AXIS_STRONG_TAPER_MAX = 0.25` | 1, and already marked provisional at the constant |
+
+Recalibrating needs generation, not code: a second batch of atlases for the first, a second batch of
+structures and rocks for the second. Both cost ComfyUI time and neither is blocked on anything else.
 
 ## Open: scatter items that were scoped and not built
 

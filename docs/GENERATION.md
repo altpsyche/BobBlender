@@ -112,6 +112,10 @@ it, which is why every route ships with one and why the nulls below are as impor
 | a generated set that resolves zero maps | map stems derived from the folder name, so a renamed set renders a solid tint and every receipt still says success | `scene-seams` |
 | a graph that reaches a cloud node | a "local-only" pipeline quietly billing an account | preflight refuses any graph with `api_node: true`, asserted over every shipped file |
 | a gate that crashed instead of running | Blender exits 0 after a script traceback, so a dead gate looks like a clean one. One gate ran this way for three releases | the runner treats "no verdict printed" as FAIL |
+| a bake that is EMPTY rather than wrong | a 2048 square of pure black shipping beside 13,302 faces, `uv_overlap` 0.0, metalness 0.0 and a `bake_fidelity` correlation of 0.9996. `map_fidelity` returns None when either image has no variation, and a None fidelity warns about nothing, so "the measurement declined to answer" and "the bake is fine" arrive as the same empty list | `gen_assets.map_stats` measures the FILE that shipped and `gen_receipt.empty_map_warning` gates its spread: the five honest basecolors in the generated pack measure 33 to 58, the block-out structure measured 0.00 |
+| openness that is real surface | a vesicular rock warned about twice for the openings of its own gas pockets, while a building with a 1.59 m hole under one eave passes at 0.2% -- a big hole has FEW edges, so no edge fraction fires on it | `gen_assets.openness_report` casts a ray in through each opening: a pit's floor is a front face and still the outside of the solid, a hole's far wall is a BACKFACE. The rock is 50 pit edges of 60, the structure 8 see-through of 19 |
+| a boundary-edge count read off an UNWELDED mesh | glTF splits a vertex at every UV seam, so every chart border reads as a hole: a control-conditioned structure measured 1,187 boundary edges in 14 see-through loops unwelded, and 24 in 4 loops after the weld | `openness_report` welds a bmesh copy of its own and reports `welded`, so the figure does not depend on whether the shipped mesh happened to be repaired |
+| a generated material claiming to be METAL | silvered siding read as metal: `metallicFactor` 1.0 with a metallic map averaging 0.83. It renders as a mirror, and a diffuse bake of a metal surface is black, so the albedo baked at a mean of 14.9 against the source's 47.3 and `bake_fidelity` fired with the wrong explanation | `gen_assets.metalness_report` and `gen_receipt.metalness_warning`. Ten staged GLBs measured: the rejected structure 0.8286, the other nine 0.0002 to 0.0191 |
 
 ## Model choice: TRELLIS.2 primary, Hunyuan3D for what only it does
 
@@ -437,10 +441,10 @@ relief field so the maps describe one surface rather than four similar ones. Cav
 rather than a sixth file: the roughness consumes it and no master reads a cavity map.
 
 **The prompt asks for flat light and the model does not always give it, which nothing measured until
-the forest-barn gate.** The clause above is the intent and it was never the problem: what was
+the generated-texture gate.** The clause above is the intent and it was never the problem: what was
 missing is that a lit albedo looked exactly like a flat one in every number the pipeline returned.
-The barn's reference came back an overcast outdoor photograph with a sky gradient and an eave shadow
-in it, and the finding surfaced at the hero render.
+A gabled structure's reference came back an overcast outdoor photograph with a sky gradient and an
+eave shadow in it, and the finding surfaced at the hero render.
 
 Two additions, both in `comfy_maps` and both numpy:
 
@@ -448,13 +452,13 @@ Two additions, both in `comfy_maps` and both numpy:
   every set's `meta.json`. `low_freq_variation` is the standard deviation of the low-frequency
   luminance over its mean, so it is scale-free and a dark set and a pale one are on one axis. Across
   the ten sets that gate shipped it runs **0.0247** (`bark_conifer`, flat) to **0.0989** (the forest
-  floor, lit), and `comfy.FLATNESS_MAX` is 0.075 -- above everything that reads as flat, below the
+  floor, lit), and `gen_receipt.FLATNESS_MAX` is 0.075 -- above everything that reads as flat, below the
   two the artist could see were not. `total_variation` sits beside it so the two are never confused:
   a mossy floor should have plenty of that, because that is texture.
 - **`delight`** is the correction, and it is **off by default**. It divides a heavily blurred
   luminance out and renormalises to preserve the mean, so a delit set still sits where the block-out
   tints were matched. `delight=True` on `comfy_texture_set`, `comfy_bark_set` and
-  `comfy_leaf_atlas`. Measured on the lit sets: the forest floor 0.0989 to 0.0662, the barn siding
+  `comfy_leaf_atlas`. Measured on the lit sets: the forest floor 0.0989 to 0.0662, the timber siding
   0.0742 to 0.0426, the granite 0.0740 to 0.0460, `leaf_broadleaf` 0.0965 to 0.0355, with the mean
   luminance intact to 0.1 of a step and `total_variation` within 3%.
 
@@ -469,7 +473,7 @@ answer is obvious in -- how many stops the albedo spans **inside the opacity mas
 leaf varies by a fraction of one. The gate's three measured **1.21** (broadleaf), **1.82** (conifer)
 and **1.84** (grass). Delighting takes the broadleaf to 0.92 and barely moves the other two, and
 that is the honest limit rather than a failure: their variation is per-needle shading and four
-genuinely different sprites, not a low-frequency ramp, so `comfy.flatness_warning` says reroll
+genuinely different sprites, not a low-frequency ramp, so `gen_receipt.flatness_warning` says reroll
 instead of correct.
 
 **What did NOT change, and it was the first suspicion.** `core/materials/texset.py` multiplies
@@ -503,16 +507,16 @@ out.
 **This stage can be run ALONE, and on anything hero it should be.** Every geometry graph conditions
 on the picture and none of them reads the text, so the reference is where an asset is won or lost --
 and until `comfy.stage_subject_only` (`comfy_mesh(subject_only=True)`) there was no way to see one
-without paying for the geometry behind it. The forest-barn barn is the argument with numbers on it:
-seed 11 returned a cropped close-up of a wall, seed 23 a whole barn standing on a display plinth
-with a toy car beside it, seed 41 was the one. The subject stage cost about 8 s each and the
+without paying for the geometry behind it. A gabled timber structure is the argument with numbers on
+it: seed 11 returned a cropped close-up of a wall, seed 23 the whole structure standing on a display
+plinth with a toy car beside it, seed 41 was the one. The subject stage cost about 8 s each and the
 geometry stage cost 81, 435 and 113 s, so two of the three geometry jobs were spent on pictures an
 artist would have rejected on sight. Accepting one is passing its path back as `subject=`, which
 runs the geometry against exactly the picture that was approved.
 
 It takes the **texture** VRAM floor rather than the mesh floor, and that is deliberate: it loads
 SDXL and no geometry model, so holding it to the mesh floor would forbid the one call whose whole
-purpose is to be cheap. The forest-barn gate ended at 3768 MiB free -- under the 5000 mesh floor,
+purpose is to be cheap. A measured run ended at 3768 MiB free -- under the 5000 mesh floor,
 over the 3000 texture one -- which is exactly the state where looking before paying is worth most.
 
 **`mesh_geom_trellis.json`, the primary geometry graph.** From
@@ -705,17 +709,17 @@ dense surface. No intermediate simplify pass is skipped, because there is none t
 loud.** `Trellis2ProcessMesh` simplifies and unwraps but it does not close the holes its
 dual-contouring remesh leaves, and because its one file arrives as `finish_passes`' simplified mesh,
 `prepare_low` skipped every Blender repair on it. Not "discarded" -- never run, on this route or the
-staged one, so `close_pinholes` was dead code in production. Measured on the five forest-barn
+staged one, so `close_pinholes` was dead code in production. Measured on five generated
 assets, after welding so glTF's per-seam vertex split does not read as false holes: 48 to 229
 boundary edges shipped, and the stump's were visible through the shell in a render.
 `comfy.geometry_is_final(staged)` is what says "these two files are one file", and it turns the weld
 and the pinhole fill back on for the mesh that ships without turning the decimate or the unwrap back
 on -- the topology and the charts are still the generator's, which is the whole point of the route.
-It fixes 156 of the stump's 229 and 87 of the barn's 98.
+It fixes 156 of the stump's 229 and 87 of the structure's 98.
 
 Two things had to be got right to enable it, both measured rather than assumed. The weld does NOT
 cost the generator's chart layout, because UVs live on the corner domain: `uv_overlap` reads
-0.000075 either side of it on the stump and 0.000008 on the barn. And Fill Holes gives each cap
+0.000075 either side of it on the stump and 0.000008 on the structure. And Fill Holes gives each cap
 corner the UV of the rim vertex it grew from, which sounds right and is not -- a remesh pinhole
 straddles chart boundaries, so one cap's corners land in charts scattered over the sheet and the
 face samples a triangle spanning them. Twenty-seven caps on the stump, the largest covering 0.27 of
@@ -726,12 +730,12 @@ the hole.
 **And there is nothing for the colour bake to transfer on this route.** One file for both meshes
 means `bake_high_to_low`'s selected-to-active pass was a cage projection of a mesh onto a copy of
 itself, with a cage 2% of the object and rays reaching 8%. It ran, it succeeded, and it resampled a
-clean texture into a jittered one: measured over the barn's roof charts, correlation **0.817**
+clean texture into a jittered one: measured over the structure's roof charts, correlation **0.817**
 against the source and a mean absolute difference of **10.4** of 255, which the artist reported as a
 chevron hash over the shingles. `coincident` (the same `geometry_is_final`) self-bakes the colour
 roles instead -- 0.991 and 3.5 on the same charts -- and drops the normal role entirely, because a
 transfer between identical meshes has nothing to say. The map it used to write was not even flat:
-52% of the barn's texels and 87% of the stump's deviated past one 8-bit step, off the difference
+52% of the structure's texels and 87% of the stump's deviated past one 8-bit step, off the difference
 between a welded high mesh's normals and an unwelded low mesh's. AO stays, self-baked, because a
 mesh occluding itself is a real measurement of that mesh.
 
@@ -946,6 +950,13 @@ core/comfy.py         EXTENDED the agent-surface gate. `tiling_values` / `TILING
                       `ensure_untiled`, the lazy reset that undoes it before any graph on the same
                       checkpoint that must not wrap. Plus `CLIENT_ID` per process, because ComfyUI
                       keys progress sockets by client id
+core/gen_receipt.py   SPLIT OUT of core/comfy.py. The receipt-warning vocabulary: seven pure
+                      functions turning a report's measurements into sentences, and `MESH_GATED` /
+                      `MESH_INFORMATIONAL` / `MESH_RECEIPT_KEYS`, which declare for every receipt
+                      key either the warning that reads it or the reason nothing can fail on it.
+                      `tools/tests/test_gen_receipt.py` fails on a key in neither, which is the
+                      mechanism for the lesson this pipeline learned four separate times: a
+                      measurement that reaches no caller is not a check
 core/comfy.py         EXTENDED the geometry A/B. `mesh_geom_alt` (`mesh_geom_alt`) and `mesh_process` (`mesh_process`), the
                       `generate_asset_alt` chain built out of them, and the per-asset-class
                       verdict as a value: `KIND_ROUTE` beside `DEFAULT_ASSET_ROUTE`, read by
@@ -1028,7 +1039,7 @@ per-asset-class verdict. `finish_passes(staged)` maps whatever any of them stage
 through `template()` because a dynamic combo's sub-widgets belong to the selected key and templating
 only merges.
 
-The forest-barn gate added `geometry_is_final(staged)` beside it, and it is the one thing
+The asset gate added `geometry_is_final(staged)` beside it, and it is the one thing
 `finish_passes` cannot say: both routes hand over a simplified mesh, so its tuple cannot tell "the
 server retopologised a mesh Bob sent" from "the server generated the only mesh there is". Two
 decisions need to know -- whether Bob's repair runs on the shipped surface, and whether the colour
@@ -1103,10 +1114,12 @@ assemble those itself will get one wrong and stop using the feature.
 needs Blender, so it stays a panel action; `texture_chain()` already documents that asymmetry and
 hiding it behind one tool would hide the fact that one route needs Blender in the middle.
 
-Three ops, one batched contract change: `apply_texture_set` (a set name plus a terrain layer index, or
+Four ops, one batched contract change: `apply_texture_set` (a set name plus a terrain layer index, or
 a material by name), `import_generated` (either `staged` from `comfy_mesh`, which runs pipeline steps 6
 to 8 and then imports, or `name` alone to import what the pack already holds), `export_control` (a
-block-out proxy out as the control MESH `mesh_geom_ctrl` conditions on). Plus one addition the plan had not foreseen:
+block-out proxy out as the control MESH `mesh_geom_ctrl` conditions on), and `make_blockout` (that
+proxy itself, out of primitives, so the pair is a whole route from nothing to a conditioned
+generation rather than one that assumes a block-out already exists). Plus one addition the plan had not foreseen:
 **`OpResult.data`**, because `export_control` produces a path the next call needs and
 `import_generated` produces the face count, UV overlap, height and origin a caller has to check, and
 both were otherwise going to be parsed out of an English sentence.
@@ -1207,9 +1220,9 @@ reachability-gated, so with no ComfyUI it skips cleanly instead of failing. The 
 measures and how to re-run one on cached generations are in
 [GENERATION-BASELINES.md](GENERATION-BASELINES.md#gates-and-how-to-re-run-them).
 
-## What the redwood-scene run found (2026-07-27)
+## What a whole-scene run found (2026-07-27)
 
-One session, one reference photograph (a foggy redwood road), one instruction: build it over MCP from
+One session, one reference photograph (a foggy conifer road), one instruction: build it over MCP from
 generated assets only. It produced a scene and thirteen findings, and it is the first time the suite
 was driven end to end by an agent with no panel clicks. Recorded because a run like this finds what
 gates do not: gates assert per feature, a scene asserts the seams between them.
@@ -1230,7 +1243,7 @@ learn how something works, and this is the generation track's document:
 | A terrain rebuilt with `reset: true` coming back unshaded (Set Material behind the recipe modifier) | [SYSTEMS.md](SYSTEMS.md#rebuilding-in-place) |
 | Scatter unable to sink an instance or leave one asset out of a shared pool | [SYSTEMS.md](SYSTEMS.md#scatter-recipe-scatter) |
 
-`tools/scripts/headless_redwood.py` is the gate for all nine, and every check in it would have
+`tools/scripts/headless_scene_seams.py` is the gate for all nine, and every check in it would have
 failed before its fix. The pure-Python halves (map resolution, pack-root ordering, the contract
 fields, the VRAM floors, the dead-wood routing rule receipt sentence) are in `tools/tests`.
 
@@ -1260,14 +1273,14 @@ The four that are this track's own:
 
 ## Foliage: what image-to-3D is for, and what it is not for
 
-Written after the redwood-scene run of 2026-07-27, which built a full scene over MCP from generated
+Written after the whole-scene run of 2026-07-27, which built a full scene over MCP from generated
 assets only and put the foliage limit in front of a camera instead of in a gate table. The
 measurements were already here (the asset gate, the route A/B, the geometry A/B); what was missing was a sentence an artist reads BEFORE
 spending 90 s on a tree, and a plan for the thing that actually makes foliage.
 
 **The limit, restated as a rule.** TRELLIS.2 returns one mesh from one image. It has no notion of a
 leaf card, an atlas, or a branch hierarchy, and the opacity channel it does emit only becomes a real
-cutout when the plausibility rule in `gen_assets.source_opacity` fires. On the redwood run it fired
+cutout when the plausibility rule in `gen_assets.source_opacity` fires. On that run it fired
 on nothing: the tree, the sorrel, the grass and the log all came back `opaque` (in-chart alpha mean
 0.998, 0.00% below the floor) and the hemlock and the fern came back `implausible` (mean 0.816 and
 0.795 with 61.3% and 51.4% of the surface below the floor), which is the guard refusing a channel
@@ -1283,8 +1296,8 @@ Where the line falls, from the numbers rather than from taste:
 | Ground clumps read at 2 to 4 m (fern, sorrel, grass tuft) | **Yes, as scatter filler.** Do not put the camera on one. | the asset gate fern frond: open, 51,842 boundary edges, but a bushy volume rather than blades |
 | A single leaf or blade as a hero asset | **Only if the gate says `cutout`.** | the asset gate leaf: 11,610 boundary edges, thin ratio 0.0422, alpha wired at mean 0.9806 |
 | Dead wood: stumps, fallen logs, snags, root balls | **Yes.** Same case as rocks — a solid with no skeleton needed. | the solids column of the geometry A/B, as above |
-| A standing tree, or any crown of foliage | **No.** Not the trunk either. Grow it (docs/FOLIAGE.md). | the asset gate broadleaf sprig: 15 boundary edges, i.e. a closed blob; redwood run: crowns are fans, and a generated trunk carries no curve for branches to attach to |
-| Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. Bark goes through `comfy_bark_set`, which adds the one thing tiling does not cover. | measured seam ratio 1.02 to 1.11 on the redwood sets; bark 5.7 deg off vertical at seam ratio 0.987 |
+| A standing tree, or any crown of foliage | **No.** Not the trunk either. Grow it (docs/FOLIAGE.md). | the asset gate broadleaf sprig: 15 boundary edges, i.e. a closed blob; the whole-scene run: crowns are fans, and a generated trunk carries no curve for branches to attach to |
+| Bark, duff, moss, needle litter as SURFACES | **Yes, and prefer this.** `comfy_texture_set` is the strong half of the suite. Bark goes through `comfy_bark_set`, which adds the one thing tiling does not cover. | measured seam ratio 1.02 to 1.11 over that run's sets; bark 5.7 deg off vertical at seam ratio 0.987 |
 | A leaf or needle ATLAS on transparent | **Yes** — `comfy_leaf_atlas`, one sprite per cell composed Bob-side. Not one prompt asking for a grid. | measured: a 2x2-grid prompt returned five sprays in a ring straddling every cell; per-sprite `mesh_subject` alpha is a real 0.000-1.000 cutout |
 
 **The UX guardrail (near-term, in this track).** Three places have to say the same thing, because
@@ -1299,7 +1312,7 @@ the artist and the agent arrive from different doors:
    single solid mesh with no leaf cards and no alpha, so an agent stops asking for trees.
 3. **`import_generated`'s receipt.** It already reports `opacity.verdict` and `warnings`. Add a
    warning when a foliage-ish asset lands with `verdict != "cutout"`: "no usable opacity channel;
-   this reads as solid geometry". That is the sentence that would have saved the redwood run its
+   this reads as solid geometry". That is the sentence that would have saved that run its
    three tree attempts.
 
 **The SpeedTree-style track (new feature, raised from here).** The right long-term answer is a
@@ -1373,7 +1386,7 @@ does to a card. The earlier answered ones, with what answered them, are in
   [Foliage](#foliage-what-image-to-3d-is-for-and-what-it-is-not-for) are in: a one-line info row
   under the Generate Asset kind selector (`ui/scatter._GEN_KIND_NOTE`, drawn only for the kinds the
   route is weak at, so the row is a warning and not decoration); the `kind="trees"` sentence in
-  `comfy_mesh`'s description; and `comfy.leaf_opacity_warning`, which `finish_asset` appends to the
+  `comfy_mesh`'s description; and `gen_receipt.leaf_opacity_warning`, which `finish_asset` appends to the
   receipt whenever a tree, plant or grass asset lands with `opacity.verdict != "cutout"`.
 
   **Why not the loud version.** Refusing `kind="trees"` without an explicit `trunk_only=True` was
@@ -1397,7 +1410,7 @@ does to a card. The earlier answered ones, with what answered them, are in
   the panel gained a **Grow in BobFoliage** button beside them
   ([FOLIAGE.md](FOLIAGE.md#routing-how-an-artist-knows-which-tool-makes-what)). The trees note still
   names dead wood, which is the part of the rule that was about the merits rather than the timing,
-  and `headless_redwood.py` still owns that assertion.
+  and `headless_scene_seams.py` still owns that assertion.
   Dead wood is solid and still gets the warning, because a crown is usually why `trees` was picked.
 
   The generator itself is now [docs/FOLIAGE.md](FOLIAGE.md), which this section is the origin of.

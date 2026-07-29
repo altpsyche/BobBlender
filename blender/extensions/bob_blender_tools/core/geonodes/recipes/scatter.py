@@ -234,7 +234,7 @@ def _camera_cull(ng, camera, gi, pos, loc):
 @recipe("scatter")
 def build(ng, out, params: dict):
     # Resolved through `resolve_named` rather than `bpy.data.*.get`, so a typo'd name is a warning
-# on the op result instead of a layer that builds, reports success and scatters nothing.
+    # on the op result instead of a layer that builds, reports success and scatters nothing.
     emitter = resolve_named("objects", params.get("emitter", ""), what="emitter object")
     assets = resolve_named("collections", params.get("assets", ""), what="asset collection")
     camera = resolve_named("objects", params.get("camera", ""), what="camera object")
@@ -294,10 +294,10 @@ def build(ng, out, params: dict):
                        _noise_mask(ng, gi, pos, (-840, -820)), (400, -600))
 
     # Curve band (BobSplines, the scatter mask): read the terrain's baked bbt_curve_mask (0..1, 1 on
-# a path). clear -> multiply by (1 - mask) so density drops to zero along the trail; keep ->
-# multiply by the mask so scatter stays only in the band (reeds along a bank). Absent attribute
-# reads 0: clear then leaves density untouched, keep correctly yields nothing (no curve, no
-# band).
+    # a path). clear -> multiply by (1 - mask) so density drops to zero along the trail; keep ->
+    # multiply by the mask so scatter stays only in the band (reeds along a bank). Absent attribute
+    # reads 0: clear then leaves density untouched, keep correctly yields nothing (no curve, no
+    # band).
     if curve_mode in ("clear", "keep"):
         cmask = nodes.new("GeometryNodeInputNamedAttribute")
         cmask.data_type = "FLOAT"

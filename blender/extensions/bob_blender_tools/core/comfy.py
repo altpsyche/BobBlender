@@ -399,7 +399,7 @@ def free(url=None, unload_models=True, free_memory=True):
 
 # -- VRAM floors and recovery (the VRAM-handback rule)
 # ----------------------------------------------------------- Free VRAM (MiB) a route needs before
-# it is worth queueing. Measured on the redwood run's 15.5 GB card: TRELLIS2 runs in a SEPARATE pixi
+# it is worth queueing. Measured on a 15.5 GB card: TRELLIS2 runs in a SEPARATE pixi
 # worker process, so it cannot reuse ComfyUI main's torch cache and OOMs inside
 # `_sample_shape_slat_cascade` (and then inside BiRefNet matting) while main still holds 7.3 GB. The
 # point of a floor is that the failure becomes a sentence about VRAM before 90 seconds are spent,
@@ -558,9 +558,9 @@ def _mesh_transport_hint(detail):
 
     "Mesh file not found: input/3d/x.glb" is what every mesh-uploading graph (`mesh_texture`,
     `mesh_simplify_uv`, `mesh_geom_ctrl`, `mesh_process`) says when `$BOB_COMFY_DIR` is unset, and
-    on its own it names neither the variable nor the reason. The redwood run hit it on the block-out
-    route and read it as a bad control mesh. Naming it here rather than setting the variable in the
-    repo's own `.mcp.json`, because a packaged install has no `.mcp.json` of ours and would inherit
+    on its own it names neither the variable nor the reason. A generated-foliage run hit it on the
+    block-out route and read it as a bad control mesh. Naming it here rather than setting the
+    variable in the repo's own `.mcp.json`, because a packaged install has no `.mcp.json` of ours and would inherit
     the silence.
     """
     if "mesh file not found" not in str(detail).lower() or comfy_dir() is not None:
@@ -1054,8 +1054,8 @@ def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, c
     (`comfy_maps.delight`), because a basecolor is meant to be reflectance and a diffusion model
     returns a photograph. Off by default: it is a real change to what lands on disk, and
     `flatness` in the returned info -- reported either way -- is what says whether a given set
-    wants it. Measured on the forest-barn sets, `low_freq_variation` runs 0.025 on a flat one to
-    0.099 on a lit one, and delighting takes the lit ones to 0.036 to 0.066 with the mean
+    wants it. Measured over ten generated texture sets, `low_freq_variation` runs 0.025 on a flat
+    one to 0.099 on a lit one, and delighting takes the lit ones to 0.036 to 0.066 with the mean
     luminance and the total variation intact.
     """
     if reference and workflow == "tex_tileable":
@@ -1085,7 +1085,7 @@ def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, c
     # Measured on what SHIPS, and reported whether or not delighting ran. Both readings are useful:
     # with it off this is the verdict on the generation, and with it on it is the verdict on the
     # correction. The lit-albedo case is silent otherwise -- the prompts already ask for flat light
-    # and the forest-barn barn's reference came back an overcast outdoor photograph anyway.
+    # and a gabled timber structure's reference came back an overcast outdoor photograph anyway.
     flatness = comfy_maps.flatness_report(maps["basecolor"])
     flatness["delighted"] = bool(delight)
     flatness["as_generated"] = generated_flatness["low_freq_variation"]
@@ -1460,6 +1460,7 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
 
     t0 = time.time()
     sources = []
+    orientations = []
     if route == "cells":
         cell = max(64, size // max(cols, rows))
         sprites = []
@@ -1475,7 +1476,8 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
             sources.append(info)
             if on_cell:
                 on_cell(i + 1, cols * rows, info)
-        basecolor, opacity = comfy_maps.atlas_compose(sprites, cols, rows, size)
+        basecolor, opacity = comfy_maps.atlas_compose(sprites, cols, rows, size,
+                                                      orientations=orientations)
     else:
         full = ", ".join(p for p in ((prompt_text or "").strip(),
                                      f"a {cols} by {rows} grid of sprigs", ATLAS_GRID_SUFFIX) if p)
@@ -1496,7 +1498,7 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
     # The atlas is the case delighting matters most for, because a card is lit from BOTH sides: the
     # renderer lights the back of a leaf with the sun behind it, and a key baked into the sprite
     # fights it with no camera angle that hides the argument. Measured inside the opacity mask of
-    # the three atlases the forest-barn gate shipped, albedo luminance spanned 1.21 stops
+    # the three generated atlases, albedo luminance spanned 1.21 stops
     # (broadleaf), 1.82 (conifer) and 1.84 (grass), which is several times what a real leaf varies.
     #
     # Delighted BEFORE the derivations for `derive`'s reason, and measured INSIDE the mask because
@@ -1510,7 +1512,29 @@ def leaf_atlas(prompt_text, pack_dir, *, cols=2, rows=2, seed=0, size=1024, rout
     flatness["delighted"] = bool(delight)
     flatness["as_generated"] = generated_flatness["low_freq_variation"]
     flatness["in_mask_stops"] = comfy_maps.mask_stops(basecolor, opacity)
+    # Split per cell into the light ON the sprite and the sprite's own relief, and gate the first
+    # only (`LEAF_RAMP_STOPS_MAX`). The worst cell rather than a mean: one card in four hanging a
+    # lit sprite in front of the camera is still a lit sprite in front of the camera.
+    light = comfy_maps.cell_light_split(basecolor, opacity, cols, rows)
+    ramps = [c["ramp_stops"] for c in light if c["ramp_stops"] is not None]
+    details = [c["detail_stops"] for c in light if c["detail_stops"] is not None]
+    flatness["in_mask_ramp_stops"] = max(ramps) if ramps else None
+    flatness["in_mask_detail_stops"] = max(details) if details else None
     cells = comfy_maps.atlas_cells(opacity, cols, rows)
+    # The orientation goes INTO the cell rows rather than beside them, because it answers the same
+    # question the rest of the row does -- is this cell a usable card -- and a figure in a second
+    # table is a figure nobody reads. Absent on the grid route, which composes nothing and rotates
+    # nothing.
+    by_cell = {int(o.get("cell", -1)): o for o in orientations}
+    light_by_cell = {int(o["cell"]): o for o in light}
+    for row in cells:
+        found = by_cell.get(int(row["cell"]))
+        if found:
+            row["orient"] = {k: v for k, v in found.items() if k != "cell"}
+        split = light_by_cell.get(int(row["cell"]))
+        if split:
+            row["ramp_stops"] = split["ramp_stops"]
+            row["detail_stops"] = split["detail_stops"]
     distinct = comfy_maps.cell_distinctness(opacity, cols, rows)
     derive_s = time.time() - t1
 
@@ -1862,7 +1886,7 @@ def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, s
 # What `Hy3DOmniVoxelGenerate` will accept per bbox axis, from its own widget declaration
 # (`bbox_length` / `bbox_height` / `bbox_depth`, min 0.1 max 3.0). ComfyUI validates widget bounds
 # server-side, so a value outside this is an HTTP 400 rather than a clamp -- the undocumented
-# ceiling item 13 of the redwood run found. Here because it is a fact about the node, and callers
+# ceiling a block-out run found. Here because it is a fact about the node, and callers
 # that want to refuse early (the MCP tool does) need one place to read it from.
 CONTROL_BBOX_RANGE = (0.1, 3.0)
 
@@ -2140,11 +2164,11 @@ def stage_subject_only(prompt_text, pack_dir, *, seed=0, size=1024, checkpoint=N
 
     Every geometry graph conditions on the picture and none of them reads the text, so the reference
     is where an asset is won or lost -- and until this existed there was no way to see one without
-    paying for the geometry behind it. The forest-barn barn took three seeds: 11 came back a cropped
-    close-up of a wall, 23 a whole barn standing on a display plinth with a toy car beside it, and
-    41 was the one. The subject stage cost about 8 s each; the geometry stage cost 81, 435 and 113
-    s. Two of those three geometry jobs were spent on references an artist would have rejected
-    on sight.
+    paying for the geometry behind it. A gabled timber structure took three seeds: 11 came back a
+    cropped close-up of a wall, 23 the whole structure standing on a display plinth with a toy car
+    beside it, and 41 was the one. The subject stage cost about 8 s each; the geometry stage cost
+    81, 435 and 113 s. Two of those three geometry jobs were spent on references an artist would
+    have rejected on sight.
 
     Returns the same shape the chains' first step does plus `dir` and `name`, so the accepted image
     goes straight back in as `comfy_mesh(subject=...)` and the geometry runs against exactly the
@@ -2407,198 +2431,6 @@ def is_foliage(kind):
     return str(kind or "") in FOLIAGE_KINDS
 
 
-# Which kinds READ as leaves, which is a wider set than FOLIAGE_KINDS and a different question. That
-# one is about geometry processing (keep the holes open) and excludes trees, which are solids;
-# this one is about the finished LOOK, and a tree is in it because its crown is the whole reason an
-# artist generated it. The two deliberately disagree and the names have to say so.
-LEAFY_KINDS = ("trees", "plants", "grass")
-
-
-def leaf_opacity_warning(kind, opacity):
-    """The dead-wood routing rule's receipt warning, as a list of zero or one sentence
-    (docs/FOLIAGE.md).
-
-    A leaf is a cutout or it is not a leaf. `gen_assets.source_opacity` already measures which of
-    the three cases a generated texture is in and refuses to wire an implausible channel; what was
-    missing is that the refusal never reached the caller, so a tree landed with a clean receipt and
-    the artist found out by looking at a render. On the redwood run every one of six foliage assets
-    came back `opaque` or `implausible`, and three tree attempts were spent before anyone said so.
-
-    Here rather than in `gen_assets` because it is a pure function of the report and this module is
-    bpy-free, so it is testable in the venv beside the rest of the generation vocabulary.
-    """
-    if str(kind or "") not in LEAFY_KINDS:
-        return []
-    verdict = (opacity or {}).get("verdict")
-    if verdict == "cutout":
-        return []
-    return [f"no usable opacity channel (verdict: {verdict or 'none'}): this asset reads as solid "
-            f"geometry, not leaf cards. Image-to-3D makes dead wood (stumps, logs, snags) and "
-            f"ground clumps; standing trees and crowns come from the foliage generator "
-            f"(docs/FOLIAGE.md)"]
-
-
-# When a SOLID kind's residual openness is worth saying out loud, as a fraction of its face count
-# plus a floor so a small mesh is not warned for two edges. Both numbers come off the forest-barn
-# gate, measured after the weld and the pinhole fill: stump 73 of 3,840 faces (1.9%) and rock slab
-# 72 of 2,900 (2.5%) are the two the artist could see through, against fallen log 17 of 3,908
-# (0.4%), barn 11 of 7,502 (0.15%) and boulder 9 of 3,807 (0.24%) which read as closed. A fraction
-# rather than a count because a 500-face rock and a 40,000-face building are not the same claim.
-OPEN_SURFACE_FRACTION = 0.01
-OPEN_SURFACE_FLOOR = 12
-
-
-def open_surface_warning(kind, report):
-    """A solid kind shipping with holes in it, as a list of zero or one sentence.
-
-    The companion to `leaf_opacity_warning`, and it exists for the same reason: a measurement that
-    reaches no caller is not a check. `prepare_low` has always counted the shipped mesh's boundary
-    edges, and the forest-barn gate still shipped five meshes carrying 48 to 229 of them with
-    `warnings: []` -- because the count was computed, dropped before the bridge, and read by nobody.
-    The stump's holes were then found in a render.
-
-    Foliage is exempt and that is the whole point of the openness split: a leaf blade IS an open
-    surface (`FOLIAGE_KINDS`), and the pinhole fill is off for it deliberately, so warning about it
-    would train an artist to ignore the one warning that means something.
-
-    Reads `low_boundary_edges`, which is only honest on a welded mesh -- glTF splits a vertex at
-    every UV seam, so an unwelded import reads several times its real openness.
-    `gen_assets.prepare_low` welds wherever it repairs; where it does not, it says so and this stays
-    quiet rather than crying wolf about seams.
-    """
-    if is_foliage(kind):
-        return []
-    open_edges = report.get("low_boundary_edges")
-    faces = report.get("faces") or 0
-    if not open_edges or not faces:
-        return []
-    if report.get("simplify_source") == "trellis2" and "low_welded_verts" not in report:
-        return []  # unwelded, so the figure is UV seams and not holes
-    threshold = max(OPEN_SURFACE_FLOOR, int(faces * OPEN_SURFACE_FRACTION))
-    if open_edges <= threshold:
-        return []
-    closed = report.get("pinholes_closed")
-    filled = (f", {closed} closed by the pinhole fill" if closed
-              else ", and the pinhole fill did not run")
-    return [f"ships with {open_edges} boundary edges over {faces} faces "
-            f"({open_edges / faces:.1%}{filled}): this is an open surface, and a solid kind should "
-            f"not be one. Holes read through the shell at any close camera. Regenerate, or raise "
-            f"the face budget so the remesh has somewhere to put the detail"]
-
-
-# How faithfully a baked basecolor has to reproduce the texture it came from before the difference
-# is worth saying out loud. Set from both sides of the coincident-bake fix, on three forest-barn
-# assets re-finished through the same code twice, `gen_assets.map_fidelity` in-chart over the whole
-# atlas:
-#
-#   asset   cage projection onto itself   self-bake
-#   barn    0.9015 / 6.48                 0.9980 / 2.28
-#   slab    0.9524 / 5.96                 0.9985 / 2.57
-#   stump   0.9793 / 3.21                 0.9995 / 1.12
-#
-# So 0.99 and 3.0 separate every pair with room on both sides: 0.008 of margin under the worst good
-# bake and 0.011 over the best bad one. A self-bake is still a resample through Cycles and the bake
-# margin, so the bar is not 1.0, and it is nowhere near what a shredded map scores. On the barn's
-# roof charts alone, where the artist saw it, the same two runs measured 0.817 against 0.991.
-BAKE_FIDELITY_MIN = 0.99
-BAKE_DIFF_MAX = 3.0
-
-
-def bake_fidelity_warning(fidelity):
-    """A colour bake that ran, succeeded and returned something else, as a list of zero or one
-    sentence.
-
-    The third of these receipt warnings, and the one whose absence cost the most. A bake cannot fail
-    loudly: a misaligned or jittered transfer still writes a plausible-looking texture, so every
-    check downstream passes and an artist finds the chevrons in a hero render.
-    `gen_assets.map_fidelity` measures it against the source at the one moment both images exist;
-    this is what carries the verdict to the caller.
-
-    The claim being tested is "the colour that was already in the low mesh's own UVs came through
-    them intact", which holds on every route today: the one-shot route's texture is the low mesh's
-    own, and on the staged and block-out routes `mesh_texture` painted the low mesh Bob exported. A
-    future route whose DENSE mesh carries a different texture in a different layout would score low
-    for a legitimate reason, and would want the comparison to be against the dense mesh instead.
-    """
-    if not fidelity:
-        return []
-    corr = fidelity.get("correlation")
-    diff = fidelity.get("mean_abs_diff")
-    if corr is None or (corr >= BAKE_FIDELITY_MIN and (diff or 0.0) <= BAKE_DIFF_MAX):
-        return []
-    return [f"the baked basecolor does not match the texture it came from (correlation {corr}, "
-            f"mean absolute difference {diff} of 255 over {fidelity.get('coverage')} of the sheet, "
-            f"against a {BAKE_FIDELITY_MIN} / {BAKE_DIFF_MAX} bar): the colour pass resampled the "
-            f"surface rather than carrying it, which reads as smeared or hatched detail at any "
-            f"close camera"]
-
-
-# When a generated albedo is carrying enough LIGHT to say so. Measured over the ten sets the
-# forest-barn gate shipped, `comfy_maps.flatness_report`'s `low_freq_variation`:
-#
-#   0.0247  bark_conifer                    flat; the bark clause did its job
-#   0.0355  very_dark_green_damp_forest_moss
-#   0.0452  leaf_conifer
-#   0.0492  very_dark_wet_bare_earth_footpath
-#   0.0509  leaf_grass
-#   0.0667  bark_broadleaf
-#   0.0740  very_dark_wet_grey_granite_bedrock
-#   0.0742  weathered_silvered_grey_barn_siding
-#   0.0965  leaf_broadleaf                  lit: the sprite's own key and shadow
-#   0.0989  very_dark_damp_forest_floor      lit: a raking light across the litter
-#
-# 0.075 sits above everything that reads as flat and below the two the artist could see were lit,
-# and delighting takes both of those under it (0.0355 and 0.0662). A threshold rather than a hard
-# failure because a lit albedo is usable -- it just cannot be relit, and on a hero surface that
-# shows.
-FLATNESS_MAX = 0.075
-
-# And the same question asked the way a leaf CARD asks it: how many stops the albedo spans inside
-# the opacity mask (`comfy_maps.mask_stops`). A real leaf varies by a fraction of a stop in colour,
-# so one stop is generous and everything over it is the sprite's own key and shadow. The gate's
-# three atlases measured 1.21, 1.82 and 1.84, and delighting took the broadleaf to 0.92 and barely
-# moved the other two -- their variation is per-needle shading and genuinely different sprites, not
-# a low-frequency ramp, which is exactly the case where the answer is reroll rather than correct.
-LEAF_STOPS_MAX = 1.0
-
-
-def flatness_warning(flatness, *, leafy=False):
-    """A generated albedo carrying baked lighting, as a list of zero or one sentence.
-
-    The largest thing the forest-barn gate found and the one with no measurement at all before it.
-    The prompts have always asked for flat light -- `PROMPT_SUFFIX` carries "flat even lighting" and
-    `SUBJECT_SUFFIX` "even diffuse studio lighting" -- so the intent was right and the enforcement
-    absent: the barn's reference came back an overcast outdoor photograph with a sky gradient and an
-    eave shadow in it, and nothing said so until the hero render.
-
-    `leafy` tightens nothing and explains more: a leaf card is lit from BOTH sides, so shading baked
-    into a sprite fights the renderer on whichever side is currently dark, and there is no camera
-    angle that hides it. Inside the opacity mask of the gate's own atlases, albedo luminance spanned
-    1.21 stops (broadleaf), 1.82 (conifer) and 1.84 (grass), which is far more than a real leaf
-    varies.
-    """
-    if not flatness:
-        return []
-    value = flatness.get("low_freq_variation")
-    stops = flatness.get("in_mask_stops") if leafy else None
-    over_ramp = value is not None and value > FLATNESS_MAX
-    over_stops = stops is not None and stops > LEAF_STOPS_MAX
-    if not over_ramp and not over_stops:
-        return []
-    fix = ("pass `delight=True` to divide the lighting out, or reroll with a flatter reference"
-           if not flatness.get("delighted")
-           else "delighting ran and did not bring it under the bar, so reroll: the lighting in "
-                "this generation is not a low-frequency ramp")
-    figures = []
-    if over_ramp:
-        figures.append(f"low-frequency variation {value} against a {FLATNESS_MAX} bar")
-    if over_stops:
-        figures.append(f"{stops} stops inside the opacity mask against a {LEAF_STOPS_MAX} bar")
-    card = (" A leaf card is lit from both sides, so no camera angle hides it."
-            if leafy else "")
-    return [f"the albedo carries baked lighting ({'; '.join(figures)}): a basecolor is "
-            f"reflectance, and light baked into one cannot be relit.{card} {fix}"]
-
 
 def asset_chain(route=None, kind=None, control=None, control_bbox=None):
     """The staging function for one asset. The one place the route becomes a decision.
@@ -2640,19 +2472,19 @@ def geometry_is_final(staged):
     True on the one-shot route and false on every other, and it is the one thing `finish_passes`
     cannot say: both routes hand `finish_asset` a simplified mesh, so a caller reading only that
     tuple cannot tell "the server retopologised a mesh Bob sent" from "the server generated the only
-    mesh there is". Two decisions downstream need to know, and both went wrong at the forest-barn
-    gate for want of being told:
+    mesh there is". Two decisions downstream need to know, and both went wrong on the first batch of
+    generated assets for want of being told:
 
     - the REPAIR. `prepare_low` skips its weld, pinhole fill, decimate and unwrap whenever the
       server simplified, which is right when the server also cleaned up and wrong here: measured on
-      the five gate assets, the shipped meshes carried 48 to 229 boundary edges, and the stump's
+      five generated solids, the shipped meshes carried 48 to 229 boundary edges, and the stump's
       holes were visible in the render. Nothing was discarded, as the first reading of this had it
       -- `close_pinholes` never ran at all, on either production route.
     - the BAKE. High and low being one file makes `bake_high_to_low`'s selected-to-active transfer a
       cage projection of a mesh onto a copy of itself, which resamples a clean texture into a
-      jittered one: measured on the barn roof, correlation 0.817 and a mean absolute difference of
-      10.4 of 255, and the artist reported it as a chevron hash over the shingles. There is nothing
-      to transfer, because the colour is already in the low mesh's own UVs.
+      jittered one: measured on the structure's roof, correlation 0.817 and a mean absolute
+      difference of 10.4 of 255, and the artist reported it as a chevron hash over the shingles.
+      There is nothing to transfer, because the colour is already in the low mesh's own UVs.
 
     Asked as a fact about the staging rather than inferred later from `has_textures`, which is the
     inference that let the second one happen. Paths are compared normalised, so a chain that hands
@@ -2693,7 +2525,7 @@ def stage_exports(staged):
     base = 1 if (meta.get("control") or meta.get("control_bbox")) else 0
     if not staged.get("simplified_mesh"):
         # The one-shot route: `mesh_geom_texture` returns ONE file that is both the raw and the low
-# mesh, and it takes no control, so there is nothing to bring into line and nothing to face.
+        # mesh, and it takes no control, so there is nothing to bring into line and nothing to face.
         return {"raw": base, "simplified": base}
     return {"raw": base, "simplified": base + 1, "textured": base + 2}
 
@@ -2793,8 +2625,8 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
         graph = drop_node(graph, "BOB_LORA", {0: "model", 1: "clip"})
 
     # A stylised frame holds a real composition, so wrapping it round the border is nonsense. Same
-# shared model as `tex_tileable`, so the same reset. Cheap here: it is one 64 px sample in front
-# of a multi-second restyle, and the paint route only pays it on its first view.
+    # shared model as `tex_tileable`, so the same reset. Cheap here: it is one 64 px sample in front
+    # of a multi-second restyle, and the paint route only pays it on its first view.
     ensure_untiled(url, on_progress=on_progress)
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
@@ -2953,9 +2785,9 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
         graph = drop_node(graph, "BOB_TILE", {0: "model"})
         graph = drop_node(graph, "BOB_TILE_VAE", {0: "vae"})
         # Dropping the nodes means this route runs on the SHARED model, so a texture set earlier in
-# the session would otherwise make the mask tile -- and a tiling macro mask puts the same
-# elevation on both borders, which is the wallpaper repeat the macro-mask gate measured and
-# rejected.
+        # the session would otherwise make the mask tile -- and a tiling macro mask puts the same
+        # elevation on both borders, which is the wallpaper repeat the macro-mask gate measured and
+        # rejected.
         ensure_untiled(url, on_progress=on_progress)
 
     png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
