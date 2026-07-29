@@ -161,15 +161,39 @@ Strength), `sky_altitude` (mapped to the `altitude` param), `air`, `ozone`,
 `turbidity` (default 2.2), `ground_albedo`. The sun override props carry an update
 callback (`_on_sun_override_change`) that repositions the sun live.
 
-**A sun override survives only until the next world re-apply, so build the sky
-LAST.** `use_override` lives in the `build_sky` op's params and nowhere in the
-scene. Every world re-apply — `set_env`, `apply_world`, `build_fog`, an artist
-moving a World slider — recomputes the sun from `bbt_env`'s clock through the solar
-model and writes it to both the lamp and the sky node. At a night `time_of_day` the
-real sun is below the horizon, where `_place_sun` zeroes the lamp energy and the
-physical sky renders black, so an overridden moonlit sky built earlier in an op list
-is silently thrown away. The panel equivalent is `bbt_firmament.use_override`, which
-a re-apply does honour; the op params are not stored, and that asymmetry is the trap.
+**`build_sky` RECORDS the sun it decided on `bbt_firmament`, which is what makes it
+survive a world re-apply.** `_record_sun` writes `use_override`, both override
+angles, `sun_strength` and `sun_angle`, and a build with no override CLEARS the flag
+so a stale one can never outrank the solar model a later caller asked for. The angles
+go on before the flag (their own update callbacks would otherwise flap the sun
+through a True flag against the previous build's angles), and the op places the sun
+after recording, so the explicit placement is always the last write. Elevation is
+clamped to +/-90, azimuth wrapped into [0, 360) and `sun_angle` clamped to 20, so the
+sky node, the lamp and the recorded prop are one number rather than three that
+disagree at the edges. `tools/scripts/headless_sun.py` measures the lamp across a
+re-apply and is the guard.
+
+Why it has to live there: every world re-apply re-places the sun from
+`bbt_firmament` plus `bbt_env` through `_reposition_sun`. That is `apply_world`,
+`set_env` with its default `apply: true`, `apply_biome` (default `world: true`),
+`world_biome`, `apply_season` (it writes `month`), `scene_preset`, and an artist
+moving a World slider. It is ALSO any `set_env` that writes a geographic field even
+with `apply: false`, because `time_of_day`, `year`, `month`, `day`, `utc_offset`,
+`latitude` and `longitude` each carry `_on_geo_change`, so the write itself fires the
+reposition. `build_fog` is not one of them: it re-applies quality and the wind
+drivers and leaves the sun alone. Before the recording, an override lived only in the
+op's params, so at a night `time_of_day` the first re-apply recomputed a sun below
+the horizon, `_place_sun` zeroed the lamp and the physical sky rendered black -- a
+frame with nothing in it but the emissive geometry, which reads as a fog or exposure
+fault and is neither.
+
+**The one case that still cannot be made durable, and is reported instead of
+hidden:** a geographic key passed to `build_sky` but never written to `bbt_env`. The
+op computes the sun the caller asked for, but the next re-apply recomputes it from
+`bbt_env`, which still holds the old clock. `data.durable` is then False and
+`data.undurable` names the keys, and the fix is to send the clock through `set_env`.
+The result's `data` also carries `source`, `elevation`, `azimuth`, `sun_strength`,
+`sun_angle` and `recorded` (False headless, where the props are not registered).
 
 Live sun: `_reposition_sun` aims the existing `BOB_Sun` and sets the `BOB_Sky` sun
 angle from the current world state (or the override) with no node rebuild, so

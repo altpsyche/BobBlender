@@ -248,9 +248,13 @@ the far end. Both are single flags:
 ]
 ```
 
-- **`build_sky` reads `bbt_env`.** With no params it takes time/date/place from `set_env`, so a
-  bare `build_sky` after a `set_env` gives the right sun. For a hero backlight aim it manually with
-  `use_override` + a low `sun_elevation` at the `sun_azimuth` the camera faces.
+- **`build_sky` reads `bbt_env`, and records what it built.** With no params it takes the
+  time/date/place from `set_env`, so a bare `build_sky` after a `set_env` gives the right sun. For a hero backlight
+  aim it manually with `use_override` + a low `sun_elevation` at the `sun_azimuth` the camera faces:
+  the override is written to `bbt_firmament`, so the next world re-apply reproduces it instead of
+  recomputing a night sun and blacking the frame. Read `data.durable` on the reply. It is False only
+  when a geographic key was passed HERE and never written to `bbt_env`, which is the one sun a
+  re-apply still recomputes, and `data.undurable` names them. Send the clock through `set_env`.
 - **`build_fog` defaults dense** (a thick foggy-morning look) and will wash the frame grey. For a
   thin, beam-friendly haze pass a `preset` (`ground_mist`/`valley`/`banks`/`thick`) and/or a
   `density` override.

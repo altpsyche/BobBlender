@@ -94,6 +94,13 @@ class BuildSky(BaseModel):
     # The geographic-sun inputs (time_of_day/date/place) DEFAULT from the shared world
     # state (Scene.bbt_env) when omitted, so a bare build_sky honours a prior set_env;
     # explicit keys here override, and use_override bypasses the solar model entirely.
+    # The sun this op decides is RECORDED on Scene.bbt_firmament (the override flag, its
+    # two angles, sun_strength, sun_angle), because the world applier re-places the sun
+    # from those props on every re-apply and an override that lived only here was lost at
+    # the next one -- a night sun below the horizon, a zeroed lamp and a black frame. The
+    # result's `data.durable` says whether the sun survives a re-apply; a geographic key
+    # passed HERE but not written to bbt_env is the one case it does not, and `data.undurable`
+    # names those keys.
     params: dict = Field(default_factory=dict)
 
 

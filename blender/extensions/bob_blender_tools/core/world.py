@@ -112,6 +112,51 @@ def _place_sun(obj, elevation, azimuth, strength, angle_deg):
     light.energy = strength if elevation > 0.0 else 0.0
 
 
+GEO_KEYS = ("time_of_day", "year", "month", "day", "utc_offset", "latitude", "longitude")
+
+
+def _differs(passed, stored):
+    """Whether a passed geographic value disagrees with the one on bbt_env. A value that will not
+    compare as a number (which the solar model would reject later anyway) counts as disagreeing, so
+    the check reports rather than raising out of a durability note."""
+    try:
+        return abs(float(passed) - float(stored)) > 1e-9
+    except (TypeError, ValueError):
+        return True
+
+
+def _record_sun(scene, *, use_override, elevation, azimuth, strength, angle_deg):
+    """Write the sun this build just decided onto Scene.bbt_firmament, and report whether it stuck.
+
+    Why: Atmosphere's world applier re-places the sun from bbt_firmament plus bbt_env on every world
+    re-apply (`apply_world`, `set_env`, `apply_biome`, `apply_season`, a World slider, and any write
+    to a geographic field, each of which carries its own update callback). A sun override that lived
+    only in this op's params was therefore lost at the next re-apply, and at a night `time_of_day`
+    the recomputed sun is below the horizon, where the lamp energy is zeroed and the physical sky
+    renders black. The frame comes back with nothing in it but the emissive geometry, which reads as
+    a fog or exposure fault and is neither. The panel's props are the one place the applier looks,
+    so this is where the override has to live.
+
+    A build with NO override clears the flag for the same reason, in reverse: a stale one would
+    outrank the solar model the caller just asked for.
+
+    The angles go on before the flag, so the props' own live-update callbacks never see a True flag
+    against last build's angles and flap the sun through a position nothing asked for. The caller
+    places the sun after this returns, so the explicit placement is what lands either way.
+
+    Returns True when the props exist to write (BobFirmament's UI registered), False headless.
+    """
+    fm = getattr(scene, "bbt_firmament", None) if scene is not None else None
+    if fm is None:
+        return False
+    fm.override_elevation = elevation
+    fm.override_azimuth = azimuth
+    fm.sun_strength = strength
+    fm.sun_angle = angle_deg
+    fm.use_override = bool(use_override)  # last: see the flapping note above
+    return True
+
+
 def build_sky(op: dict) -> dict:
     params = op.get("params", {})
 
@@ -119,15 +164,25 @@ def build_sky(op: dict) -> dict:
     # omits them, so a bare build_sky honours a prior set_env instead of falling back to the noon
     # solar defaults. Explicit op params still win (they overlay the env seed), and an override is
     # left alone (it supplies elevation/azimuth directly, no solar inputs needed).
-    if not _get(params, "use_override", False):
-        env = _env.get_env()
-        if env is not None:
-            params = {**_env.sun_params(env), **params}
+    env = _env.get_env()
+    use_override = bool(_get(params, "use_override", False))
+    # A geographic key this op passes that disagrees with bbt_env is the one thing this op CANNOT
+    # make durable: the sun is recomputed from bbt_env on the next re-apply, not from what was
+    # passed here. Collected before the seed merge (which would hide it) and named in the result, so
+    # a caller learns to send the clock through set_env rather than finding out at gate C.
+    undurable = [] if (use_override or env is None) else [
+        k for k in GEO_KEYS
+        if k in params and params[k] is not None and _differs(params[k], getattr(env, k))
+    ]
+    if not use_override and env is not None:
+        params = {**_env.sun_params(env), **params}
 
     # Sun position: manual override, else the geographic solar model.
-    if _get(params, "use_override", False):
-        elevation = float(_get(params, "sun_elevation", 45.0))
-        azimuth = float(_get(params, "sun_azimuth", 180.0))
+    if use_override:
+        # Clamped and wrapped to the panel props' own ranges, so the sky node, the lamp and the
+        # recorded override are one number rather than three that disagree at the edges.
+        elevation = max(-90.0, min(90.0, float(_get(params, "sun_elevation", 45.0))))
+        azimuth = float(_get(params, "sun_azimuth", 180.0)) % 360.0
         source = "override"
     else:
         pos = solar.sun_position(
@@ -139,9 +194,15 @@ def build_sky(op: dict) -> dict:
         elevation, azimuth = pos["elevation"], pos["azimuth"]
         source = "solar"
 
+    # The lamp's two knobs, clamped to the panel props' ranges for the same reason the angles are:
+    # `sun_strength` and `sun_angle` are ALSO read back off bbt_firmament by the world applier, so a
+    # value this op could set and the props could not is a sun that changes on the next re-apply.
+    strength = max(0.0, float(_get(params, "sun_strength", 2.0)))
+    sun_angle = max(0.0, min(20.0, float(_get(params, "sun_angle", 0.545))))
+
     sky_kw = {
         "sun_disc": bool(_get(params, "sun_disc", False)),
-        "sun_size": math.radians(_get(params, "sun_angle", 0.545)),
+        "sun_size": math.radians(sun_angle),
         "sun_intensity": _get(params, "sun_intensity", 1.0),
         "sun_elevation": math.radians(elevation),
         "sun_rotation": math.radians(azimuth),
@@ -158,11 +219,11 @@ def build_sky(op: dict) -> dict:
     _activate_world(world)  # after the tree is built, so the refresh sees it
 
     sun = _ensure_sun()
-    _place_sun(
-        sun, elevation, azimuth,
-        strength=_get(params, "sun_strength", 2.0),
-        angle_deg=_get(params, "sun_angle", 0.545),
-    )
+    # Record BEFORE placing, so this op's own placement is the last write and the frame matches the
+    # number this returns (a recorded prop fires a live-update callback of its own).
+    recorded = _record_sun(bpy.context.scene, use_override=use_override, elevation=elevation,
+                           azimuth=azimuth, strength=strength, angle_deg=sun_angle)
+    _place_sun(sun, elevation, azimuth, strength=strength, angle_deg=sun_angle)
 
     # A rebuild clears and refills the world node tree; tag the world and sun so an
     # open viewport re-evaluates the new shader instead of showing a stale one.
@@ -170,4 +231,13 @@ def build_sky(op: dict) -> dict:
     sun.update_tag()
 
     info = f"{source} el={elevation:.1f} az={azimuth:.1f}"
-    return {"op": "build_sky", "created": [world.name, sun.name], "info": info}
+    if not recorded:
+        info += "; not recorded on bbt_firmament (BobFirmament's UI is not registered)"
+    if undurable:
+        info += (f"; {', '.join(undurable)} passed here but not in bbt_env -- the next world "
+                 f"re-apply recomputes the sun from bbt_env, so send it through set_env to keep it")
+    return {"op": "build_sky", "created": [world.name, sun.name], "info": info,
+            "data": {"source": source, "elevation": round(elevation, 4),
+                     "azimuth": round(azimuth, 4), "sun_strength": strength,
+                     "sun_angle": sun_angle, "recorded": recorded,
+                     "durable": bool(recorded and not undurable), "undurable": undurable}}

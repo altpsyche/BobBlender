@@ -151,7 +151,10 @@ def comfy_texture_set(
 
     prompt: what the surface is ("wet mossy river stones"). The tileability and lighting clauses are
             added for you. reference: an optional local image the texture follows (switches graph).
-    seed: 0 for a fresh one each call. size: 1024 is SDXL's native size.
+    seed: reaches the sampler literally, INCLUDING the 0 default, so the same prompt and seed
+            reproduce the same set. Repeating a call never overwrites (the second `mossy_stone`
+            becomes `mossy_stone_02`), so a reroll is a DIFFERENT seed, not a second call.
+    size: 1024 is SDXL's native size.
 
     Then ASSIGN it with the `apply_texture_set` op (via build_live or build), which needs Blender:
     {"op": "apply_texture_set", "object": "Terrain", "set": <the returned set>, "index": 1}.
@@ -303,6 +306,10 @@ def comfy_mesh(
     height_m: the real-world height. Mandatory in spirit: every image-to-3D model emits a
           unit-cube mesh, so without it the scatter looks like a toy set.
     faces: the face budget the simplify hits. hero: 2K bake and 2048 texture.
+    seed: reaches the graph literally, INCLUDING the 0 default, so the same prompt and seed restage
+          the same mesh -- which is the only way back after `import_generated` has consumed the
+          staging (its `cleanup` defaults to true). The staged folder is named `<slug>_s<seed>`, so
+          an existing one tells you the key it was made with. A reroll is a different seed.
     negative: what must NOT appear in the reference image (pot, hands, text, multiple objects). The
           framing clause every subject gets is appended for you; this is the artist's half.
     control: a control mesh from the `export_control` op, so the result keeps a block-out's
