@@ -22,7 +22,7 @@ import json
 
 import bpy
 
-from . import assets
+from . import assets, util
 from . import env as bbt_env
 
 # What marks an object as a BobFoliage tree, and how the panel, the wind applier and (later, the
@@ -289,7 +289,7 @@ def live_input(obj, socket_name):
     not the interface `default_value` (which only seeds a fresh bind, so writing it would change
     nothing on an already-bound modifier while looking exactly like it had worked).
     """
-    mod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return None
     ident = next((s.identifier for s in mod.node_group.interface.items_tree

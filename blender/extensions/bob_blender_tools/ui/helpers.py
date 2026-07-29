@@ -133,10 +133,14 @@ def live_knobs(layout, obj, names, enabled=True, seed_op=None, seed_names=()):
     `seed_op` / `seed_names` route the named sockets through `seed_row` so a seed gets its reshuffle
     button; the operator is passed `{"socket": <name>}`.
 
-    Scatter and Firmament each grew their own copy of this before it existed here. New panels use this
-    one; folding those two into it is a subtraction pass of its own, not a side effect of one.
+    Scatter and Firmament each grew their own copy of this before it existed here. Scatter's is now
+    folded in (its `_draw_knobs` was byte-equivalent to a call to this with `seed_op` set); Firmament
+    draws through `_draw_mod_knobs`, which takes a modifier rather than an object and is a separate
+    fold.
     """
-    mod = next((m for m in obj.modifiers if m.type == "NODES"), None) if obj is not None else None
+    from ..core import util
+
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree

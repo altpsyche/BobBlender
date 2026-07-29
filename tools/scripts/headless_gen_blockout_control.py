@@ -42,16 +42,13 @@ import argparse
 import json
 import math
 import os
-import struct
 import subprocess
 import sys
 import threading
 import time
 
-import bmesh
 import bpy
 import numpy as np
-from mathutils.bvhtree import BVHTree
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
@@ -195,77 +192,12 @@ class Vram:
 
 
 # -- Shape maths, scored where it lands -----------------------------------------------------------
-def glb_extents(path):
-    """The POSITION accessor extents of a glb's first primitive, read out of its JSON chunk.
-
-    Pure struct and json, because it has to work in Blender's interpreter with no mesh library. It
-    is here to measure the SPACE each staged file arrives in, which is the one property the chain
-    has to agree on and the only one nothing was reading: `Trellis2EncodeMesh` voxelises in the unit
-    cube, so a file whose longest extent is not about 1.0 is a file `mesh_texture` cannot see.
-    """
-    with open(path, "rb") as fh:
-        data = fh.read()
-    _magic, _version, total = struct.unpack("<III", data[:12])
-    offset, doc = 12, None
-    while offset < total and doc is None:
-        length, kind = struct.unpack("<II", data[offset:offset + 8])
-        if kind == 0x4E4F534A:
-            doc = json.loads(data[offset + 8:offset + 8 + length].decode("utf-8"))
-        offset += 8 + length
-    prim = doc["meshes"][0]["primitives"][0]
-    acc = doc["accessors"][prim["attributes"]["POSITION"]]
-    return [round(acc["max"][i] - acc["min"][i], 5) for i in range(3)]
-
-
-def _barycentric(rings=4):
-    """Interior sample weights for a triangle, so a shared edge or a corner never decides whether a
-    face is hidden."""
-    return [(i / (rings + 1.0), j / (rings + 1.0))
-            for i in range(1, rings + 1) for j in range(1, rings + 1)
-            if i / (rings + 1.0) + j / (rings + 1.0) < 1.0]
-
-
-HIDDEN_WEIGHTS = _barycentric()
-
-
-def hidden_surface(obj, eps=1e-4):
-    """(total area, hidden area) in square metres: how much of this mesh's surface is INSIDE it.
-
-    The property a block-out has to have that no render, bbox or footprint can see.
-    `Hy3DOmniPointGenerate` samples the control mesh area-weighted, so an interior face is a
-    conditioning point like any other -- a shape built as overlapping solids spends part of its point
-    budget describing surfaces that are not there, and the barn's block-out spent 29.6% of it that
-    way while looking exactly right in every view.
-
-    Ray parity on a triangulated BVH from points nudged along the face normal, sampled over the face
-    rather than at its centroid: the two are different measurements where geometry is coincident, and
-    one jamb post covering 6% of a wall triangle would otherwise charge that whole triangle to the
-    hidden column (measured, it charged 33.60 m of a true 2.95).
-    """
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    bmesh.ops.triangulate(bm, faces=bm.faces[:])
-    tree = BVHTree.FromBMesh(bm)
-    total = hidden = 0.0
-    for face in bm.faces:
-        area = face.calc_area()
-        total += area
-        a, b, c = (v.co for v in face.verts)
-        inside = 0
-        for u, v in HIDDEN_WEIGHTS:
-            at, crossings = a + (b - a) * u + (c - a) * v + face.normal * eps, 0
-            for _ in range(64):
-                hit = tree.ray_cast(at, face.normal)
-                if hit[0] is None:
-                    break
-                crossings += 1
-                at = hit[0] + face.normal * eps
-            inside += crossings % 2
-        hidden += area * inside / len(HIDDEN_WEIGHTS)
-    bm.free()
-    return total, hidden
-
-
+# `glb_extents` and `hidden_surface` are `core.gen_assets`'. This gate carried its own copy of both,
+# which is the shape of duplication that costs most: the gate is where the numbers below were
+# calibrated, so a divergence between the two copies would silently recalibrate the bar. The core
+# version of `hidden_surface` is also the more correct one -- it applies `obj.matrix_world` before
+# measuring, so its areas are world-space square metres, where this file's copy measured in local
+# space and quietly disagreed with the receipt on any scaled object.
 def mesh_points(obj, count=SAMPLES, seed=0):
     """Area-weighted surface samples, centred and divided by ONE scale so the aspect ratio survives.
 
@@ -543,8 +475,9 @@ def part_a(args, reachable):
         empty_scene()
         candidate = make(f"Blockout_{shape}")
         bpy.context.scene.collection.objects.link(candidate)
-        total, inside = hidden_surface(candidate)
-        fraction = inside / total if total else 0.0
+        measured = gen_assets.hidden_surface(candidate)
+        total, inside = measured["surface_area_m2"], measured["hidden_area_m2"]
+        fraction = measured["hidden_fraction"]
         check(f"the {shape!r} block-out has no surface behind its own surface",
               fraction <= HIDDEN_AREA_MAX,
               f"{inside:.2f} m of {total:.2f} m is interior, {100.0 * fraction:.1f}% of every "
@@ -807,8 +740,8 @@ def part_c(args, reachable, ready):
     # texture set, faithfully baked, with every other figure in the receipt healthy. Measured per
     # file rather than asserted about the route, because the frame is what the chain is agreeing on.
     for label, path in (("control", control), ("raw", raw), ("simp", simp), ("tex", tex)):
-        note(f"{label} glb extents", str(glb_extents(path)))
-    handed = max(glb_extents(simp))
+        note(f"{label} glb extents", str(gen_assets.glb_extents(path)))
+    handed = max(gen_assets.glb_extents(simp))
     check("the mesh handed to mesh_texture is in the unit cube the encoder voxelises in",
           abs(handed - 1.0) < 0.05,
           f"longest extent {handed:.4f} against 1.0; over it the encoder sees nothing and the "

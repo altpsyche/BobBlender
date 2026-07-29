@@ -357,9 +357,7 @@ class BBT_OT_foliage_make_variants(Operator):
         scn = context.scene.bbt_foliage
         pack = None
         if scn.variant_pack:
-            from .shaders import _generated_pack
-
-            pack = _generated_pack()
+            pack = assets.generated_root()
             if not pack:
                 self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
                                        "add-on preferences), or turn Write to Pack off")
@@ -386,14 +384,14 @@ def _generate(self, context, kind):
     which is what makes "generate the bark" enough with no assignment step after it.
     """
     from ..core import comfy
-    from .shaders import _COMFY_STATE, _comfy_job_running, _generated_pack, _submit
+    from .shaders import _COMFY_STATE, _comfy_job_running, _submit
 
     scn = context.scene.bbt_foliage
     obj = _active_tree(context)
     if obj is None:
         self.report({"ERROR"}, "Add or pick a tree first")
         return {"CANCELLED"}
-    pack = _generated_pack()
+    pack = assets.generated_root()
     if not pack:
         self.report({"ERROR"}, "No generated pack folder (set an output folder in the add-on "
                                "preferences)")

@@ -1340,7 +1340,7 @@ def test_a_failed_atlas_does_not_keep_the_name_it_asked_for(mods, monkeypatch, t
     assert comfy.unique_set_name(str(textures), "leaf_conifer") == "leaf_conifer"
 
 
-def test_w9c_normalises_before_it_simplifies(mods):
+def test_mesh_simplify_uv_normalises_before_it_simplifies(mods):
     """`mesh_simplify_uv` carries the same normalise for the same reason, and it is the fix for the
     block-out route's black texture.
 

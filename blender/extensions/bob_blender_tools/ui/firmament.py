@@ -26,7 +26,7 @@ from bpy.props import (
 from bpy.types import Operator, Panel, PropertyGroup
 
 from ..bridge import server
-from ..core import atmosphere
+from ..core import atmosphere, util
 from . import helpers, world
 
 # Preset dicts, the live modifier-input helpers, the wind/snow drivers, the snow-line math, and
@@ -40,9 +40,7 @@ MOTE_PRESETS = atmosphere.MOTE_PRESETS
 SEASON_APPLY = atmosphere.SEASON_APPLY
 SCENE_PRESETS = atmosphere.SCENE_PRESETS
 
-_nodes_mod = atmosphere._nodes_mod
 _input = atmosphere._input
-_named_mod = atmosphere._named_mod
 _input_of = atmosphere._input_of
 _apply_quality = atmosphere._apply_quality
 _install_wind_drivers = atmosphere._install_wind_drivers
@@ -106,7 +104,7 @@ _DOMAIN_KNOBS = ["Domain Size", "Domain Height"]
 def _draw_knobs(layout, obj, names, enabled=True):
     """Draw each present modifier input by socket name (live, no rebuild). enabled=False greys
     the row (a live driver owns the input, so an edit would be silently overwritten)."""
-    mod = _nodes_mod(obj)
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return
     ids = {it.name: it.identifier for it in mod.node_group.interface.items_tree
@@ -219,7 +217,7 @@ def _apply_world(scene):
         else:
             _remove_wind_drivers(obj, extra)
     surface = fm.snow_surface or getattr(bpy.context, "active_object", None)
-    mod = _named_mod(surface, "BOB_Snow")
+    mod = util.nodes_mod(surface, "BOB_Snow")
     if mod is not None:
         # Clear any legacy live driver (older builds drove the pass Snow from bbt_env.snow, now
         # removed) and refresh the shell from the env, since it is no longer driven live.
@@ -575,7 +573,7 @@ class BBT_OT_firmament_snow_from_env(Operator):
         fm = context.scene.bbt_firmament
         env = _env.get_env(context.scene)
         surface = fm.snow_surface or context.active_object
-        if env is None or _named_mod(surface, "BOB_Snow") is None:
+        if env is None or util.nodes_mod(surface, "BOB_Snow") is None:
             return {"CANCELLED"}
         _sync_snow_pass(surface, env)
         self.report({"INFO"}, "Snow pass synced from Environment")
@@ -709,7 +707,7 @@ class BBT_PT_firmament_clouds(Panel):
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.cloud_object)
-        if obj is None or _nodes_mod(obj) is None:
+        if obj is None or util.nodes_mod(obj) is None:
             layout.label(text="Build to edit cloud knobs", icon="INFO")
             return
 
@@ -773,7 +771,7 @@ class BBT_PT_firmament_fog(Panel):
 
         # Live knobs from the modifier (present only after a Build), grouped.
         obj = bpy.data.objects.get(fm.fog_object)
-        if obj is None or _nodes_mod(obj) is None:
+        if obj is None or util.nodes_mod(obj) is None:
             layout.label(text="Build to edit fog knobs", icon="INFO")
             return
 
@@ -840,7 +838,7 @@ class BBT_PT_firmament_weather(Panel):
         helpers.structural_action(box, "bob_blender_tools.firmament_build_rain",
                                      note="builds: falling rain streaks")
         rain = bpy.data.objects.get(fm.rain_object)
-        if rain is not None and _nodes_mod(rain) is not None:
+        if rain is not None and util.nodes_mod(rain) is not None:
             # Instant preset: instant look preset, gated behind Build so it never silently builds.
             helpers.preset_row(box, "bob_blender_tools.firmament_rain_preset")
             box.prop(rain, "hide_viewport", text="Hide", invert_checkbox=True, icon="HIDE_OFF")
@@ -886,7 +884,7 @@ class BBT_PT_firmament_weather(Panel):
         helpers.structural_action(box, "bob_blender_tools.firmament_build_snow_cover",
                                      note="builds: the snow pass (shell coverage + occlusion)")
         surface = fm.snow_surface or context.active_object
-        snow_mod = _named_mod(surface, "BOB_Snow")
+        snow_mod = util.nodes_mod(surface, "BOB_Snow")
         if snow_mod is not None:
             live = _live_env_on(context.scene)
             # Snow (amount) is driven from bbt_env when Live Environment is on, so grey it. The

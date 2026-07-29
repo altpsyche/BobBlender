@@ -368,7 +368,9 @@ def paint_object(obj, views, images, out_dir, stem, *, size=1024, material_name=
     `mesh_paint_views` route.
 
     Reuses `gen_assets.apply_baked_material`, so a painted asset carries the same graph shape a
-    baked one does and stays a BobShader candidate rather than a special case.
+    baked one does rather than being a special case. That graph is a plain Principled BSDF, so the
+    result's `materials.master_type()` is None: it is a material a BobShader Convert can take, not a
+    BobShader. The earlier wording here claimed the latter.
     """
     try:
         from . import gen_assets

@@ -40,7 +40,6 @@ nothing failed.
 import argparse
 import json
 import os
-import struct
 import sys
 import time
 
@@ -101,27 +100,6 @@ AIMDO_MEASURED = "0.4.10"
 def section(title):
     print()
     print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def glb_extents(path):
-    """The POSITION accessor extents of a glb's first primitive, read out of its JSON chunk.
-
-    Pure struct and json, because this has to work in Blender's interpreter with no mesh library,
-    and because reading the file Omni will read is the only way to check the frame mapping against
-    something other than the code that produced it.
-    """
-    with open(path, "rb") as fh:
-        data = fh.read()
-    _magic, _version, total = struct.unpack("<III", data[:12])
-    offset, doc = 12, None
-    while offset < total and doc is None:
-        length, kind = struct.unpack("<II", data[offset:offset + 8])
-        if kind == 0x4E4F534A:
-            doc = json.loads(data[offset + 8:offset + 8 + length].decode("utf-8"))
-        offset += 8 + length
-    prim = doc["meshes"][0]["primitives"][0]
-    acc = doc["accessors"][prim["attributes"]["POSITION"]]
-    return [round(acc["max"][i] - acc["min"][i], 5) for i in range(3)]
 
 
 def aimdo_version():
@@ -200,7 +178,7 @@ def part_a(args, reachable):
     os.makedirs(GEN, exist_ok=True)
     path = os.path.join(GEN, "frame_probe.glb")
     exported = gen_assets.export_control(probe, path)
-    got, want = exported["bbox"], glb_extents(path)
+    got, want = exported["bbox"], gen_assets.glb_extents(path)
     check("control_bbox matches the control glb's own extents, axis for axis",
           all(abs(a - b) < 1e-4 for a, b in zip(got, want)),
           f"bbox {got} against glb POSITION extents {want}, from Blender dims "

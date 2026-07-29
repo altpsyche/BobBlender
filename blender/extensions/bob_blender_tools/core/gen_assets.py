@@ -29,6 +29,7 @@ which staged file is which, and that import costs nothing: `core.comfy` is bpy-f
 import json
 import math
 import os
+import struct
 import time
 
 import bpy
@@ -500,6 +501,32 @@ def import_glb(path, name=None, orient=None):
 
 
 # -- The normalise round trip ------------------------------------------------------------------
+def glb_extents(path):
+    """The POSITION accessor extents of a glb's first primitive, read out of its JSON chunk.
+
+    Pure `struct` and `json`, so it works in Blender's interpreter with no mesh library and, more to
+    the point, WITHOUT re-importing: it reads the file the model will read, which is the only way to
+    check the frame mapping against something other than the code that wrote it.
+
+    Here rather than in a gate script because it is the readback of `unit_normalise_export` above,
+    and the property it measures is the one the whole mesh-texturing family has to agree on:
+    `Trellis2EncodeMesh` voxelises in the unit cube, so a file whose longest extent is not about 1.0
+    is a file `mesh_texture` cannot see. Two gates had a byte-identical copy of this.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    _magic, _version, total = struct.unpack("<III", data[:12])
+    offset, doc = 12, None
+    while offset < total and doc is None:
+        length, kind = struct.unpack("<II", data[offset:offset + 8])
+        if kind == 0x4E4F534A:  # b"JSON"
+            doc = json.loads(data[offset + 8:offset + 8 + length].decode("utf-8"))
+        offset += 8 + length
+    prim = doc["meshes"][0]["primitives"][0]
+    acc = doc["accessors"][prim["attributes"]["POSITION"]]
+    return [round(acc["max"][i] - acc["min"][i], 5) for i in range(3)]
+
+
 def unit_normalise_export(obj, path):
     """Export a COPY of `obj` normalised into the unit cube, and return what the trip back needs.
 

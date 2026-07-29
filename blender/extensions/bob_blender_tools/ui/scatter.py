@@ -31,7 +31,7 @@ from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, P
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from ..bridge import server
-from ..core import scatter_build
+from ..core import foliage_build, scatter_build, util
 from . import helpers
 
 # The live knobs drawn per layer, grouped by panel. A knob is only drawn when its
@@ -107,29 +107,6 @@ def _foliage_species_for(kind):
     if kind not in _FOLIAGE_SPECIES_CACHE:
         _FOLIAGE_SPECIES_CACHE[kind] = assets.foliage_species_for_kind(kind)
     return _FOLIAGE_SPECIES_CACHE[kind]
-
-
-def _nodes_mod(obj):
-    if obj is None:
-        return None
-    return next((m for m in obj.modifiers if m.type == "NODES"), None)
-
-
-def _socket_ids(ng):
-    """Map input socket name -> identifier, for reaching the live modifier input."""
-    return {it.name: it.identifier for it in ng.interface.items_tree
-            if getattr(it, "item_type", None) == "SOCKET" and it.in_out == "INPUT"}
-
-
-def _live_input(obj, socket_name):
-    """The modifier input struct for a socket (has a live `.value`), or None."""
-    mod = _nodes_mod(obj)
-    if mod is None or mod.node_group is None:
-        return None
-    ident = _socket_ids(mod.node_group).get(socket_name)
-    if ident is None:
-        return None
-    return getattr(mod.properties.inputs, ident, None)
 
 
 def _active_coll(context):
@@ -258,13 +235,6 @@ class BBT_OT_scatter_make_proxies(Operator):
         return {"FINISHED"}
 
 
-def _generated_pack():
-    """The generated asset pack root the addon registered, or None."""
-    from ..core import assets
-
-    return assets.generated_root()
-
-
 def _comfy_reachable_cached():
     """The last known ComfyUI state, never a probe: a socket call from `draw` would freeze the
     UI for the timeout in exactly the case the row exists to report (found the first time a
@@ -293,7 +263,7 @@ class BBT_OT_scatter_generate_asset(Operator):
                     "silhouette and footprint and drops into the layout it was blocked out in")
 
     def execute(self, context):
-        from ..core import comfy, gen_assets
+        from ..core import assets, comfy, gen_assets
         from .shaders import _COMFY_STATE, _submit, _comfy_job_running
 
         scn = context.scene.bbt_scatter
@@ -301,7 +271,7 @@ class BBT_OT_scatter_generate_asset(Operator):
         if not prompt:
             self.report({"ERROR"}, "Describe the asset first (the Prompt field)")
             return {"CANCELLED"}
-        pack = _generated_pack()
+        pack = assets.generated_root()
         if not pack:
             self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
                                    "add-on preferences)")
@@ -494,7 +464,7 @@ class BBT_OT_scatter_duplicate(Operator):
             return {"CANCELLED"}
         dup = src.copy()
         dup.data = src.data.copy()
-        mod = _nodes_mod(dup)
+        mod = util.nodes_mod(dup)
         if mod is not None and mod.node_group is not None:
             mod.node_group = mod.node_group.copy()  # own group, live knobs stay
         dup.name = _unique_object_name(src.name.rsplit(".", 1)[0])
@@ -565,7 +535,7 @@ class BBT_OT_scatter_random_seed(Operator):
             context.scene.bbt_scatter.gen_seed = random.randint(0, 99999)
             return {"FINISHED"}
         obj = _active_layer(context)
-        seed = _live_input(obj, self.socket) if obj else None
+        seed = foliage_build.live_input(obj,self.socket) if obj else None
         if seed is None:
             return {"CANCELLED"}
         seed.value = random.randint(0, 99999)
@@ -578,25 +548,11 @@ _SEED_KNOBS = ("Seed", "Noise Seed")  # knobs that get a reshuffle button, each 
 
 
 def _draw_knobs(layout, obj, names, enabled=True):
-    """Draw each present socket's live value, by name. Skips absent sockets. A seed knob (placement
-    Seed or Noise Seed) gets a reshuffle button targeting ITS socket, so both are shufflable.
-    enabled=False greys the rows (a band whose Strength is 0 does nothing)."""
-    mod = _nodes_mod(obj)
-    if mod is None or mod.node_group is None:
-        return
-    ids = _socket_ids(mod.node_group)
-    col = layout.column(align=True)
-    col.enabled = enabled
-    for nm in names:
-        ident = ids.get(nm)
-        inp = getattr(mod.properties.inputs, ident, None) if ident else None
-        if inp is None:
-            continue
-        if nm in _SEED_KNOBS:
-            helpers.seed_row(col, inp, "value", "bob_blender_tools.scatter_random_seed",
-                                text=nm, op_props={"socket": nm})
-        else:
-            col.row(align=True).prop(inp, "value", text=nm)
+    """`helpers.live_knobs` with this panel's seed reshuffle bound, so the 7 call sites below stay
+    short. The body used to be a second copy of `live_knobs` -- byte-equivalent to this call, which
+    is why it went; what is left is the argument binding, and that is genuinely panel-local."""
+    helpers.live_knobs(layout, obj, names, enabled=enabled,
+                       seed_op="bob_blender_tools.scatter_random_seed", seed_names=_SEED_KNOBS)
 
 
 class BBT_UL_scatter_layers(UIList):
@@ -852,7 +808,7 @@ class BBT_PT_scatter_layer(Panel):
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
         # Live group: the modifier's own inputs, edited in place, no rebuild.
-        if _nodes_mod(obj) is None:
+        if util.nodes_mod(obj) is None:
             layout.label(text="No scatter modifier", icon="ERROR")
             return
         layout.label(text="Live knobs (instant)")
@@ -871,7 +827,7 @@ class BBT_PT_scatter_masks(Panel):
     def draw(self, context):
         layout = self.layout
         obj = _active_layer(context)
-        if obj is None or _nodes_mod(obj) is None:
+        if obj is None or util.nodes_mod(obj) is None:
             layout.label(text="No active layer: add one on the Scatter panel", icon="INFO")
             return
         if obj.bbt_scatter_layer.curve_mode == "along":
@@ -881,7 +837,7 @@ class BBT_PT_scatter_masks(Panel):
         # A band does nothing until its Strength is above 0. Keep the Strength knob live and grey
         # the dependent knobs when it is 0 (the same "grey the inert knob" idiom Paths uses).
         def _on(socket):
-            inp = _live_input(obj, socket)
+            inp = foliage_build.live_input(obj,socket)
             return inp is not None and inp.value > 0.0
         layout.label(text="Altitude")
         _draw_knobs(layout, obj, _HEIGHT_KNOBS[:1])
@@ -890,7 +846,7 @@ class BBT_PT_scatter_masks(Panel):
         _draw_knobs(layout, obj, _NOISE_KNOBS[:1])
         _draw_knobs(layout, obj, _NOISE_KNOBS[1:], enabled=_on("Noise Strength"))
         # Paint Strength exists only when the layer has a mask group set + Built.
-        if _live_input(obj, "Paint Strength") is not None:
+        if foliage_build.live_input(obj,"Paint Strength") is not None:
             layout.label(text="Paint")
             _draw_knobs(layout, obj, ["Paint Strength"])
         elif obj.bbt_scatter_layer.vgroup:
@@ -910,7 +866,7 @@ class BBT_PT_scatter_camera(Panel):
         scn = context.scene.bbt_scatter
         layout = self.layout
         obj = _active_layer(context)
-        if obj is None or _nodes_mod(obj) is None:
+        if obj is None or util.nodes_mod(obj) is None:
             layout.label(text="No active layer: add one on the Scatter panel", icon="INFO")
             return
         if obj.bbt_scatter_layer.curve_mode == "along":
@@ -920,7 +876,7 @@ class BBT_PT_scatter_camera(Panel):
         if scn.camera is None:
             layout.label(text="Set a Camera on the Scatter panel", icon="INFO")
             return
-        if _live_input(obj, "Camera Distance") is None:
+        if foliage_build.live_input(obj,"Camera Distance") is None:
             layout.label(text="Build this layer to cull", icon="INFO")
             return
         _draw_knobs(layout, obj, _CAMERA_KNOBS)

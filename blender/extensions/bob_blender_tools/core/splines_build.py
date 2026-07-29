@@ -28,6 +28,8 @@ import os
 
 import bpy
 
+from . import util
+
 # A small tuck (m) so the water edge sits just UNDER the bank lip rather than exactly on the
 # waterline, avoiding a hairline gap where the ribbon meets the rising bank.
 _WATER_TUCK = 0.15
@@ -420,7 +422,7 @@ def _build_water(curve):
     materials.enable_eevee_refraction(bpy.context.scene)
     # Drive Freeze from the environment temperature so a frozen river stops animating (the shader
     # freezes the look; this flattens the wave geometry in lockstep). Reinstalled every build.
-    wmod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    wmod = util.nodes_mod(obj)
     _drive_water_freeze(obj, wmod, bpy.context.scene)
     obj.update_tag()
     return obj

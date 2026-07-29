@@ -459,7 +459,10 @@ def recover_vram(url=None, target_mib=None, timeout=3):
 def preflight_vram(route="mesh", url=None, free_first=True):
     """Raise ComfyError with a VRAM sentence when the card cannot hold this route's working set.
 
-    Called by every generation entry point before it queues. `free_first` tries the recovery once,
+    One caller today, `mcp_agent.server._generation`, which is every generation that enters over
+    MCP; the panel's own submissions do NOT pass through here, so a panel generation still meets an
+    OOM as an OOM. That asymmetry is a gap rather than a design, and it is named in
+    docs/ROADMAP.md. `free_first` tries the recovery once,
     because the common case is a card that a previous job left full and that one `POST /free` fixes;
     only when that is not enough does this refuse. A server that cannot report its VRAM at all is
     allowed through -- an unknown is not a reason to block work.

@@ -23,7 +23,7 @@ re-applies the world afterwards so the live sun drivers reinstall.
 
 import bpy
 
-from . import env as _env, geonodes, world as _world
+from . import env as _env, geonodes, util, world as _world
 
 # Cloud-type presets: each sets the live modifier knobs by socket name for a named sky look.
 CLOUD_PRESETS = {
@@ -189,29 +189,15 @@ def _live_env_on(scene):
     return getattr(getattr(scene, "bbt_world", None), "live_env", True)
 
 
-def _nodes_mod(obj):
-    if obj is None:
-        return None
-    return next((m for m in obj.modifiers if m.type == "NODES"), None)
-
-
 def _input(obj, socket_name):
     """The live modifier input struct for a socket name, or None."""
-    mod = _nodes_mod(obj)
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return None
     ident = next((it.identifier for it in mod.node_group.interface.items_tree
                   if getattr(it, "item_type", None) == "SOCKET"
                   and it.in_out == "INPUT" and it.name == socket_name), None)
     return getattr(mod.properties.inputs, ident, None) if ident else None
-
-
-def _named_mod(obj, mod_name):
-    """A specific NODES modifier by name (an object may carry more than one, e.g. a terrain with
-    both its terrain modifier and the snow-coverage pass)."""
-    if obj is None:
-        return None
-    return next((m for m in obj.modifiers if m.type == "NODES" and m.name == mod_name), None)
 
 
 def _input_of(mod, socket_name):
@@ -330,7 +316,7 @@ def _remove_wind_drivers(obj, extra=()):
 # -- Snow-line math (matches the shader) -----------------------------------------------------
 def _snow_input(surface):
     """The Snow input struct of the BOB_Snow pass on a surface, or None."""
-    return _input_of(_named_mod(surface, "BOB_Snow"), "Snow")
+    return _input_of(util.nodes_mod(surface, "BOB_Snow"), "Snow")
 
 
 def _snow_amount(env):
@@ -368,7 +354,7 @@ def _sync_snow_pass(surface, env):
     line/band in the surface's local frame (matching the shader's world-Z line). Snow is
     temperature-driven with no plain env field to drive live, so the shell is refreshed on build /
     Apply Season / Use Env Snow, not per-edit."""
-    mod = _named_mod(surface, "BOB_Snow")
+    mod = util.nodes_mod(surface, "BOB_Snow")
     if mod is None or env is None:
         return
     lo, band = _local_snow_line(surface, env)
@@ -571,7 +557,7 @@ def apply_cloud_preset(scene, preset, *, name=None, cloud_shadows=None):
     if cloud_shadows is None:
         cloud_shadows = getattr(fm, "cloud_shadows", True)
     obj = bpy.data.objects.get(name)
-    if obj is None or _nodes_mod(obj) is None:
+    if obj is None or util.nodes_mod(obj) is None:
         obj = build_clouds_object(scene, name=name, cloud_shadows=cloud_shadows)
     if obj is None:
         return None
@@ -596,7 +582,7 @@ def apply_fog_preset(scene, preset, *, name=None, mode=None, heightmap=None):
         hm = getattr(fm, "fog_heightmap", "")
         heightmap = bpy.path.abspath(hm) if hm else ""
     obj = bpy.data.objects.get(name)
-    if obj is None or _nodes_mod(obj) is None:
+    if obj is None or util.nodes_mod(obj) is None:
         obj = build_fog_object(scene, name=name, mode=mode, heightmap=heightmap)
     if obj is None:
         return None
@@ -612,7 +598,7 @@ def apply_rain_preset(scene, preset, *, name=None, camera_name=None, use_motion_
     fm = getattr(scene, "bbt_firmament", None)
     name = name or getattr(fm, "rain_object", "BOB_Rain")
     obj = bpy.data.objects.get(name)
-    if obj is None or _nodes_mod(obj) is None:
+    if obj is None or util.nodes_mod(obj) is None:
         obj = _particulate_from_panel(scene, name, "streak", fm,
                                       camera_name=camera_name, use_motion_blur=use_motion_blur)
     if obj is None:
@@ -629,7 +615,7 @@ def apply_mote_preset(scene, preset, *, name=None, camera_name=None, use_motion_
     fm = getattr(scene, "bbt_firmament", None)
     name = name or getattr(fm, "mote_object", "BOB_Motes")
     obj = bpy.data.objects.get(name)
-    if obj is None or _nodes_mod(obj) is None:
+    if obj is None or util.nodes_mod(obj) is None:
         obj = _particulate_from_panel(scene, name, "mote", fm,
                                       camera_name=camera_name, use_motion_blur=use_motion_blur)
     if obj is None:

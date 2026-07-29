@@ -7,6 +7,7 @@ up a recipe, builds the node group, and places it.
 
 import bpy
 
+from .. import util
 from . import recipes
 from .place import place
 from .scaffold import new_group
@@ -34,8 +35,7 @@ def _gn_object(name):
     obj = bpy.data.objects.get(name)
     if obj is None:
         return None, None
-    mod = next((m for m in obj.modifiers if m.type == "NODES"), None)
-    return obj, mod
+    return obj, util.nodes_mod(obj)
 
 
 # Structural inputs define the mesh topology, so a rebuild must take them from the

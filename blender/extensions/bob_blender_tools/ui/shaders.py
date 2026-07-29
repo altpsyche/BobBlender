@@ -38,7 +38,7 @@ from bpy.props import (
 from bpy.types import Operator, Panel, PropertyGroup
 
 from ..bridge import server
-from ..core import shading
+from ..core import shading, util
 from . import helpers, world
 
 # The bbmcp modules, imported at register and held so unregister uses the same objects
@@ -170,13 +170,6 @@ def _terrain_node_active(context):
     return _terrain_node(_editing_material(context))
 
 
-def _named_mod(obj, name):
-    """A NODES modifier by name (an object may carry the terrain, snow, shell passes)."""
-    if obj is None:
-        return None
-    return next((m for m in obj.modifiers if m.type == "NODES" and m.name == name), None)
-
-
 def _draw_mod_knobs(layout, mod, names):
     """Draw a GN modifier's live input values by socket name (mod.properties.inputs)."""
     if mod is None or mod.node_group is None:
@@ -286,19 +279,12 @@ def _texture_set_items(self, context):
     return _TEXTURE_SET_ITEMS
 
 
-def _generated_pack():
-    """The generated asset pack root, or None when the addon has not registered one."""
-    from ..core import assets
-
-    return assets.generated_root()
-
-
 def _staged_variants():
     """Absolute paths of the variants waiting for a decision, oldest first. A listdir, so it is
     safe to call from draw; nothing here touches a socket."""
-    from ..core import comfy
+    from ..core import assets, comfy
 
-    pack = _generated_pack()
+    pack = assets.generated_root()
     return comfy.list_variants(pack) if pack else []
 
 
@@ -740,14 +726,14 @@ class BBT_OT_shaders_generate_set(Operator):
     index: IntProperty(default=-1)
 
     def execute(self, context):
-        from ..core import comfy
+        from ..core import assets, comfy
 
         scn = context.scene.bbt_shaders
         prompt = (scn.gen_prompt or "").strip()
         if not prompt:
             self.report({"ERROR"}, "Describe the ground first (the Prompt field)")
             return {"CANCELLED"}
-        pack = _generated_pack()
+        pack = assets.generated_root()
         if not pack:
             self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
                                    "add-on preferences)")
@@ -796,10 +782,10 @@ class BBT_OT_shaders_variant_accept(Operator):
     index: IntProperty(default=-1)
 
     def execute(self, context):
-        from ..core import comfy
+        from ..core import assets, comfy
 
         scn = context.scene.bbt_shaders
-        pack = _generated_pack()
+        pack = assets.generated_root()
         staged = _staged_pick(scn)
         if not pack or not staged:
             self.report({"ERROR"}, "Nothing staged to accept")
@@ -978,7 +964,7 @@ class BBT_OT_shaders_snow_shell_remove(Operator):
 
     def execute(self, context):
         surface = _active_object(context)
-        mod = _named_mod(surface, SNOW_SHELL_MOD)
+        mod = util.nodes_mod(surface, SNOW_SHELL_MOD)
         if mod is None:
             self.report({"WARNING"}, "No snow shell to remove")
             return {"CANCELLED"}
@@ -1478,11 +1464,11 @@ class BBT_PT_shaders_weather(Panel):
         box = layout.box()
         box.label(text="Snow Accumulation Shell", icon="MOD_SMOOTH")
         surface = _active_object(context)
-        shell = _named_mod(surface, SNOW_SHELL_MOD)
+        shell = util.nodes_mod(surface, SNOW_SHELL_MOD)
         # Empty states: the shell reads the surface's snow_cover pass for its thickness. Say so
         # inline, before the Add press, rather than only in a post-click warning, so the dependency
         # is visible up front (the coverage pass is built in Atmosphere > Snow Coverage).
-        if _named_mod(surface, "BOB_Snow") is None:
+        if util.nodes_mod(surface, "BOB_Snow") is None:
             cap = box.row()
             cap.enabled = False
             cap.label(text="needs a coverage pass: Atmosphere > Snow Coverage (reads 0 until then)",

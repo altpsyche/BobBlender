@@ -44,7 +44,7 @@ import os
 
 import bpy
 
-from . import assets, foliage_build, gen_assets, proxies
+from . import assets, foliage_build, gen_assets, proxies, util
 from .geonodes.recipes import foliage as recipe
 
 DEFAULT_VARIANTS = 8        # docs/FOLIAGE.md 2.5: enough that a repeat is not findable in a frame
@@ -283,7 +283,7 @@ def variant_params(tree, overrides=None):
 
 def _tree_materials(obj):
     """(bark, card) as the object's OWN graph assigns them, in Set Material order."""
-    mod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None:
         return []
     return [n.inputs["Material"].default_value
@@ -299,7 +299,7 @@ def _share_materials(obj, wanted):
     stand would drift away from the tree it was baked from. They are the same tree at the same
     seed's worth of difference; they wear one pair.
     """
-    mod = next((m for m in obj.modifiers if m.type == "NODES"), None)
+    mod = util.nodes_mod(obj)
     if mod is None or mod.node_group is None or not wanted:
         return 0
     dropped = []

@@ -475,9 +475,10 @@ def comfy_paint_mesh(
     voxelises in unit-cube space and a metre-scale mesh lands outside the grid. The `export_control`
     op writes exactly that normalisation, so it is the way to get a Bob object into this tool.
 
-    The other route, stylised painting with LoRA control, is not available here: it renders
-    turntable views, which needs Blender, so it stays a panel action (Stylise) rather than an MCP
-    tool.
+    The other route, stylised painting with LoRA control, is not reachable from anywhere yet: it
+    renders turntable views, so it needs Blender in the middle, and neither a panel action nor an
+    MCP tool has been built for it. Named in docs/ROADMAP.md; `comfy.texture_chain("stylised")`
+    selects it and `core.gen_paint` is its Blender half.
 
     Returns {ok, path, seconds, subject} or {ok: false, error}.
     """
