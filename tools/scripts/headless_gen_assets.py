@@ -293,8 +293,44 @@ def assert_finished(entry, report):
         detail = neighbour_detail(report["maps"]["normal"])
         check(f"{key}: the baked normal is not flat", detail > 1e-4,
               f"neighbour detail {detail:.5f}, std {std:.4f}, range {lo:.3f} to {hi:.3f}")
+    elif report.get("simplify_source") == "trellis2" and report.get("low_welded_verts") is not None:
+        # The coincident route has no dense mesh, so a normal map is not something it withheld: the
+        # two meshes are one file and a transfer has nothing to say. Asserting one here would be
+        # asserting the defect the forest-barn gate found -- 52% of the barn's texels and 87% of the
+        # stump's deviating from flat, off a bake of a mesh onto a copy of itself.
+        note("SKIP", f"{key}: no baked normal, and none is owed (one file for both meshes)")
     else:
         check(f"{key}: a baked normal exists", False, "no normal map written")
+
+    # The two numbers the forest-barn gate had no equivalent of. Both were the same failure shape: a
+    # step that ran, degraded its input and reported success.
+    if not entry["foliage"]:
+        # A solid kind must ship closed. The stump shipped 229 boundary edges with `warnings: []`
+        # and the holes were found in a render.
+        open_edges = report.get("low_boundary_edges")
+        faces_shipped = report.get("faces") or faces
+        threshold = max(comfy.OPEN_SURFACE_FLOOR,
+                        int(faces_shipped * comfy.OPEN_SURFACE_FRACTION))
+        if open_edges is None:
+            note("SKIP", f"{key}: no shipped boundary-edge count in the report")
+        elif report.get("simplify_source") == "trellis2" \
+                and report.get("low_welded_verts") is None:
+            note("SKIP", f"{key}: shipped mesh is unwelded, so {open_edges} counts UV seams")
+        else:
+            check(f"{key}: a solid kind ships closed",
+                  open_edges <= threshold,
+                  f"{open_edges} boundary edges over {faces_shipped} faces against a {threshold} "
+                  f"bar, {report.get('pinholes_closed')} closed by the pinhole fill")
+    fidelity = report.get("bake_fidelity")
+    if not fidelity:
+        note("SKIP", f"{key}: no colour to compare, so no bake fidelity")
+    else:
+        check(f"{key}: the baked colour is the colour it came from",
+              fidelity["correlation"] >= comfy.BAKE_FIDELITY_MIN
+              and fidelity["mean_abs_diff"] <= comfy.BAKE_DIFF_MAX,
+              f"correlation {fidelity['correlation']}, mean absolute difference "
+              f"{fidelity['mean_abs_diff']} of 255 over {fidelity['coverage']} of the sheet, "
+              f"against a {comfy.BAKE_FIDELITY_MIN} / {comfy.BAKE_DIFF_MAX} bar")
     check(f"{key}: the sidecar records provenance",
           os.path.isfile(report["sidecar"]), report["sidecar"])
 

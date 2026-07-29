@@ -101,6 +101,19 @@ def texset_sampler_group():
     go.location = (620, 0)
     I = gi.outputs
 
+    # Albedo times AO, and it STAYS times AO. The forest-barn gate raised this as a suspected
+    # double-count -- a generated albedo carries baked light, `comfy_maps.ao_from` derives occlusion
+    # from that same luminance, and the product would then count the shading twice -- and the
+    # measurement says otherwise, so nothing here changes and `AO_STRENGTH` stays where it is.
+    #
+    # The reason is a cutoff. `comfy_maps.relief`, which the AO is derived from, is a high-pass at a
+    # thirty-second of the image, so it never contained the low-frequency lighting in the first
+    # place; `comfy_maps.delight` corrects at an eighth. The two act on different scales and cannot
+    # overlap. Measured on the forest-floor set either side of delighting, AO against basecolor
+    # luminance went 0.656 to 0.6665 -- it rose, because removing the ramp makes the surviving
+    # detail a larger share of the albedo's variance. Across all ten shipped sets it rose or held
+    # every time. What the AO agrees with is cavity and sub-thirty-second shading, which is what an
+    # AO map is FOR.
     ao = _lerp(g, 1.0, I["AO"], I["AO Amount"], (-360, 260))
     g.links.new(_vscale(g, I["Albedo"], ao, (60, 320)), go.inputs["Albedo Map"])
     g.links.new(_lerp(g, 1.0, I["Roughness"], I["Roughness Amount"], (-360, -20)),

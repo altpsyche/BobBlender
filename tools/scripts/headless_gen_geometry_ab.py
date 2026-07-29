@@ -423,6 +423,7 @@ def finish_cell(entry, model):
         height_m=entry["height_m"], fill_pinholes=not entry["foliage"],
         exports=comfy.stage_exports(staged),
         simplify_pass=simplify_pass, texture_pass=texture_pass,
+        geometry_is_final=comfy.geometry_is_final(staged),
         provenance=dict(staged["meta"], prompt=entry["prompt"], seed=entry["seed"]))
     if "normal" in report["maps"]:
         report["normal_std"], report["normal_detail"] = normal_stats(report["maps"]["normal"])
@@ -671,6 +672,7 @@ def part_d(limit=len(D11_KEYS)):
                 stage["raw_mesh"], PACK, kind=subject["kind"], name=f"{key}_{label}",
                 height_m=subject["height_m"], fill_pinholes=not foliage(subject),
                 exports=exports, simplify_pass=simplify_pass, texture_pass=texture_pass,
+                geometry_is_final=comfy.geometry_is_final(stage),
                 provenance={"prompt": subject["prompt"], "seed": subject["seed"], "d11": label})
             if "normal" in report["maps"]:
                 std, detail = normal_stats(report["maps"]["normal"])
@@ -694,29 +696,35 @@ def part_d(limit=len(D11_KEYS)):
             print(f"{key:<9} {label:<15} {r['faces']:>6} {r['source_faces']:>12} "
                   f"{fmt(r['normal_std'], 4):>11} {fmt(r['normal_detail'], 5):>14}")
 
+    # The one-shot arm ships NO baked normal, and that is the correction the forest-barn gate forced
+    # rather than a gap in this table. Its two meshes are one file, so a transfer has nothing to
+    # say; the figure this A/B used to score against was the weld boundary between a welded high
+    # and an unwelded low, which the comment below conceded and used as a baseline anyway. Measured
+    # on the shipped assets: 52% of the barn's texels and 87% of the stump's deviated past one 8-bit
+    # step from a map whose only correct value was flat. So the control is now zero by construction,
+    # and the question "does the dense mesh buy detail" is answered against its own misaligned bake.
     scored = [(k, r) for k, r in out.items()
-              if r.get("staged_aligned", {}).get("normal_detail") is not None
-              and r.get("oneshot", {}).get("normal_detail") is not None]
+              if r.get("staged_aligned", {}).get("normal_detail") is not None]
     for key, r in scored:
         note(f"dense mesh, {key}",
              f"aligned detail {r['staged_aligned']['normal_detail']:.5f} against the route A/B's misaligned "
-             f"{r['staged_g3b']['normal_detail']:.5f} and the one-shot control's "
-             f"{r['oneshot']['normal_detail']:.5f}; std "
+             f"{fmt(r.get('staged_g3b', {}).get('normal_detail'), 5)}; the one-shot arm ships no "
+             f"normal map (one file for both meshes, nothing to transfer); std "
              f"{fmt(r['staged_aligned']['normal_std'], 4)} / "
-             f"{fmt(r['staged_g3b']['normal_std'], 4)} / {fmt(r['oneshot']['normal_std'], 4)}")
+             f"{fmt(r['staged_g3b']['normal_std'], 4)}")
     if scored:
-        # "Buys detail" has to mean a margin rather than a difference, because a bake of a mesh onto
-        # itself still records the weld boundary. 10% of the control is the smallest gap worth
-        # calling a gain at this budget.
-        better = [k for k, r in scored
-                  if r["staged_aligned"]["normal_detail"] > r["oneshot"]["normal_detail"] * 1.1]
+        # "Buys detail" has to mean a margin rather than a difference. Against the one-shot route it
+        # is now the whole of the staged route's detail, since that route writes no normal at all.
         fixed = [k for k, r in scored
-                 if r["staged_aligned"]["normal_detail"] > r["staged_g3b"]["normal_detail"] * 1.1]
+                 if r.get("staged_g3b", {}).get("normal_detail") is not None
+                 and r["staged_aligned"]["normal_detail"] > r["staged_g3b"]["normal_detail"] * 1.1]
+        absent = [k for k, r in out.items() if r.get("oneshot", {}).get("normal_detail") is None]
         note("dense mesh, the answer",
-             f"the aligned dense-mesh bake beats the one-shot control by more than 10% on "
-             f"{len(better)} of {len(scored)} assets ({', '.join(better) or 'none'}), and beats "
-             f"its own earlier misaligned bake on {len(fixed)} of {len(scored)} "
-             f"({', '.join(fixed) or 'none'})")
+             f"the aligned dense-mesh bake beats its own earlier misaligned bake on "
+             f"{len(fixed)} of {len(scored)} assets ({', '.join(fixed) or 'none'}); the one-shot "
+             f"arm wrote no normal on {len(absent)} of {len(out)} "
+             f"({', '.join(absent) or 'none'}), which is the route "
+             f"being honest about having no dense mesh rather than a missing measurement")
     return out
 
 

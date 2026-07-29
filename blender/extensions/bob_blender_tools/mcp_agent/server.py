@@ -141,6 +141,7 @@ def comfy_texture_set(
     size: int = 1024,
     reference: str | None = None,
     negative: str | None = None,
+    delight: bool = False,
 ) -> dict:
     """Generate a seamless PBR texture set from a prompt, into the generated asset pack.
 
@@ -155,20 +156,28 @@ def comfy_texture_set(
             reproduce the same set. Repeating a call never overwrites (the second `mossy_stone`
             becomes `mossy_stone_02`), so a reroll is a DIFFERENT seed, not a second call.
     size: 1024 is SDXL's native size.
+    delight: divide the baked LIGHTING out of the albedo before deriving the other maps. A basecolor
+            is meant to be reflectance and a diffusion model returns a photograph, so a set can come
+            back with a sky gradient or a shadow across it that then cannot be relit. Read
+            `flatness.low_freq_variation` in the result first: under 0.075 needs nothing, and the
+            warning tells you when it does.
 
     Then ASSIGN it with the `apply_texture_set` op (via build_live or build), which needs Blender:
     {"op": "apply_texture_set", "object": "Terrain", "set": <the returned set>, "index": 1}.
 
-    Returns {ok, set, dir, maps, seconds, apply_op, pack_dir} or {ok: false, error}.
+    Returns {ok, set, dir, maps, seam, flatness, warnings, seconds, apply_op, pack_dir} or
+    {ok: false, error}.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
         name, info = comfy.texture_set_from_prompt(
             prompt, pack, seed=int(seed), size=int(size), negative=negative,
-            reference=reference,
+            reference=reference, delight=bool(delight),
             workflow="tex_tileable_ref" if reference else "tex_tileable")
         return {"set": name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
-                "seconds": info.get("seconds"), "seam": info.get("seam"), "pack_dir": pack,
+                "seconds": info.get("seconds"), "seam": info.get("seam"),
+                "flatness": info.get("flatness"),
+                "warnings": comfy.flatness_warning(info.get("flatness")), "pack_dir": pack,
                 "apply_op": {"op": "apply_texture_set", "set": name, "object": "<your mesh>",
                              "index": 0, "pack_dir": pack}}
 
@@ -181,6 +190,7 @@ def comfy_bark_set(
     name: str = "",
     seed: int = 0,
     size: int = 1024,
+    delight: bool = False,
 ) -> dict:
     """Generate a BARK texture set, measured for grain direction as well as for tiling.
 
@@ -199,16 +209,22 @@ def comfy_bark_set(
     The tree recipe reads it by NAME, so nothing needs applying afterwards: build or rebuild a
     foliage object and the bark is on it.
 
-    Returns {ok, set, dir, maps, grain, seam, seconds, pack_dir} or {ok: false, error}.
-    `grain.off_vertical_deg` is the verdict: under about 25 is usable, and it is gated by
-    tools/scripts/headless_foliage.py rather than left to taste.
+    delight: see `comfy_texture_set`. Bark is the one texture family that usually does not need it
+            -- the gate's `bark_conifer` measured 0.0247 low-frequency variation, the flattest set
+            of ten -- but a shaggy species shot in raking light does.
+
+    Returns {ok, set, dir, maps, grain, seam, flatness, warnings, seconds, pack_dir} or
+    {ok: false, error}. `grain.off_vertical_deg` is the verdict: under about 25 is usable, and it is
+    gated by tools/scripts/headless_foliage.py rather than left to taste.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
         set_name, info = comfy.bark_set(prompt, pack, name=(name or None), seed=int(seed),
-                                        size=int(size))
+                                        size=int(size), delight=bool(delight))
         return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
                 "grain": info.get("grain"), "seam": info.get("seam"),
+                "flatness": info.get("flatness"),
+                "warnings": comfy.flatness_warning(info.get("flatness")),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")
@@ -223,6 +239,7 @@ def comfy_leaf_atlas(
     seed: int = 0,
     size: int = 1024,
     route: str = "",
+    delight: bool = False,
 ) -> dict:
     """Generate a LEAF ATLAS: a grid of foliage sprites on transparent, for BobFoliage's cards.
 
@@ -247,18 +264,28 @@ def comfy_leaf_atlas(
     layout from it and its `Atlas Columns` / `Atlas Rows` knobs stay as an override. Point a tree at
     it with the `atlas` param on `build_geonodes`.
 
-    Returns {ok, set, dir, maps, cols, rows, cells, cell_distinctness, seconds, pack_dir} or {ok:
-    false, error}. `cells` is per cell: `opaque` 0 is a card that renders as nothing.
+    delight: divide the baked lighting out of the sprites. This is the texture family that needs it
+            MOST, because a card is lit from both sides: the renderer lights the back of a leaf with
+            the sun behind it and a key baked into the sprite fights it, with no camera angle that
+            hides the argument. Read `flatness.in_mask_stops` -- how many stops the albedo spans
+            inside the cutout, where a real leaf varies by a fraction of one. The gate's three
+            atlases measured 1.21, 1.82 and 1.84.
+
+    Returns {ok, set, dir, maps, cols, rows, cells, cell_distinctness, flatness, warnings, seconds,
+    pack_dir} or {ok: false, error}. `cells` is per cell: `opaque` 0 is a card that renders as
+    nothing.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
         set_name, info = comfy.leaf_atlas(prompt, pack, cols=int(cols), rows=int(rows),
                                           name=(name or None), seed=int(seed), size=int(size),
-                                          route=(route or None))
+                                          route=(route or None), delight=bool(delight))
         return {"set": set_name, "dir": info.get("dir"), "maps": sorted(info.get("maps") or {}),
                 "cols": info.get("cols"), "rows": info.get("rows"), "cells": info.get("cells"),
                 "cell_distinctness": info.get("cell_distinctness"),
                 "clear_fraction": info.get("clear_fraction"),
+                "flatness": info.get("flatness"),
+                "warnings": comfy.flatness_warning(info.get("flatness"), leafy=True),
                 "seconds": info.get("seconds"), "pack_dir": pack}
 
     return _generation(run, route="texture")
@@ -278,6 +305,7 @@ def comfy_mesh(
     control_mode: str | None = None,
     subject: str | None = None,
     negative: str | None = None,
+    subject_only: bool = False,
 ) -> dict:
     """Generate a scatter asset from a prompt: reference image, then geometry plus PBR texture.
 
@@ -331,15 +359,31 @@ def comfy_mesh(
           "bbox" needs its own signal, which is `control_bbox`.
     subject: a local image with ALPHA to use instead of generating a reference. Skips the reference
           stage entirely, so `negative` does nothing alongside it.
+    subject_only: stop after the reference image and return its path, so it can be LOOKED AT before
+          any geometry is paid for. Use it on anything whose framing matters, which is anything
+          hero. The economics are the whole argument: the reference stage costs about 8 s and the
+          geometry stage 40 to 200, and on the forest-barn barn three seeds were needed -- one came
+          back a cropped close-up of a wall, one a barn on a display plinth with a toy car beside it
+          -- whose geometry cost 81, 435 and 113 s. Two of those were spent on pictures an artist
+          would have rejected on sight. Accept one by passing its path straight back as `subject`,
+          which runs the geometry against exactly the picture that was approved; reject one by
+          calling again with a different seed.
     route: "oneshot" (default, `mesh_subject` then `mesh_geom_texture`), "staged" (`mesh_subject`, `mesh_geom_trellis`, `mesh_simplify_uv`, `mesh_texture`; the only route that
           leaves a dense mesh on disk) or "alt" (`mesh_subject`, `mesh_geom_alt`, `mesh_process`,
           `mesh_texture`; Hunyuan 2.1 geometry, which needs no custom node pack). Leave it unset and
           the kind decides, which is the geometry A/B verdict.
 
-    Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}.
+    Returns {ok, staged, import_op, seconds, pack_dir} or {ok: false, error}. With `subject_only`
+    there is no `import_op`, because there is no mesh yet: it returns {ok, staged, subject, next}.
     """
     def run(comfy):
         pack = str(paths.generated_pack())
+        if subject_only:
+            staged = comfy.stage_subject_only(prompt, pack, seed=int(seed), negative=negative)
+            return {"staged": staged, "subject": staged["subject"],
+                    "seconds": staged.get("seconds"), "pack_dir": pack,
+                    "next": "look at `subject`, then call comfy_mesh again with "
+                            "subject=<that path> to build the geometry, or a different seed"}
         chain = comfy.asset_chain(route=route, kind=kind, control=control,
                                   control_bbox=control_bbox)
         staged = chain(prompt, pack, seed=int(seed), tier="hero" if hero else "default",
@@ -356,6 +400,10 @@ def comfy_mesh(
     routes = _comfy().ASSET_ROUTES
     if route is not None and route not in routes:
         return {"ok": False, "error": f"unknown route {route!r} (have: {', '.join(routes)})"}
+    if subject_only and (subject or control or control_bbox):
+        return {"ok": False, "error": "subject_only GENERATES a reference to look at, so it cannot "
+                                      "take a subject you already have or a control that only the "
+                                      "geometry stage reads. Drop one of the two."}
     if control_bbox is not None and (len(control_bbox) != 3
                                      or any(float(d) <= 0 for d in control_bbox)):
         return {"ok": False, "error": "control_bbox is three positive numbers "
@@ -377,6 +425,14 @@ def comfy_mesh(
                                       f"(have: {', '.join(modes)})"}
     # The hero tier is 1536_cascade, which needs materially more of the card than the default 1024,
     # so it gets its own floor rather than sharing one that would let it through and then OOM.
+    #
+    # `subject_only` takes the TEXTURE floor, and that is the point rather than an oversight: it
+    # runs SDXL and no geometry model, so holding it to the mesh floor would forbid the one call
+    # that exists to be cheap on exactly the card state where being cheap matters. The forest-barn
+    # gate ended at 3768 MiB free -- under the 5000 mesh floor, over the 3000 texture one -- so a
+    # reference can still be looked at there and only the geometry needs the restart.
+    if subject_only:
+        return _generation(run, route="texture")
     return _generation(run, route="mesh_hero" if hero else "mesh")
 
 

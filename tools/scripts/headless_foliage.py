@@ -808,17 +808,29 @@ def check_bark_uv():
     3.927 of a tile in U against a 0.035 median -- a factor of 112.
 
     Measured on the RAW profile parameter, recovered from the written UV by dividing out the metres
-    term (U is `u * 2*pi*radius / Bark Scale`, all of which the gate can read back). Measuring the
-    UV directly instead does not work, and finding that out mattered: the U of a TAPERING limb spans
-    a genuinely large range on any face near the wrap, because the circumference it is scaled by
-    differs between the quad's two rings. That is shear, it is inherent to a metres-based
-    cylindrical UV, and it is not the seam -- a check that cannot tell them apart reported a 5x miss
-    on a fixed graph. In the raw parameter every face is entitled to exactly 1/n and the seam is
-    unmistakable.
+    term (U is `u * 2*pi*bbt_fol_uvrad / Bark Scale`, all of which the gate can read back).
+    Measuring the UV directly instead does not work, and finding that out mattered: the U of a
+    TAPERING limb spans a genuinely large range on any face near the wrap, because the circumference
+    it is scaled by differs between the quad's two rings. That is the SHEAR, it is inherent to a
+    metres-based cylindrical UV, and it is not the seam -- a check that cannot tell them apart
+    reported a 5x miss on a fixed graph. In the raw parameter every face is entitled to exactly 1/n
+    and the seam is unmistakable.
+
+    The shear then gets a check of its own, below, because leaving it merely acknowledged is how it
+    reached a hero render: the forest-barn gate reported "bark wrapping wrong at the foot of the
+    conifer trunk" and the cause was 1.713 tiles of sideways slide in the single quad band the root
+    flare lands in. The two checks are the same defect measured at two scales and neither
+    substitutes for the other.
+
+    Note `bbt_fol_uvrad`, not `bbt_fol_rad`: the UV is built from the taper radius BEFORE the flare
+    and collar swell, which is what fixed the shear (`foliage._taper`). Dividing by the real radius
+    here would read the correction as a miss.
     """
     ev, mesh, params = build("BarkUV", cards=0, bark_scale=1.0)
     profile = params["profile_segments"]
-    rad = attr(mesh, "bbt_fol_rad")
+    rad = attr(mesh, "bbt_fol_uvrad")
+    check("the recipe writes the bark UV's own radius attribute", bool(rad),
+          f"bbt_fol_uvrad on {len(rad)} points")
     uv = mesh.uv_layers[0].data
     share = 1.0 / profile
     worst, over, measured = 0.0, 0, 0
@@ -843,6 +855,74 @@ def check_bark_uv():
     # ... and the share is real rather than zero, or the check above passes on a dead UV.
     check("and the U does go round the tube", worst > 0.5 * share,
           f"worst span {worst:.4f}, share {share:.4f}")
+    ev.to_mesh_clear()
+    check_bark_shear()
+
+
+# How far the bark texture may slide SIDEWAYS across one quad band, in tiles. V runs along a limb
+# and U around it, so a band whose two rings have different circumferences maps the same azimuth to
+# different U and the texture shears. Some of that is unavoidable in a metres-based cylindrical UV;
+# the question is only how much.
+#
+# Measured on the shipped conifer at the size the forest-barn gate used, over 8,235 bark quads,
+# before and after the UV took its radius from the pre-swell taper:
+#
+#             median    p95     worst   where the worst is
+#   before    0.0000    0.068   1.713   z = 0.00, the root flare, radius 0.798 -> 0.416 in one band
+#   after     0.0000    0.041   0.184   z = 15.27, an ordinary twig taper
+#
+# Broadleaf went 1.825 to 0.159 on the same change. 0.5 of a tile is the bar: comfortably above what
+# a correct build produces on either species and far below the defect, and half a tile is also about
+# where a sideways slide stops reading as bark and starts reading as a smear.
+BARK_SHEAR_MAX = 0.5
+
+
+def check_bark_shear():
+    """The bark must not slide sideways across a quad band. The trunk foot is where it did.
+
+    Measured per quad off the written UV rather than off the raw profile parameter, because shear is
+    exactly what the raw parameter divides out: the two rings of a band are entitled to the same
+    share of the profile and get different U precisely because their circumferences differ. So this
+    reads the UV, and it reads it on the SHIPPED species rather than on the gate's own params -- the
+    defect was a property of the conifer preset's flare against its segment count, and a check run
+    on something else would have missed it.
+
+    The wrap face is excluded, or every ring's seam quad reads as maximal shear: that is
+    `check_bark_uv`'s subject and this one cannot see the difference.
+    """
+    for species in ("conifer", "broadleaf"):
+        spec = assets.foliage_species(species)
+        params = dict(spec["params"], seed=11, cards=0)
+        apply_op({"op": "build_geonodes", "recipe": "foliage", "name": f"shear_{species}",
+                  "params": params, "reset": True})
+        ev = bpy.data.objects[f"shear_{species}"].evaluated_get(
+            bpy.context.evaluated_depsgraph_get())
+        mesh = ev.to_mesh()
+        scale = float(params.get("bark_scale", 0.6))
+        uv = mesh.uv_layers[0].data
+        rad = attr(mesh, "bbt_fol_uvrad")
+        share = 1.6 / params["profile_segments"]
+        slides = []
+        for f in mesh.polygons:
+            if len(f.loop_indices) != 4:
+                continue
+            cs = [(uv[c].uv[0], uv[c].uv[1], rad[mesh.loops[c].vertex_index])
+                  for c in f.loop_indices]
+            cs.sort(key=lambda t: t[1])
+            bot, top = cs[:2], cs[2:]
+            span_bot, span_top = abs(bot[0][0] - bot[1][0]), abs(top[0][0] - top[1][0])
+            turn = 2.0 * math.pi * max(bot[0][2], bot[1][2]) / scale
+            if span_bot > share * turn or span_top > share * turn:
+                continue  # the wrap face: check_bark_uv's subject, not this one's
+            slides.append(abs(span_top - span_bot))
+        ev.to_mesh_clear()
+        worst = max(slides) if slides else 0.0
+        p95 = float(np.percentile(slides, 95)) if slides else 0.0
+        check(f"'{species}' bark does not slide sideways across a band",
+              slides and worst <= BARK_SHEAR_MAX,
+              f"worst {worst:.4f} tiles over {len(slides)} quads against a "
+              f"{BARK_SHEAR_MAX} bar, p95 {p95:.4f}, median "
+              f"{float(np.median(slides)) if slides else 0.0:.4f}")
 
     # The bark material has to sample the UV it was given. the cards assigned the bark set with box
     # projection, so the metres-based UV reached nothing and the grain followed the world axes.

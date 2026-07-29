@@ -92,6 +92,28 @@ AO_STRENGTH = 0.6
 # knob rather than a unit conversion.
 NORMAL_STRENGTH = 6.0
 
+# Delighting, and the flatness measure that decides whether a set wants it (`delight`,
+# `flatness_report`).
+#
+# An eighth of the image for the blur, which is deliberately coarser than
+# `HEIGHT_LOWPASS_FRACTION`'s thirty-second. Those two answer different questions: the relief split
+# is "what is detail", and this one is "what is the LIGHT", which lives at a much larger scale than
+# any surface feature. At a thirty-second the correction starts flattening real surface variation;
+# at an eighth a sky gradient and a shadow across the frame go and the mossy patches stay.
+DELIGHT_FRACTION = 1.0 / 8.0
+
+# How much of the division to apply, when a caller asks for delighting at all. Not 1.0, because a
+# full divide also removes genuine large-scale albedo variation: a patch of moss really is a
+# different colour from the earth beside it, and a texture that has been flattened to one tone reads
+# as vinyl. 0.75 removes most of a 1.2-stop ramp and leaves the surface reading as a surface.
+DELIGHT_STRENGTH = 0.75
+
+# The floor the blurred luminance is divided by. A texel in deep shadow would otherwise be
+# multiplied up by a huge factor and come back as amplified sensor noise, which is the one way this
+# correction looks worse than the defect it fixes. 0.08 of full range is about two and a half stops
+# below mid grey, which is below every low-frequency value the shipped sets actually contain.
+DELIGHT_FLOOR = 0.08
+
 
 # -- PNG -------------------------------------------------------------------------------------
 def read_png(data):
@@ -376,17 +398,145 @@ def roughness_from(rgb, band=ROUGHNESS_RANGE, fraction=ROUGHNESS_LOCAL_FRACTION,
     return _to_u8(lo + unit * (hi - lo))
 
 
-def derive(albedo_png):
+def flatness_report(rgb, fraction=DELIGHT_FRACTION):
+    """How much of an albedo is a LIGHTING ramp rather than the surface, as a number and its parts.
+
+    `low_freq_variation` is the standard deviation of the low-frequency luminance over its mean: a
+    genuinely flat-lit tile has almost none, and a photograph with a sky gradient or a shadow across
+    it has a lot. Scale-free by construction, so a dark set and a pale set are on the same axis --
+    which is the whole reason it is a ratio and not a spread in 8-bit steps.
+
+    The measure the texture family had no equivalent of, and the largest thing the forest-barn gate
+    found. Every other property of a generated set is measured -- `seam_report` for the wrap,
+    `grain_report` for bark direction, atlas cell opacity for a card -- and the one that decides
+    whether the surface can be RELIT was not, so a lit albedo reached a hero render before anyone
+    said so. Measured across the ten sets that gate shipped, and the spread is wide enough to gate
+    on:
+
+        bark_conifer                              0.0247   flat, and the prompt clause worked
+        very_dark_green_damp_forest_moss           0.0355
+        very_dark_wet_bare_earth_footpath          0.0492
+        leaf_conifer                              0.0452
+        leaf_grass                                0.0509
+        bark_broadleaf                            0.0667
+        very_dark_wet_grey_granite_bedrock         0.0740
+        weathered_silvered_grey_barn_siding        0.0742
+        leaf_broadleaf                            0.0965   lit: a sprite's own key and shadow
+        very_dark_damp_forest_floor_rotting_brown  0.0989   lit: a raking light across the litter
+
+    `total_variation` is the same ratio over the whole image, and it is reported beside it so the
+    two cannot be confused: a mossy floor SHOULD have a lot of total variation, because that is
+    texture. Only the low-frequency part is lighting.
+
+    One floor to know before quoting it: the blur window has to hold enough pixels to average the
+    texture away. At 1024 the radius is 128 and the window is 257 square, so 66,000 samples and pure
+    noise reads as 0.001; at 32 square the window holds 49 and the same noise leaks 0.063 into the
+    answer. Every generated set is 1024 or larger, so this is a caveat for a thumbnail rather than a
+    limit in practice, and the unit test pins it rather than asserting it away.
+    """
+    rgb = np.asarray(rgb)
+    if rgb.ndim == 2:
+        rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+    lum = luminance(np.ascontiguousarray(rgb[:, :, :3], dtype=np.uint8))
+    low = _box_blur(lum, _radius(lum.shape, fraction))
+    mean = max(float(low.mean()), 1e-6)
+    return {"low_freq_variation": round(float(low.std()) / mean, 4),
+            "total_variation": round(float(lum.std()) / max(float(lum.mean()), 1e-6), 4),
+            "low_freq_mean": round(mean, 4),
+            "fraction": fraction}
+
+
+def mask_stops(rgb, opacity, floor=200, percentiles=(5.0, 95.0)):
+    """How many STOPS the albedo luminance spans inside an opacity mask, p5 to p95.
+
+    The flatness measure asked the way a leaf card asks it. `flatness_report` reads the whole sheet,
+    and on an atlas most of the sheet is cleared background the card never shows; what matters is
+    the variation inside the sprite, because that is one material lit from both sides at once.
+
+    Stops rather than a ratio of standard deviations, because that is the unit the answer is obvious
+    in: a real leaf varies by a fraction of a stop in colour, so anything over about one stop is the
+    sprite's own key and shadow. Measured on the three atlases the forest-barn gate shipped -- 1.21
+    (broadleaf), 1.82 (conifer), 1.84 (grass).
+
+    Returns None when the mask is empty or the darker percentile lands at zero, which is the honest
+    answer rather than an infinity.
+    """
+    rgb = np.asarray(rgb)
+    if rgb.ndim == 2:
+        rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+    lum = luminance(np.ascontiguousarray(rgb[:, :, :3], dtype=np.uint8)) * 255.0
+    mask = np.asarray(opacity)
+    if mask.ndim == 3:
+        mask = mask[:, :, -1]
+    inside = lum[mask >= floor]
+    if inside.size < 64:
+        return None
+    lo, hi = (float(v) for v in np.percentile(inside, percentiles))
+    if lo <= 0.5:
+        return None
+    return round(float(np.log2(hi / lo)), 3)
+
+
+def delight(rgb, fraction=DELIGHT_FRACTION, strength=DELIGHT_STRENGTH):
+    """Divide a heavily blurred luminance out of an albedo, renormalised to preserve the mean.
+
+    The cheap standard delighting: the low frequency of a photographed surface is overwhelmingly the
+    LIGHT on it -- a sky gradient, a shadow falling across it, the sprite's own key -- and dividing
+    it out leaves the reflectance. The mean is put back afterwards, so the surface keeps the
+    brightness it was authored at and the texture-set brightness rule (which the block-out tints
+    were matched against) still holds. Per channel through one shared luminance gain rather than per
+    channel independently, or the correction shifts the hue wherever the light was coloured.
+
+    `strength` interpolates from no correction to full division, because a full divide also removes
+    genuine large-scale albedo variation -- a patch of moss really is a different colour from the
+    earth beside it. `fraction` is the blur radius as a fraction of the image, and it is coarse on
+    purpose: anything finer starts eating the surface instead of the light.
+
+    Not the default, and that is a decision rather than caution. Delighting a set that is already
+    flat is nearly a no-op, but it is not free, and the master multiplies AO into the albedo
+    (`core/materials/texset.py`), so turning it on globally moves every render baseline that reads a
+    generated set. `flatness_report` is what says whether a given set wants it; the tools take it as
+    an argument and record what they did.
+    """
+    rgb = np.asarray(rgb)
+    if rgb.ndim == 2:
+        rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+    rgb = np.ascontiguousarray(rgb[:, :, :3], dtype=np.uint8)
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0:
+        return rgb
+    lum = luminance(rgb)
+    low = _box_blur(lum, _radius(lum.shape, fraction))
+    target = max(float(low.mean()), 1.0 / 255.0)
+    # A gain rather than a difference, because light is multiplicative. Floored well away from zero:
+    # a texel in deep shadow would otherwise be multiplied up by a huge factor and come back as
+    # amplified noise, which is the one way this correction can look worse than the defect.
+    gain = target / np.maximum(low, DELIGHT_FLOOR)
+    gain = 1.0 + strength * (gain - 1.0)
+    out = np.asarray(rgb, dtype=np.float32) * gain[:, :, None]
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+def derive(albedo_png, delight_strength=0.0, delight_fraction=DELIGHT_FRACTION):
     """{role: array} for the maps Bob writes, from raw PNG bytes or a uint8 RGB array.
 
     One relief field feeds height, normal and AO; see the module docstring for why cavity is a
     signal here rather than a sixth file.
+
+    `delight_strength` above zero runs `delight` FIRST, so every derived map describes the delit
+    surface rather than the lit one. That ordering is the point: the derivations are all luminance
+    reads, so deriving them from a lit albedo bakes the same lighting into the height, the normal,
+    the roughness and the AO, and the AO then gets multiplied back into the albedo by the master.
+    Measured on the forest-floor set that gate shipped: AO against basecolor luminance 0.656, and
+    against the relief field it is derived from 0.806.
     """
     rgb = read_png(albedo_png) if isinstance(albedo_png, (bytes, bytearray)) else albedo_png
     rgb = np.asarray(rgb)
     if rgb.ndim == 2:
         rgb = np.repeat(rgb[:, :, None], 3, axis=2)
     rgb = np.ascontiguousarray(rgb[:, :, :3], dtype=np.uint8)
+    if delight_strength:
+        rgb = delight(rgb, fraction=delight_fraction, strength=delight_strength)
     height = relief(rgb)
     return {"basecolor": rgb,
             "roughness": roughness_from(rgb, cavity=cavity_from(height)),

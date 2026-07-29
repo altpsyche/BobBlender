@@ -577,9 +577,52 @@ anything else. Solved as follows, and gated.
   Measuring it needed care, and getting that wrong first is the useful part. The obvious check — each
   face's span in the written UV against its share of the local circumference — reported a 5× miss on a
   correctly fixed graph, because the U of a TAPERING limb genuinely spans a large range on any face
-  near the wrap: the circumference it is scaled by differs between the quad's two rings. That is shear,
-  it is inherent to a metres-based cylindrical UV, and it is not a seam. The gate divides the metres
-  term back out and measures the RAW profile parameter, where every face is entitled to exactly 1/n.
+  near the wrap: the circumference it is scaled by differs between the quad's two rings. That is
+  shear, it is inherent to a metres-based cylindrical UV, and it is not a seam. The gate divides the
+  metres term back out and measures the RAW profile parameter, where every face is entitled to
+  exactly 1/n.
+
+- **The shear, measured and then fixed.** Acknowledging it as inherent was right about the mechanism
+  and wrong about the size, and leaving it unmeasured is how it reached a hero render: the
+  forest-barn gate reported *bark wrapping wrong at the foot of the conifer trunk*.
+
+  Measured per quad, in tiles of sideways slide, on the shipped conifer at the size that scene used
+  — median **0.0000** and p95 **0.068** over 8,235 bark quads, and **1.713** in one band. All of it
+  in the same place on both species: the bottom band of the trunk, where the ROOT FLARE takes the
+  radius 0.798 → 0.416 in one step. `FLARE_SPAN` is 0.05 of the limb and a trunk resamples to 16
+  points, so the whole 1.9× swell lands inside a single quad and the bark slides most of two tiles
+  across it. Broadleaf measured **1.825**. Turning the flare off dropped the worst to 0.245, which
+  identified the cause.
+
+  So the flare **was** the cause, and the earlier reading that it could not be — because `_taper`
+  sets the radius before `_tag` stores `bbt_fol_rad`, so the UV already accounts for it — had the
+  mechanism exactly backwards. Accounting for it is what does the damage: keeping metres-per-tile
+  constant around a circumference that changes that fast is only possible by sliding the texture
+  sideways.
+
+  The fix is one more attribute and no interface change. `_taper` now stores `bbt_fol_uvrad`, the
+  taper radius **before** the swell, and `_sweep_uv` reads the circumference from that. Everything
+  else — the sweep itself, `_lobe`, the next level's base radius — keeps the real `bbt_fol_rad`, so
+  the flare stays in the silhouette and the collar still thickens where a limb meets its parent.
+  After: conifer worst **0.184**, broadleaf **0.159**, and flare-on and flare-off now measure
+  identically, which is the proof that the flare no longer touches the UV. The worst case moved off
+  the trunk foot entirely and onto an ordinary twig taper at 15.3 m.
+
+  The tradeoff, stated: bark over the flare is now stretched slightly rather than sheared, because
+  fewer tiles wrap a wider trunk there. That is what bark over a swelling root does, and a stretch
+  reads as a surface where a shear reads as a smear.
+
+  `check_bark_shear` in `tools/scripts/headless_foliage.py` is the gate, at 0.5 of a tile, and it
+  runs on the **shipped species presets** rather than on the gate's own params — the defect was a
+  property of the conifer preset's flare against its segment count, and a check run on anything else
+  would have missed it.
+
+- **`profile_segments` is a hero-distance decision and it is still 5 on the conifer.** A 5-sided
+  profile is 72° per facet, so a trunk is a visible pentagon at 2 m and reads as round at 40 m,
+  which is what that preset was tuned for. Raising it to 12 also quarters the per-facet share of the
+  residual shear (0.184 → 0.077), but it multiplies every vertex count in the recipe and the shear
+  is no longer the reason to do it. If a tree is a hero at close range, raise `profile_segments` on
+  that build; the shipped presets stay tuned for the scatter they were measured for.
 
 #### The same family again: bark UVs that never reached the shader
 
@@ -1169,6 +1212,8 @@ until you look at its edge. Only a number tells them apart, which is why each ro
 | a card whose atlas does not resolve | an opaque WHITE rectangle, because the material's tint is deliberately white and the cutout comes from the set | `_atlas_set` falls back to the shipped block-out atlas; bark deliberately does not fall back |
 | `Leaf Level` unclamped on a LOD rung | a bald rung: leaves requested at a depth the rung does not build | `Leaf Level` is clamped to the rung's own depth |
 | a flared, lobed base below the ground plane | a tree sunk 0.031 m into the terrain | the base-offset check, after flare and lobing |
+| the bark UV shearing across the flare | grain fanning out and smearing across the bottom metre of a trunk, at correct scale and correct direction everywhere else, so both existing bark measures pass | `check_bark_shear`, per-quad sideways slide: conifer 1.713 tiles before, 0.184 after, against a 0.5 bar, on the shipped presets |
+| a generated albedo with the light baked in | a surface that looks right in the reference and cannot be relit, plus a leaf card lit from the wrong side on whichever face is dark | `comfy_maps.flatness_report` (0.075 bar) and `mask_stops` (one stop inside the cutout); `comfy.flatness_warning` carries the verdict |
 
 Two of these are worth reading as method rather than as bugs.
 

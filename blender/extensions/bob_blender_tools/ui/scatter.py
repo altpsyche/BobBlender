@@ -365,6 +365,7 @@ class BBT_OT_scatter_generate_asset(Operator):
                 bake_size=2048 if hero else gen_assets.DEFAULT_BAKE_SIZE,
                 fill_pinholes=not foliage, exports=comfy.stage_exports(staged),
                 simplify_pass=simplify_pass, texture_pass=texture_pass,
+                geometry_is_final=comfy.geometry_is_final(staged),
                 provenance=dict(staged["meta"], prompt=prompt, seed=seed))
             gen_assets.import_generated(report["name"], kind=kind, pack_dir=pack)
             comfy.reject_variant(staged["dir"])  # the staged intermediates are spent

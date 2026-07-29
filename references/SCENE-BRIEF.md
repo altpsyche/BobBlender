@@ -132,14 +132,20 @@ The tools hand back numbers. Report those, not adjectives.
 
 - `comfy_bark_set` -- `grain.off_vertical_deg`. Under about 25 is usable. Over that, the bark grain
   is running across the trunk instead of along it: reroll.
+- every texture tool -- `flatness.low_freq_variation`. Under 0.075 is a flat albedo. Over it, the
+  generation has light baked in: `delight=True` or reroll (trap 24).
 - `comfy_leaf_atlas` -- the `cells` list. **A cell with `opaque: 0.0` is a card that renders as
-  nothing.** Also `cell_distinctness` (higher is more varied) and `clear_fraction`. Reroll or use a
+  nothing.** Also `cell_distinctness` (higher is more varied), `clear_fraction`, and
+  `flatness.in_mask_stops` (want under 1.0; a card is lit from both sides). Reroll or use a
   smaller grid rather than shipping dead cells.
 - `comfy_texture_set` -- `seam.ratio`. Near 1.0 means the wrap is as continuous as any interior
   line.
 - `comfy_mesh` then `import_generated` -- `lod_faces` against the budget, `uv_overlap` (want about
   1e-5, not 1.6), `height_m`, `origin_above_base`, `master_type` (should read `surface`), and any
-  `warnings`.
+  `warnings`. Then the two that describe the SURFACE rather than the budget, because a receipt with
+  neither of them is what let a sieve and a shredded texture through gate A once already:
+  `low_boundary_edges` (near zero on a solid; see trap 21) and `bake_fidelity.correlation` (0.99 or
+  better; see trap 22).
 - `comfy_status` before and after the expensive routes -- free VRAM, against the floors in trap 2.
 
 **Gate B**
@@ -399,6 +405,75 @@ An emissive doorway flush with the siding has no edge to shade, so it goes flat 
 set, and dimming it until it stops clipping leaves nothing to light the scene with. Give the opening
 a thickness -- a jamb standing proud, and a lit area a fraction of the opening rather than all of
 it. A slot a tenth the area can be ten times brighter and still hold its colour.
+
+### 21. A generated mesh's receipt now says whether it shipped closed. Read it.
+
+`import_generated` used to return a face count, a height and `warnings: []`, all true, and none of
+it described the surface. The forest-barn gate shipped five meshes carrying 48 to 229 boundary edges
+on that receipt, and the stump's holes were found in a hero render.
+
+The route is fixed -- the weld and the pinhole fill now run on the mesh that ships -- but the
+residue is real and it is the number to read: **`low_boundary_edges` on a solid kind should be near
+zero, and you get a warning above 1% of the face count**. After the repair the gate assets sit at 9,
+11, 17, 72 and 73. The 72 and the 73 warn, and they warn because a rock slab and a tree stump at
+2.5% and 1.9% are still see-through at a close camera. That is a REGENERATE signal, not a rounding
+error.
+
+Two figures beside it, for reading the same receipt:
+
+- `source_boundary_edges` is the generated mesh before any repair, and it is the honest openness of
+  what the model returned. Compare with `pinholes_closed` to see how much Bob could fix.
+- **Never quote a boundary-edge count off an unwelded mesh.** glTF splits a vertex at every UV seam,
+  so an unwelded import reads several times its real openness: the stump measures 3,646 unwelded
+  against a real 229. Both the pipeline figures are welded; a count you take yourself may not be.
+
+### 22. A colour bake can succeed and return something else. `bake_fidelity` is the check.
+
+Nothing else in the pipeline catches this, because a misaligned or resampled colour transfer still
+writes a plausible texture: the map has the right average, the right histogram and no error
+anywhere. The forest-barn barn shipped with its shingle courses shredded into a chevron hash, at
+correlation **0.817** to the texture it came from, and every other check passed.
+
+`import_generated` now returns `bake_fidelity: {correlation, mean_abs_diff, coverage}`, measured
+in-chart against the source, and warns below **0.99** correlation or above **3.0** of 255 mean
+absolute difference. A clean self-bake scores 0.998 to 0.9995. If it warns, the texture is not the
+one the generator made and no amount of prompt work will fix it.
+
+### 23. Look at the reference before paying for the geometry
+
+`comfy_mesh(subject_only=True)` stops after the reference image and hands back its path. Every
+geometry graph conditions on that picture and none of them reads your prompt, so the reference IS
+the asset, and a bad one is only visible as a bad mesh two hundred seconds later.
+
+The barn took three seeds: one came back a cropped close-up of a wall, one a whole barn standing on
+a display plinth with a toy car beside it, one was right. The subject stage cost about 8 s each and
+the geometry stage cost 81, 435 and 113 s. Two of those three geometry jobs were spent on pictures
+that would have been rejected on sight.
+
+Accept one by passing its path back as `subject=<path>`, which runs the geometry against exactly the
+picture that was approved. Reject one by calling again with a different seed. It takes the TEXTURE
+VRAM floor rather than the mesh floor, so it still works on a card too low to generate geometry on
+-- which is exactly the state a gate ends in (trap 2).
+
+Use it for anything hero, and for any prompt where framing matters more than surface.
+
+### 24. A generated albedo is a photograph, and a photograph has light in it
+
+The prompts already ask for flat even lighting and the model does not always comply. Nothing said so
+until it reached a hero render: the barn's reference came back an overcast outdoor photograph with a
+sky gradient and an eave shadow baked into the siding.
+
+Every texture tool now reports `flatness.low_freq_variation` and warns over **0.075**. Across ten
+sets the flat ones measured 0.025 to 0.074 and the two visibly lit ones 0.0965 and 0.0989. Pass
+`delight=True` to divide the lighting out; it preserves the mean, so trap 9's brightness advice
+still applies unchanged.
+
+**Leaf atlases are the case that matters most**, because a card is lit from both sides and there is
+no camera angle that hides a key baked into a sprite. Read `flatness.in_mask_stops` -- how many
+stops the albedo spans inside the cutout, where a real leaf varies by a fraction of one. The three
+atlases that gate shipped measured 1.21, 1.82 and 1.84. Delighting brought the broadleaf to 0.92 and
+barely moved the other two, which is the case where the answer is **reroll**: their variation is
+per-needle shading and four different sprites, not a low-frequency ramp.
 
 ---
 

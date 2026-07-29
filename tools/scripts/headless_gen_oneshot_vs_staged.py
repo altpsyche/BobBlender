@@ -393,6 +393,11 @@ def normal_stats(path):
     mesh does not already have. `detail` is the mean absolute neighbour difference, which is high
     frequency by construction, so half a million faces baked down should read well above a bake of a
     mesh onto itself.
+
+    That same-topology bake is no longer taken: `comfy.geometry_is_final` drops the role when the
+    two meshes are one file, so this now only ever reads a genuine transfer. The number it used to
+    produce was the defect it describes, and it shipped -- 52% of the barn's texels and 87% of the
+    stump's deviated past one 8-bit step from a map whose only correct value was flat.
     """
     img = bpy.data.images.load(path, check_existing=False)
     px = np.empty(len(img.pixels), dtype=np.float32)
@@ -413,7 +418,11 @@ def finish_route(entry, route, *, hero=False, force_opacity=False):
     - staged: raw is the dense `mesh_geom_trellis` mesh, `simplify_pass` is the `mesh_simplify_uv` result and `texture_pass` the
       `mesh_texture` result, so Blender has a dense high mesh to bake a detail normal and AO from.
     - oneshot: `mesh_geom_texture` returned budget topology already textured, so the same file is BOTH the raw and
-      the simplified mesh and there is no dense surface left to bake from.
+      the simplified mesh and there is no dense surface left to bake from. `comfy.geometry_is_final`
+      is what says so, and it is what makes this route repair the mesh it ships (weld, pinhole fill)
+      and skip a transfer that has nothing to transfer. Without it this benchmark measures a route
+      that no longer exists: the forest-barn gate found the one-shot arm shipping the generator's
+      holes and a cage projection of a mesh onto itself.
     """
     empty_scene()
     paths = entry["paths"]
@@ -433,6 +442,7 @@ def finish_route(entry, route, *, hero=False, force_opacity=False):
         height_m=entry["height_m"], hero=hero, fill_pinholes=not entry["foliage"],
         force_opacity=force_opacity,
         simplify_pass=simplify_pass, texture_pass=texture_pass,
+        geometry_is_final=comfy.geometry_is_final(staged),
         provenance={"prompt": entry["prompt"], "seed": entry["seed"], "route": route,
                     "workflows": flows})
 
@@ -647,6 +657,14 @@ def verdict(entries, cells, summary, finished, floors):
     for route, vals in normals.items():
         if vals:
             note(f"{route}: baked normal std", f"{[round(v, 4) for v in vals]}")
+        else:
+            # An absence with a reason, or a reader takes it for a measurement that failed. The
+            # one-shot route's two meshes are one file, so there is no detail to transfer and
+            # `comfy.geometry_is_final` drops the role: the number this column used to carry was the
+            # weld boundary between a welded high and an unwelded low, not geometry.
+            note(f"{route}: baked normal std",
+                 "no normal map written, which is the route being honest about having no dense "
+                 "mesh")
     if floors:
         note("the third route", "keeping mesh_geom_texture's dense mesh and letting Blender simplify lands at "
              + ", ".join(f"{k} {v['faces']}" for k, v in sorted(floors.items()))

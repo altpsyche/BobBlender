@@ -436,6 +436,53 @@ numpy: deterministic, tunable, no submodule. **Shipped by the variants gate**, a
 relief field so the maps describe one surface rather than four similar ones. Cavity is a signal
 rather than a sixth file: the roughness consumes it and no master reads a cavity map.
 
+**The prompt asks for flat light and the model does not always give it, which nothing measured until
+the forest-barn gate.** The clause above is the intent and it was never the problem: what was
+missing is that a lit albedo looked exactly like a flat one in every number the pipeline returned.
+The barn's reference came back an overcast outdoor photograph with a sky gradient and an eave shadow
+in it, and the finding surfaced at the hero render.
+
+Two additions, both in `comfy_maps` and both numpy:
+
+- **`flatness_report`** is the measurement, reported like seam ratio and grain angle and carried in
+  every set's `meta.json`. `low_freq_variation` is the standard deviation of the low-frequency
+  luminance over its mean, so it is scale-free and a dark set and a pale one are on one axis. Across
+  the ten sets that gate shipped it runs **0.0247** (`bark_conifer`, flat) to **0.0989** (the forest
+  floor, lit), and `comfy.FLATNESS_MAX` is 0.075 -- above everything that reads as flat, below the
+  two the artist could see were not. `total_variation` sits beside it so the two are never confused:
+  a mossy floor should have plenty of that, because that is texture.
+- **`delight`** is the correction, and it is **off by default**. It divides a heavily blurred
+  luminance out and renormalises to preserve the mean, so a delit set still sits where the block-out
+  tints were matched. `delight=True` on `comfy_texture_set`, `comfy_bark_set` and
+  `comfy_leaf_atlas`. Measured on the lit sets: the forest floor 0.0989 to 0.0662, the barn siding
+  0.0742 to 0.0426, the granite 0.0740 to 0.0460, `leaf_broadleaf` 0.0965 to 0.0355, with the mean
+  luminance intact to 0.1 of a step and `total_variation` within 3%.
+
+It runs BEFORE the derivations, and that ordering is the whole point: every other role is a
+luminance read, so deriving from a lit albedo bakes the same lighting into the height, the normal,
+the roughness and the AO.
+
+**The atlases are the case that matters most**, because a card is lit from both sides: the renderer
+lights the back of a leaf with the sun behind it and a key baked into the sprite fights it, with no
+camera angle that hides the argument. `comfy_maps.mask_stops` asks the question in the unit the
+answer is obvious in -- how many stops the albedo spans **inside the opacity mask**, where a real
+leaf varies by a fraction of one. The gate's three measured **1.21** (broadleaf), **1.82** (conifer)
+and **1.84** (grass). Delighting takes the broadleaf to 0.92 and barely moves the other two, and
+that is the honest limit rather than a failure: their variation is per-needle shading and four
+genuinely different sprites, not a low-frequency ramp, so `comfy.flatness_warning` says reroll
+instead of correct.
+
+**What did NOT change, and it was the first suspicion.** `core/materials/texset.py` multiplies
+Albedo by AO, and a lit albedo plus an AO derived from that same luminance looks like counting the
+shading twice. It is not, and the reason is a cutoff: `relief`, which the AO comes from, is a
+high-pass at a thirty-second of the image, so it never held the low-frequency lighting, and
+`delight` corrects at an eighth. Measured either side of delighting on the forest-floor set, AO
+against basecolor luminance went 0.656 to **0.6665** -- it rose, because removing the ramp makes the
+surviving detail a larger share of the albedo's variance, and it rose or held on all ten sets. What
+the AO agrees with is cavity and sub-thirty-second shading, which is what an AO map is for. So
+`AO_STRENGTH` stays at 0.6 and no render baseline moves except for a set that is regenerated with
+`delight=True`.
+
 ### Mesh generation
 
 Derived from shipped templates per the derivation rule, with the upstream template name recorded in each file.
@@ -448,10 +495,25 @@ pad node: `BOB_SIZE` generates square, so the subject is already centred in a sq
 background", because the geometry model's failure mode on a cropped or busy image is silent and
 costs a whole generation.
 
-The `InvertMask` is load-bearing and inverted from the obvious wiring:
-`Trellis2RemoveBackground` returns a FOREGROUND mask and `JoinImageWithAlpha` computes
-`alpha = 1 - mask`, following ComfyUI's `LoadImage` convention. Wired directly, `mesh_subject` saves the
-background and cuts the subject out.
+The `InvertMask` is load-bearing and inverted from the obvious wiring: `Trellis2RemoveBackground`
+returns a FOREGROUND mask and `JoinImageWithAlpha` computes `alpha = 1 - mask`, following ComfyUI's
+`LoadImage` convention. Wired directly, `mesh_subject` saves the background and cuts the subject
+out.
+
+**This stage can be run ALONE, and on anything hero it should be.** Every geometry graph conditions
+on the picture and none of them reads the text, so the reference is where an asset is won or lost --
+and until `comfy.stage_subject_only` (`comfy_mesh(subject_only=True)`) there was no way to see one
+without paying for the geometry behind it. The forest-barn barn is the argument with numbers on it:
+seed 11 returned a cropped close-up of a wall, seed 23 a whole barn standing on a display plinth
+with a toy car beside it, seed 41 was the one. The subject stage cost about 8 s each and the
+geometry stage cost 81, 435 and 113 s, so two of the three geometry jobs were spent on pictures an
+artist would have rejected on sight. Accepting one is passing its path back as `subject=`, which
+runs the geometry against exactly the picture that was approved.
+
+It takes the **texture** VRAM floor rather than the mesh floor, and that is deliberate: it loads
+SDXL and no geometry model, so holding it to the mesh floor would forbid the one call whose whole
+purpose is to be cheap. The forest-barn gate ended at 3768 MiB free -- under the 5000 mesh floor,
+over the 3000 texture one -- which is exactly the state where looking before paying is worth most.
 
 **`mesh_geom_trellis.json`, the primary geometry graph.** From
 `geometry_only_1024`. `LoadImage(BOB_IMAGE)` -> `InvertMask` -> `Trellis2GetConditioning`, with
@@ -638,6 +700,44 @@ returns finished topology with charts, and `Trellis2RasterizePBR` bakes the PBR 
 while projecting through `original_mesh`, the pre-simplify shape, so the texture still describes the
 dense surface. No intermediate simplify pass is skipped, because there is none to skip.
 `BOB_PROCESS.remesh` is the same open-surface knob as `mesh_geom_trellis`'s and is bound the same way.
+
+**What this route hands Blender is the mesh that SHIPS, and that took a session to be said out
+loud.** `Trellis2ProcessMesh` simplifies and unwraps but it does not close the holes its
+dual-contouring remesh leaves, and because its one file arrives as `finish_passes`' simplified mesh,
+`prepare_low` skipped every Blender repair on it. Not "discarded" -- never run, on this route or the
+staged one, so `close_pinholes` was dead code in production. Measured on the five forest-barn
+assets, after welding so glTF's per-seam vertex split does not read as false holes: 48 to 229
+boundary edges shipped, and the stump's were visible through the shell in a render.
+`comfy.geometry_is_final(staged)` is what says "these two files are one file", and it turns the weld
+and the pinhole fill back on for the mesh that ships without turning the decimate or the unwrap back
+on -- the topology and the charts are still the generator's, which is the whole point of the route.
+It fixes 156 of the stump's 229 and 87 of the barn's 98.
+
+Two things had to be got right to enable it, both measured rather than assumed. The weld does NOT
+cost the generator's chart layout, because UVs live on the corner domain: `uv_overlap` reads
+0.000075 either side of it on the stump and 0.000008 on the barn. And Fill Holes gives each cap
+corner the UV of the rim vertex it grew from, which sounds right and is not -- a remesh pinhole
+straddles chart boundaries, so one cap's corners land in charts scattered over the sheet and the
+face samples a triangle spanning them. Twenty-seven caps on the stump, the largest covering 0.27 of
+the atlas, taking `uv_overlap` from 0.000075 to 4.18. `close_pinholes` now flattens each cap onto
+the UV of whichever rim corner is nearest its own centre, which is a flat patch of the colour beside
+the hole.
+
+**And there is nothing for the colour bake to transfer on this route.** One file for both meshes
+means `bake_high_to_low`'s selected-to-active pass was a cage projection of a mesh onto a copy of
+itself, with a cage 2% of the object and rays reaching 8%. It ran, it succeeded, and it resampled a
+clean texture into a jittered one: measured over the barn's roof charts, correlation **0.817**
+against the source and a mean absolute difference of **10.4** of 255, which the artist reported as a
+chevron hash over the shingles. `coincident` (the same `geometry_is_final`) self-bakes the colour
+roles instead -- 0.991 and 3.5 on the same charts -- and drops the normal role entirely, because a
+transfer between identical meshes has nothing to say. The map it used to write was not even flat:
+52% of the barn's texels and 87% of the stump's deviated past one 8-bit step, off the difference
+between a welded high mesh's normals and an unwelded low mesh's. AO stays, self-baked, because a
+mesh occluding itself is a real measurement of that mesh.
+
+Both of those were possible because the route's shape was INFERRED downstream (`has_textures`)
+rather than declared upstream. That is the general lesson and it is why `geometry_is_final` is a
+function of the staged dict and not a test on the objects.
 
 Two seeds, so two titles: `BOB_SEED` is the shape sampler and `BOB_TEXSEED` the texture sampler.
 Unlike `mesh_texture` it cannot texture a mesh Bob already has, only geometry it generated itself, which is why
@@ -927,6 +1027,17 @@ per-asset-class verdict. `finish_passes(staged)` maps whatever any of them stage
 `finish_asset`'s `simplify_pass` and `texture_pass`. `bind_process()` is the shared `Trellis2ProcessMesh` binding, which cannot go
 through `template()` because a dynamic combo's sub-widgets belong to the selected key and templating
 only merges.
+
+The forest-barn gate added `geometry_is_final(staged)` beside it, and it is the one thing
+`finish_passes` cannot say: both routes hand over a simplified mesh, so its tuple cannot tell "the
+server retopologised a mesh Bob sent" from "the server generated the only mesh there is". Two
+decisions need to know -- whether Bob's repair runs on the shipped surface, and whether the colour
+bake has anything to transfer -- and both were being inferred from `has_textures` further
+downstream, where they were wrong. It also added the two receipt warnings that make a computed
+number a check: `open_surface_warning(kind, report)` for a solid kind shipping with holes in it, and
+`bake_fidelity_warning(fidelity)` for a colour pass that ran, succeeded and returned something else.
+Both live here for `leaf_opacity_warning`'s reason: they are pure functions of the report, so the
+venv tests them with no server and no bpy.
 
 The macro-mask gate added a third member on the same terms: `macro_tiling(route)` over `MACRO_ROUTES`, which is where
 "does a terrain macro mask want to tile" becomes one decision instead of a flag threaded through a

@@ -34,6 +34,24 @@ the path is what `comfy_mesh(control=...)` takes. `import_generated` returns the
 `lod_faces`, `uv_overlap`, `height_m`, `origin_above_base`, `master_type`, `maps`, `file` and
 `warnings`, which is how to CHECK a generated asset instead of trusting it. Everywhere else it is `{}`.
 
+`data` is a free-form dict in the contract (`mcp_agent/contracts.py`, `OpResult.data`), so a handler
+may add keys without a schema change and without an `/mcp reconnect`; only a Reload Builders is
+needed. The forest-barn gate spent that freedom, because the receipt it got was true and useless:
+`warnings: []` on five meshes with holes in them. `import_generated` now also returns the openness
+and the provenance of the mesh that actually shipped —
+
+| Key | What it answers |
+| --- | --- |
+| `source_faces`, `source_boundary_edges` | the generated mesh before anything Bob did, welded so glTF's per-seam vertex split is not counted as holes |
+| `low_boundary_edges`, `pinholes_closed`, `low_welded_verts` | the openness of the mesh that SHIPPED, and what the repair fixed on it |
+| `simplify_source`, `uv_source` | whose topology and whose charts these are: `trellis2` / `trellis2_uvunwrap` means the generator's, which is the default route working as designed |
+| `welded_verts`, `textured_faces`, `bake_rescale` | the frame and scale the bake read across |
+| `bake_fidelity` | `{correlation, mean_abs_diff, coverage}` of the baked basecolor against the texture it came from, in-chart |
+
+Every one of those was computed and then dropped before the bridge. Two of them are now also
+`warnings` rather than only figures: a solid kind shipping open, and a colour bake that returned
+something other than its source.
+
 <!-- BEGIN GENERATED: op-vocabulary (tools/scripts/gen_api_docs.py) -->
 
 | Op | Handler | Fields (type, default) |

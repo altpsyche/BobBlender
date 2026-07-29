@@ -401,6 +401,21 @@ def _taper(ng, curve, base_radius, taper, location, power=None, swell=None, span
     collar cannot poke through its parent by construction: the base radius is already the parent's
     own radius times a per-level ratio well under 1, so a swell of 1 on a 0.46 ratio is still under
     the parent.
+
+    It stores TWO radii, and the second one is why the bark stopped shearing at the trunk foot.
+    `bbt_fol_uvrad` is the radius WITHOUT the swell; `_tag` then stores the real one as
+    `bbt_fol_rad`. The sweep, the lobing and the next level's base radius all want the real radius,
+    because that is the shape; only the bark UV wants the smooth one, because `_sweep_uv` builds U
+    as `unwrap_u * 2*pi*rad / Bark Scale` and keeping metres-per-tile constant around a
+    circumference that changes fast forces the texture to slide sideways instead.
+
+    Measured, per quad, in tiles, on the shipped conifer at the size the forest-barn gate used: the
+    median slide over 8,235 bark quads was 0.0000 and the p95 0.068, and the single bottom band was
+    **1.713** -- the flare takes the radius 0.798 to 0.416 across one segment, because FLARE_SPAN is
+    0.05 and `segments` is 16, so the whole flare fits inside one band. The broadleaf measured
+    1.825. With the flare turned off entirely the worst dropped to 0.245, which is what identified
+    the cause; reading the UV off the pre-swell radius gets the same result with the flare still in
+    the silhouette.
     """
     lx, ly = location
     factor, _ = _spline_parameter(ng, (lx, ly + 200))
@@ -409,6 +424,10 @@ def _taper(ng, curve, base_radius, taper, location, power=None, swell=None, span
                        math_node(ng, "MULTIPLY", taper, curved, (lx + 180, ly + 200)),
                        (lx + 360, ly + 200))
     radius = math_node(ng, "MULTIPLY", base_radius, shrink, (lx + 540, ly + 100))
+    # The bark UV's radius, taken here because here is the last moment it exists: after the swell
+    # there is no way to recover the smooth taper, and `_tag` reads the curve rather than a socket.
+    # Floored the same way the real radius is, so a degenerate tip cannot divide the UV by zero.
+    uv_radius = math_node(ng, "MAXIMUM", radius, MIN_RADIUS, (lx + 720, ly + 400))
     if swell is not None:
         ramp = math_node(ng, "POWER",
                          math_node(ng, "MAXIMUM",
@@ -424,6 +443,10 @@ def _taper(ng, curve, base_radius, taper, location, power=None, swell=None, span
                                      (lx + 1080, ly - 240)),
                            (lx + 1260, ly + 100))
     radius = math_node(ng, "MAXIMUM", radius, MIN_RADIUS, (lx + 1440, ly + 100))
+    # Stored on the POINT domain for `bbt_fol_rad`'s reason: it has to survive the trim, the
+    # resample and the instancing that stand between here and `_sweep_uv`, and a constant per point
+    # interpolates to itself.
+    curve = _store(ng, curve, "bbt_fol_uvrad", uv_radius, "FLOAT", "POINT", (lx + 1440, ly - 480))
     node = ng.nodes.new("GeometryNodeSetCurveRadius")
     node.location = (lx + 1620, ly)
     ng.links.new(curve, node.inputs["Curve"])
@@ -1072,9 +1095,31 @@ def _sweep_uv(ng, mesh, gi, location):
     nothing was textured, which is why it was raised as an open question rather than found later.
 
     The fix is `_unwrap_u`, and it costs no vertices and no interface change.
+
+    The SHEAR, which is a different failure at the same seam and was found by the forest-barn gate
+    rather than here. U is proportional to azimuth times circumference, so a band whose two rings
+    have different radii maps the same azimuth to different U, and the texture slides sideways
+    across it. That is inherent to a metres-based cylindrical UV and it is small everywhere the
+    radius changes slowly -- median 0.0000 of a tile and p95 0.068 over the shipped conifer's 8,235
+    bark quads. It is not small at the ROOT FLARE: `FLARE_SPAN` is 0.05 of the limb and a trunk is
+    resampled to 16 points, so the whole 1.9x swell lands on ONE band and slides the bark **1.713
+    tiles** sideways across it. The broadleaf measured 1.825. That is the reported defect, "bark
+    wrapping wrong at the foot of the conifer trunk".
+
+    So the circumference is read from `bbt_fol_uvrad`, the taper radius BEFORE the swell (`_taper`),
+    while everything else -- the sweep, the lobing, the next level's base radius -- keeps the real
+    one. The flare stays in the silhouette and the grain stays one grain over the whole tree; only
+    the bark's metres-per-tile stops chasing a radius that changes faster than a band can carry.
+    Measured after: worst slide 0.068 tiles, which is the p95 of the rest of the tree, i.e. the
+    flare is no longer special.
+
+    No fallback, and that is safe rather than optimistic: `_taper` stores `bbt_fol_uvrad`
+    unconditionally and every limb in the tree comes through `_taper`, so the one graph that reads
+    this attribute is the one graph that wrote it. A missing one would mean the recipe never built.
     """
     lx, ly = location
-    circumference = math_node(ng, "MULTIPLY", _named(ng, "bbt_fol_rad", "FLOAT", (lx, ly + 200)),
+    circumference = math_node(ng, "MULTIPLY",
+                              _named(ng, "bbt_fol_uvrad", "FLOAT", (lx, ly + 200)),
                               2.0 * math.pi, (lx + 200, ly + 200))
     scale = math_node(ng, "MAXIMUM", gi.outputs["Bark Scale"], 0.01, (lx, ly - 400))
     u = math_node(ng, "DIVIDE",

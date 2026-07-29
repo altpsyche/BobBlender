@@ -91,6 +91,29 @@ against the pure-python core, which is why the fast gate stays honest without Bl
 means no geometry assertion runs in CI, and every geometry number in these docs comes from a local
 Blender run.
 
+## Open: the one thing the forest-barn gate measured and did not fix
+
+Everything else that gate found is closed: the mesh repair and the coincident bake in
+[GENERATION.md](GENERATION.md) (the one-shot route), the lit albedo in its texture-set section, the
+bark shear in [FOLIAGE.md](FOLIAGE.md), and `subject_only` on `comfy_mesh`. One is left, and it is
+left for a reason rather than for time.
+
+- **The bake cage is still a guess, on the one route that still uses it.** 2% of the longest
+  dimension with rays reaching 8%, which is far too loose for two near-coincident surfaces. The
+  coincident and colour-from-low paths now bake with no cage at all, so this is only read where
+  there is a genuinely denser mesh to cross to — the staged and block-out routes. The honest version
+  measures the actual separation between the pair and sizes the cage from it. Not done because
+  **there is no staged asset on disk to measure a change against**, and changing a cage by reasoning
+  alone is how the misaligned bake survived two gates. It needs one staged-route generation, which
+  needs ComfyUI.
+
+Two smaller calls were made deliberately and are recorded where they apply rather than here:
+`profile_segments` stays 5 on the shipped conifer, because the shear that argued for raising it is
+fixed and the remaining argument is faceting at hero distance (FOLIAGE.md); and `AO_STRENGTH` stays
+at 0.6 with Albedo × AO unchanged, because the suspected double-count measured as absent — the AO's
+source field is a high-pass at a thirty-second of the image and the delighting corrects at an
+eighth, so the two cannot overlap (GENERATION.md, and the comment in `core/materials/texset.py`).
+
 ## Open: scatter items that were scoped and not built
 
 Named so they are not rediscovered as new: a per-layer emitter override, an in-panel Make Proxies

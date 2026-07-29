@@ -491,13 +491,39 @@ def close_pinholes(obj, sides=256):
     `sides` is what keeps this safe for foliage. A leaf's silhouette boundary is one loop of tens
     of thousands of edges, so it is far outside the limit and stays open; a remesh pinhole is a
     handful of edges and gets closed.
+
+    Every cap face is then FLATTENED onto one UV, and on a mesh that already carries a chart layout
+    that is the difference between a repair and a new defect. Fill Holes gives each cap corner the
+    UV of the rim vertex it was built on, which sounds right and is not: a remesh pinhole sits
+    across chart boundaries, so one cap's corners land in charts scattered over the whole sheet and
+    the face samples a triangle spanning them. Measured on the gate stump -- 27 caps, the largest
+    covering 0.27 of the atlas, taking `uv_overlap` from 0.000075 to 4.18. Collapsing the cap to the
+    UV of whichever rim corner is nearest its own centre makes it a flat patch of the colour beside
+    the hole, which is what a few-centimetre hole should look like. It is only ever a few
+    centimetres: anything bigger is a boundary loop over `sides` and stays open.
+
+    Verified on Blender 5.2 rather than assumed, because the flatten needs to know which faces are
+    new: Fill Holes appends its faces and leaves the vertex order and every existing loop UV
+    untouched (stump, 3813 faces to 3840, all 11,439 old loop UVs unchanged).
     """
     before = boundary_edges(obj)
+    mesh = obj.data
+    faces_before = len(mesh.polygons)
     _select_only([obj], obj)
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.fill_holes(sides=int(sides))
     bpy.ops.object.mode_set(mode="OBJECT")
+
+    uv_layer = mesh.uv_layers.active
+    for poly in mesh.polygons[faces_before:] if uv_layer is not None else ():
+        loops = list(poly.loop_indices)
+        centre = poly.center
+        nearest = min(loops, key=lambda i: (mesh.vertices[mesh.loops[i].vertex_index].co
+                                            - centre).length_squared)
+        uv = tuple(uv_layer.data[nearest].uv)
+        for loop_index in loops:
+            uv_layer.data[loop_index].uv = uv
     return before - boundary_edges(obj)
 
 
@@ -524,6 +550,13 @@ def decimate_to(obj, faces, passes=3, tolerance=0.1):
 # The asset gate meshes, that floor is well above a 4,000-face budget, which is most of
 # why the steps 3 and 4 A/B went the way it did.
             break
+    # Decimate-collapse on an open surface leaves an INVALID mesh, and the only place it surfaced
+    # was as "Mesh <name>_LOD1 is not valid, and may be exported wrongly" from the glTF exporter, on
+    # a line an artist never reads. Measured on the forest-barn assets before any of this session's
+    # changes: the rock slab's and the stump's LOD1 and LOD2 both needed repair, straight off the
+    # shipped route. `validate` fixes it in place and is a no-op on a clean mesh, so it belongs
+    # where the damage is made rather than at the export.
+    obj.data.validate(verbose=False)
     return face_count(obj)
 
 
@@ -713,8 +746,57 @@ def _write_alpha(img, alpha):
     return img
 
 
+def map_fidelity(source, baked, obj, grid=1024):
+    """How faithfully `baked` reproduces `source` over the texels `obj`'s UVs actually reach.
+
+    The measurement the pipeline had no equivalent of, and the reason a shredded roof shipped with
+    an empty warning list. Every other stage here is measured -- the face budget, the UV overlap,
+    the opacity verdict, the origin -- and the one that resampled a clean texture into a jittered
+    one was not, so it reported success.
+
+    In-chart only, for `uv_coverage`'s reason: `Trellis2RasterizePBR` inpaints a few pixels past the
+    chart edge and Bob's bake margins differently, so a whole-image figure measures the packing. On
+    luminance rather than per channel, because what went wrong was a spatial displacement of detail,
+    not a colour shift.
+
+    Returns {"correlation", "mean_abs_diff", "coverage"} or None when there is nothing to compare.
+    `mean_abs_diff` is in 0-255 steps, which is the unit an artist can argue with.
+    """
+    import numpy as np
+
+    if source is None or baked is None or source.size[0] == 0 or baked.size[0] == 0:
+        return None
+
+    def read(img):
+        width, height = img.size
+        px = np.empty(width * height * img.channels, dtype=np.float32)
+        img.pixels.foreach_get(px)
+        rgb = px.reshape(height, width, img.channels)[..., :3]
+        return rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
+
+    a, b = read(source), read(baked)
+    if a.shape != b.shape:
+        ys = (np.arange(b.shape[0]) * a.shape[0] // b.shape[0])
+        xs = (np.arange(b.shape[1]) * a.shape[1] // b.shape[1])
+        a = a[np.ix_(ys, xs)]
+    mask = uv_coverage(obj, grid=grid)
+    if mask is not None and mask.shape != b.shape:
+        ys = (np.arange(b.shape[0]) * mask.shape[0] // b.shape[0])
+        xs = (np.arange(b.shape[1]) * mask.shape[1] // b.shape[1])
+        mask = mask[np.ix_(ys, xs)]
+    inside = np.ones(b.shape, bool) if mask is None else mask
+    if inside.sum() < 64:
+        return None
+    x, y = a[inside], b[inside]
+    if x.std() < 1e-6 or y.std() < 1e-6:
+        return None
+    return {"correlation": round(float(np.corrcoef(x, y)[0, 1]), 4),
+            "mean_abs_diff": round(float(np.abs(x - y).mean() * 255.0), 2),
+            "coverage": round(float(inside.mean()), 4)}
+
+
 def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device="CPU",
-                     roles=None, alpha=None):
+                     roles=None, alpha=None, coincident=False, stats=None):
     """Bake the dense mesh's surface into the low mesh's UVs, writing PNGs to `out_dir`.
 
     A bake is a TRANSFER, so the dense mesh's own UV layout is irrelevant and the paint model is
@@ -727,6 +809,22 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     `assets.texture_set_maps()` uses. Which mesh each role reads FROM is decided per role rather
     than once: see the comment on `colour_from_low`, which is a the control gate fix.
 
+    `coincident` says the two meshes are the SAME geometry, which is a fact about the route
+    (`comfy.geometry_is_final`) and not something to infer here. On that route there is no dense
+    mesh and no transfer: the colour, the roughness and the surface normal are all already in the
+    low mesh's own UVs, and every ray a cage projection sends is looking for the surface it started
+    from. Sending them anyway is what shredded the forest-barn roof -- correlation 0.817 against the
+    source over the roof charts and a mean absolute difference of 10.4 of 255, reported as a chevron
+    hash over the shingles -- and it also wrote a normal map that was not flat where flat was the
+    only correct answer (52% of the barn's texels and 87% of the stump's deviating past one 8-bit
+    step, from `high` being welded and `low` not). So `coincident` self-bakes the colour roles and
+    drops NORMAL entirely; AO is kept, because a mesh occluding itself is a real measurement of that
+    mesh whichever way round the pair is.
+
+    `stats`, when a dict is passed, collects `bake_fidelity` -- `map_fidelity` of the basecolor
+    against the texture it was supposed to reproduce. An out-parameter rather than a second return
+    value, so the `{role: path}` contract every caller reads is unchanged.
+
     `alpha` is TRELLIS.2's opacity channel from `source_opacity`, written into the basecolor's
     fourth channel rather than saved as a sixth file. Two reasons, and the second is the one that
     matters: the source alpha is already in the low mesh's own UV layout, which is the layout being
@@ -738,6 +836,11 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     prev_engine, prev_samples = scene.render.engine, getattr(scene.cycles, "samples", None)
     scene.render.engine = "CYCLES"
     scene.cycles.device = device
+    # 2% of the longest dimension, rays reaching four times that. It is a guess, and it is only ever
+    # read on a route that has a genuinely denser mesh to cross to, since `coincident` and
+    # `colour_from_low` both bake with no cage at all. It is loose for two near-coincident surfaces:
+    # the honest version measures the actual separation between the pair and sizes the cage from it,
+    # and there is no staged asset on disk to measure that against yet (docs/ROADMAP.md).
     scene.render.bake.cage_extrusion = max(0.02, max(dimensions(low)) * 0.02)
     scene.render.bake.max_ray_distance = scene.render.bake.cage_extrusion * 4.0
     scene.render.bake.use_pass_direct = False
@@ -757,24 +860,39 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
     written = {}
     wanted = roles or _BAKE_ROLES
     # Where each kind of map comes from, and it is not one answer. Normal and AO are a TRANSFER and
-# need the dense mesh; colour and roughness are the generated PBR and live wherever the texture
-# landed. Three cases, all of them real:
+# need a genuinely denser mesh; colour and roughness are the generated PBR and live wherever the
+# texture landed. Four cases, all of them real:
 #
-# - the dense mesh is textured (`mesh_geom_texture`, whose one file is both meshes): transfer
-# everything. - only the LOW mesh is textured (`mesh_geom_ctrl` then `mesh_texture`, and any
-# chain whose geometry graph is geometry-only): the colour is ALREADY in the low mesh's own UVs,
-# so it is a self-bake with no cage. Measured by the control gate: Omni returns geometry with no
-# material at all, so without this the block-out route shipped an asset with `mesh_texture`'s
-# albedo silently dropped. - neither is textured (`mesh_geom_trellis` alone): skip the colour
-# roles. A DIFFUSE bake would write a solid black basecolor and a ROUGHNESS bake the Principled
-# default, and both are worse than absent because the material wiring would then read a map that
-# says "this object is black".
-    colour_from_low = has_textures(low) and not has_textures(high)
+# - the two meshes are ONE file (`mesh_geom_texture`, the one-shot route): `coincident`. Nothing to
+# transfer at all -- see the docstring. The colour roles self-bake, NORMAL is dropped, AO stays.
+# - only the LOW mesh is textured (`mesh_geom_ctrl` then `mesh_texture`, and any chain whose
+# geometry graph is geometry-only): the colour is ALREADY in the low mesh's own UVs, so it is a
+# self-bake with no cage. Measured by the control gate: Omni returns geometry with no material at
+# all, so without this the block-out route shipped an asset with `mesh_texture`'s albedo silently
+# dropped. - the dense mesh is textured and is a different mesh: transfer everything, which is what
+# a cage is for. - neither is textured (`mesh_geom_trellis` alone): skip the colour roles. A DIFFUSE
+# bake would write a solid black basecolor and a ROUGHNESS bake the Principled default, and both are
+# worse than absent because the material wiring would then read a map that says "this object is
+# black".
+#
+# `coincident` comes in as a fact about the route. `colour_from_low` is still an inference, and it
+# is a safe one: "only the low mesh carries a texture" cannot be true of a pair that is one file.
+# What was NOT safe was leaving the one-file case to be inferred from the same test, which read it
+# as an ordinary transfer and baked a cage projection of a mesh onto itself.
+    colour_from_low = coincident or (has_textures(low) and not has_textures(high))
     if not has_textures(high) and not colour_from_low:
         wanted = [r for r in wanted if r[1] in ("NORMAL", "AO")]
+    if coincident:
+        wanted = [r for r in wanted if r[1] != "NORMAL"]
+    # The generated colour, held before the first bake target replaces it as the active image, so
+    # the basecolor result can be compared against what it was supposed to reproduce.
+    source = basecolor_image(low)
     for role, bake_type, _socket, is_data in wanted:
         with_alpha = alpha is not None and role == "basecolor"
-        self_bake = colour_from_low and bake_type in ("DIFFUSE", "ROUGHNESS")
+        # AO joins the self-bake on the coincident route rather than only the colour roles: a mesh's
+        # occlusion of itself is what the AO map means, and asking for it selected-to-active only
+        # puts the cage back in a bake that has nothing to cross.
+        self_bake = coincident or (colour_from_low and bake_type in ("DIFFUSE", "ROUGHNESS"))
         img = _bake_image(f"{stem}_{role}", size, is_data, alpha=with_alpha)
         node = _bake_target_node(mat, img)
         scene.cycles.samples = _BAKE_SAMPLES.get(bake_type, 1)
@@ -789,6 +907,13 @@ def bake_high_to_low(high, low, out_dir, stem, *, size=DEFAULT_BAKE_SIZE, device
             continue
         if with_alpha:
             _write_alpha(img, alpha)
+        # Measured BEFORE the image is freed, which is the only moment the source and the result are
+        # both in hand. The whole class of defect this catches is a colour pass that runs, succeeds
+        # and returns something else: `warnings: []` and a chevron hash over the roof.
+        if role == "basecolor" and stats is not None:
+            fidelity = map_fidelity(source, img, low)
+            if fidelity:
+                stats["bake_fidelity"] = fidelity
         path = os.path.join(out_dir, f"{stem}_{role}.png")
         img.filepath_raw = path
         img.file_format = "PNG"
@@ -985,7 +1110,7 @@ def _resolve_pass(spec, argument):
 
 def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=False,
                 keep_source_uv=False, low_glb=None, report=None, on_progress=None,
-                fill_pinholes=True, simplified_glb=None, exports=None):
+                fill_pinholes=True, simplified_glb=None, exports=None, repair_low=False):
     """Steps 3 and 4 on the main thread: import the dense mesh, make the low one, unwrap it, and
     optionally export the low as a unit-scale GLB for the `mesh_texture` texture pass to consume.
 
@@ -999,6 +1124,13 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
 
     `exports` names how many `Trellis2ExportTrimesh` writes each incoming file has been through, so
     both meshes land in ONE frame before the bake reads across them: see `undo_exports`.
+
+    `repair_low` is `comfy.geometry_is_final(staged)`: the server-simplified mesh IS the mesh that
+    ships, so the weld and the pinhole fill have to run on it. Without it those two steps ran on
+    nothing on both production routes, and the forest-barn gate shipped five meshes carrying 48 to
+    229 boundary edges with a clean receipt. It does NOT turn the decimate or the unwrap back on:
+    the mesh already arrives at its budget with the generator's chart layout, and re-unwrapping it
+    would throw away the layout its own texture is painted in.
     """
     report = report if report is not None else {}
     if on_progress:
@@ -1016,6 +1148,16 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
 # on it.
         low = import_glb(simplified_glb, name=name,
                          orient=undo_exports(exports.get("simplified")))
+        if repair_low:
+            # The mesh that SHIPS, so Bob's two repairs belong on it. Welding first is what makes
+            # the fill possible at all: glTF splits a vertex at every UV seam, so an unwelded import
+            # reads as thousands of one-face edges (stump 3,646 against a real 229) and Fill Holes
+            # would sew the chart borders shut. The UV layout survives the weld -- UVs live on the
+            # corner domain, and `uv_overlap` measured 0.000075 either side of it on the stump and
+            # 0.000008 on the barn -- which is why this is a weld and not a copy-and-weld.
+            report["low_welded_verts"] = weld(low)
+            if fill_pinholes:
+                report["pinholes_closed"] = close_pinholes(low)
         # One frame is one rotation AND one scale: a chain that normalised its low mesh on the
         # server leaves the dense mesh at its own size, and a bake across that reads nothing.
         report["bake_rescale"] = match_frame(high, low)
@@ -1050,12 +1192,12 @@ def prepare_low(raw_glb, *, name="generated_asset", faces=DEFAULT_FACES, hero=Fa
             smart_uv(low)
             report["uv_source"] = "smart_uv_project"
     report["uv_overlap"] = uv_overlap(low)
-    # Counted on the mesh AS IT SHIPS, which on a route that simplified on the server means an
-# unwelded glTF import, so it reads several times the surface's real openness (the asset gate's
-# correction 9, from the other side). The low mesh is deliberately NOT welded: its vertices are
-# split along the UV seams the generator unwrapped, and merging those would break the layout the
-# bake writes into. Read `source_boundary_edges` for the honest openness figure; this one only
-# answers "did the surface stay open at all".
+    # Counted on the mesh AS IT SHIPS, and honest only where that mesh has been welded. glTF splits
+# a vertex at every UV seam, so an UNWELDED import reads as several times its real openness (the
+# asset gate's correction 9, from the other side): the gate stump measured 3,646 one-face edges
+# against a real 229. `repair_low` welds, so this is the true figure on the one-shot route and on
+# anything Bob retopologised itself; a route that neither welds nor repairs leaves it inflated, and
+# `source_boundary_edges` is the figure to read there.
     report["low_boundary_edges"] = boundary_edges(low)
 
     if low_glb:
@@ -1069,7 +1211,7 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
                  faces=DEFAULT_FACES, lods=DEFAULT_LODS, bake_size=DEFAULT_BAKE_SIZE,
                  hero=False, bake_device="CPU", keep_source_uv=False, provenance=None,
                  simplify_pass=None, texture_pass=None, fill_pinholes=True, on_progress=None,
-                 force_opacity=False, exports=None):
+                 force_opacity=False, exports=None, geometry_is_final=False):
     """A raw generated GLB to a finished, packed, BobShaded asset. Returns a report dict.
 
     The order is the pinned pipeline's, and each step is here because leaving it out breaks
@@ -1091,6 +1233,12 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
     since a mesh with no material has no surface to transfer.
 
     `keep_source_uv` skips Smart UV Project and bakes into whatever UVs the generator supplied.
+
+    `geometry_is_final` is `comfy.geometry_is_final(staged)`, and it turns two steps from an
+    inference into a fact. It runs the weld and the pinhole fill on the mesh that actually ships
+    (see `prepare_low`), and it tells the bake that the dense and low meshes are ONE file, so the
+    colour is already in the low mesh's own UVs and there is nothing to transfer. Both were wrong on
+    the default route until the forest-barn gate: see `bake_high_to_low`'s `self_bake`.
 
     `exports` is `comfy.stage_exports(staged)`: how many `Trellis2ExportTrimesh` writes to undo on
     each incoming file. It does two jobs at once, and both are load-bearing. It puts the dense and
@@ -1126,7 +1274,8 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
                             # Only export the low mesh when a CALLABLE texture pass needs a file
                             # to send; a finished path means it already ran.
                             low_glb=low_glb if callable(texture_pass) else None,
-                            report=report, on_progress=on_progress, exports=exports)
+                            report=report, on_progress=on_progress, exports=exports,
+                            repair_low=geometry_is_final)
     step("prepare")
 
     if texture_pass:
@@ -1158,9 +1307,13 @@ def finish_asset(raw_glb, pack_dir, *, kind="rocks", name=None, height_m=2.0,
 # channel. The measurement was already in the report; nothing read it (docs/FOLIAGE.md).
     from . import comfy as _comfy  # bpy-free, and imported lazily for the same reason as below
     report["warnings"] += _comfy.leaf_opacity_warning(kind, report["opacity"])
+    # And the same treatment for the openness of the mesh that ships: computed since the asset gate,
+    # read by nobody until the forest-barn gate found the stump's holes in a render.
+    report["warnings"] += _comfy.open_surface_warning(kind, report)
     maps = bake_high_to_low(high, low, tex_dir, stem, size=bake_size, device=bake_device,
-                            alpha=alpha)
+                            alpha=alpha, coincident=geometry_is_final, stats=report)
     report["maps"] = maps
+    report["warnings"] += _comfy.bake_fidelity_warning(report.get("bake_fidelity"))
     if not maps:
         report["warnings"].append("no map baked; the asset ships with a flat material")
     step("bake")
@@ -1348,15 +1501,29 @@ def import_generated_op(op: dict) -> dict:
             bake_size=2048 if hero else DEFAULT_BAKE_SIZE,
             fill_pinholes=not foliage, exports=comfy.stage_exports(staged),
             simplify_pass=simplify_pass, texture_pass=texture_pass,
+            geometry_is_final=comfy.geometry_is_final(staged),
             provenance=dict(staged.get("meta") or {}))
         asset_name = report["name"]
         info = (f"{asset_name}: {report['lod_faces'][0]} faces, {report['height_m']} m, "
                 f"UV overlap {report.get('uv_overlap', 0.0):.6f}")
         # What an agent has to be able to CHECK without opening the file: the budget it asked for,
         # the height it asked for, the UV it needs, and every warning the finish raised.
+        #
+        # The second group is the openness and provenance of the mesh that SHIPPED, and it is here
+        # because leaving it out is what let the forest-barn gate pass five sieves with
+        # `warnings: []`. Every one of these was already computed and then dropped at this line: the
+        # stump shipped with 229 boundary edges and the reply said nothing, because the only figures
+        # that crossed the bridge described a budget and a height that were never in doubt.
+        # `simplify_source` and `uv_source` are the pair that says WHOSE mesh this is -- "trellis2"
+        # and "trellis2_uvunwrap" mean the generator's topology and the generator's charts shipped,
+        # which is the route working as designed and not something an agent should have to infer
+        # from a face count matching a request.
         data = {k: report[k] for k in
                 ("name", "faces", "lod_faces", "height_m", "uv_overlap", "origin_above_base",
-                 "master_type", "opacity", "maps", "file", "warnings", "seconds")
+                 "master_type", "opacity", "maps", "file", "warnings", "seconds",
+                 "source_faces", "source_boundary_edges", "low_boundary_edges", "pinholes_closed",
+                 "simplify_source", "uv_source", "welded_verts", "low_welded_verts",
+                 "textured_faces", "bake_rescale", "bake_fidelity")
                 if k in report}
         if op.get("cleanup", True) and staged.get("dir"):
             comfy.reject_variant(staged["dir"])  # the staged intermediates are spent

@@ -141,6 +141,99 @@ def test_height_is_a_wrap_safe_high_pass(mods):
     assert abs(int(h[:, 16:48].mean()) - 128) <= 6
 
 
+def test_flatness_separates_a_lighting_ramp_from_texture(mods, noise_rgb):
+    """The measure the texture family had no equivalent of, and the largest thing the forest-barn
+    gate found. It has to answer "is this a lit photograph" without answering "is this a busy
+    surface": a mossy floor SHOULD have plenty of total variation and no low-frequency variation."""
+    _, maps = mods
+    flat = np.full((128, 128, 3), 110, dtype=np.uint8)
+    assert maps.flatness_report(flat)["low_freq_variation"] < 0.001
+
+    # High-frequency detail is texture, not light, and must not register -- at a size where the blur
+    # window holds enough pixels to average it away. At 1024 the window is 257 square, i.e. 66,000
+    # samples; the 24 by 32 fixture gives it 49 and pure noise then leaks 0.063 into the answer,
+    # which is the measure's floor rather than a lighting reading. Worth knowing before quoting it
+    # on a thumbnail.
+    rng = np.random.default_rng(7)
+    big = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
+    detail = maps.flatness_report(big)
+    assert detail["low_freq_variation"] < 0.01 < detail["total_variation"], \
+        "noise is all texture and no lighting"
+    assert maps.flatness_report(noise_rgb)["low_freq_variation"] > detail["low_freq_variation"], \
+        "and the small-image floor is real, not a bug to assert away"
+
+    # A ramp across the frame is light, and it must register hard.
+    ramp = np.tile(np.linspace(40, 210, 128, dtype=np.uint8)[None, :, None], (128, 1, 3))
+    lit = maps.flatness_report(ramp)
+    assert lit["low_freq_variation"] > 0.2
+    # Scale-free: the same ramp, halved in brightness, is the same LIGHTING claim.
+    dim = maps.flatness_report((ramp * 0.5).astype(np.uint8))
+    assert abs(dim["low_freq_variation"] - lit["low_freq_variation"]) < 0.02
+
+
+def test_delight_removes_the_ramp_and_keeps_the_surface(mods):
+    """A ramp times a texture is what a photographed surface is. Delighting has to take the ramp and
+    leave the texture, at the brightness it arrived at -- the mean is load-bearing, because the
+    texture-set brightness rule and every block-out tint were matched against it."""
+    _, maps = mods
+    rng = np.random.default_rng(4)
+    texture = rng.integers(70, 190, (128, 128, 1)).repeat(3, axis=2).astype(np.float32)
+    ramp = np.linspace(0.55, 1.45, 128, dtype=np.float32)[None, :, None]
+    lit = np.clip(texture * ramp, 0, 255).astype(np.uint8)
+
+    before = maps.flatness_report(lit)
+    out = maps.delight(lit)
+    after = maps.flatness_report(out)
+    assert after["low_freq_variation"] < before["low_freq_variation"] * 0.5, \
+        f"{before['low_freq_variation']} -> {after['low_freq_variation']}"
+    # The mean survives, so a delit set still sits where the tints were matched.
+    assert abs(float(maps.luminance(out).mean()) - float(maps.luminance(lit).mean())) < 0.01
+    # And the texture survives: total variation is the surface, and it must not be flattened away.
+    assert after["total_variation"] > before["total_variation"] * 0.7
+    # Zero strength is exactly a no-op, which is what makes it safe as a default.
+    assert np.array_equal(maps.delight(lit, strength=0.0), lit[:, :, :3])
+    # A flat image has no lighting to remove, so delighting it changes essentially nothing.
+    flat = np.full((64, 64, 3), 120, dtype=np.uint8)
+    assert int(np.abs(maps.delight(flat).astype(int) - flat.astype(int)).max()) <= 1
+
+
+def test_delight_runs_before_the_derivations(mods):
+    """Ordering, and it is the point rather than an implementation detail: every derived map is a
+    luminance read, so deriving from a lit albedo bakes the same lighting into the height, the
+    normal, the roughness and the AO, and the master then multiplies the AO back into the albedo."""
+    _, maps = mods
+    rng = np.random.default_rng(9)
+    texture = rng.integers(70, 190, (128, 128, 1)).repeat(3, axis=2).astype(np.float32)
+    lit = np.clip(texture * np.linspace(0.6, 1.4, 128, dtype=np.float32)[None, :, None],
+                 0, 255).astype(np.uint8)
+    plain = maps.derive(lit)
+    delit = maps.derive(lit, delight_strength=maps.DELIGHT_STRENGTH)
+    assert not np.array_equal(plain["basecolor"], delit["basecolor"]), "the albedo is corrected"
+    assert np.array_equal(delit["basecolor"], maps.delight(lit)), "and it IS the delit albedo"
+    # The other roles are derived from the corrected albedo, not the original.
+    assert not np.array_equal(plain["ao"], delit["ao"])
+    assert maps.flatness_report(delit["basecolor"])["low_freq_variation"] \
+        < maps.flatness_report(plain["basecolor"])["low_freq_variation"]
+
+
+def test_mask_stops_reads_only_what_a_card_shows(mods):
+    """`flatness_report` reads the whole sheet and most of an atlas is cleared background the card
+    never shows. Stops inside the mask is the same question asked the way a leaf card asks it."""
+    _, maps = mods
+    rgb = np.zeros((64, 64, 3), dtype=np.uint8)
+    opacity = np.zeros((64, 64), dtype=np.uint8)
+    # A sprite spanning exactly one stop, on a background that would drag the answer anywhere.
+    rgb[:32, :, :] = 80
+    rgb[32:, :, :] = 160
+    opacity[:, :] = 255
+    assert abs(maps.mask_stops(rgb, opacity) - 1.0) < 0.15
+    # Mask out the dark half and the span collapses, which is the whole point of measuring in-mask.
+    opacity[:32, :] = 0
+    assert maps.mask_stops(rgb, opacity) < 0.1
+    # An empty mask is None rather than an invented number.
+    assert maps.mask_stops(rgb, np.zeros((64, 64), dtype=np.uint8)) is None
+
+
 def test_seam_report_reads_a_seam_and_clears_a_tileable_image(mods):
     _, maps = mods
     rng = np.random.default_rng(3)
@@ -984,6 +1077,124 @@ def test_the_route_is_a_value_and_maps_onto_the_finish_passes(mods):
     assert comfy.finish_passes({"raw_mesh": "r.glb", "textured_mesh": "t.glb"}) == ("t.glb", None)
     assert comfy.finish_passes({"raw_mesh": "r.glb", "simplified_mesh": "s.glb",
                                 "textured_mesh": "t.glb"}) == ("s.glb", "t.glb")
+
+
+def test_one_file_for_both_meshes_is_declared_and_not_inferred(mods):
+    """The one thing `finish_passes` cannot say, and the forest-barn gate's two defects both came of
+    nobody saying it: on the one-shot route the dense and the low mesh are ONE file, so there is a
+    surface to repair and nothing to transfer.
+
+    Both routes hand over a simplified mesh, so a caller reading only that tuple cannot tell them
+    apart, and the bake's `has_textures` inference read the one-file case as an ordinary transfer
+    and baked a cage projection of a mesh onto itself."""
+    comfy, _ = mods
+    assert comfy.geometry_is_final({"raw_mesh": "/p/a_tex.glb", "textured_mesh": "/p/a_tex.glb"})
+    # Same file, two spellings. Read off the paths, so a chain that is sloppy about them still lands
+    # on the right answer.
+    assert comfy.geometry_is_final({"raw_mesh": "/p/a_tex.glb", "textured_mesh": "/p/./a_tex.glb"})
+    assert not comfy.geometry_is_final({"raw_mesh": "/p/raw.glb", "simplified_mesh": "/p/s.glb",
+                                        "textured_mesh": "/p/t.glb"}), "the staged route transfers"
+    assert not comfy.geometry_is_final({"raw_mesh": "/p/raw.glb", "textured_mesh": "/p/t.glb"})
+    assert not comfy.geometry_is_final({"raw_mesh": "/p/raw.glb"}), "geometry only"
+    # A simplified mesh always means the server retopologised something Bob sent, whatever the other
+    # two paths say: the low mesh is then a different mesh and the cage has a job.
+    assert not comfy.geometry_is_final({"raw_mesh": "/p/a.glb", "simplified_mesh": "/p/s.glb",
+                                        "textured_mesh": "/p/a.glb"})
+
+
+def test_a_solid_kind_shipping_open_says_so(mods):
+    """The companion to `leaf_opacity_warning`, and it exists because the boundary-edge count was
+    computed since the asset gate and read by nobody: the forest-barn gate shipped five meshes with
+    48 to 229 boundary edges and a `warnings: []` receipt, and the stump's holes were found in a
+    render.
+
+    The thresholds are the gate's own measurements, after the weld and the pinhole fill."""
+    comfy, _ = mods
+
+    def report(edges, faces, **extra):
+        return dict({"low_boundary_edges": edges, "faces": faces,
+                     "simplify_source": "trellis2", "low_welded_verts": 100}, **extra)
+
+    # The two the artist could see through, and the three that read as closed.
+    assert comfy.open_surface_warning("stump", report(73, 3840)), "1.9%"
+    assert comfy.open_surface_warning("slab", report(72, 2865)), "2.5%"
+    assert not comfy.open_surface_warning("log", report(17, 3911)), "0.4%"
+    assert not comfy.open_surface_warning("structure", report(11, 7502)), "0.15%"
+    assert not comfy.open_surface_warning("boulder", report(9, 3832)), "0.24%"
+    # A count alone is not the claim: the same 30 edges is a sieve on a small rock and nothing on a
+    # building.
+    assert comfy.open_surface_warning("rocks", report(30, 500))
+    assert not comfy.open_surface_warning("rocks", report(30, 40000))
+    # The floor, so a tiny mesh is not warned about two edges.
+    assert not comfy.open_surface_warning("rocks", report(comfy.OPEN_SURFACE_FLOOR, 10))
+    # Foliage is exempt: a leaf blade IS an open surface and the pinhole fill is off for it, so
+    # warning here would teach an artist to ignore the warning that means something.
+    for kind in comfy.FOLIAGE_KINDS:
+        assert not comfy.open_surface_warning(kind, report(5000, 4000))
+    # And the figure is only honest on a welded mesh, so an unwelded one stays quiet rather than
+    # reporting its UV seams as holes (stump: 3,646 one-face edges unwelded against a real 229).
+    assert not comfy.open_surface_warning("stump", {"low_boundary_edges": 3646, "faces": 3832,
+                                                    "simplify_source": "trellis2"})
+    assert comfy.open_surface_warning("stump", {"low_boundary_edges": 300, "faces": 3832,
+                                                "simplify_source": "decimate"}), \
+        "Bob's own retopo welds, so its count is honest with no marker"
+    assert not comfy.open_surface_warning("stump", report(0, 3832)), "closed says nothing"
+
+
+def test_a_colour_bake_that_returned_something_else_says_so(mods):
+    """The receipt warning for the defect that cannot fail loudly. A misaligned or jittered colour
+    transfer still writes a plausible texture, so nothing downstream notices and the artist finds it
+    in a hero render.
+
+    The pairs are the forest-barn assets re-finished through the same code either side of the
+    coincident-bake fix, so the bar is measured on both sides rather than picked."""
+    comfy, _ = mods
+
+    def fid(corr, diff):
+        return {"correlation": corr, "mean_abs_diff": diff, "coverage": 0.57}
+
+    for corr, diff in ((0.9015, 6.48), (0.9524, 5.96), (0.9793, 3.21)):  # cage onto itself
+        assert comfy.bake_fidelity_warning(fid(corr, diff)), f"{corr} should warn"
+    for corr, diff in ((0.9980, 2.28), (0.9985, 2.57), (0.9995, 1.12)):  # self-baked
+        assert not comfy.bake_fidelity_warning(fid(corr, diff)), f"{corr} should not"
+    # Either half of the bar is enough on its own: a map can track the source's shape and still be
+    # shifted in level, or match in level and have its detail moved about.
+    assert comfy.bake_fidelity_warning(fid(0.999, comfy.BAKE_DIFF_MAX + 0.1))
+    assert comfy.bake_fidelity_warning(fid(comfy.BAKE_FIDELITY_MIN - 0.01, 1.0))
+    # And nothing measured is not a failure: a geometry-only asset has no colour to compare.
+    assert comfy.bake_fidelity_warning(None) == []
+    assert comfy.bake_fidelity_warning({"coverage": 0.4}) == []
+
+
+def test_a_lit_albedo_says_so(mods):
+    """The third receipt warning, and the one with no measurement at all before that gate.
+    The prompts have always asked for flat light -- `PROMPT_SUFFIX` carries "flat even lighting" --
+    so the intent was right and the enforcement absent."""
+    comfy, _ = mods
+    assert "flat even lighting" in comfy.PROMPT_SUFFIX, "the intent, which was never the problem"
+
+    def flat(value, **extra):
+        return dict({"low_freq_variation": value}, **extra)
+
+    # The gate's own ten sets, either side of the bar.
+    for value in (0.0247, 0.0355, 0.0452, 0.0492, 0.0509, 0.0667, 0.0740, 0.0742):
+        assert not comfy.flatness_warning(flat(value)), f"{value} reads as flat"
+    for value in (0.0965, 0.0989):
+        assert comfy.flatness_warning(flat(value)), f"{value} is lit"
+    # The advice changes once delighting has been tried and did not help, because at that point the
+    # lighting is not a low-frequency ramp and correcting harder will not fix it.
+    assert "reroll" in comfy.flatness_warning(flat(0.2, delighted=True))[0]
+    assert "delight=True" in comfy.flatness_warning(flat(0.2))[0]
+
+    # A leaf card is the case that matters most, and it is measured in STOPS inside the cutout: an
+    # atlas can have a flat sheet and still span two stops within the sprite.
+    leafy = flat(0.02, in_mask_stops=1.84)
+    assert not comfy.flatness_warning(leafy), "the stops half only applies to a leafy caller"
+    assert comfy.flatness_warning(leafy, leafy=True)
+    assert "both sides" in comfy.flatness_warning(leafy, leafy=True)[0]
+    assert not comfy.flatness_warning(flat(0.02, in_mask_stops=0.92), leafy=True), \
+        "delighted broadleaf, under one stop"
+    assert comfy.flatness_warning(None) == []
 
 
 def test_the_per_class_verdict_is_one_table_and_a_control_still_wins(mods, monkeypatch):
@@ -1933,6 +2144,42 @@ def test_a_texture_set_binds_tiling_on_and_marks_the_model_dirty(mods, monkeypat
     values = seen["calls"][-1]
     assert values[comfy.TILE_TITLE] == {"tiling": "enable", "copy_model": "Modify in place"}
     assert comfy._TILING_DIRTY[comfy.base_url(None)] is True, "the shared model is now padded"
+
+
+def test_a_texture_set_records_its_flatness_and_can_be_delit(mods, monkeypatch, tmp_path):
+    """The measurement rides on every set whether or not the correction ran, because the case it
+    catches is silent: a lit albedo looks exactly like a flat one in every other number a set
+    reports. Driven through `texture_variant` rather than through `comfy_maps` alone, so the wiring
+    is under test and not only the maths."""
+    comfy, maps = mods
+    rng = np.random.default_rng(3)
+    texture = rng.integers(70, 190, (96, 96, 1)).repeat(3, axis=2).astype(np.float32)
+    lit = np.clip(texture * np.linspace(0.55, 1.45, 96, dtype=np.float32)[None, :, None],
+                  0, 255).astype(np.uint8)
+
+    def fake_generate(workflow, values, **kwargs):
+        return _paeth_png(lit), {"prompt_id": "p1", "seconds": 1.0}
+
+    monkeypatch.setattr(comfy, "generate_image", fake_generate)
+    plain = comfy.texture_variant("stone", str(tmp_path / "a"), seed=1)
+    delit = comfy.texture_variant("stone", str(tmp_path / "b"), seed=1, delight=True)
+
+    for info in (plain, delit):
+        assert set(info["flatness"]) >= {"low_freq_variation", "total_variation", "delighted",
+                                         "as_generated"}
+    assert plain["flatness"]["delighted"] is False
+    assert delit["flatness"]["delighted"] is True
+    # `as_generated` is the reading BEFORE any correction, so both runs agree on what arrived.
+    assert plain["flatness"]["as_generated"] == delit["flatness"]["as_generated"]
+    assert plain["flatness"]["low_freq_variation"] == plain["flatness"]["as_generated"], \
+        "with delighting off, what shipped IS what was generated"
+    assert delit["flatness"]["low_freq_variation"] < delit["flatness"]["as_generated"] * 0.6
+    # The warning fires on the lit one and clears on the corrected one, which is the whole loop.
+    assert comfy.flatness_warning(plain["flatness"])
+    assert not comfy.flatness_warning(delit["flatness"])
+    # And it is on disk, not only in the return value: a set has to carry its own verdict.
+    written = json.loads((tmp_path / "b" / "meta.json").read_text())
+    assert written["flatness"]["delighted"] is True
 
 
 def test_a_subject_image_resets_the_padding_first(mods, monkeypatch, tmp_path):
