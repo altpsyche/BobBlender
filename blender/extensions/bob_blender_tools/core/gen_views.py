@@ -30,6 +30,7 @@ CYCLES or the view transform on Raw has broken the artist's file to make a pictu
 
 import math
 import os
+import struct
 
 import bpy
 from mathutils import Matrix, Vector
@@ -177,29 +178,56 @@ def _drop_pass_materials():
 
 
 # -- Camera maths ------------------------------------------------------------------------------
+def size_pair(resolution):
+    """`resolution` as (width, height): an int means square, a pair passes through.
+
+    One place, because three functions take the same argument and a render that squared a 16:9 shot
+    silently re-cropped the composition the stylise route exists to hold.
+    """
+    if isinstance(resolution, (int, float)):
+        return int(resolution), int(resolution)
+    width, height = resolution[:2]
+    return int(width), int(height)
+
+
 def camera_info(camera, resolution):
     """Everything the projection needs about one camera, as plain floats.
 
     Read from `matrix_world` AFTER a view-layer update by the caller: a matrix read straight after
     setting `location` still describes the old transform, which is the same trap the asset gate hit
     with `bound_box`.
+
+    `resolution` may be an int or a (width, height). `resolution` in the result stays the WIDTH so
+    the square callers are unchanged, and `resolution_xy` carries both so `project` can refuse a
+    non-square one rather than projecting it wrongly.
     """
     data = camera.data
     tan_half = 0.5 * data.sensor_width / data.lens
+    width, height = size_pair(resolution)
     return {"matrix_world": [list(row) for row in camera.matrix_world],
             "lens": data.lens, "sensor_width": data.sensor_width,
             "type": data.type, "ortho_scale": data.ortho_scale,
-            "tan_half": tan_half, "resolution": int(resolution)}
+            "tan_half": tan_half, "resolution": width, "resolution_xy": [width, height]}
 
 
 def project(cam_info, points):
     """World points to (pixel x, pixel y, camera depth) arrays, for a SQUARE render.
 
     Square on purpose: an aspect ratio would be a second convention to keep in sync between the
-    render, the projection and the ControlNet hint, and every view Bob renders for a mesh is square
-    because that is also what SDXL wants.
+    render, the projection and the ControlNet hint, and every view Bob renders for a MESH is square
+    because that is also what SDXL wants. A non-square render is legitimate elsewhere -- the stylise
+    route shoots the artist's own frame at the artist's own aspect -- so this refuses one rather than
+    quietly halving an axis: a wrong projection would show up as a texture that is subtly off, which
+    is the least debuggable failure this module can produce.
     """
     import numpy as np
+
+    width, height = cam_info.get("resolution_xy", [cam_info["resolution"]] * 2)
+    if width != height:
+        raise RuntimeError(
+            f"project: this camera info came from a {width}x{height} render and the projection is "
+            f"square-only. Render the views square (gen_views.turntable_views does) or project "
+            f"through something that carries an aspect ratio.")
 
     view = np.array(Matrix(cam_info["matrix_world"]).inverted(), dtype="float64")
     pts = np.asarray(points, dtype="float64")
@@ -326,7 +354,12 @@ def render_passes(out_dir, stem, *, camera=None, objects=None, resolution=1024, 
 
     Returns the paths plus the camera and the depth range, which is what the projection bake and
     the provenance both need. THREE renders, not one: the two passes are constant-per-pixel
-    emission, so they run at one sample and cost a fraction of the beauty frame.
+    emission, so they run at one sample and cost a fraction of the beauty frame. `beauty=False`
+    shoots only the two passes, which is what a caller reusing a frame it already has wants.
+
+    `resolution` is an int (square) or a (width, height). Square is what every MESH view uses and
+    what `project` requires; the artist's own aspect is what the stylise route uses, because
+    squaring a 16:9 frame re-crops the composition the restyle is supposed to hold.
 
     `objects` scopes the depth range; None means every visible mesh, which is the right default for
     a whole-scene stylise and the wrong one for a single asset (pass the asset).
@@ -340,7 +373,8 @@ def render_passes(out_dir, stem, *, camera=None, objects=None, resolution=1024, 
     scene.camera = camera
     if engine:
         scene.render.engine = engine
-    scene.render.resolution_x = scene.render.resolution_y = int(resolution)
+    width, height = size_pair(resolution)
+    scene.render.resolution_x, scene.render.resolution_y = width, height
     scene.render.resolution_percentage = 100
     scene.render.film_transparent = bool(transparent)
     bpy.context.view_layer.update()
@@ -352,7 +386,7 @@ def render_passes(out_dir, stem, *, camera=None, objects=None, resolution=1024, 
     info = camera_info(camera, resolution)
     view_layer = scene.view_layers[0]
     out = {"camera": info, "near": float(near), "far": float(far), "flip": list(flip),
-           "resolution": int(resolution), "engine": scene.render.engine}
+           "resolution": [width, height], "engine": scene.render.engine}
     try:
         if beauty:
             scene.view_settings.view_transform = saved["view_transform"]
@@ -391,6 +425,67 @@ def render_passes(out_dir, stem, *, camera=None, objects=None, resolution=1024, 
 
 
 # -- Turntable ---------------------------------------------------------------------------------
+def save_render_result(path):
+    """Write Blender's existing render to `path`, or None when there is nothing rendered.
+
+    The frame an artist is already looking at, which is what "stylise the last render" has to mean:
+    a fresh beauty render at their sample count is the expensive part of that route and it produces
+    an image they have already seen. `Render Result` carries no depth or normal pass unless they set
+    those up themselves, so a caller wanting true hints still shoots the two passes -- one sample
+    each, a fraction of the frame.
+
+    Returns {"path", "resolution"} so the caller can render its passes at the SAME size. Nothing
+    here can tell whether the camera has moved since that render; a caller pairing this with fresh
+    passes has to say so to the artist.
+
+    The size comes from the FILE, not from `Render Result.size`, and that is measured rather than
+    fastidious: in `--background` the datablock reports size (0, 0) and `has_data` False while
+    `save_render` writes a perfectly good PNG. Trusting the datablock's own report would refuse a
+    frame that is right there. `have_render_result` is the read-only predicate a panel uses, and it
+    DOES read those fields, because a panel cannot write a file to find out.
+    """
+    image = bpy.data.images.get("Render Result")
+    if image is None:
+        return None
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    saved = bpy.context.scene.render.image_settings.file_format
+    try:
+        bpy.context.scene.render.image_settings.file_format = "PNG"
+        image.save_render(filepath=path)
+    except RuntimeError:
+        return None
+    finally:
+        bpy.context.scene.render.image_settings.file_format = saved
+    size = _png_size(path)
+    if size is None:
+        return None
+    return {"path": path, "resolution": list(size)}
+
+
+def _png_size(path):
+    """(width, height) from a PNG's IHDR, or None. Header only: no decode and no dependency, which
+    matters because this runs inside Blender's bundled Python next to a 3 MB render."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height = struct.unpack(">II", head[16:24])
+    return (int(width), int(height)) if width and height else None
+
+
+def have_render_result():
+    """Whether there is a rendered frame to reuse, without writing anything.
+
+    What a panel can ask during a draw. `save_render_result` is the authority and is more permissive
+    (see its note on `--background`); this is the UI's read-only approximation of the same question.
+    """
+    image = bpy.data.images.get("Render Result")
+    return bool(image is not None and image.has_data and min(tuple(image.size) or (0,)) > 0)
+
+
 def frame_radius(obj, lens, sensor_width, fill=0.82):
     """How far a camera with this lens has to sit from `obj` for it to fill `fill` of the frame."""
     size = max(max(obj.dimensions), 1e-4)

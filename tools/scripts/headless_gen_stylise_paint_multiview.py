@@ -524,6 +524,27 @@ def normal_convention(args):
           f"{got:.0f} against {expected:.0f}; sRGB encoding would read "
           f"{(((expected / 255) ** (1 / 2.4) * 1.055 - 0.055) * 255):.0f}")
 
+    # The artist's own aspect survives, and the projection refuses what it cannot do. The stylise
+    # panel used to pass `max(resolution_x, resolution_y)`, so a 16:9 shot was rendered square and
+    # the route that exists to HOLD a composition re-cropped it before it started.
+    wide = gen_views.render_passes(GEN, "wide", camera=cam, objects=[sphere], resolution=(320, 180),
+                                   samples=4, engine="BLENDER_EEVEE", beauty=False)
+    got_size = read_grey(wide["depth"]).shape[::-1]
+    check("a non-square render keeps the aspect it was asked for", got_size == (320, 180),
+          f"{got_size[0]}x{got_size[1]} from a (320, 180) request, reported "
+          f"{wide['resolution']}")
+    try:
+        gen_views.project(wide["camera"], [(0.0, 0.0, 0.0)])
+        check("the square-only projection refuses a non-square camera", False, "it projected")
+    except RuntimeError as exc:
+        check("the square-only projection refuses a non-square camera", "square-only" in str(exc),
+              str(exc)[:70])
+    square = gen_views.render_passes(GEN, "square", camera=cam, objects=[sphere], resolution=128,
+                                     samples=4, engine="BLENDER_EEVEE", beauty=False)
+    px, _py, _d = gen_views.project(square["camera"], [(0.0, 0.0, 0.0)])
+    check("and still projects a square one", abs(float(px[0]) - 64.0) < 1.0,
+          f"the sphere's centre lands at x={float(px[0]):.1f} of 128")
+
 
 def part_a(args, reachable):
     section("A. The look-dev stylise family: a Bob render, stylised under real passes against estimated ones")

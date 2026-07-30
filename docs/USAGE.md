@@ -603,10 +603,23 @@ Whichever button you pressed, the progress and the output appear here.
   **Open Folder** button that opens where the file landed. A job that produced a warning shows the
   warning instead of a picture. Results are session state and clear on file load, like the job
   registry they belong to.
-- **Stylise Render**, a sub-panel: a style prompt, a **Strength**, render **Samples** and an
-  optional **LoRA** picked from what the server actually has (a filename typed by hand is a
+- **Stylise Render**, a sub-panel: a style prompt, a **Strength**, render **Samples**, a **Frame**
+  choice and an optional **LoRA** picked from what the server actually has (a filename typed by hand is a
   validator failure waiting to happen; the stored value stays a plain string so a .blend saved with
   a LoRA still opens on a machine without it).
+
+  **Frame** decides where the picture and the ControlNet hints come from, and the caption under the
+  button always says which of the three will run before you press it:
+
+  | Frame | what it does | cost |
+  |---|---|---|
+  | **Last render + passes** (default) | Reuses the frame you already rendered and shoots only the depth and normal passes, one sample each. True geometry hints, no re-render of the beauty. Assumes the camera has not moved since — nothing can check that for you. | measured 9.2 s total, 7.5 s of it in ComfyUI |
+  | **Last render only** | Uses your frame and nothing else; the graph estimates depth and normal from the image. No rendering at all. | 12.6 s, all of it in ComfyUI (two preprocessors) |
+  | **Render fresh** | Renders the camera at your **Samples** plus both passes. The only one certainly in step with the scene as it is now. | the beauty frame, plus the rest |
+
+  **Samples** is greyed out unless Frame is Render fresh, because it buys nothing on the other two.
+  The frame keeps your scene's aspect: a 16:9 shot restyles at 16:9. It used to be squared, which
+  re-cropped the composition the route exists to hold.
 
   **Strength is the knob that decides whether your geometry is reinterpreted or merely painted**, and
   it is worth knowing before the first press. Measured on one block-out cube, same seed and prompt:

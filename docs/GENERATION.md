@@ -854,6 +854,29 @@ the control the real-passes claim was measured against, and the only stylise rou
 image Bob did not render. **The measurement came back against the real passes on quality and for them
 on speed**: see [the stylise baseline](GENERATION-BASELINES.md#stylise-paint-and-multi-view-conditioning).
 
+**Where the frame comes from is a third decision, and it was being made silently.** The panel action
+was labelled "Stylise Last Render" and used no part of the last render: it shot a fresh beauty frame at
+the artist's sample count, then the two passes, three renders in all, and squared the frame on the way
+(`max(resolution_x, resolution_y)`), so the route that exists to hold a composition re-cropped it
+first. It is now an explicit `Frame` choice, measured on one 16:9 scene:
+
+| Frame | rendering | ComfyUI | total | hints |
+|---|---|---|---|---|
+| last render + passes | two passes at one sample each | 7.5 s | 9.2 s | `passes` |
+| last render only | none | 10.6 s | 12.6 s | `estimated` |
+| render fresh | beauty at Samples + two passes | 7.5 s | 9.1 s | `passes` |
+
+The estimated route costs MORE on the server (Depth Anything V2 plus NormalBAE run as preprocessors)
+and nothing in Blender, which is the trade to know: it is the fast one only because it renders nothing.
+Reusing the frame with fresh passes is the default because it gets the true hints for the price of two
+one-sample renders. `gen_views.save_render_result` is what makes it possible, and it trusts
+`save_render` rather than `Render Result.size`: in `--background` the datablock reports (0, 0) and
+`has_data` False while the save writes a perfectly good PNG, so believing the datablock would refuse a
+frame that is right there.
+
+Non-square is now legal through `render_passes` and `project` REFUSES it, which keeps the projection's
+square-only convention honest instead of silently halving an axis (the stylise gate asserts both).
+
 **Strength decides whether the GEOMETRY is reinterpreted, and the shipped 0.55 says no.** Measured
 2026-07-30 on one block-out cube in an empty world, same seed and prompt ("painted concept art, warm
 evening light, building, rooftop swimming pool"), ControlNets left at their shipped 0.85 depth / 0.45

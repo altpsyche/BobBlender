@@ -21,7 +21,10 @@ output, which is also what the add-on preferences already call it (ComfyUI URL, 
 
 **What lives here and what does not.** This panel owns the SERVICE (is the server up, how much of the
 card is free, what is queued, what came back) and the one action whose output is not scene data:
-Stylise Last Render, which makes a pitch frame. The actions that DO produce scene data stay with the
+Stylise, which makes a pitch frame. It was called "Stylise Last Render" and did not use the last
+render -- it shot a fresh beauty frame at the artist's sample count plus two passes, three renders in
+all, and squared the frame on the way. `Frame` is now an explicit choice between the render you have,
+that render plus freshly shot passes, and a fresh render of everything. The actions that DO produce scene data stay with the
 pipeline stage that owns their result -- texture sets and Paint (stylised) under Shaders, Generate
 Asset under Scatter -- because a panel hop to texture a material would be worse than the problem this
 fixes. Wherever the button was, the progress and the image show up here.
@@ -258,15 +261,36 @@ class BBT_StyliseProps(PropertyGroup):
         description="The same seed and prompt repaint the same look; change it to reroll",
         default=0, min=0,
     )
+    hints: bpy.props.EnumProperty(
+        name="Frame",
+        description="Where the frame and the ControlNet hints come from. All three restyle; they "
+                    "differ in what they cost and how tightly the geometry is held",
+        items=[
+            ("reuse", "Last render + passes",
+             "Use the frame you already rendered, and shoot only the depth and normal passes (one "
+             "sample each, a fraction of a frame). True geometry hints without re-rendering the "
+             "beauty. Assumes the camera has not moved since that render -- nothing can check that "
+             "for you"),
+            ("estimated", "Last render only",
+             "Use the frame you already rendered and nothing else: the graph estimates depth and "
+             "normal from the image. No rendering at all, so it is instant, and measured as not "
+             "meaningfully worse than the true passes"),
+            ("render", "Render fresh",
+             "Render the camera at your Samples, plus true depth and normal passes. The slowest and "
+             "the only one that is certainly in step with the scene as it is now"),
+        ],
+        default="reuse",
+    )
 
 
 class BBT_OT_comfy_stylise(Operator):
     bl_idname = "bob_blender_tools.comfy_stylise"
-    bl_label = "Stylise Last Render"
-    bl_description = ("Render the current camera with TRUE depth and normal passes, then restyle "
-                      "the frame in ComfyUI under both as ControlNet. The passes are Blender's own "
-                      "geometry, not an estimate, which is the whole point of this route. Output is "
-                      "a pitch frame beside the render, never geometry")
+    bl_label = "Stylise"
+    bl_description = ("Restyle a frame in ComfyUI under depth and normal ControlNet, so the "
+                      "composition holds and the paint changes. `Frame` decides where the picture "
+                      "and the hints come from: the render you already have (instant), that render "
+                      "plus freshly shot passes (true geometry, no re-render of the beauty), or a "
+                      "fresh render of everything. Output is a pitch frame, never geometry")
     bl_options = {"REGISTER"}
 
     def execute(self, context):
@@ -275,7 +299,8 @@ class BBT_OT_comfy_stylise(Operator):
 
         scene = context.scene
         props = scene.bbt_stylise
-        if scene.camera is None:
+        hints = props.hints
+        if hints == "render" and scene.camera is None:
             self.report({"ERROR"}, "The scene has no camera to render from")
             return {"CANCELLED"}
         if _comfy_job_running():
@@ -289,14 +314,32 @@ class BBT_OT_comfy_stylise(Operator):
 
         out_dir = os.path.join(pack, "_staging", "stylise")
         stem = comfy.slugify(props.prompt or "stylise")
-        # The render is main-thread work by nature, so it happens HERE, before the job is queued:
-        # a render inside the worker would touch bpy off the main thread, which is the one thing
-        # the job model forbids (the threading rule).
+        # Rendering is main-thread work by nature, so all of it happens HERE, before the job is
+        # queued: a render inside the worker would touch bpy off the main thread, which is the one
+        # thing the job model forbids (the threading rule).
+        beauty = depth = normal = None
+        size = [scene.render.resolution_x, scene.render.resolution_y]
         try:
-            shot = gen_views.render_passes(out_dir, stem, samples=int(props.samples),
-                                           resolution=max(scene.render.resolution_x,
-                                                          scene.render.resolution_y),
-                                           transparent=False)
+            if hints in ("reuse", "estimated"):
+                existing = gen_views.save_render_result(
+                    comfy.unique_file_name(out_dir, stem + "_frame", ".png"))
+                if existing is None:
+                    self.report({"ERROR"}, "Nothing has been rendered yet, so there is no last "
+                                           "render to stylise. Render once (F12), or set Frame to "
+                                           "Render fresh")
+                    return {"CANCELLED"}
+                beauty, size = existing["path"], existing["resolution"]
+            if hints == "reuse":
+                # Passes only, at the SAME size as the frame they have to line up with. One sample
+                # each, so this is a fraction of what re-rendering the beauty would cost.
+                shot = gen_views.render_passes(out_dir, stem, beauty=False, resolution=size,
+                                               transparent=False)
+                depth, normal = shot["depth"], shot["normal"]
+            elif hints == "render":
+                shot = gen_views.render_passes(out_dir, stem, samples=int(props.samples),
+                                               resolution=size, transparent=False)
+                beauty, depth, normal = shot["beauty"], shot["depth"], shot["normal"]
+                size = shot["resolution"]
         except Exception as exc:  # a render failure is a message, not a traceback in the console
             self.report({"ERROR"}, f"Render failed: {exc}")
             return {"CANCELLED"}
@@ -313,9 +356,10 @@ class BBT_OT_comfy_stylise(Operator):
         target = comfy.unique_file_name(out_dir, stem + "_styled", ".png")
 
         def work(job):
-            return comfy.stylize_render(shot["beauty"], target, prompt,
-                                        depth=shot["depth"], normal=shot["normal"],
-                                        denoise=denoise, size=shot["resolution"], lora=lora,
+            # Passing neither hint selects `stylize_render_est`, which estimates both from the image
+            # -- the route is a value in `core/comfy.py`, so there is no workflow name to get wrong.
+            return comfy.stylize_render(beauty, target, prompt, depth=depth, normal=normal,
+                                        denoise=denoise, size=size, lora=lora,
                                         on_queued=job.note_prompt_id, on_progress=job.report)
 
         def landed(job):
@@ -323,11 +367,16 @@ class BBT_OT_comfy_stylise(Operator):
             seconds = info.get("seconds", 0)
             _COMFY_STATE.update(ok=True, detail=f"stylised in {seconds:.0f}s: "
                                                f"{os.path.basename(info.get('path', ''))}")
-            record(f"stylise: {prompt[:40]}", image=info.get("path"), seconds=seconds)
+            record(f"stylise ({info.get('hints', '?')}): {prompt[:34]}",
+                   image=info.get("path"), seconds=seconds)
 
         _submit(f"stylise: {prompt[:32]}", work, landed)
-        self.report({"INFO"}, f"Rendered {os.path.basename(shot['beauty'])} with depth and normal "
-                              f"passes; stylising in the background")
+        told = {"reuse": f"Reusing your last render at {size[0]}x{size[1]} with fresh depth and "
+                         f"normal passes",
+                "estimated": f"Reusing your last render at {size[0]}x{size[1]}, hints estimated "
+                             f"from it",
+                "render": f"Rendered {size[0]}x{size[1]} with depth and normal passes"}[hints]
+        self.report({"INFO"}, f"{told}; stylising in the background")
         return {"FINISHED"}
 
 
@@ -432,7 +481,11 @@ class BBT_PT_comfyui_stylise(Panel):
         col.prop(props, "prompt")
         row = col.row(align=True)
         row.prop(props, "denoise")
-        row.prop(props, "samples")
+        samples = row.row(align=True)
+        # Samples only buys anything on the route that actually renders a beauty frame.
+        samples.enabled = props.hints == "render"
+        samples.prop(props, "samples")
+        col.prop(props, "hints", text="")
         # A LoRA is a filename on the SERVER, so it is picked from what the server has rather than
         # typed: an unguessable string in a text field is a validator failure waiting to happen.
         row = col.row(align=True)
@@ -444,15 +497,33 @@ class BBT_PT_comfyui_stylise(Panel):
         hint = col.row()
         hint.enabled = False
         hint.label(text="Strength 0.55 paints your render; 0.8+ lets it reinterpret a block-out")
+        # Say what the press will DO, before it is pressed: the button used to be called "Stylise
+        # Last Render" and rendered three frames instead, so the cost arrived as a surprise.
+        from ..core import gen_views
+
+        rendered = bpy.data.images.get("Render Result")
+        have_frame = gen_views.have_render_result()
+        camera = context.scene.camera is not None
+        if props.hints == "render":
+            ready, note = camera, (f"renders the camera at {context.scene.render.resolution_x}x"
+                                   f"{context.scene.render.resolution_y} plus two passes, then "
+                                   f"restyles" if camera else "no camera in the scene to render")
+        elif props.hints == "reuse":
+            ready = have_frame and camera
+            note = (f"reuses your {rendered.size[0]}x{rendered.size[1]} render, shoots only the two "
+                    f"passes" if ready else
+                    "nothing rendered yet -- press F12, or choose Render fresh"
+                    if not have_frame else "no camera, so the passes cannot be shot")
+        else:
+            ready = have_frame
+            note = (f"reuses your {rendered.size[0]}x{rendered.size[1]} render, no rendering at all"
+                    if ready else "nothing rendered yet -- press F12, or choose Render fresh")
         run = col.row()
-        # A restyle needs a camera to render from, and saying so before the press beats a
-        # post-click error (the empty-state rule).
-        run.enabled = context.scene.camera is not None
+        run.enabled = ready
         run.operator("bob_blender_tools.comfy_stylise", icon="SHADERFX")
         cap = col.row()
         cap.enabled = False
-        cap.label(text="renders the camera plus true depth and normal, then restyles it"
-                       if context.scene.camera is not None else "no camera in the scene to render")
+        cap.label(text=note)
 
 
 CLASSES = (

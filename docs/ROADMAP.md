@@ -586,16 +586,18 @@ _31 bars: 22 judged on the ASSET (a receipt sentence reads each), 9 on the CODE 
 
 ## Open: the provisional bars, and what each one needs
 
-Nine of the twenty-nine are marked `provisional` in the table above, and each one's registry entry
-carries what would settle it. They are kept rather than deleted because every one catches something real
+Eleven of the thirty-one are marked `provisional` in the table above, and each one's registry entry
+carries what would settle it. Two are the paint route's, added 2026-07-30 with the route itself
+(`paint_coverage` at two samples, `view_overlap` at two), so the shopping list below gained a third
+batch: one stand painted at two texture sizes and two ring counts. They are kept rather than deleted because every one catches something real
 — trading a working gate for a tidy table would be a bad exchange — and none of them is trusted. The
 strong ones, for contrast: `metalness` from ten samples spanning 0.0002 to 0.83, `map_spread` from seven
 maps spanning 0.00 to 57.51, `axis_anisotropy` and `axis_taper` from twelve cells with a clean
 separating gap on both figures.
 
-**Recalibrating needs generation, not code**, which is why this is one section rather than nine: a
-second batch of leaf atlases settles four of them and a second batch of structures and rocks settles
-three. One is different, and it is the worst of them:
+**Recalibrating needs generation, not code**, which is why this is one section rather than eleven: a
+second batch of leaf atlases settles four of them, a second batch of structures and rocks settles
+three, and one painted stand at two sizes and two ring counts settles the paint pair. One is different, and it is the worst of them:
 
 **`LEAF_RAMP_STOPS_MAX` now has its second batch, and the batch says the bar is wrong.** Ten real
 atlas sheets measured at `in_mask_ramp_stops`: 0.235, 0.305, 0.627, 0.692, 0.711, 0.978, 1.075, 1.153,
