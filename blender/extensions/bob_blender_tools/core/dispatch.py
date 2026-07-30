@@ -5,13 +5,16 @@ from . import (
     biome,
     camera,
     describe,
+    foliage_build,
     gen_assets,
+    gen_paint,
     geonodes,
     images,
     mesh,
     path_curve,
     proxies,
     render,
+    scatter_build,
     scene,
     shading,
     splines_build,
@@ -53,11 +56,19 @@ _HANDLERS = {
     "apply_season": atmosphere.apply_season,
     "scene_preset": atmosphere.scene_preset,
     # Generation, the Blender half (docs/GENERATION.md, Ops and MCP). Everything that talks to
-    # ComfyUI runs in the MCP process with no bpy; these three are the steps that need Blender.
+    # ComfyUI runs in the MCP process with no bpy; these are the steps that need Blender.
     "apply_texture_set": shading.apply_texture_set,
     "import_generated": gen_assets.import_generated_op,
     "make_blockout": proxies.make_blockout,
     "export_control": gen_assets.export_control_op,
+    # The stylised texture route. An op rather than a comfy_* tool because Blender renders the
+    # turntable and projects the restyled views back, so half of it cannot leave this process.
+    "paint_stylised": gen_paint.paint_stylised_op,
+    # The two recipes an owning builder is responsible for (geonodes.OWNED_RECIPES), which is why
+    # build_geonodes refuses them: these record what the object IS -- a species, a kind, an emitter --
+    # so the result is listed by the panels and rebuildable, which a raw recipe build was not.
+    "grow_foliage": foliage_build.grow_foliage_op,
+    "scatter_layer": scatter_build.scatter_layer_op,
     # Typed paths + water + erosion (core/splines_build.py)
     "make_curve": splines_build.make_curve,
     "curve_build": splines_build.curve_build,

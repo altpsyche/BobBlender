@@ -67,13 +67,15 @@ recipe, and both honoured on a rebuild as well as a first build:
   it is a scatter source and not a tree standing on the origin. An existing
   collection is used as it is, so this never changes whether a pool is in the scene.
 
-Together they are the whole difference between a stand of trees and one tree standing on the origin:
+Together they are the whole difference between a stand of trees and one tree standing on the origin.
+On `grow_foliage` the two are op FIELDS rather than `params` keys, because a tree is owned by that op
+and not by `build_geonodes` — the recipe refuses the generic route, which recorded no species:
 
 ```json
-{"op": "build_geonodes", "recipe": "foliage", "name": "Conifer_0",
- "params": {"height": 17.5, "seed": 11, "collection": "BOB_Assets_Trees"}}
-{"op": "build_geonodes", "recipe": "foliage", "name": "Hero_0",
- "params": {"height": 17.5, "seed": 61, "location": [-6.8, -13.5, 1.2]}}
+{"op": "grow_foliage", "species": "conifer", "name": "Conifer_0", "seed": 11,
+ "collection": "BOB_Assets_Trees", "params": {"height": 17.5}}
+{"op": "grow_foliage", "species": "conifer", "name": "Hero_0", "seed": 61,
+ "location": [-6.8, -13.5, 1.2], "params": {"height": 17.5}}
 ```
 
 The first is a scatter source in an off-scene pool; the second is a tree standing at a spot you

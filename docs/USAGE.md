@@ -113,7 +113,7 @@ Eight more need a local ComfyUI:
 | `comfy_bark_set` | A bark set for BobFoliage, measured for grain direction as well as tiling. Pass the name a species preset asks for (`bark_conifer`, `bark_broadleaf`) and the tree wears it with no apply step. |
 | `comfy_leaf_atlas` | A grid of foliage sprites on transparent, for BobFoliage's leaf cards. The set records its own grid, so a tree only has to name it. |
 | `comfy_mesh` | Prompt to a staged scatter asset, geometry plus PBR. Returns the `import_generated` op. |
-| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. **MCP only; there is no panel button for this.** |
+| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs, native PBR from one reference image. For a stylised look, or for a shape one image cannot describe, send the `paint_stylised` op instead: it paints from a turntable so every surface is painted by a camera that could see it. |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. A pitch frame, not geometry. |
 | `comfy_free` | Ask ComfyUI to hand the card back, and report how much it actually gave. Reach for it between a generate and a Cycles render. It only drops what ComfyUI's main process will release, which on the measured case is about 100 MiB of a 7.3 GB hold, and it says so rather than pretending. |
@@ -616,7 +616,8 @@ Install it if you want generated content. Skip it and you lose nothing described
 | Scatter | **Asset from Block-out** | The same, conditioned on a proxy's shape, so it keeps that silhouette and footprint. |
 | Shaders | **Generate Variants** | Seamless PBR texture sets from a prompt or a reference photo, with accept / reject / upres. |
 | Advanced | **Stylise Last Render** | A styled concept frame from your render, composition held by true depth and normal passes. |
-| MCP only | `comfy_paint_mesh` | Textures a mesh you already have, in its own UVs. No panel button exists for this. |
+| Shaders | **Paint (stylised)** | Paints the selected mesh from a turntable: every view restyled under depth and normal ControlNet, projected back into its own UVs. The route for a stylised look, and for any shape a single reference image cannot describe. |
+| MCP only | `comfy_paint_mesh` | Textures a mesh you already have, in its own UVs, from one reference image. The stylised alternative IS on the panel above, and reaches an agent as the `paint_stylised` op. |
 
 Two models do the 3D work, each for what only it does, and the panel never asks you to choose
 between them.
@@ -744,17 +745,18 @@ or put Blender on `PATH`.
 **`bake_heightfield` fails on import.** numpy is missing from the MCP launch environment. Keep the
 `--with numpy>=1.26` in the config snippet.
 
-**Headless `build` raises on ops that read addon state.** Headless `build` runs against a
-`--factory-startup` Blender with the addon's `core` imported but the addon itself not enabled, so
-any op that reads a PropertyGroup the addon registers will raise there. That is `set_env`,
-`apply_season` and `scene_preset` (they read the shared env), and also `apply_biome`, whose scatter
-half reads `Object.bbt_scatter_coll` and fails with
-`AttributeError: 'Object' object has no attribute 'bbt_scatter_coll'`.
+**Headless `build` raises on ops that read PANEL-owned state.** Headless `build` runs against a
+`--factory-startup` Blender with the addon's `core` imported but the addon itself not enabled, so an op
+whose state a `ui/` module registers raises `AttributeError: 'Object' object has no attribute '<prop>'`
+there. **That is the curve ops** (`make_curve`, `curve_build`, `drape_curve`, `bake_erode`,
+`revert_erode`), which read `Object.bbt_curve` from `ui/splines.py`, and anything reading
+`Scene.bbt_world`.
 
-Use `build_live` for any of them. If you need a headless `.blend`, the pieces work individually:
-`shade_terrain` shades, `build_geonodes` with the `scatter` recipe scatters, and `build_sky` works
-headlessly as long as you pass an explicit `time_of_day` (a bare `build_sky` reads the env it
-cannot see).
+The world, foliage and scatter state is registered by `core` and works on both surfaces, so `set_env`,
+`apply_season`, `scene_preset`, `grow_foliage`, `scatter_layer` and `apply_biome` are fine headlessly.
+
+Use `build_live` for what is still panel-owned. `build_sky` works headlessly as long as you pass an
+explicit `time_of_day` (a bare `build_sky` reads the env it cannot see).
 
 More MCP-specific cases are in [MCP.md](MCP.md).
 

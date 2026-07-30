@@ -177,7 +177,10 @@ def reset_tiling(url=None, timeout=120):
     if ckpt:
         values["BOB_CKPT"] = {"ckpt_name": ckpt}
     t0 = time.time()
-    generate_image((graph, prov), values, url=url, timeout=timeout,
+    # No floor: this is 64 px and one step on a model the server has already loaded, and it is the
+    # thing that has to run BEFORE the real job. Holding a reset to the floor of the route it
+    # unblocks would refuse the fix on exactly the card that needs it.
+    generate_image((graph, prov), values, route=None, url=url, timeout=timeout,
                    required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
     mark_tiling_applied(url, False)
     return time.time() - t0
@@ -407,6 +410,11 @@ def free(url=None, unload_models=True, free_memory=True):
 #
 # The numbers are the worker's resident weights (3.2 GB measured) plus its cascade working set, and
 # the hero tier's 1536_cascade needs materially more than the default 1024.
+#
+# Every job in this module is held to one of these, because `generate_image` and `generate_mesh`
+# check before they queue and take `route` with no default. A graph that loads no model says
+# `route=None` at the call site with its reason beside it -- that is the whole list of exceptions,
+# and it is visible rather than implied.
 VRAM_FLOOR_MIB = {
     "mesh": 5000,        # any image-to-3D route at the default tier
     "mesh_hero": 7000,   # 1536_cascade
@@ -459,10 +467,12 @@ def recover_vram(url=None, target_mib=None, timeout=3):
 def preflight_vram(route="mesh", url=None, free_first=True):
     """Raise ComfyError with a VRAM sentence when the card cannot hold this route's working set.
 
-    One caller today, `mcp_agent.server._generation`, which is every generation that enters over
-    MCP; the panel's own submissions do NOT pass through here, so a panel generation still meets an
-    OOM as an OOM. That asymmetry is a gap rather than a design, and it is named in
-    docs/ROADMAP.md. `free_first` tries the recovery once,
+    Called from `generate_image` and `generate_mesh`, which every job in this module goes through,
+    so the floor belongs to the CAPABILITY rather than to one caller: a panel operator, a gate
+    script and an MCP tool all inherit it, and a route added later cannot forget it because `route`
+    has no default. `mcp_agent.server._generation` also calls it up front, which is not a duplicate
+    of this so much as an early-out: it refuses a multi-stage chain before the first stage is paid
+    for rather than after. `free_first` tries the recovery once,
     because the common case is a card that a previous job left full and that one `POST /free` fixes;
     only when that is not enough does this refuse. A server that cannot report its VRAM at all is
     allowed through -- an unknown is not a reason to block work.
@@ -747,10 +757,14 @@ def upload_mesh(path, url=None, subfolder="3d"):
     return "input/" + upload_image(path, url=url, subfolder=subfolder)
 
 
-def generate_mesh(workflow, values, *, url=None, timeout=1800, on_progress=None, on_queued=None,
-                  required_titles=(), preflight_graph=True):
+def generate_mesh(workflow, values, *, route, url=None, timeout=1800, on_progress=None,
+                  on_queued=None, required_titles=(), preflight_graph=True):
     """Run one graph and return (mesh bytes, info). `generate_image`'s twin, with a longer default
     timeout because a geometry job is 87 s warm and 680 s on the run that pulls 15 GB of weights.
+
+    `route` names the VRAM floor, and it has no default for the reason `gen_receipt` gives a receipt
+    key no default reader: a new graph then has to state which floor it runs under or say `None` out
+    loud, and the omission that left every caller but one unguarded cannot happen silently again.
     """
     graph, prov = load_workflow(workflow) if isinstance(workflow, str) else workflow
     bound = template(graph, values)
@@ -758,6 +772,8 @@ def generate_mesh(workflow, values, *, url=None, timeout=1800, on_progress=None,
         check(bound, url=url, required_titles=required_titles,
               runtime_inputs=prov.get("runtime_inputs") or ())
     t0 = time.time()
+    if route:
+        preflight_vram(route, url=url)
     pid = queue(bound, url=url)
     if on_queued:
         on_queued(pid)
@@ -970,13 +986,17 @@ def unique_file_name(directory, stem, ext):
     raise ComfyError(f"too many files named {stem}{ext}")
 
 
-def generate_image(workflow, values, *, url=None, timeout=600, on_progress=None,
+def generate_image(workflow, values, *, route, url=None, timeout=600, on_progress=None,
                    on_queued=None, required_titles=(), preflight_graph=True):
     """Run one graph and return (png bytes, info). The single path every raster job takes.
 
     Preflight first, so a missing model or an uninstalled pack is a sentence rather than an HTTP
     400 from the validator. `preflight_graph=False` skips the `/object_info` fetch for a caller
     that has already checked the same graph this session.
+
+    `route` names the VRAM floor and is required; see `generate_mesh` for why it has no default.
+    The graph check comes first because a graph that cannot run is a defect and a full card is a
+    condition, and reporting the condition would hide the defect.
 
     `on_queued(prompt_id)` fires the moment the server accepts the graph. That is what makes a
     cancel reach the server rather than only the local registry, so a cancelled job stops costing
@@ -988,6 +1008,8 @@ def generate_image(workflow, values, *, url=None, timeout=600, on_progress=None,
         check(bound, url=url, required_titles=required_titles,
               runtime_inputs=prov.get("runtime_inputs") or ())
     t0 = time.time()
+    if route:
+        preflight_vram(route, url=url)
     pid = queue(bound, url=url)
     if on_queued:
         on_queued(pid)
@@ -1072,7 +1094,7 @@ def texture_variant(prompt_text, out_dir, *, seed=0, size=1024, negative=None, c
         values["BOB_SEED"]["denoise"] = float(denoise)
 
     mark_tiling_applied(url)  # before the queue: a crash mid-job still leaves the model padded
-    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+    png, gen = generate_image((graph, prov), values, route="texture", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
@@ -1251,7 +1273,7 @@ def upres_variant(variant_dir, *, scale=2.0, url=None, workflow="tex_upres", den
 
     mark_tiling_applied(url)
     try:
-        png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+        png, gen = generate_image((graph, prov), values, route="texture", url=url, timeout=timeout,
                                   on_progress=on_progress, on_queued=on_queued,
                                   required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
     finally:
@@ -1642,6 +1664,16 @@ def _leaf_atlas(prompt_text, out_dir, set_name, cells_dir, *, route, cols, rows,
 MESH_TIERS = {"preview": "512", "default": "1024", "hero": "1536_cascade"}
 
 
+def _tier_route(resolution):
+    """The VRAM floor a geometry job runs under, from the resolution it actually asked the node for.
+
+    Off the RESOLUTION rather than the tier name so `tier="1536_cascade"` passed raw is read the
+    same as `tier="hero"`; the hero cascade needs materially more of the card than the default 1024
+    and sharing one floor would let it through and then OOM inside somebody else's worker.
+    """
+    return "mesh_hero" if resolution == MESH_TIERS["hero"] else "mesh"
+
+
 def subject_prompt(prompt_text):
     """The artist's prompt with `mesh_subject`'s single-subject clause appended."""
     return ", ".join(p for p in ((prompt_text or "").strip(), SUBJECT_SUFFIX) if p)
@@ -1669,8 +1701,13 @@ def subject_image(prompt_text, out_path, *, seed=0, size=1024, negative=None, ch
 
     # A subject image must NOT wrap: it is a single centred object, and a circular UNet would carry
     # its edge round the frame. So undo any padding a texture set left on the shared model.
+    #
+    # The floor is read BEFORE that reset, for `stylize_render`'s measured reason: the reset is an
+    # SDXL job, so afterwards the card reads as full of the very model this needs, and the chokepoint
+    # would refuse a job that was about to run. Hence route=None below.
+    preflight_vram("texture", url=url)
     ensure_untiled(url, on_progress=on_progress)
-    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+    png, gen = generate_image((graph, prov), values, route=None, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
@@ -1742,8 +1779,9 @@ def mesh_geometry(image_path, out_path, *, seed=0, tier="default", url=None, rem
     if "BOB_MODEL" in titles(graph):
         values["BOB_MODEL"] = {"resolution": resolution}
     graph = bind_process(graph, values, remesh=remesh)
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
-                              on_progress=on_progress, on_queued=on_queued,
+    data, gen = generate_mesh((graph, prov), values, route=_tier_route(resolution),
+                              url=url, timeout=timeout, on_progress=on_progress,
+                              on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
     return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
@@ -1777,7 +1815,7 @@ def mesh_geom_alt(image_path, out_path, *, seed=0, url=None, workflow="mesh_geom
     ckpt = checkpoint or prov.get("default_checkpoint")
     if ckpt and "BOB_3D_MODEL" in titles(graph):
         values["BOB_3D_MODEL"] = {"ckpt_name": ckpt}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="mesh", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
@@ -1802,7 +1840,7 @@ def mesh_texture(mesh_path, image_path, out_path, *, seed=0, texture_size=1024, 
               "BOB_IMAGE": {"image": upload_image(image_path, url=url, subfolder="bob")},
               "BOB_SEED": {"seed": int(seed)},
               "BOB_TEXSIZE": {"texture_size": int(texture_size)}}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="paint", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_MESH", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
@@ -1835,8 +1873,9 @@ def mesh_geom_texture(image_path, out_path, *, seed=0, tier="default", faces=400
     if "BOB_MODEL" in titles(graph):
         values["BOB_MODEL"] = {"resolution": resolution}
     graph = bind_process(graph, values, remesh=remesh, faces=faces)
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
-                              on_progress=on_progress, on_queued=on_queued,
+    data, gen = generate_mesh((graph, prov), values, route=_tier_route(resolution),
+                              url=url, timeout=timeout, on_progress=on_progress,
+                              on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
     return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
@@ -1860,7 +1899,7 @@ def mesh_geom_mv(view_paths, out_path, *, seed=0, url=None, workflow="mesh_geom_
                            view_paths):
         values[title] = {"image": upload_image(path, url=url, subfolder="bob")}
     values["BOB_SEED"] = {"seed": int(seed)}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="mesh", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_VIEW_FRONT", "BOB_SEED", "BOB_OUT"))
@@ -1889,8 +1928,9 @@ def mesh_geom_mv_trellis(view_paths, out_path, *, seed=0, tier="default", remesh
     if "BOB_MODEL" in titles(graph):
         values["BOB_MODEL"] = {"resolution": resolution}
     graph = bind_process(graph, values, remesh=remesh, faces=faces)
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
-                              on_progress=on_progress, on_queued=on_queued,
+    data, gen = generate_mesh((graph, prov), values, route=_tier_route(resolution),
+                              url=url, timeout=timeout, on_progress=on_progress,
+                              on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_VIEW_FRONT", "BOB_SEED", "BOB_OUT"))
     return _write_mesh(out_path, data, gen, workflow=workflow, prov=prov,
@@ -1938,7 +1978,7 @@ def mesh_geom_ctrl(control_path, image_path, out_path, *, seed=0, points=8192, s
     local = omni_model_dir()
     if local:
         values["BOB_OMNI"] = {"repo_or_path": local}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="mesh", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_CONTROL", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
@@ -1985,7 +2025,7 @@ def mesh_geom_bbox(dims, image_path, out_path, *, seed=0, steps=50, guidance=4.5
     local = omni_model_dir()
     if local:
         values["BOB_OMNI"] = {"repo_or_path": local}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="mesh", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
@@ -2039,7 +2079,7 @@ def mesh_geom_voxel(control_path, image_path, out_path, *, seed=0, samples=81920
     local = omni_model_dir()
     if local:
         values["BOB_OMNI"] = {"repo_or_path": local}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    data, gen = generate_mesh((graph, prov), values, route="mesh", url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_CONTROL", "BOB_IMAGE", "BOB_SEED", "BOB_OUT"))
@@ -2135,7 +2175,9 @@ def mesh_simplify_uv(mesh_path, out_path, *, faces=4000, url=None, workflow="mes
     graph, prov = load_workflow(workflow)
     values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)},
               "BOB_SIMPLIFY": {"target_face_count": int(faces)}}
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    # No floor: this graph loads no model, so refusing it on free VRAM would block the cheap half of
+    # a chain on the card state its expensive half created.
+    data, gen = generate_mesh((graph, prov), values, route=None, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_MESH", "BOB_OUT"))
@@ -2166,7 +2208,8 @@ def mesh_process(mesh_path, out_path, *, faces=4000, remesh=True, url=None,
     graph, prov = load_workflow(workflow)
     values = {"BOB_MESH": {"mesh_path": upload_mesh(mesh_path, url=url)}}
     graph = bind_process(graph, values, remesh=remesh, faces=faces)
-    data, gen = generate_mesh((graph, prov), values, url=url, timeout=timeout,
+    # No floor, for `mesh_simplify_uv`'s reason: no model is loaded here.
+    data, gen = generate_mesh((graph, prov), values, route=None, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_MESH", "BOB_OUT"))
@@ -2630,6 +2673,14 @@ PAINT_DENOISE = 0.40
 STYLISE_SUFFIX = "same composition, same camera, same layout, coherent lighting"
 
 
+def _paint_or_stylise_route(workflow):
+    """Which VRAM floor one `stylize_render` call runs under: `mesh_paint_views` carries an
+    IPAdapter and its vision encoder on top of the two ControlNets, so it is the paint floor and not
+    the stylise one. One graph shape serving two families is exactly why this is read off the
+    workflow rather than passed in by a caller that would sometimes forget."""
+    return "paint" if workflow == "mesh_paint_views" else "stylize"
+
+
 def _round8(value):
     """SDXL latents are eighths of a pixel, so a render's odd resolution has to land on a multiple
     of 8 before it becomes a latent."""
@@ -2650,7 +2701,7 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
                    denoise=STYLISE_DENOISE, size=1024, negative=None, checkpoint=None,
                    lora=None, lora_strength=0.8, depth_strength=None, normal_strength=None,
                    reference=None, url=None, workflow=None, timeout=900, on_progress=None,
-                   on_queued=None, preflight_graph=True):
+                   on_queued=None, preflight_graph=True, check_vram=True):
     """`stylize_render` (or `mesh_paint_views`, or `stylize_render_est`): one image restyled under
     depth and normal ControlNet, written to `out_path`. Returns info.
 
@@ -2662,6 +2713,13 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
     `lora` is a filename from the server's own LoRA enum. None DROPS the LoraLoader from the graph
     rather than running it at strength 0, because a placeholder filename fails the validator on a
     machine with no LoRAs installed (`drop_node`).
+
+    `check_vram` is where this route's floor is read, and it is HERE rather than in
+    `generate_image` because of the `ensure_untiled` call below: the reset is itself an SDXL job, so
+    by the time the chokepoint looked, the shared checkpoint was resident and the card legitimately
+    read 3,599 MiB free against a 4,000 floor -- a refusal caused by the priming step rather than by
+    a full card. Measured on this route. `paint_views` turns it off for every view after the first,
+    the same batching argument `preflight_graph` makes one line down.
     """
     if workflow is None:
         workflow = ("mesh_paint_views" if reference
@@ -2702,9 +2760,14 @@ def stylize_render(image_path, out_path, prompt_text, *, depth=None, normal=None
     # A stylised frame holds a real composition, so wrapping it round the border is nonsense. Same
     # shared model as `tex_tileable`, so the same reset. Cheap here: it is one 64 px sample in front
     # of a multi-second restyle, and the paint route only pays it on its first view.
+    if check_vram:
+        preflight_vram(_paint_or_stylise_route(workflow), url=url)
     ensure_untiled(url, on_progress=on_progress)
-    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
-                              on_progress=on_progress, on_queued=on_queued,
+    # route=None here: the floor was read above, before the reset loaded the checkpoint. Reading it
+    # again now would measure the card WITH this route's own model on it.
+    png, gen = generate_image((graph, prov), values, route=None, url=url,
+                              timeout=timeout, on_progress=on_progress,
+                              on_queued=on_queued,
                               preflight_graph=preflight_graph,
                               required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
@@ -2746,7 +2809,7 @@ def paint_views(views, out_dir, prompt_text, *, seed=0, denoise=PAINT_DENOISE, s
                              denoise=denoise, negative=negative, checkpoint=checkpoint,
                              lora=lora, lora_strength=lora_strength, url=url, workflow=workflow,
                              timeout=timeout, on_progress=on_progress, on_queued=on_queued,
-                             preflight_graph=(i == 0))
+                             preflight_graph=(i == 0), check_vram=(i == 0))
         if reference is None:
             reference = target  # the stylised FRONT, from here on
         seconds[f"view_{i:02d}"] = info["seconds"]
@@ -2756,30 +2819,26 @@ def paint_views(views, out_dir, prompt_text, *, seed=0, denoise=PAINT_DENOISE, s
             "total_seconds": float(sum(seconds.values()))}
 
 
-# Which route paints a mesh Bob already has. Both texture a mesh in ITS OWN UVs, and both stage a
-# file per view or per mesh that `core.gen_paint` or `core.gen_assets` then consumes, so the choice
-# is a value in one place -- the same shape `asset_chain` gave the geometry decision.
+# Which route paints a mesh Bob already has. Both texture a mesh in ITS OWN UVs, so the choice is a
+# NAME in one place; what the name reaches is a whole entry point rather than a function this module
+# can hand back, and that asymmetry is the honest shape of the two routes:
 #
 #   "pbr"      `mesh_texture`, Trellis2TextureMesh: plausible native PBR, no style control, one job.
-#   "stylised" `mesh_paint_views`, this module's paint_views plus core.gen_paint: LoRA and prompt style control,
-#              N jobs, and a colour map rather than a PBR set.
+#              One mesh in, one textured mesh out, so `comfy_paint_mesh` is the whole route.
+#   "stylised" `mesh_paint_views`: `paint_views` here, with Blender on both sides of it. Bob renders
+#              the turntable and projects the restyle back, so the route is `core.gen_paint`'s
+#              `paint_stylised` and reaches an agent as the `paint_stylised` OP. LoRA and prompt
+#              style control, N jobs, and a colour map with the rest of the set derived.
+#
+# There was a `texture_chain()` here that returned one of the two functions. It went because the two
+# have different signatures -- one mesh against N views -- so nothing could call what it returned
+# without knowing which it had got, and in the event nothing called it at all.
 #
 # "pbr" stays the default because a plausible material is what a scatter prop needs; "stylised" is
 # for the case the retopology tier rule named, where the target look is stylised rather than
 # photographic, and it is the only route that has real style control at all.
 TEXTURE_ROUTES = ("pbr", "stylised")
 DEFAULT_TEXTURE_ROUTE = "pbr"
-
-
-def texture_chain(route=None):
-    """The texturing function for a route name. The one place THAT route becomes a decision.
-
-    The two have different signatures on purpose and the difference is honest: `mesh_texture` takes
-    one mesh and returns one textured mesh, while `paint_views` takes N rendered views and returns N
-    images for Blender to project. A wrapper that hid that would hide the fact that the stylised
-    route needs Blender in the middle.
-    """
-    return paint_views if (route or DEFAULT_TEXTURE_ROUTE) == "stylised" else mesh_texture
 
 
 # -- Terrain macro mask (the macro-heightmap family)
@@ -2849,6 +2908,9 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
     ckpt = checkpoint or prov.get("default_checkpoint")
     if ckpt:
         values["BOB_CKPT"] = {"ckpt_name": ckpt}
+    # Before the `ensure_untiled` in the open branch below, for `stylize_render`'s measured reason:
+    # the reset is an SDXL job, and after it the card reads as full of this route's own model.
+    preflight_vram("heightmap", url=url)
     tiled = macro_tiling(route)
     if tiled:
         values.update(tiling_values(enable=True))
@@ -2865,7 +2927,7 @@ def heightmap_macro(prompt_text, out_path, *, seed=0, size=1024, route=None, neg
         # rejected.
         ensure_untiled(url, on_progress=on_progress)
 
-    png, gen = generate_image((graph, prov), values, url=url, timeout=timeout,
+    png, gen = generate_image((graph, prov), values, route=None, url=url, timeout=timeout,
                               on_progress=on_progress, on_queued=on_queued,
                               required_titles=("BOB_PROMPT", "BOB_SEED", "BOB_OUT"))
 

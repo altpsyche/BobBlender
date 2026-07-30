@@ -61,11 +61,12 @@ from mcp_agent import contracts, executor, paths, server  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, section  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("agent-surface gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -73,10 +74,6 @@ SEED = 4242
 PROMPT_ASSET = "a weathered granite boulder covered in lichen"
 PROMPT_TEX = "mossy forest floor with small stones and fallen needles"
 PROMPT_MACRO = "one isolated steep massif in the north west, broad low valleys elsewhere"
-
-
-def section(title: str) -> None:
-    print(f"\n=== {title} " + "=" * max(0, 62 - len(title)))
 
 
 def rel(path) -> str:
@@ -247,9 +244,14 @@ def part_b(args, reachable: bool) -> dict:
         {"op": "add_mesh", "kind": "grid", "name": "Ground", "size": 24.0},
         {"op": "shade_terrain", "object": "Ground", "stack": "temperate"},
         gen["import_op"],
-        {"op": "build_geonodes", "recipe": "scatter", "name": "ScatterRocks",
-         "params": {"emitter": "Ground", "assets": "BOB_Assets_Rocks", "density": 0.4,
-                    "min_scale": 0.8, "max_scale": 1.3, "seed": SEED}},
+        # The TYPED op, not a raw `scatter` recipe: the raw one is what an agent used to have and it
+        # left the layer anonymous, so the Scatter panel showed nothing after this gate ran. This is
+        # the route a user's panel takes, which is the whole point of an agent-surface gate.
+        # convert=False keeps the generated rock's own baked texture set on it, rather than
+        # weathering it into a BobShader mid-measurement.
+        {"op": "scatter_layer", "emitter": "Ground", "kind": "rocks", "name": "ScatterRocks",
+         "knobs": {"density": 0.4, "min_scale": 0.8, "max_scale": 1.3, "seed": SEED},
+         "convert": False},
         {"op": "add_camera", "name": "BOB_Camera", "location": [14.0, -14.0, 8.0],
          "look_at": [0.0, 0.0, 1.0], "lens": 45.0},
         {"op": "build_sky", "params": {"time_of_day": 15.0}},
@@ -282,8 +284,15 @@ def part_b(args, reachable: bool) -> dict:
           f"{origin} m above the lowest vertex")
     check("a BobShader on it", imported.get("master_type") in ("surface", "terrain"),
           str(imported.get("master_type")))
-    scattered = op_result(result, "build_geonodes").get("created") or []
+    # The typed op reports what the layer IS, not just what it created, so assert that too: a layer
+    # that records its kind and its emitter is one the Scatter panel can list and a rebuild can
+    # resolve, which is the whole difference from the raw recipe this used to call.
+    layer = op_result(result, "scatter_layer")
+    scattered = layer.get("created") or []
     check("a scatter layer instances it", bool(scattered), ", ".join(scattered))
+    data = layer.get("data") or {}
+    check("and the layer records its kind and its emitter, so the panel can show it",
+          data.get("kind") == "rocks" and data.get("emitter") == "Ground", str(data))
     check("the render landed", render_png.is_file(),
           f"{render_png.stat().st_size // 1024} KiB" if render_png.is_file() else "missing")
 

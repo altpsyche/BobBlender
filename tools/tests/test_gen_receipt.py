@@ -101,12 +101,13 @@ def test_no_measurement_can_reach_a_receipt_without_a_reader(mods):
     receipt, _ = mods
     assert receipt.unreviewed(receipt.MESH_RECEIPT_KEYS) == [], \
         "a mesh receipt key with no warning and no informational reason"
+    assert receipt.unreviewed(receipt.PAINT_RECEIPT_KEYS, "paint") == [], \
+        "a paint receipt key with no warning and no informational reason"
 
     # Both halves of the declaration have to be real. A key cannot be in both -- that would be a
     # gate somebody decided to stop trusting without deleting -- and every gated key has to name a
     # function that exists, or the declaration is a comment rather than a check.
-    for gated, known, label in ((receipt.MESH_GATED, receipt.MESH_INFORMATIONAL, "mesh"),
-                                (receipt.TEXTURE_GATED, receipt.TEXTURE_INFORMATIONAL, "texture")):
+    for label, (gated, known) in receipt.VOCABULARIES.items():
         assert not set(gated) & set(known), f"{label}: a key cannot be both gated and informational"
         for key, fns in gated.items():
             # One key may declare several readers, because one measurement can fail in ways that are
@@ -127,8 +128,10 @@ def test_the_bridge_sends_exactly_what_is_declared(mods):
     source = (CORE / "gen_assets.py").read_text()
     assert "gen_receipt.MESH_RECEIPT_KEYS" in source, \
         "the bridge builds its reply from the declared list, not from a literal beside it"
-    assert len(set(receipt.MESH_RECEIPT_KEYS)) == len(receipt.MESH_RECEIPT_KEYS), \
-        "a duplicate key in the receipt list"
+    assert "gen_receipt.PAINT_RECEIPT_KEYS" in (CORE / "gen_paint.py").read_text(), \
+        "the paint bridge builds its receipt from the declared list too"
+    for keys in (receipt.MESH_RECEIPT_KEYS, receipt.PAINT_RECEIPT_KEYS):
+        assert len(set(keys)) == len(keys), "a duplicate key in the receipt list"
 
 
 def test_a_map_that_shipped_with_no_picture_in_it_says_so(mods):
@@ -159,6 +162,16 @@ def test_a_map_that_shipped_with_no_picture_in_it_says_so(mods):
     assert grey and "one flat tone" in grey[0]
     assert receipt.empty_map_warning("rocks", None) == []
     assert receipt.empty_map_warning("rocks", {}) == []
+
+    # The paint route reuses this bar and needs the OTHER remedy: measured 1.31 in-chart spread at
+    # the shipped paint denoise against 14.83 at 0.75, same mesh, same seed, same prompt. A sentence
+    # telling an artist to go and look at the texture pass would send them to the wrong place.
+    painted = receipt.empty_map_warning("painted", stats(201.86, 1.31))
+    assert painted and "one flat tone" in painted[0]
+    assert "Strength" in painted[0], "the paint sentence names the knob that fixes it"
+    assert "texture pass" not in painted[0]
+    assert not receipt.empty_map_warning("painted", stats(171.89, 14.83)), \
+        "the same paint at 0.75 carries a picture"
 
 
 def test_orientation_warning_names_the_cells_whose_up_was_a_guess(mods):

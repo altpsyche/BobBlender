@@ -1361,11 +1361,17 @@ class BBT_OT_comfy_stop(Operator):
 
 
 class BBT_StyliseProps(PropertyGroup):
-    """The three things a stylised look-dev frame needs (docs/GENERATION.md, look-dev stylise).
+    """What a stylised restyle needs, for both routes that do one (docs/GENERATION.md).
 
-    Three, not ten: the ControlNet strengths, the sampler and the negative prompt are values in
-    `core/comfy.py` because they have measured defaults, and Strength is the one knob that genuinely
-    trades style against silhouette.
+    Two consumers, one set of knobs, because they are the same graph: "Stylise Last Render" restyles
+    one camera frame, and Shaders > Paint (stylised) restyles a turntable of an object and projects
+    it back. A second property group would have been the same four fields under different names, and
+    an artist who set a style for one would find the other had not heard of it.
+
+    Short, not ten fields: the ControlNet strengths, the sampler and the negative prompt are values
+    in `core/comfy.py` because they have measured defaults. Strength is the one knob that genuinely
+    trades style against silhouette; `views` and `size` are the paint route's own two, and both
+    change what the route COSTS rather than only how it looks.
     """
 
     prompt: StringProperty(
@@ -1392,6 +1398,26 @@ class BBT_StyliseProps(PropertyGroup):
         description=("Optional style LoRA, by filename as ComfyUI lists it. Empty removes the "
                      "LoRA node from the graph entirely rather than running it at zero strength"),
         default="",
+    )
+    views: IntProperty(
+        name="Views",
+        description=("Turntable views around the object for the paint route. This is the RING "
+                     "count; Bob adds a high and a low view on top, because a ring alone leaves a "
+                     "closed shape's top and underside to the hole fill. Every view is one "
+                     "ComfyUI job, so this is the route's main cost knob"),
+        default=6, min=3, max=16,
+    )
+    size: IntProperty(
+        name="Size",
+        description=("Render and texture resolution for the paint route. The projection reads "
+                     "render pixels into texels, so a texture much larger than the render gains "
+                     "nothing"),
+        default=1024, min=256, max=2048, step=256,
+    )
+    seed: IntProperty(
+        name="Seed",
+        description="The same seed and prompt repaint the same look; change it to reroll",
+        default=0, min=0,
     )
 
 

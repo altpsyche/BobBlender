@@ -33,15 +33,16 @@ import bob_blender_tools  # noqa: E402
 bob_blender_tools.register()
 
 from bob_blender_tools.core import assets, materials  # noqa: E402
-from bob_blender_tools.core import splines_build  # noqa: E402
+from bob_blender_tools.core import scatter_build, splines_build  # noqa: E402
 from bob_blender_tools.core.dispatch import apply_op  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
 from _gate import Gate  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("scene-seams gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -203,9 +204,10 @@ def scatter_scene():
         pool.objects.link(obj)
 
     def build(name, params):
-        apply_op({"op": "build_geonodes", "recipe": "scatter", "name": name, "reset": True,
-                  "params": {"emitter": "Emitter", "assets": "Pool", "density": 2.0,
-                             "distance_min": 0.5, **params}})
+        scatter_build.build_recipe(
+            "scatter", name,
+            {"emitter": "Emitter", "assets": "Pool", "density": 2.0, "distance_min": 0.5,
+             **params}, reset=True)
         bpy.context.view_layer.update()
         return bpy.data.objects[name]
 
@@ -256,12 +258,54 @@ def foliage_note():
           "rocks" not in notes and notes == {"trees", "plants", "grass"}, f"{sorted(notes)}")
 
 
+# -- Recipe ownership, which is a property of the CODE and so belongs in a gate ------------------
+def recipe_ownership():
+    """The seam between the generic `build_geonodes` op and the two builders that own recipes.
+
+    A property of the code, not of any asset, so it is here rather than in a receipt. Three ways this
+    can break and each would be silent: a recipe added to `OWNED_RECIPES` pointing at an op nobody
+    registered, the guard letting an owned recipe through (which is how an agent's tree came back
+    with no species), and an owning builder's own build hitting the guard, which would break every
+    Add Tree in the panel.
+    """
+    from bob_blender_tools.core import dispatch, foliage_build, geonodes
+
+    owned = geonodes.OWNED_RECIPES
+    missing = sorted(set(owned.values()) - set(dispatch._HANDLERS))
+    check("every owned recipe names an op dispatch actually handles", not missing, f"{missing}")
+    check("and the owned set is the two builders' recipes", sorted(owned) ==
+          ["foliage", "scatter", "scatter_along"], f"{sorted(owned)}")
+
+    for recipe, op_name in sorted(owned.items()):
+        try:
+            geonodes.build_geonodes({"op": "build_geonodes", "recipe": recipe, "name": "Refused"})
+            refused = ""
+        except ValueError as exc:
+            refused = str(exc)
+        check(f"a raw build_geonodes on {recipe!r} is refused and names its op",
+              op_name in refused, refused[:70] or "it BUILT")
+        left = bpy.data.objects.get("Refused")
+        check(f"and refusing {recipe!r} left no object behind", left is None,
+              f"{left.name if left is not None else 'nothing'} in the scene")
+
+    # The owning builder's own route still works, which is the half a guard is likely to break.
+    tree = foliage_build.grow("OwnedTree", {"levels": 2, "profile_segments": 4},
+                              species="", scene=bpy.context.scene)
+    check("the owning builder still builds its own recipe", tree is not None
+          and foliage_build.is_foliage(tree),
+          tree.name if tree is not None else "grow() produced nothing")
+    check("and the tree it builds records its structural config",
+          foliage_build.built_params(tree).get("levels") == 2,
+          str(foliage_build.built_params(tree)))
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="bob_scene_seams_")
     try:
         main_scene(tmp)
         scatter_scene()
         foliage_note()
+        recipe_ownership()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print()

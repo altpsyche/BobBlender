@@ -23,7 +23,8 @@ import bpy
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
-from bob_blender_tools.core import assets, foliage_build, foliage_variants   # noqa: E402
+from bob_blender_tools.core import assets, foliage_build, foliage_variants  # noqa: E402
+from bob_blender_tools.core import scatter_build                            # noqa: E402
 from bob_blender_tools.core import env as bbt_env                            # noqa: E402
 from bob_blender_tools.core.dispatch import apply_op                         # noqa: E402
 
@@ -75,10 +76,11 @@ def main(argv):
     # killed and the shot would be about that instead.
     apply_op({"op": "shade_terrain", "object": "Ground", "stack": "temperate"})
     apply_op({"op": "apply_texture_set", "object": "Ground", "set": "grass", "layer": "grass"})
-    apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
-              "params": {"emitter": "Ground", "assets": report["collection"], "align": "up",
-                         "density": 0.03, "distance_min": 5.5, "min_normal_z": 0.7,
-                         "min_scale": 0.8, "max_scale": 1.35, "z_offset": -0.3}})
+    scatter_build.build_recipe(
+        "scatter", "Stand",
+        {"emitter": "Ground", "assets": report["collection"], "align": "up", "density": 0.03,
+         "distance_min": 5.5, "min_normal_z": 0.7, "min_scale": 0.8, "max_scale": 1.35,
+         "z_offset": -0.3}, reset=True)
     bpy.context.view_layer.update()
     count, sources = foliage_variants.stand_report(bpy.data.objects["Stand"])
     print(f"    {count} trees over 260 m, drawing on {len(sources)} of {args.variants} variants")

@@ -39,11 +39,13 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 from bob_blender_tools.core import assets, comfy, gen_assets  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, Vram, empty_scene, section, stamp  # noqa: E402
+from _gate import gpu_sample  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("route A/B")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -85,15 +87,6 @@ SUBJECTS = [
 ROUTES = ("staged", "oneshot")
 
 
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-
-
 # -- VRAM ---------------------------------------------------------------------------------------
 # "Does it fit 16 GB" is the question, and the pack-install figures cannot answer it: they were
 # whole-card
@@ -101,73 +94,6 @@ def empty_scene():
 # The reading has to be PER PROCESS, and it has to be summed over the ComfyUI FAMILY, because
 # comfy-env runs each isolated pack in its own process: the main server, the TRELLIS2 pixi worker
 # and the GeometryPack pixi worker each hold their own allocation and only their sum is the answer.
-_OURS = {os.getpid()}
-
-
-def _gpu_sample():
-    """(card MiB in use, {pid: MiB}) from nvidia-smi, or (None, {}) with no nvidia-smi."""
-    try:
-        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, {}
-    procs = {}
-    for line in apps.splitlines():
-        bits = [b.strip() for b in line.split(",")]
-        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
-            procs[int(bits[0])] = int(bits[1])
-    return (int(card.splitlines()[0]) if card else None), procs
-
-
-class Vram:
-    """Peak VRAM across a job, sampled from a thread so the measurement does not serialise with it.
-
-    `at_queue` is the baseline the moment the job is handed over and `peak` is the highest reading
-    while it ran, both as (card, comfy family). The delta between them is what the graph cost; the
-    absolute `peak` is what has to fit.
-    """
-
-    def __init__(self, interval=0.5):
-        self.interval = interval
-        self.card_peak = self.comfy_peak = 0
-        self.card_start = self.comfy_start = 0
-        self._stop = threading.Event()
-        self._thread = None
-
-    def _family(self, procs):
-        return sum(mib for pid, mib in procs.items() if pid not in _OURS)
-
-    def _loop(self):
-        while not self._stop.is_set():
-            card, procs = _gpu_sample()
-            if card is not None:
-                self.card_peak = max(self.card_peak, card)
-                self.comfy_peak = max(self.comfy_peak, self._family(procs))
-            self._stop.wait(self.interval)
-
-    def __enter__(self):
-        card, procs = _gpu_sample()
-        self.card_start = self.card_peak = card or 0
-        self.comfy_start = self.comfy_peak = self._family(procs)
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        return False
-
-    def report(self):
-        return {"card_start": self.card_start, "card_peak": self.card_peak,
-                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak}
-
-
 def _merge_vram(parts):
     """The peak of several stages, and the lowest start among them."""
     parts = [p for p in parts if p]
@@ -198,21 +124,18 @@ def _cache(path):
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
-def _stamp_path(key):
-    return os.path.join(GEN, key + "_g3b.json")
+def _stamp_target(key):
+    """The artifact a keyed sidecar belongs to. `_gate.stamp` appends the `.json`, so the file a
+    previous run wrote is the file this one reads -- no cache is invalidated by the fold."""
+    return os.path.join(GEN, key + "_g3b")
 
 
 def _load_stamp(key):
-    try:
-        with open(_stamp_path(key)) as fh:
-            return json.load(fh) or {}
-    except (OSError, ValueError):
-        return {}
+    return stamp(_stamp_target(key))
 
 
 def _save_stamp(key, data):
-    with open(_stamp_path(key), "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
+    stamp(_stamp_target(key), data)
 
 
 def generate_one(subject, fresh, reachable):
@@ -224,7 +147,9 @@ def generate_one(subject, fresh, reachable):
     """
     key = subject["key"]
     entry = dict(subject, seconds={}, vram={}, paths={})
-    stamp = _load_stamp(key)
+    # `cached` and not `stamp`: the shared writer from `_gate` is named `stamp`, and a local of that
+    # name shadows it for the rest of this scope.
+    cached = _load_stamp(key)
     png = os.path.join(GEN, key + "_subject.png")
     a_raw = os.path.join(GEN, key + "_a_raw.glb")
     a_simp = os.path.join(GEN, key + "_a_simp.glb")
@@ -232,8 +157,8 @@ def generate_one(subject, fresh, reachable):
     b_tex = os.path.join(GEN, key + "_b_tex.glb")
     entry["paths"] = {"subject": png, "staged_raw": a_raw, "staged_simp": a_simp,
                       "staged": a_tex, "oneshot": b_tex}
-    entry["seconds"] = dict(stamp.get("seconds") or {})
-    entry["vram"] = dict(stamp.get("vram") or {})
+    entry["seconds"] = dict(cached.get("seconds") or {})
+    entry["vram"] = dict(cached.get("vram") or {})
     remesh = not subject["foliage"]
 
     want = {"subject": png, "staged_raw": a_raw, "staged_simp": a_simp, "staged": a_tex,
@@ -695,7 +620,7 @@ def main():
     if os.path.isdir(repo):
         comfy.set_pref_comfy_dir(repo)
         note("mesh transport", f"local copy into {repo}/input/3d")
-    card, procs = _gpu_sample()
+    card, procs = gpu_sample()
     note("GPU at start", f"{card} MiB in use on the card, compute apps {procs}")
 
     section("preflight over every shipped graph, offline")

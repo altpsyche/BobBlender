@@ -81,3 +81,156 @@ class Gate:
         forgets to call `summary()` still gets one."""
         self.summary()
         return 1 if self.failures else 0
+
+
+# -- The rest of what every gate needs, and why it is here rather than in ten files ---------------
+#
+# `check` / `note` / `skip` came here first because they decide a VERDICT, and one implementation
+# makes "did this gate pass" a property of the harness. These four decide nothing, and they are here
+# for a different reason: they were byte-identical copies. Nine copies of `section`, seven of
+# `empty_scene`, five of `Vram` (with its two nvidia-smi helpers), four stamp readers. Identical is
+# the problem rather than the duplication -- the day one copy drifts, nothing fails and no reader is
+# told. That already happened: `Vram.report()` gained a `rise` key in ONE of its five copies, so two
+# gates whose whole point is comparable VRAM figures were reporting different dicts.
+#
+# What is deliberately NOT folded, so the line is visible:
+#
+#   `headless_comfy_all.VramSampler`   a different measurement -- whole-card, no per-process family.
+#                                      Sharing a name would imply the numbers are comparable.
+#   `generate_cached`                  two functions with one name: one returns
+#                                      (png, stats, cached), the other a stamp dict. Nothing to
+#                                      share but the word.
+#   `headless_foliage.wipe_scene`      removes objects and KEEPS names; `empty_scene` resets the
+#                                      file. Folding them would silently change what a gate wipes.
+
+import os
+import subprocess
+import threading
+
+
+def section(title):
+    """A gate's section banner. One format, so two gates' output can be read side by side."""
+    print()
+    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
+
+
+def empty_scene():
+    """A fresh, empty .blend, for a gate that measures one scene after another.
+
+    `bpy` is imported inside the function on purpose: this module is also imported by gates that run
+    in the tools venv (the agent-surface gate is one), and a module-level `import bpy` would make it
+    unimportable there -- which would put `check` and `note` out of reach for exactly the reason a
+    scene helper is not needed.
+    """
+    import bpy
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def stamp(target, data=None):
+    """Read or write the timing and VRAM sidecar beside a cached artifact.
+
+    Called with `data` it writes and returns it; without, it reads and returns `{}` when there is
+    nothing readable. The point is that a RERUN reports what the generating run measured rather than
+    what the cache cost -- a table of zeros beside a cached mesh is worse than no table, because it
+    reads as a fast route.
+    """
+    import json
+
+    path = target + ".json"
+    if data is None:
+        try:
+            with open(path) as fh:
+                return json.load(fh) or {}
+        except (OSError, ValueError):
+            return {}
+    with open(path, "w") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True, default=str)
+    return data
+
+
+# The PIDs that are not ComfyUI's: this process. A gate runs inside Blender or the venv and holds
+# GPU memory of its own (a render, a bake), and counting it as the server's would attribute
+# Blender's frame buffer to the graph under test.
+_OURS = {os.getpid()}
+
+
+def gpu_sample():
+    """(card MiB in use, {pid: MiB}) from nvidia-smi, or (None, {}) where there is no nvidia-smi.
+
+    Absence is not an error: a gate on a machine with no NVIDIA card still measures everything else,
+    and a VRAM column of Nones says so honestly.
+    """
+    try:
+        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
+                               "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
+                               "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None, {}
+    procs = {}
+    for line in apps.splitlines():
+        bits = [b.strip() for b in line.split(",")]
+        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
+            procs[int(bits[0])] = int(bits[1])
+    return (int(card.splitlines()[0]) if card else None), procs
+
+
+def comfy_family(procs):
+    """Summed VRAM over the ComfyUI process family: everything on the card that is not this process.
+
+    A gate holds GPU memory of its own -- a render, a bake -- so counting it as the server's would
+    attribute Blender's frame buffer to the graph under test. `Vram` reads it per sample and the
+    handback checks read it once either side of a free, which is why it is a function rather than a
+    method: three gates had the same sum written inline beside a `_OURS` they imported privately.
+    """
+    return sum(mib for pid, mib in procs.items() if pid not in _OURS)
+
+
+class Vram:
+    """Peak VRAM across a job, sampled from a thread so the measurement does not serialise with it.
+
+    Per process, summed over the ComfyUI family, with the RISE over this stage's own baseline
+    reported beside the absolute peak: the rise is what the graph cost, the peak has to fit. Both
+    are needed because the ordering rule the generation routes live under is about the peak -- once
+    Omni has run, the SDXL atlas route OOMs whatever the card reports free.
+
+    One class for every gate that reports VRAM, because those numbers are only worth anything if
+    they are comparable, and five copies were already not: `report()` carried `rise` in one.
+    """
+
+    def __init__(self, interval=0.5):
+        self.interval = interval
+        self.card_peak = self.comfy_peak = 0
+        self.card_start = self.comfy_start = 0
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _loop(self):
+        while not self._stop.is_set():
+            card, procs = gpu_sample()
+            if card is not None:
+                self.card_peak = max(self.card_peak, card)
+                self.comfy_peak = max(self.comfy_peak, comfy_family(procs))
+            self._stop.wait(self.interval)
+
+    def __enter__(self):
+        card, procs = gpu_sample()
+        self.card_start = self.card_peak = card or 0
+        self.comfy_start = self.comfy_peak = comfy_family(procs)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        return False
+
+    def report(self):
+        return {"card_start": self.card_start, "card_peak": self.card_peak,
+                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak,
+                "rise": self.comfy_peak - self.comfy_start}

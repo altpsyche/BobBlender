@@ -157,7 +157,50 @@ def _result(created, info):
             "data": {"warnings": warnings} if warnings else {}}
 
 
+# Recipes an owning BUILDER is responsible for, and the typed op that reaches each.
+#
+# A tree and a scatter layer carry structural config on the OBJECT (`foliage_build.CONFIG_PROP`,
+# `Object.bbt_scatter_layer`) plus a stamp that makes them findable at all, and only their builder
+# writes those. A raw `build_geonodes` on one of these recipes therefore produced a real mesh with no
+# identity: the panels could not list it, a rebuild had nothing to rebuild FROM, and nothing said so.
+# That is the whole of "an agent scatters and the scatter panel is empty" -- the op was never wrong
+# about the geometry, it was wrong about being the entry point.
+#
+# So the generic op refuses these and names the op that owns each. The refusal message is generated
+# from this table, so a recipe added to it cannot end up pointing at an op that does not exist -- the
+# `scene seams` gate asserts every value here is a dispatch handler.
+OWNED_RECIPES = {
+    "foliage": "grow_foliage",
+    "scatter": "scatter_layer",
+    "scatter_along": "scatter_layer",
+}
+
+
 def build_geonodes(op: dict) -> dict:
+    """The `build_geonodes` OP: build any recipe that no other op owns.
+
+    Ownership is enforced here rather than in the recipe or in the contract. The recipe cannot
+    enforce it, because its own builder legitimately builds it; `mcp_agent/contracts.py` cannot,
+    because it is validated in a venv with no `bpy` and so cannot import this module, and a
+    contract-side copy of `OWNED_RECIPES` would be a second table to drift. One table, one check.
+
+    `build_recipe` is the same build without the check: what an owning builder calls once it is ready
+    to stamp the result.
+    """
+    owner = OWNED_RECIPES.get(op.get("recipe", "wave_grid"))
+    if owner is not None:
+        raise ValueError(
+            f"the {op.get('recipe')!r} recipe is built by the {owner!r} op, not by build_geonodes. "
+            f"{owner} records what the object IS -- its species or its kind, its emitter, and the "
+            f"structural params no modifier socket holds -- which is what makes the result show up "
+            f"in the panels and rebuildable afterwards. A build_geonodes call would make the "
+            f"geometry and none of that")
+    return build_recipe(op)
+
+
+def build_recipe(op: dict) -> dict:
+    """Build a recipe, with no ownership check. Owning builders only; every other caller wants
+    `build_geonodes`, which is this behind that check."""
     recipe_name = op.get("recipe", "wave_grid")
     recipes.drain_warnings()  # discard anything a previous build left behind
     build = recipes.get(recipe_name)

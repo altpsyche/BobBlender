@@ -13,12 +13,16 @@ context resolution. That is also what makes every check here runnable in a headl
 panel's own operators are not.
 
 **No operator reads a PropertyGroup to build a tree** (docs/MCP.md, the known gap every curve op is
-on). The functions here take plain arguments and hand plain params to `build_geonodes`; the panel
-resolves its own state into those arguments before calling. Panel state that never reaches a recipe
-is what keeps this track off the live-bridge-only list.
+on). The functions here take plain arguments and hand plain params to the recipe; the panel resolves
+its own state into those arguments before calling. Panel state that never reaches a recipe is what
+keeps this track off the live-bridge-only list.
+
+This module OWNS the `foliage` recipe (`geonodes.OWNED_RECIPES`): the generic `build_geonodes` op
+refuses it and points at `grow_foliage`, because a tree built through the generic op carries no
+species and no structural config, which is a mesh the panels cannot list and nothing can rebuild.
 """
 
-import json
+import random
 
 import bpy
 
@@ -31,20 +35,26 @@ from . import env as bbt_env
 # build path, so a tree grown over MCP is as findable as one added in the panel.
 FOLIAGE_STAMP = "bbt_foliage"
 
-# Which species a tree was last loaded from, for the panel's header and for the variant pass's
-# variant naming. Empty on a bare `build_geonodes(recipe="foliage")`, which is a legitimate state: a
-# tree tuned by hand from the defaults belongs to no species.
-SPECIES_STAMP = "bbt_foliage_species"
-
-# The params this tree was last BUILT with, as JSON (variants and LODs). The live knobs live on the
-# modifier and need no copy, but the STRUCTURAL ones -- `levels`, `profile_segments`, `bark_set`,
-# `atlas` -- are Python arguments to the recipe and are recoverable from nothing afterwards. Without
-# this a tree the artist rebuilt at two levels forgot it on the next rebuild (the panel's staged
-# choice was the only record, and it is UI state), and a baked variant would come out at the
-# species' depth rather than at the tree's. `heightmap_terrain` stamps its own build params for the
-# same reason (core/geonodes/__init__.py `_TERRAIN_STAMP`); this is that idiom, kept local to
-# foliage.
-BUILD_STAMP = "bbt_foliage_build"
+# Where a tree's STRUCTURAL build config lives: the `bbt_foliage_tree` PropertyGroup declared and
+# REGISTERED at the bottom of this module. The panel draws these straight off the object, so there is
+# no panel-side copy to disagree with the build, and selecting a tree an agent grew shows what that
+# tree actually is.
+#
+# Owned by core rather than by `ui/foliage`, following `core/env.py` with `Scene.bbt_env`: this module
+# is the one place a tree is built, and a headless gate builds trees through it with the addon not
+# registered at all (the whole reason BobFoliage is not on the live-bridge-only list). A group
+# registered by the panel would make every structural param silently unrecordable in exactly that
+# case -- measured: the foliage gate lost the species off every variant it baked.
+#
+# It replaces a JSON blob of the whole param dict. That blob recorded around forty-five keys of which
+# only these five matter: every other param in a species preset becomes an `add_input` socket on the
+# modifier (recipes/foliage.py), so the modifier already owns it and `build_geonodes` already
+# restores it by socket name across a rebuild. These five are Python arguments to the recipe -- they
+# decide how many level socket groups exist, the profile geometry, and which datablocks the materials
+# name -- so nothing can recover them afterwards. `build_params`' docstring has always said the live
+# knobs are "deliberately absent"; storing the whole dict is what made that untrue.
+CONFIG_PROP = "bbt_foliage_tree"
+STRUCTURAL_KEYS = ("levels", "profile_segments", "skeleton", "bark_set", "atlas")
 
 # Where authored trees live. One collection so the panel can list them with a template_list over
 # real objects (the Scatter panel's model) instead of a CollectionProperty of pointers that can go
@@ -56,12 +66,17 @@ FOLIAGE_COLL = "BOB_Foliage"
 _WIND_INPUTS = (("Wind", "wind_strength"), ("Wind Direction", "wind_direction"))
 
 
-def _apply_op(op):
-    """Run one bbmcp op in-process. Imported lazily, as scatter_build does, so the dispatch registry
-    can import modules that import this one without a cycle at load."""
-    from .dispatch import apply_op
+def build_recipe(name, params, *, reset):
+    """Build the `foliage` recipe under `name`. The one place this module reaches the recipe.
 
-    return apply_op(op)
+    `geonodes.build_recipe` rather than the `build_geonodes` op: this module OWNS the foliage recipe
+    (`geonodes.OWNED_RECIPES`), so the op refuses it and points here. Imported lazily to keep the
+    module import order free of a cycle, the way `scatter_build` does.
+    """
+    from .geonodes import build_recipe as build_gn
+
+    return build_gn({"op": "build_geonodes", "recipe": "foliage", "name": name,
+                     "params": dict(params), "reset": reset})
 
 
 def is_foliage(obj):
@@ -123,31 +138,70 @@ def wind_targets(scene=None):
     return trees + [o for o in pool_objects() if o.name not in known]
 
 
-def stamp(obj, species="", params=None):
-    """Mark an object as a BobFoliage tree, and record the species and the params it was built with.
+def config(obj):
+    """The object's own structural config group, or None when it is not registered yet.
 
-    `params` is written only when given, so a caller that only wants to re-stamp the species (a
-    rebuild) does not erase the structural record with an empty one.
+    A pure read: it never registers. `stamp` is what guarantees the group exists, so by the time
+    anything reads a TREE's config there is one. None still comes back for a non-tree object and for
+    a caller that reads before anything has been built, and every reader below treats that as "this
+    tree records nothing", which degrades to the species preset.
+    """
+    return getattr(obj, CONFIG_PROP, None) if obj is not None else None
+
+
+def stamp(obj, species=None, params=None):
+    """Mark an object as a BobFoliage tree, and record the species and the structural params.
+
+    `species=None` leaves whatever species is already recorded, so a rebuild does not have to
+    re-state it; pass `""` to clear it deliberately. `params` is written only when given, and only
+    its `STRUCTURAL_KEYS` are taken -- the rest belong to the modifier.
+
+    It registers the config group if nothing has yet, which is what makes "a tree always carries its
+    structural config" true by construction rather than by whoever remembered to call `register()`.
+    A headless gate builds trees through this module with no addon, and without this the whole
+    structural record was silently dropped there -- measured: every variant the foliage gate baked
+    came back with no species, so the pack entries could not regrow them.
     """
     if obj is None:
         return
     obj[FOLIAGE_STAMP] = 1
-    obj[SPECIES_STAMP] = str(species or "")
-    if params is not None:
-        obj[BUILD_STAMP] = json.dumps({k: v for k, v in params.items()}, sort_keys=True)
+    register()
+    cfg = config(obj)
+    if cfg is None:
+        return
+    if species is not None:
+        cfg.species = str(species or "")
+    for key in (STRUCTURAL_KEYS if params else ()):
+        if key in params:
+            setattr(cfg, key, params[key])
 
 
 def species_of(obj):
-    return str(obj.get(SPECIES_STAMP, "")) if obj is not None else ""
+    """Which species this tree was last loaded from, or "".
+
+    "" is a legitimate state, not a failure: a tree tuned by hand from the recipe defaults belongs to
+    no species.
+    """
+    cfg = config(obj)
+    return str(cfg.species) if cfg is not None else ""
 
 
 def built_params(obj):
-    """The params this tree was last built with, off its own stamp ({} when it carries none)."""
-    try:
-        got = json.loads(str(obj.get(BUILD_STAMP, "") or "{}"))
-    except (ValueError, TypeError):
+    """The structural params this tree was last built with, off its own config ({} when it has none).
+
+    `bark_set` and `atlas` are omitted when empty rather than passed as "": the recipe reads them as
+    datablock names, and an empty name is not the same instruction as "leave it alone".
+    """
+    cfg = config(obj)
+    if cfg is None:
         return {}
-    return got if isinstance(got, dict) else {}
+    got = {"levels": int(cfg.levels), "profile_segments": int(cfg.profile_segments),
+           "skeleton": bool(cfg.skeleton)}
+    for key in ("bark_set", "atlas"):
+        value = str(getattr(cfg, key, "") or "")
+        if value:
+            got[key] = value
+    return got
 
 
 def foliage_collection(scene=None, create=True):
@@ -189,20 +243,27 @@ def grow(name, params, *, species="", scene=None, location=None, collection=True
     """Build a foliage object and return it, or None if the build produced nothing.
 
     The one place a tree is created, so every caller gets the same thing: the recipe params go
-    straight to `build_geonodes` (no PropertyGroup in sight), the object is stamped so the panel and
-    the wind applier can find it, it lands in BOB_Foliage, and it picks the live world's wind up
+    straight to the recipe (no PropertyGroup in sight), the object is stamped so the panel and the
+    wind applier can find it, it lands in BOB_Foliage, and it picks the live world's wind up
     immediately rather than at the next slider drag.
+
+    `collection` is True for BOB_Foliage, False to leave the object wherever the build put it, or a
+    NAME to file it there instead -- which is how a tree becomes a scatter SOURCE rather than a tree
+    standing at the origin: `BOB_Assets_Trees` is instanced by a scatter layer and is deliberately not
+    linked to the scene.
     """
     scene = scene or bpy.context.scene
-    _apply_op({"op": "build_geonodes", "recipe": "foliage", "name": name,
-               "params": dict(params), "reset": True})
+    build_recipe(name, params, reset=True)
     obj = bpy.data.objects.get(name)
     if obj is None:
         return None
     stamp(obj, species, params=params)
     if location is not None:
         obj.location = location
-    if collection:
+    if isinstance(collection, str):
+        coll = bpy.data.collections.get(collection) or bpy.data.collections.new(collection)
+        _move_to_collection(obj, coll)
+    elif collection:
         _move_to_collection(obj, foliage_collection(scene))
     apply_wind(scene, only=obj)
     return obj
@@ -227,8 +288,7 @@ def load_species(obj, species, *, scene=None, extra=None):
     params = dict(spec["params"])
     if extra:
         params.update(extra)
-    _apply_op({"op": "build_geonodes", "recipe": "foliage", "name": obj.name,
-               "params": params, "reset": True})
+    build_recipe(obj.name, params, reset=True)
     obj = bpy.data.objects.get(obj.name)
     stamp(obj, species, params=params)
     apply_wind(scene or bpy.context.scene, only=obj)
@@ -247,10 +307,9 @@ def rebuild(obj, *, overrides=None, scene=None):
         return None
     name = obj.name
     params = build_params(obj, overrides=overrides)
-    _apply_op({"op": "build_geonodes", "recipe": "foliage", "name": name, "params": params,
-               "reset": False})
+    build_recipe(name, params, reset=False)
     obj = bpy.data.objects.get(name)
-    stamp(obj, species_of(obj), params=params)
+    stamp(obj, params=params)  # species=None: a rebuild keeps whatever species is recorded
     apply_wind(scene or bpy.context.scene, only=obj)
     return obj
 
@@ -266,10 +325,12 @@ def build_params(obj, *, species="", overrides=None):
     shape from the tree it was baked from. Asking for a species explicitly skips the stamp, since
     loading a species IS the instruction to forget what this tree was.
 
-    The live knobs are deliberately absent. `build_geonodes` restores those by socket name across a
-    rebuild (unless reset is asked), so passing them would be a second copy of a value that already
-    has a home on the modifier -- the panel-versus-modifier drift `core/scatter_build.py` avoids the
-    same way.
+    The live knobs are absent, and this is now true rather than aspirational: `built_params` returns
+    only `STRUCTURAL_KEYS`. `build_geonodes` restores every knob by socket name across a rebuild
+    (unless reset is asked), so passing one would be a second copy of a value that already has a home
+    on the modifier -- the panel-versus-modifier drift `core/scatter_build.py` avoids the same way.
+    The species preset still supplies its full dict on the FIRST build, which is correct: that is
+    where a socket's initial value has to come from.
     """
     spec = assets.foliage_species(species or species_of(obj))
     params = dict(spec.get("params", {})) if spec else {}
@@ -278,6 +339,73 @@ def build_params(obj, *, species="", overrides=None):
     if overrides:
         params.update({k: v for k, v in overrides.items() if v is not None})
     return params
+
+
+# -- The MCP op -------------------------------------------------------------------------------
+def grow_foliage_op(op: dict) -> dict:
+    """MCP op `grow_foliage`: grow a tree from a species NAME, or load a species onto an existing one.
+
+    The op that owns the `foliage` recipe (`geonodes.OWNED_RECIPES`), and the reason the raw recipe
+    refuses. Over MCP a tree used to be `build_geonodes` with a species' whole parameter dict expanded
+    by hand, so the object never recorded that it IS a conifer and the foliage panel had nothing to
+    show. Here the species is the argument.
+
+    One op covers both directions on purpose, because they are one artist action ("make this a
+    birch") and the panel already treats them that way: a `name` that resolves to an existing tree is
+    re-speciesed IN PLACE, so its transform, its collections and everything pointing at it survive,
+    and any other name grows a new tree. Splitting them would make an agent ask which case it is in
+    before it is allowed to say what it wants.
+
+    op: {"species": <name>, "name"?: <object>, "location"?: [x,y,z], "seed"?: int,
+    "params"?: {...overrides}}. Raises ValueError on a species no pack provides -- loud, with the
+    list, because a silent fallback to the recipe defaults is a tree that is not the species asked
+    for and looks like a success.
+    """
+    species = str(op.get("species") or "")
+    if species and not assets.foliage_species(species):
+        raise ValueError(f"no species preset named {species!r} "
+                         f"(have: {assets.list_foliage_species()})")
+    scene = bpy.context.scene
+    name = op.get("name") or None
+    existing = bpy.data.objects.get(name) if name else None
+    if existing is not None and not is_foliage(existing):
+        raise ValueError(f"{name!r} exists and is not a BobFoliage tree; "
+                         f"delete it or grow under another name")
+
+    overrides = dict(op.get("params") or {})
+    # An explicit seed beats a random one for an agent, which needs a rerun to reproduce; absent, a
+    # random seed is right for the same reason the panel randomises -- a stand of identical trees is
+    # the one thing nobody wants, and the recipe's default 0 gives exactly that.
+    if op.get("seed") is not None:
+        overrides["seed"] = int(op["seed"])
+    elif existing is None and "seed" not in overrides:
+        overrides["seed"] = random.randint(0, 99999)
+
+    if existing is not None:
+        obj = load_species(existing, species, scene=scene, extra=overrides) if species \
+            else rebuild(existing, overrides=overrides, scene=scene)
+        action = "loaded onto"
+    else:
+        spec = assets.foliage_species(species)
+        label = unique_name(name or spec.get("meta", {}).get(
+            "name", species.replace("_", " ").title() or "Tree"))
+        obj = grow(label, build_params(None, species=species, overrides=overrides),
+                   species=species, scene=scene, location=op.get("location"),
+                   collection=op.get("collection") or True)
+        action = "grew"
+    if obj is None:
+        raise ValueError(f"the foliage build produced no object for species {species!r}")
+
+    # What a NAMED set costs when no pack provides it: the tree builds and wears a solid tint. An
+    # agent cannot see that in a render it has not taken yet, so it is in the result rather than left
+    # to be discovered.
+    missing = [v for _k, _l, v in assets.foliage_missing_sets(species)] if species else []
+    cfg = built_params(obj)
+    return {"op": "grow_foliage", "created": [obj.name],
+            "info": f"{action} {obj.name}" + (f" ({species})" if species else "")
+                    + (f"; solid tint until {', '.join(missing)} is generated" if missing else ""),
+            "data": {"object": obj.name, "species": species_of(obj),
+                     "seed": overrides.get("seed"), "missing_sets": missing, **cfg}}
 
 
 # -- The live world feed ----------------------------------------------------------------------
@@ -346,3 +474,65 @@ def apply_world_wind(scene):
     press. Gated by the one master Live Environment toggle, like every other consumer's applier."""
     if getattr(getattr(scene, "bbt_world", None), "live_env", True):
         apply_wind(scene)
+
+
+# -- The tree's own structural config, and its registration -------------------------------------
+class BBT_FoliageTree(bpy.types.PropertyGroup):
+    """A tree's STRUCTURAL config, stored on the tree OBJECT. The peer of `BBT_ScatterLayer`.
+
+    These five are the params that are NOT modifier sockets, so the object is the only place they can
+    live (`STRUCTURAL_KEYS`). They used to be staged on `Scene.bbt_foliage`, and that is the defect
+    this replaces: the panel's copy always won on a Build, so selecting a tree an agent grew and
+    nudging anything rebuilt it from panel defaults and discarded what the agent set. Drawn straight
+    off the object, there is no second copy to disagree, and no sync code either.
+
+    `bark_set` / `atlas` are plain strings rather than a dynamic EnumProperty on purpose, following
+    `materials/texset.py`'s `bbt_texsets`: a set name outlives the pack it came from, and assigning a
+    name absent from a dynamic enum's items RAISES -- which would turn "load a conifer on a machine
+    without bark_conifer installed" into a crash instead of a solid tint.
+    """
+
+    species: bpy.props.StringProperty(
+        name="Species", default="",
+        description="Which species preset this tree was last loaded from. Empty is legitimate: a "
+                    "tree tuned by hand from the recipe defaults belongs to no species")
+    levels: bpy.props.IntProperty(
+        name="Levels", default=3, min=1, max=4,
+        description="Branch levels below the trunk. Structural: three is a tree, one is a shrub, "
+                    "and changing it rebuilds the graph")
+    profile_segments: bpy.props.IntProperty(
+        name="Profile", default=6, min=3, max=24,
+        description="Sides of the tube swept along every limb. Structural, and the mesh's main "
+                    "cost knob: the vertex count is exactly linear in it")
+    skeleton: bpy.props.BoolProperty(
+        name="Skeleton Only", default=False,
+        description="Emit the curves and skip the sweep. Much faster to tune structure in, and the "
+                    "only view where a detached branch is visible rather than hidden in a trunk")
+    bark_set: bpy.props.StringProperty(
+        name="Bark", default="",
+        description="The texture set the trunk and limbs wear. A species preset already names the "
+                    "bark it wants, so this is for overriding that choice")
+    atlas: bpy.props.StringProperty(
+        name="Leaf Atlas", default="",
+        description="The leaf/needle atlas the cards sample. The set declares its own grid, so "
+                    "assigning one needs no numbers")
+
+
+def register():
+    """Register the per-object config. Idempotent, and callable by a gate as well as by the addon.
+
+    Idempotency is not defensiveness here: `core/env.py` has the same shape and the foliage gate has
+    to hand `bbt_env` back before the addon registers it, so a second registration is a real path
+    rather than a hypothetical one.
+    """
+    if getattr(bpy.types.Object, CONFIG_PROP, None) is not None:
+        return
+    bpy.utils.register_class(BBT_FoliageTree)
+    setattr(bpy.types.Object, CONFIG_PROP, bpy.props.PointerProperty(type=BBT_FoliageTree))
+
+
+def unregister():
+    if getattr(bpy.types.Object, CONFIG_PROP, None) is None:
+        return
+    delattr(bpy.types.Object, CONFIG_PROP)
+    bpy.utils.unregister_class(BBT_FoliageTree)

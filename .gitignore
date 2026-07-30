@@ -13,6 +13,12 @@ projects/**/renders/**
 # Agent/headless-generated .blend files (regenerable)
 **/_generated/
 
+# The generated asset pack. Every meshes/textures/sidecar under it is written by a generation run
+# and is reproducible from the receipt beside it (the provenance rule), so it is output, not source.
+# It lands here rather than outside the repo because the addon's Output Folder preference resolves
+# to the repo root; before this it reappeared in `git status` after any gate run that touched a pack.
+/packs/generated/
+
 # Built extension zips (regenerable via tools/scripts/build_extension.py)
 /dist/
 

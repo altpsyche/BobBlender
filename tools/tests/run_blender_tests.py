@@ -65,6 +65,27 @@ def blender_binary() -> str:
     return found
 
 
+# What proves a gate RAN rather than merely started: the closing line `_gate.Gate.summary` prints,
+# in either of its two forms.
+#
+# Exit code alone does not prove it, and that is a Blender fact rather than a gate one: **an uncaught
+# exception in a `--python` script exits 0.** Measured -- a script whose only statement is `raise
+# RuntimeError` exits 0, while `sys.exit(3)` exits 3. So a gate that died at import, before reaching
+# its own `sys.exit(main())`, reported PASS: all three gates once came back green here while every one
+# of them had failed on a NameError, and the tracebacks scrolling past were the only sign.
+#
+# `--python-exit-code 1` looks like the fix and is the wrong one: it also fires on an exception in a
+# post-run TIMER, so a gate that passed every check failed the run because the addon's bridge autostart
+# could not bind a port another Blender already held. That makes a gate's verdict depend on what else
+# is running on the machine. Asserting the gate reached its own summary asserts exactly the thing that
+# was missing, and nothing else.
+_SUMMARY_MARKERS = ("check(s) passed", "failure(s) of")
+
+
+def _reached_summary(output: str) -> bool:
+    return any(m in output for m in _SUMMARY_MARKERS)
+
+
 def main() -> int:
     binary = blender_binary()
     os.makedirs(REPO / "_generated", exist_ok=True)
@@ -74,9 +95,13 @@ def main() -> int:
         print(f"\n{'=' * 78}\n== {label} ({filename})\n{'=' * 78}", flush=True)
         proc = subprocess.run([binary, "--background", "--factory-startup",
                                "--python", str(SCRIPTS / filename)],
-                              cwd=str(REPO))
+                              cwd=str(REPO), capture_output=True, text=True)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        print(out, end="", flush=True)
         if proc.returncode:
             failed.append(f"{label} (exit {proc.returncode})")
+        elif not _reached_summary(out):
+            failed.append(f"{label} (died before its summary)")
 
     print(f"\n{'=' * 78}")
     if failed:

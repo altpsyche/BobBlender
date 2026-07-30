@@ -1618,12 +1618,17 @@ def test_paint_views_reuses_the_stylised_front_as_the_reference(mods, monkeypatc
 
 def test_the_texture_route_is_a_value_beside_the_asset_route(mods):
     """`mesh_paint_views`-as-a-paint-route lands in the shape the route A/B gave the geometry decision:
-    one place where the route becomes a decision, not a second operator."""
+    one place where the route becomes a decision, not a second operator.
+
+    A NAME, though, and not a function: the pbr route is one mesh in and one textured mesh out, the
+    stylised one is N views with Blender on both sides, and the `texture_chain()` that used to hand
+    back one of the two functions could not be called without knowing which it had returned. Each
+    name now reaches a whole entry point -- `comfy_paint_mesh` and the `paint_stylised` op.
+    """
     comfy, _ = mods
     assert set(comfy.TEXTURE_ROUTES) == {"pbr", "stylised"}
     assert comfy.DEFAULT_TEXTURE_ROUTE == "pbr"
-    assert comfy.texture_chain() is comfy.mesh_texture
-    assert comfy.texture_chain("stylised") is comfy.paint_views
+    assert not hasattr(comfy, "texture_chain"), "the selector nothing selected with is gone"
     # And the asset route is untouched by it.
     assert comfy.asset_chain() is comfy.generate_asset_oneshot
 
@@ -2437,6 +2442,66 @@ def test_a_card_that_cannot_report_its_vram_is_let_through(mods, monkeypatch):
                         lambda url=None, timeout=3: {"ok": True, "vram_free_mib": None})
     assert comfy.preflight_vram("mesh") is None
     assert comfy.preflight_vram("no_such_route") is None, "an unknown route has no floor"
+
+
+def test_the_floor_is_checked_at_the_capability_not_at_one_caller(mods, card, monkeypatch):
+    """A direct `core.comfy` call refuses on a full card, without a server and without an MCP tool.
+
+    This is the defect the floors were carrying: the check lived in `mcp_agent.server._generation`,
+    so the panel operators and the gate scripts, which call these functions straight, had no floor at
+    all and met the OOM the floor exists to prevent. `queue` raising proves the refusal happens
+    BEFORE the job is submitted rather than after it dies in somebody else's worker process.
+    """
+    comfy, _ = mods
+    card["free_mib"], card["gives_back"] = 900, 100
+
+    def queue(*_args, **_kwargs):
+        raise AssertionError("a job reached the server on a card under the floor")
+
+    monkeypatch.setattr(comfy, "queue", queue)
+    graph = {"1": {"class_type": "X", "inputs": {}, "_meta": {"title": "BOB_OUT"}}}
+    with pytest.raises(comfy.ComfyError, match="not enough free VRAM for the mesh route"):
+        comfy.generate_mesh((graph, {}), {}, route="mesh", preflight_graph=False)
+    with pytest.raises(comfy.ComfyError, match="not enough free VRAM for the texture route"):
+        comfy.generate_image((graph, {}), {}, route="texture", preflight_graph=False)
+
+
+# The functions in `core/comfy.py` allowed to queue a job with `route=None` and no floor of their
+# own, each because it loads no model: the 64-px tiling reset, and the two processing graphs whose
+# own docstrings say no checkpoint is read. Anything else passing None has to read the floor itself
+# BEFORE it primes the shared model, which is what the `stylize_render` measurement forced.
+_NO_FLOOR_FUNCTIONS = {"reset_tiling", "mesh_simplify_uv", "mesh_process"}
+
+
+def test_no_generation_call_site_forgets_its_floor():
+    """Every function that queues a job either names a VRAM route or reads the floor itself.
+
+    `route` has no default, so a forgotten one is a TypeError rather than a silent hole -- but a
+    caller can still write `route=None`, and that is the honest escape for a graph that loads no
+    model AND the shape a route needs when it primes the checkpoint with a reset job first (reading
+    the floor after that reset measures the card with this route's own model already on it, which
+    refused a paint that was about to run). So the check is per FUNCTION: pass a route, or call
+    `preflight_vram` yourself, or be one of the three named above.
+    """
+    import ast
+
+    tree = ast.parse((CORE / "comfy.py").read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        queues = nulled = checks = False
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call) or not isinstance(inner.func, ast.Name):
+                continue
+            if inner.func.id in ("generate_image", "generate_mesh"):
+                queues = True
+                nulled |= any(kw.arg == "route" and isinstance(kw.value, ast.Constant)
+                              and kw.value.value is None for kw in inner.keywords)
+            checks |= inner.func.id == "preflight_vram"
+        if queues and nulled and not checks and node.name not in _NO_FLOOR_FUNCTIONS:
+            offenders.append(node.name)
+    assert offenders == [], "functions that queue a job with no floor and no reason"
 
 
 def test_recover_vram_reports_what_it_actually_got_back(mods, card):

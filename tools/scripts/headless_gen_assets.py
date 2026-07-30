@@ -39,16 +39,17 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
 from bob_blender_tools.core import (  # noqa: E402
-    assets, comfy, comfy_jobs, gen_assets, gen_receipt, materials, proxies,
+    assets, comfy, comfy_jobs, gen_assets, gen_bars, gen_receipt, materials, proxies,
     scatter_build,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, empty_scene, section  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("asset gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -73,19 +74,11 @@ SUBJECTS = [
      "prompt": "a single pine cone"},
 ]
 
-# What counts as a genuinely open, genuinely thin surface. Both numbers come from the leaf
-# measurement, which is the case TRELLIS.2 exists to handle and Hunyuan structurally cannot.
-OPEN_BOUNDARY_EDGES = 500
-THIN_AXIS_RATIO = 0.25
-
-
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+# What counts as a genuinely open, genuinely thin surface: both off the registry, which records that
+# both come from ONE case -- the leaf measurement, which is what TRELLIS.2 exists to handle and
+# Hunyuan structurally cannot.
+OPEN_BOUNDARY_EDGES = gen_bars.value("open_boundary_edges")
+THIN_AXIS_RATIO = gen_bars.value("thin_axis_ratio")
 
 
 # -- Image helpers ------------------------------------------------------------------------------

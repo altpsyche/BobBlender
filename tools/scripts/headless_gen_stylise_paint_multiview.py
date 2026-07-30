@@ -51,15 +51,17 @@ from bob_blender_tools.core import (  # noqa: E402
     comfy_maps,
     gen_assets,
     gen_paint,
+    gen_receipt,
     gen_views,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, Vram, empty_scene, section, stamp  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("stylise/paint gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -74,82 +76,7 @@ SEED = 4242
 RESOLUTION = 1024
 
 
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-
-
 # -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
-_OURS = {os.getpid()}
-
-
-def _gpu_sample():
-    try:
-        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, {}
-    procs = {}
-    for line in apps.splitlines():
-        bits = [b.strip() for b in line.split(",")]
-        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
-            procs[int(bits[0])] = int(bits[1])
-    return (int(card.splitlines()[0]) if card else None), procs
-
-
-class Vram:
-    """Peak VRAM across a job, sampled from a thread. Copied from `headless_gen_oneshot_vs_staged.py`,
-    because the rule it encodes is the point: read PER PROCESS and sum over the ComfyUI family,
-    and report the RISE over the stage's own baseline as well as the absolute peak, which is
-    order-dependent (`mesh_subject` and `stylize_render` both leave SDXL resident at roughly 6.6
-    GB)."""
-
-    def __init__(self, interval=0.5):
-        self.interval = interval
-        self.card_peak = self.comfy_peak = 0
-        self.card_start = self.comfy_start = 0
-        self._stop = threading.Event()
-        self._thread = None
-
-    def _family(self, procs):
-        return sum(mib for pid, mib in procs.items() if pid not in _OURS)
-
-    def _loop(self):
-        while not self._stop.is_set():
-            card, procs = _gpu_sample()
-            if card is not None:
-                self.card_peak = max(self.card_peak, card)
-                self.comfy_peak = max(self.comfy_peak, self._family(procs))
-            self._stop.wait(self.interval)
-
-    def __enter__(self):
-        card, procs = _gpu_sample()
-        self.card_start = self.card_peak = card or 0
-        self.comfy_start = self.comfy_peak = self._family(procs)
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        return False
-
-    def report(self):
-        return {"card_start": self.card_start, "card_peak": self.card_peak,
-                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak,
-                "rise": self.comfy_peak - self.comfy_start}
-
-
 # -- Image maths ---------------------------------------------------------------------------------
 def read_rgb(path):
     with open(path, "rb") as fh:
@@ -345,24 +272,6 @@ def shape_agreement(truth_points, candidate_points, grid=48):
     return best
 
 
-def _stamp(target, data=None):
-    """Read or write the timing and VRAM beside a cached artifact.
-
-    Without this a re-measured table is a table of zeros, and these numbers go into the plan: a
-    cached run has to report what the generating run measured, not what the cache cost.
-    """
-    path = target + ".json"
-    if data is None:
-        try:
-            with open(path) as fh:
-                return json.load(fh) or {}
-        except (OSError, ValueError):
-            return {}
-    with open(path, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True, default=str)
-    return data
-
-
 # -- Scenes --------------------------------------------------------------------------------------
 def _sun_and_world(scene, strength=3.0):
     light = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
@@ -547,8 +456,10 @@ def probe_image(graph, image_path, out_path, label):
     if os.path.isfile(out_path):
         return out_path
     values = {"BOB_IMAGE": {"image": comfy.upload_image(image_path, subfolder="bob")}}
+    # One estimator node over one image, no checkpoint: no floor, the same call `mesh_simplify_uv`
+    # makes and for the same reason.
     png, _info = comfy.generate_image((graph, {"runtime_inputs": ["BOB_IMAGE.image"]}), values,
-                                      timeout=600, required_titles=("BOB_OUT",))
+                                      route=None, timeout=600, required_titles=("BOB_OUT",))
     with open(out_path, "wb") as fh:
         fh.write(png)
     note(f"{label} estimated", os.path.basename(out_path))
@@ -681,15 +592,15 @@ def part_a(args, reachable):
             if args.fresh and os.path.isfile(target):
                 os.remove(target)
             if os.path.isfile(target):
-                stamp = _stamp(target)
-                info = {"path": target, "seconds": stamp.get("seconds", 0.0), "cached": True}
-                vram = stamp.get("vram", {})
+                sidecar = stamp(target)
+                info = {"path": target, "seconds": sidecar.get("seconds", 0.0), "cached": True}
+                vram = sidecar.get("vram", {})
             else:
                 with Vram() as sampler:
                     info = comfy.stylize_render(shot["beauty"], target, STYLE_PROMPT, seed=SEED,
                                                denoise=denoise, size=RESOLUTION, **kwargs)
                 vram = sampler.report()
-                _stamp(target, {"seconds": info["seconds"], "vram": vram})
+                stamp(target, {"seconds": info["seconds"], "vram": vram})
             styled = read_rgb(info["path"])
             source = read_rgb(shot["beauty"])
             est = resize_to(read_grey(probe_image(DEPTH_PROBE, info["path"],
@@ -785,18 +696,18 @@ def part_b(args, reachable):
             if os.path.isdir(out_dir) else []
         if len(cached) == len(views) and not args.fresh:
             images = [os.path.join(out_dir, f) for f in cached]
-            stamp = _stamp(out_dir)
+            sidecar = stamp(out_dir)
             painted = {"images": images, "cached": True,
-                       "total_seconds": stamp.get("total_seconds", 0.0),
-                       "vram": stamp.get("vram", {})}
+                       "total_seconds": sidecar.get("total_seconds", 0.0),
+                       "vram": sidecar.get("vram", {})}
         else:
             with Vram() as sampler:
                 painted = comfy.paint_views(views, out_dir, PAINT_PROMPT, seed=SEED,
                                           denoise=comfy.PAINT_DENOISE, size=RESOLUTION,
                                           lora=use_lora, lora_strength=1.0)
             painted["vram"] = sampler.report()
-            _stamp(out_dir, {"total_seconds": painted["total_seconds"],
-                             "vram": painted["vram"]})
+            stamp(out_dir, {"total_seconds": painted["total_seconds"],
+                            "vram": painted["vram"]})
         runs[label] = painted
         note(f"`mesh_paint_views` restyle, {label}",
              f"{len(painted['images'])} views in {painted.get('total_seconds', 0):.1f} s, peak "
@@ -833,6 +744,10 @@ def part_b(args, reachable):
 
     out = gen_paint.paint_object(obj, views, runs["lora"]["images"],
                                 os.path.join(GEN, "painted"), "painted", size=1024)
+    # Through the same receipt an artist and an agent get, so this gate cannot judge the route by a
+    # different standard than the product does -- the two bars below are read from `gen_bars` via
+    # `gen_receipt` rather than repeated here as literals.
+    receipt = gen_paint.paint_receipt(obj, out, prompt=PAINT_PROMPT, seed=SEED, lora=lora)
     report = out["report"]
     note("projection bake", f"chart coverage {report['coverage']:.3f}, "
                             f"painted {report['painted'] * 100:.1f}% of chart texels directly from "
@@ -850,10 +765,15 @@ def part_b(args, reachable):
 
     mads = [p["mad"] for p in report["pairs"] if p["mad"] is not None]
     check("every adjacent view pair overlaps enough to measure",
-          all(p["texels"] > 200 for p in report["pairs"]),
-          f"smallest overlap {min(p['texels'] for p in report['pairs'])} texels")
-    check("the projection bake reached the charts", report["painted"] > 0.9,
-          f"{report['painted'] * 100:.1f}% of chart texels painted directly")
+          not gen_receipt.view_overlap_warning(report),
+          f"smallest overlap {min(p['texels'] for p in report['pairs'])} texels against a "
+          f"{int(gen_receipt.VIEW_OVERLAP_MIN)} bar")
+    check("the projection bake reached the charts",
+          not gen_receipt.paint_coverage_warning(report),
+          f"{report['painted'] * 100:.1f}% of chart texels painted directly against a "
+          f"{gen_receipt.PAINT_COVERAGE_MIN * 100:.0f}% bar")
+    check("the paint receipt is clean", not receipt["warnings"],
+          "; ".join(receipt["warnings"]) or "no warnings")
     check("a texture came out of it", os.path.isfile(out["maps"]["basecolor"]),
           os.path.basename(out["maps"]["basecolor"]))
     note("VERDICT, cross-view consistency",
@@ -899,16 +819,13 @@ def part_c(args, reachable):
             ("multi_view_hunyuan", "mesh_geom_mv", None))
     for label, workflow, _unused in runs:
         target = os.path.join(GEN, f"mv_{label}.glb")
-        stamp_path = target + ".json"
         if args.fresh and os.path.isfile(target):
             os.remove(target)
-        seconds, vram = 0.0, {}
         # A cached mesh keeps its timing and VRAM beside it, so a re-measured table is not a table
-        # of zeros: these numbers go into the plan and have to survive a rerun.
-        if os.path.isfile(target) and os.path.isfile(stamp_path):
-            with open(stamp_path) as fh:
-                stamp = json.load(fh) or {}
-            seconds, vram = stamp.get("seconds", 0.0), stamp.get("vram", {})
+        # of zeros: these numbers go into the plan and have to survive a rerun. Through the shared
+        # `stamp`, which this block had inlined a third copy of.
+        sidecar = stamp(target) if os.path.isfile(target) else {}
+        seconds, vram = sidecar.get("seconds", 0.0), sidecar.get("vram", {})
         if not os.path.isfile(target):
             try:
                 with Vram() as sampler:
@@ -920,8 +837,7 @@ def part_c(args, reachable):
                         info = comfy.mesh_geom_mv(paths, target, seed=SEED)
                 vram = sampler.report()
                 seconds = info["seconds"]
-                with open(stamp_path, "w") as fh:
-                    json.dump({"seconds": seconds, "vram": vram}, fh, indent=2, sort_keys=True)
+                stamp(target, {"seconds": seconds, "vram": vram})
             except comfy.ComfyError as exc:
                 check(f"{label} generated a mesh", False, str(exc)[:160])
                 continue

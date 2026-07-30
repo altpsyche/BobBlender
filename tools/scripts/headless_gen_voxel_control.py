@@ -55,15 +55,17 @@ import headless_gen_blockout_control as control_gate  # noqa: E402
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
     gen_assets,
+    gen_bars,
     materials,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, section  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("voxel gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -97,22 +99,19 @@ COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_voxel voxel", "mesh_geom_voxel swa
 #                  null on. Below this the control is not reaching the model and there is no verdict
 #                  to read, only a defect: three phases running, an Omni control that misses NEVER
 #                  errors (the black albedo, Omni's random projection, auto_bbox).
-DRAW = 0.02
-WIN_THRESHOLD = 2
-WIRED_THRESHOLD = 2
+# The same three bars the bbox gate reads, off the registry rather than declared again here.
+DRAW = gen_bars.value("control_draw")
+WIN_THRESHOLD = gen_bars.value("control_win")
+WIRED_THRESHOLD = gen_bars.value("control_wired")
 
 # The control gate's footprint bar. It belongs to the ADOPTED mode and to no other: holding a
-# challenger to the winner's bar records a negative result as a broken suite.
-FOOTPRINT_BAR = 0.5
+# challenger to the winner's bar records a negative result as a broken suite. The registry records
+# that no sample count was ever written down for it, which is a finding rather than a formality.
+FOOTPRINT_BAR = gen_bars.value("footprint")
 
 # What the agent-surface gate measured the `comfy_aimdo` segfault on (docs/GENERATION.md, the
 # staged-copy fault), the same tripwire the bbox gate sets.
 AIMDO_MEASURED = "0.4.10"
-
-
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
 
 
 # -- Part A: the values, the frame and preflight ---------------------------------------------------

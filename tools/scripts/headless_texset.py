@@ -26,9 +26,10 @@ from bob_blender_tools.core import assets, materials, shading  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
 from _gate import Gate  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("texture-set check")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures

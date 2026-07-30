@@ -18,8 +18,13 @@ The data model is the Scatter panel's, one capability over:
 - the LIVE knobs (height, taper, the per-level shape, the cards, the wind) are the modifier's own
  inputs, drawn in place -- editing one is instant, there is no sync code, and there is nothing for
  the panel and the modifier to disagree about;
-- `Scene.bbt_foliage` holds UI state only: which tree is active, and the STRUCTURAL choices staged
- for the next Build (levels, profile, the two texture sets, Skeleton Only).
+- the STRUCTURAL choices (levels, profile, the two texture sets, Skeleton Only) live on the TREE, in
+ `Object.bbt_foliage_tree`, which `core/foliage_build.py` owns and registers. They used to be staged
+ on `Scene.bbt_foliage`, and that was the defect: the panel's copy won on every Build, so selecting a
+ tree an agent grew and nudging one thing rebuilt it from panel defaults and threw the agent's work
+ away. Drawn off the object there is nothing to sync and nothing to disagree;
+- `Scene.bbt_foliage` holds UI state only: which tree is active, the species the Add/Load buttons
+ use, and the generation prompts. Nothing a build reads off it decides what a tree IS.
 
 **No panel state reaches a recipe except as a plain param.** Every operator here resolves its
 context and calls `core/foliage_build.py`, which takes arguments and hands them to `build_geonodes`;
@@ -116,18 +121,6 @@ def _coll(context):
     return bpy.data.collections.get(foliage_build.FOLIAGE_COLL)
 
 
-def _structural(scn):
-    """The staged structural choices, as build_geonodes params. `None` means "leave as built", so a
-    freshly added species keeps its own levels until someone changes the number."""
-    out = {"levels": int(scn.levels), "profile_segments": int(scn.profile_segments),
-           "skeleton": bool(scn.skeleton)}
-    if scn.bark_set != "NONE":
-        out["bark_set"] = scn.bark_set
-    if scn.atlas != "NONE":
-        out["atlas"] = scn.atlas
-    return out
-
-
 class BBT_FoliageProps(PropertyGroup):
     """BobFoliage's UI state. Not the tree (that is the object and its modifier), not the world
     (that is bbt_env): only which tree is active and what the next Build should be."""
@@ -138,26 +131,6 @@ class BBT_FoliageProps(PropertyGroup):
         description="The species preset Add grows and Load applies. A species is DATA in a pack "
                     "(<pack>/foliage/<name>.json), so a pack can ship one and an artist can hand "
                     "one to someone else")
-    levels: IntProperty(
-        name="Levels", default=3, min=1, max=4,
-        description="Branch levels below the trunk. Structural: three is a tree, one is a shrub, "
-                    "and changing it rebuilds the graph")
-    profile_segments: IntProperty(
-        name="Profile", default=6, min=3, max=24,
-        description="Sides of the tube swept along every limb. Structural, and the mesh's main "
-                    "cost knob: the vertex count is exactly linear in it")
-    skeleton: BoolProperty(
-        name="Skeleton Only", default=False,
-        description="Emit the curves and skip the sweep. Much faster to tune structure in, and the "
-                    "only view where a detached branch is visible rather than hidden in a trunk")
-    bark_set: EnumProperty(
-        name="Bark", items=_set_items,
-        description="The texture set the trunk and limbs wear. A species preset already names the "
-                    "bark it wants, so this is for overriding that choice")
-    atlas: EnumProperty(
-        name="Leaf Atlas", items=_set_items,
-        description="The leaf/needle atlas the cards sample. The set declares its own grid, so "
-                    "assigning one needs no numbers")
     bark_prompt: StringProperty(
         name="Bark Prompt", default="rough conifer bark",
         description="What the bark is. Generation adds the measured grain clause for you: naming "
@@ -306,8 +279,8 @@ class BBT_OT_foliage_build(Operator):
     bl_idname = "bob_blender_tools.foliage_build"
     bl_label = "Build This Tree"
     bl_description = ("Rebuild the active tree with the structural choices above (levels, profile, "
-                      "the two texture sets, Skeleton Only). Tuned live knobs are kept by socket "
-                      "name, so a rebuild costs no tuning")
+                      "the two texture sets, Skeleton Only), read off the tree itself. Tuned live "
+                      "knobs are kept by socket name, so a rebuild costs no tuning")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -315,8 +288,9 @@ class BBT_OT_foliage_build(Operator):
         if obj is None:
             self.report({"ERROR"}, "Add or pick a tree first")
             return {"CANCELLED"}
-        obj = foliage_build.rebuild(obj, overrides=_structural(context.scene.bbt_foliage),
-                                    scene=context.scene)
+        # No overrides: the structural choices are ON the tree now, so `rebuild` reads them itself.
+        # Passing panel state here is exactly what discarded an agent's build.
+        obj = foliage_build.rebuild(obj, scene=context.scene)
         self.report({"INFO"}, f"Rebuilt {obj.name}")
         return {"FINISHED"}
 
@@ -338,6 +312,49 @@ class BBT_OT_foliage_random_seed(Operator):
         inp.value = random.randint(0, 99999)
         obj.update_tag()
         return {"FINISHED"}
+
+
+class _SetPicker(Operator):
+    """Assign a texture set onto the ACTIVE TREE's own config. Structural, so it takes effect on the
+    next Build; the assignment itself is recorded immediately so nothing is staged anywhere else.
+
+    Two operators rather than one because `operator_menu_enum` can only drive the operator's own enum
+    property and cannot also pass which field to write -- so the field is the operator's identity.
+    Both subclass this for the body, which is the only thing they share.
+    """
+
+    bl_options = {"REGISTER", "UNDO"}
+    field = ""
+
+    set_name: EnumProperty(name="Set", items=_set_items)
+
+    def execute(self, context):
+        tree = _active_tree(context)
+        cfg = foliage_build.config(tree)
+        if cfg is None:
+            self.report({"ERROR"}, "Add or pick a tree first")
+            return {"CANCELLED"}
+        # "NONE" is the enum's own empty entry; the object records "" for it, because the recipe reads
+        # these as datablock names and an empty name means "leave it alone" rather than "no set".
+        setattr(cfg, self.field, "" if self.set_name == "NONE" else self.set_name)
+        self.report({"INFO"}, f"{tree.name} {self.field} = {self.set_name}; Build to apply")
+        return {"FINISHED"}
+
+
+class BBT_OT_foliage_set_bark(_SetPicker):
+    bl_idname = "bob_blender_tools.foliage_set_bark"
+    bl_label = "Bark"
+    bl_description = ("The texture set the trunk and limbs wear, recorded on this tree. A species "
+                      "preset already names the bark it wants, so this overrides that choice")
+    field = "bark_set"
+
+
+class BBT_OT_foliage_set_atlas(_SetPicker):
+    bl_idname = "bob_blender_tools.foliage_set_atlas"
+    bl_label = "Leaf Atlas"
+    bl_description = ("The leaf/needle atlas the cards sample, recorded on this tree. The set "
+                      "declares its own grid, so assigning one needs no numbers")
+    field = "atlas"
 
 
 class BBT_OT_foliage_make_variants(Operator):
@@ -363,9 +380,12 @@ class BBT_OT_foliage_make_variants(Operator):
                                        "add-on preferences), or turn Write to Pack off")
                 return {"CANCELLED"}
         levels = foliage_variants.LOD_LEVELS if scn.variant_lods else (0,)
+        # No overrides: a variant is a reseed of THIS tree, so its structural config is the tree's
+        # own. Handing the panel's copy in is how a variant came out a different shape from the tree
+        # it was baked from.
         report = foliage_variants.make_variants(
             tree, count=int(scn.variant_count), levels=levels, scene=context.scene,
-            overrides=_structural(scn), pack_dir=pack)
+            pack_dir=pack)
         # Which collection it filled, because that is where the artist goes next: the Scatter panel
         # reads exactly this pool (docs/FOLIAGE.md 4.5, the loop closing in the other direction).
         rungs = ", ".join(f"LOD{level} {verts:,}v"
@@ -427,12 +447,15 @@ def _generate(self, context, kind):
         _COMFY_STATE.update(ok=True, detail=f"{kind} set {got}" if got else f"{kind} generated")
         if not got:
             return
-        # Rebuild the tree wearing it. The resolver reads the generated pack the moment it is
-        # written (the pack_dir plumbing a scene run's fixes added), so this needs no import step.
+        # Record it ON THE TREE, then rebuild -- one write instead of an override plus a panel-state
+        # copy. The resolver reads the generated pack the moment it is written (the pack_dir
+        # plumbing a scene run's fixes added), so this needs no import step.
         tree = bpy.data.objects.get(name)
+        cfg = foliage_build.config(tree)
+        if cfg is not None:
+            setattr(cfg, "bark_set" if kind == "bark" else "atlas", got)
         if tree is not None:
-            foliage_build.rebuild(tree, overrides={("bark_set" if kind == "bark" else "atlas"): got})
-        setattr(scn, "bark_set" if kind == "bark" else "atlas", got)
+            foliage_build.rebuild(tree)
 
     _submit(f"{kind}: {prompt[:32]}", work, landed)
     self.report({"INFO"}, f"Generating the {kind} in the background")
@@ -540,13 +563,15 @@ class BBT_PT_foliage_shape(Panel):
 
         # Structural group: these change what is built, so they apply on a Build press and not
         # from a callback -- rebuilding from an update callback is the re-entrancy the Scatter panel
-        # avoids the same way.
+        # avoids the same way. Drawn off the TREE's own config, so what is shown is what this tree
+        # actually is, whether the panel built it, an agent did, or a previous session did.
+        cfg = foliage_build.config(tree)
         box = layout.box()
         box.label(text="Structural (Build to apply)")
         row = box.row(align=True)
-        row.prop(scn, "levels")
-        row.prop(scn, "profile_segments")
-        box.prop(scn, "skeleton")
+        row.prop(cfg, "levels")
+        row.prop(cfg, "profile_segments")
+        box.prop(cfg, "skeleton")
         helpers.structural_action(box, "bob_blender_tools.foliage_build",
                                   note="rebuilds this tree's graph (keeps tuned knobs)")
 
@@ -683,14 +708,19 @@ class BBT_PT_foliage_textures(Panel):
         species = foliage_build.species_of(tree)
         missing = dict((k, v) for k, _l, v in assets.foliage_missing_sets(species)) if species \
             else {}
-        for label, prop, prompt_prop, op, key in (
-                ("Bark", "bark_set", "bark_prompt",
+        cfg = foliage_build.config(tree)
+        for label, pick_op, prompt_prop, op, key in (
+                ("Bark", "bob_blender_tools.foliage_set_bark", "bark_prompt",
                  "bob_blender_tools.foliage_generate_bark", "bark_set"),
-                ("Leaf Atlas", "atlas", "atlas_prompt",
+                ("Leaf Atlas", "bob_blender_tools.foliage_set_atlas", "atlas_prompt",
                  "bob_blender_tools.foliage_generate_atlas", "atlas")):
             box = layout.box()
             box.label(text=label, icon="TEXTURE")
-            box.prop(scn, prop, text="")
+            # The set is on the TREE, so the row shows this tree's assignment and the menu writes it
+            # there. `preset_row` folds the current value into the button, which is what an
+            # operator_menu_enum cannot show by itself.
+            helpers.preset_row(box, pick_op, prop="set_name", text=label, icon="TEXTURE",
+                               current=str(getattr(cfg, key, "") or ""))
             if key in missing:
                 cap = box.row()
                 cap.enabled = False
@@ -719,6 +749,8 @@ CLASSES = (
     BBT_OT_foliage_load_species,
     BBT_OT_foliage_build,
     BBT_OT_foliage_random_seed,
+    BBT_OT_foliage_set_bark,
+    BBT_OT_foliage_set_atlas,
     BBT_OT_foliage_make_variants,
     BBT_OT_foliage_generate_bark,
     BBT_OT_foliage_generate_atlas,
@@ -739,6 +771,10 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_foliage = PointerProperty(type=BBT_FoliageProps)
+    # The per-object structural config is core's, not the panel's (`foliage_build.BBT_FoliageTree`),
+    # because a headless gate builds trees with no addon registered. Idempotent, so a gate that
+    # already called it and then enables the addon is a supported path rather than a crash.
+    foliage_build.register()
     # The world feed: raising Wind Strength moves every tree with no rebuild and no per-tree press.
     world.register_applier(foliage_build.apply_world_wind)
 
@@ -747,6 +783,7 @@ def unregister():
     from . import world
 
     world.unregister_applier(foliage_build.apply_world_wind)
+    foliage_build.unregister()
     del bpy.types.Scene.bbt_foliage
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

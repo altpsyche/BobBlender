@@ -44,14 +44,16 @@ import numpy as np
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
-from bob_blender_tools.core import assets, comfy, gen_assets  # noqa: E402
+from bob_blender_tools.core import assets, comfy, gen_assets, gen_bars  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, Vram, empty_scene, section, stamp  # noqa: E402
+from _gate import gpu_sample  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("geometry A/B")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -67,8 +69,9 @@ FACES = gen_assets.DEFAULT_FACES
 TEXTURE_SIZE = 1024
 CARD_MIB = 16303
 # A texture whose in-chart standard deviation is below this is the black-albedo trap rather than a
-# flat-looking asset (the asset gate's floor, kept so both gates' numbers mean the same thing).
-ALBEDO_FLOOR = 0.02
+# flat-looking asset. Off the registry, which is what MAKES it "the asset gate's floor" rather than a
+# comment promising the two gates' numbers mean the same thing.
+ALBEDO_FLOOR = gen_bars.value("albedo_floor")
 
 # The same ten prompts, seeds and heights the route A/B used, so the TRELLIS.2 column here is
 # comparable with that table and the shared subject images are already on disk. Three of the ten are
@@ -107,15 +110,6 @@ def skip(label, value):
     print(f"[SKIP] {label} -- {value}")
 
 
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-
-
 def foliage(subject):
     """Whether this prompt is a foliage case, through the same value the operators read."""
     return comfy.is_foliage(subject["kind"])
@@ -126,73 +120,6 @@ def foliage(subject):
 # own process: the main server, the TRELLIS2 pixi worker and the GeometryPack pixi worker each hold
 # their own allocation and only their sum answers "does it fit". Same sampler the route A/B and the
 # stylise gate used.
-_OURS = {os.getpid()}
-
-
-def _gpu_sample():
-    """(card MiB in use, {pid: MiB}) from nvidia-smi, or (None, {}) with no nvidia-smi."""
-    try:
-        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, {}
-    procs = {}
-    for line in apps.splitlines():
-        bits = [b.strip() for b in line.split(",")]
-        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
-            procs[int(bits[0])] = int(bits[1])
-    return (int(card.splitlines()[0]) if card else None), procs
-
-
-class Vram:
-    """Peak VRAM across a job, sampled from a thread so the measurement does not serialise with it.
-
-    `at_queue` is the baseline the moment the job is handed over and `peak` the highest reading
-    while it ran. The rise between them is what the graph cost; the absolute peak is what has to
-    fit.
-    """
-
-    def __init__(self, interval=0.5):
-        self.interval = interval
-        self.card_peak = self.comfy_peak = 0
-        self.card_start = self.comfy_start = 0
-        self._stop = threading.Event()
-        self._thread = None
-
-    def _family(self, procs):
-        return sum(mib for pid, mib in procs.items() if pid not in _OURS)
-
-    def _loop(self):
-        while not self._stop.is_set():
-            card, procs = _gpu_sample()
-            if card is not None:
-                self.card_peak = max(self.card_peak, card)
-                self.comfy_peak = max(self.comfy_peak, self._family(procs))
-            self._stop.wait(self.interval)
-
-    def __enter__(self):
-        card, procs = _gpu_sample()
-        self.card_start = self.card_peak = card or 0
-        self.comfy_start = self.comfy_peak = self._family(procs)
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        return False
-
-    def report(self):
-        return {"card_start": self.card_start, "card_peak": self.card_peak,
-                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak}
-
-
 def _merge_vram(parts):
     """The peak of several stages, and the lowest start among them."""
     parts = [p for p in parts if p]
@@ -211,22 +138,18 @@ def _cache(path):
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
-def _stamp_path(key):
-    return os.path.join(GEN, key + "_g7.json")
+def _stamp_target(key):
+    """The artifact a keyed sidecar belongs to. `_gate.stamp` appends the `.json`, so the file a
+    previous run wrote is the file this one reads -- no cache is invalidated by the fold."""
+    return os.path.join(GEN, key + "_g7")
 
 
 def _load_stamp(key):
-    try:
-        with open(_stamp_path(key)) as fh:
-            return json.load(fh) or {}
-    except (OSError, ValueError):
-        return {}
+    return stamp(_stamp_target(key))
 
 
 def _save_stamp(key, entry):
-    with open(_stamp_path(key), "w") as fh:
-        json.dump({"seconds": entry["seconds"], "vram": entry["vram"]}, fh, indent=2,
-                  sort_keys=True)
+    stamp(_stamp_target(key), {"seconds": entry["seconds"], "vram": entry["vram"]})
 
 
 def paths_for(key):
@@ -238,9 +161,11 @@ def paths_for(key):
 
 
 def new_entry(subject):
-    stamp = _load_stamp(subject["key"])
+    # `cached` and not `stamp`: `stamp` is the shared writer imported from `_gate`, and a local of that
+    # name would shadow it for the rest of this scope -- harmless today, one line from not being.
+    cached = _load_stamp(subject["key"])
     return dict(subject, paths=paths_for(subject["key"]),
-                seconds=dict(stamp.get("seconds") or {}), vram=dict(stamp.get("vram") or {}),
+                seconds=dict(cached.get("seconds") or {}), vram=dict(cached.get("vram") or {}),
                 foliage=foliage(subject))
 
 
@@ -788,7 +713,7 @@ def main():
     if os.path.isdir(repo):
         comfy.set_pref_comfy_dir(repo)
         note("mesh transport", f"local copy into {repo}/input/3d")
-    card, procs = _gpu_sample()
+    card, procs = gpu_sample()
     note("GPU at start", f"{card} MiB in use on the card, compute apps {procs}")
 
     if "a" in parts:

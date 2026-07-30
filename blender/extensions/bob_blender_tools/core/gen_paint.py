@@ -30,6 +30,7 @@ views land where they overlap, and how far the front view has drifted from the s
 
 import math
 import os
+import time
 
 import bpy
 from mathutils import Matrix, Vector
@@ -333,6 +334,23 @@ def cross_view_report(contributions, *, ring=None, opposite=None):
     return {"pairs": pairs, "drift": compare(0, back)}
 
 
+def chart_stats(basecolor, mask):
+    """{"basecolor": {mean, std}} over the texels INSIDE the charts, in 0-255.
+
+    The shape `gen_receipt.empty_map_warning` reads, deliberately measured in-chart rather than over
+    the file the way `gen_assets.map_stats` does. A projected texture is black wherever no chart is,
+    and that background is most of the atlas: the whole-image standard deviation of a paint that came
+    back one flat grey measured 62.0 against a 6.0 bar and would have passed, while the same texels
+    inside the charts measured 0.75. The background is not a picture, so it does not get a vote.
+    """
+    import numpy as np
+
+    if mask is None or not mask.any():
+        return {}
+    lum = basecolor[mask].astype("float64")
+    return {"basecolor": {"mean": round(float(lum.mean()), 2), "std": round(float(lum.std()), 2)}}
+
+
 # -- The whole route ---------------------------------------------------------------------------
 def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
     """Project `images` (one per view) onto `obj`'s UVs and write a texture set into `out_dir`.
@@ -348,6 +366,7 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
     blend = blend_views(gbuf, contributions)
     report = dict(blend)
     report.pop("basecolor", None)
+    report["map_stats"] = chart_stats(blend["basecolor"], gbuf["mask"])
     ring = sum(1 for view in views if view.get("ring", True))
     report.update(cross_view_report(contributions, ring=ring), views=len(views), ring=ring,
                   size=int(size))
@@ -361,6 +380,219 @@ def paint_maps(obj, views, images, out_dir, stem, *, size=1024, derive=True):
         maps["basecolor"] = comfy_maps.write_png(os.path.join(out_dir, f"{stem}_basecolor.png"),
                                                  blend["basecolor"])
     return {"maps": maps, "report": report}
+
+
+# -- What a painted object records about its own paint ------------------------------------------
+CONFIG_PROP = "bbt_paint"
+
+
+class BBT_PaintedAsset(bpy.types.PropertyGroup):
+    """What the stylised route did to this object, stored ON the object. The peer of
+    `foliage_build.BBT_FoliageTree` and `scatter_build.BBT_ScatterLayer`, and here for their reason:
+    state an op writes belongs to core, and core registers it.
+
+    Without this a paint an AGENT ran would be invisible in the panel -- the material would change
+    and nothing would say where it came from, which is the first of the two complaints this round
+    exists to answer. With it the panel reads the object and shows the same figures whoever pressed
+    the button.
+
+    Provenance plus the one gated number. Not the whole receipt: the pair MADs and the drift are a
+    report an agent reads, and a panel that showed six of them would be a log rather than a panel.
+    """
+
+    prompt: bpy.props.StringProperty(
+        name="Style", default="",
+        description="The style prompt this object was painted with")
+    seed: bpy.props.IntProperty(
+        name="Seed", default=0,
+        description="The seed it was painted with; the same seed and prompt repaint the same look")
+    views: bpy.props.IntProperty(
+        name="Views", default=0,
+        description="How many views were rendered and restyled, the ring plus the two elevations")
+    painted: bpy.props.FloatProperty(
+        name="Charts Painted", default=0.0, min=0.0, max=1.0,
+        description="Fraction of chart texels painted from a view that could see them. The rest is "
+                    "hole fill: neighbouring colour spread inwards, which carries no information")
+    lora: bpy.props.StringProperty(
+        name="LoRA", default="",
+        description="The style LoRA applied, if any")
+    warnings: bpy.props.StringProperty(
+        name="Warnings", default="",
+        description="What the receipt said about this paint, so the panel shows the same sentence "
+                    "an agent got back")
+
+
+def stamp(obj, receipt):
+    """Record a paint's provenance on the object, so every surface reports the same paint.
+
+    Silently skipped when the property is not registered, which is the headless case: a gate script
+    importing `core` alone has no addon registration and must still be able to paint.
+    """
+    config = getattr(obj, CONFIG_PROP, None)
+    if config is None:
+        return
+    config.prompt = receipt.get("prompt", "")
+    config.seed = int(receipt.get("seed", 0))
+    config.views = int(receipt.get("views", 0))
+    config.painted = float(receipt.get("painted", 0.0))
+    config.lora = receipt.get("lora", "")
+    config.warnings = "; ".join(receipt.get("warnings") or ())
+
+
+def register():
+    """Register the per-object paint record. Idempotent, for `foliage_build.register`'s reason."""
+    if getattr(bpy.types.Object, CONFIG_PROP, None) is not None:
+        return
+    bpy.utils.register_class(BBT_PaintedAsset)
+    setattr(bpy.types.Object, CONFIG_PROP, bpy.props.PointerProperty(type=BBT_PaintedAsset))
+
+
+def unregister():
+    if getattr(bpy.types.Object, CONFIG_PROP, None) is None:
+        return
+    delattr(bpy.types.Object, CONFIG_PROP)
+    bpy.utils.unregister_class(BBT_PaintedAsset)
+
+
+def paint_staging(pack_dir, stem):
+    """Where one object's paint lands: `<pack>/_staging/<stem>_paint`, holding `views/`, `styled/`
+    and the maps.
+
+    Here rather than at each caller because the op and the panel operator both need it, and a paint
+    an artist started and an agent finished has to be able to find its own intermediates.
+    """
+    try:
+        from . import comfy
+    except ImportError:
+        import comfy
+
+    return os.path.join(comfy.staging_dir(pack_dir), f"{stem}_paint")
+
+
+def paint_stylised(obj, out_dir, stem, prompt, *, seed=0, views=6, size=1024, denoise=None,
+                   negative=None, lora=None, lora_strength=0.8, url=None, material_name=None,
+                   samples=32, pack_dir=None, on_progress=None, on_queued=None):
+    """The whole stylised texture route on one object: render the turntable, restyle it, project it
+    back. Returns a receipt.
+
+    The three halves of this route are `gen_views.turntable_views` (Blender), `comfy.paint_views`
+    (ComfyUI) and `paint_object` (Blender again), and until this existed the only thing that had ever
+    put them in order was a gate script -- so the route was exercised, documented, and reachable from
+    neither the panel nor an agent. It is one function because the ORDER is the route: the ring's
+    front view has to be view 0 for the palette to be decided once, and the projection has to read
+    the same `views` list the restyle consumed, in the same order.
+
+    Blocking, which is what a headless caller and the `paint_stylised` op both want. The panel
+    operator cannot block, so it drives the same three calls across the job boundary itself: the two
+    Blender halves on the main thread, the ComfyUI half on the worker (the threading rule).
+
+    `views` is the RING count; `gen_views.turntable_views` adds its two extra elevations on top, so
+    the default 6 renders 8. The ring is what the seam is measured across, and the extras are what
+    stop a closed shape's top and underside going to the hole fill.
+    """
+    try:
+        from . import comfy, render
+    except ImportError:
+        import comfy
+        import render
+
+    seconds = {}
+    started = time.time()
+    shot = gen_views.turntable_views(obj, os.path.join(out_dir, "views"), count=int(views),
+                                     resolution=int(size), samples=int(samples), stem=stem)
+    seconds["render"] = time.time() - started
+    # Hand the card back before the restyle asks for it. This route is the VRAM-handback rule's
+    # worst case -- it renders N frames and then generates N times in the SAME session -- and it was
+    # measured: eight 1024 EEVEE views left 3,599 MiB free against the paint route's 4,000 floor, so
+    # the first restyle was refused by its own preflight. Blender's hold is the smaller half and the
+    # only half Bob controls (`core.render.release_gpu`), so it goes here rather than being left for
+    # the generate to trip over.
+    released = render.release_gpu()
+    if on_progress:
+        on_progress(f"handed the card back: {released}")
+
+    started = time.time()
+    painted = comfy.paint_views(shot, os.path.join(out_dir, "styled"), prompt, seed=int(seed),
+                                denoise=comfy.PAINT_DENOISE if denoise is None else float(denoise),
+                                size=int(size), negative=negative, lora=lora,
+                                lora_strength=lora_strength, url=url,
+                                on_progress=on_progress, on_queued=on_queued)
+    seconds["restyle"] = painted["total_seconds"]
+
+    started = time.time()
+    out = paint_object(obj, shot, painted["images"], out_dir, stem, size=int(size),
+                       material_name=material_name)
+    seconds["project"] = time.time() - started
+    return paint_receipt(obj, out, prompt=prompt, seed=seed, lora=lora, seconds=seconds,
+                         pack_dir=pack_dir)
+
+
+def paint_stylised_op(op: dict) -> dict:
+    """MCP op: paint one object through the stylised texture route. Returns its receipt in `data`.
+
+    An op rather than a `comfy_*` tool because Blender is in the middle of the route, which is the
+    same rule that makes `import_generated` an op: a tool in the MCP process has no bpy, and putting
+    the render and the projection behind a socket would mean shipping half a pipeline over HTTP.
+    """
+    try:
+        from . import comfy, gen_assets
+    except ImportError:
+        import comfy
+        import gen_assets
+
+    obj = bpy.data.objects.get(op.get("object") or "")
+    if obj is None:
+        raise ValueError(f"no object named {op.get('object')!r} in the scene")
+    if obj.type != "MESH":
+        raise ValueError(f"object {obj.name!r} is a {obj.type}, not a MESH")
+    if not obj.data.uv_layers:
+        raise ValueError(f"object {obj.name!r} has no UV layer to project into; this route paints "
+                         f"into the charts a mesh already has rather than making new ones")
+
+    pack = gen_assets.resolve_pack(op.get("pack_dir"))
+    stem = comfy.slugify(obj.name) or "painted"
+    out_dir = paint_staging(pack, stem)
+    receipt = paint_stylised(obj, out_dir, stem, op.get("prompt") or "",
+                             seed=int(op.get("seed", 0)), views=int(op.get("views", 6)),
+                             size=int(op.get("size", 1024)), denoise=op.get("denoise"),
+                             lora=op.get("lora") or None,
+                             lora_strength=float(op.get("lora_strength", 0.8)), pack_dir=pack)
+    painted = receipt.get("painted")
+    return {"op": "paint_stylised", "created": [], "data": receipt,
+            "info": f"{obj.name}: painted from {receipt.get('views')} views into "
+                    f"{receipt.get('material')}"
+                    + (f", {painted * 100:.1f}% of charts direct" if painted is not None else "")
+                    + (f" -- {'; '.join(receipt['warnings'])}" if receipt.get("warnings") else "")}
+
+
+def paint_receipt(obj, painted, *, prompt, seed, lora=None, seconds=None, pack_dir=None):
+    """What `paint_stylised` produced, in the vocabulary `core.gen_receipt` judges.
+
+    A property of an ASSET belongs in the receipt, so the seam and the coverage the projection
+    measured are reported here rather than printed by whoever happened to run it. The two gated ones
+    are `painted` and `pairs`; everything else is declared context in `gen_receipt`.
+    """
+    try:
+        from . import gen_receipt
+    except ImportError:
+        import gen_receipt
+
+    report = painted["report"]
+    values = dict(report)
+    values.update(name=obj.name, object=obj.name, material=painted["material"],
+                  maps=painted["maps"], route="stylised", prompt=prompt, seed=int(seed),
+                  lora=lora or "", seconds=seconds or {}, pack_dir=pack_dir or "",
+                  warnings=(gen_receipt.paint_coverage_warning(report)
+                            + gen_receipt.view_overlap_warning(report)
+                            # The existing bar, reused rather than re-derived: a paint that changed
+                            # nothing is a basecolor with no picture in it, which is the failure
+                            # `empty_map_warning` was written for on the block-out route.
+                            + gen_receipt.empty_map_warning("painted", report.get("map_stats"))))
+    # Built from the DECLARED list rather than from a literal here, so the receipt an artist reads
+    # and the vocabulary that judges it cannot drift apart -- the same rule the mesh bridge follows.
+    receipt = {k: values[k] for k in gen_receipt.PAINT_RECEIPT_KEYS if k in values}
+    stamp(obj, receipt)
+    return receipt
 
 
 def paint_object(obj, views, images, out_dir, stem, *, size=1024, material_name=None):

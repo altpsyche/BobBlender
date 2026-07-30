@@ -50,15 +50,17 @@ import numpy as np
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 
-from bob_blender_tools.core import assets, materials  # noqa: E402
+from bob_blender_tools.core import assets, foliage_build, gen_bars  # noqa: E402
+from bob_blender_tools.core import materials, scatter_build  # noqa: E402
 from bob_blender_tools.core.dispatch import apply_op  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
 from _gate import Gate  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("foliage gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -75,8 +77,7 @@ BASE = {"levels": 3, "height": 20.0, "seed": 3, "segments": 14, "branch_segments
 def build(name, **overrides):
     """Build a foliage object and return its evaluated mesh plus the params used."""
     params = dict(BASE, **overrides)
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": name, "params": params,
-              "reset": True})
+    foliage_build.build_recipe(name, params, reset=True)
     obj = bpy.data.objects[name]
     evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     return evaluated, evaluated.to_mesh(), params
@@ -609,8 +610,8 @@ def check_leaves():
     # tint is white, so the canopy renders as opaque white rectangles -- measured on the first the
     # wood shaping run against a generated atlas the resolver could not see. Bark has no such cliff,
     # which is why only the atlas falls back (`_atlas_set`).
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Fallback",
-              "params": dict(BASE, cards=4, atlas="no_such_atlas_anywhere"), "reset": True})
+    foliage_build.build_recipe("Fallback", dict(BASE, cards=4, atlas="no_such_atlas_anywhere"),
+                               reset=True)
     card = bpy.data.materials.get("M_Fallback Leaf")
     bsdf = next((n for n in card.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"),
                 None) if card and card.node_tree else None
@@ -872,10 +873,11 @@ def check_bark_uv():
 #   before    0.0000    0.068   1.713   z = 0.00, the root flare, radius 0.798 -> 0.416 in one band
 #   after     0.0000    0.041   0.184   z = 15.27, an ordinary twig taper
 #
-# Broadleaf went 1.825 to 0.159 on the same change. 0.5 of a tile is the bar: comfortably above what
-# a correct build produces on either species and far below the defect, and half a tile is also about
-# where a sideways slide stops reading as bark and starts reading as a smear.
-BARK_SHEAR_MAX = 0.5
+# Broadleaf went 1.825 to 0.159 on the same change. The bar is the registry's `bark_shear`, which
+# records those two species as its whole evidence -- and records that it is deliberately NOT the
+# receipt's `grain_off_vertical`: this one asserts the prompt clause still holds, read off the built
+# trunk, and that one tells an artist their bark is sideways.
+BARK_SHEAR_MAX = gen_bars.value("bark_shear")
 
 
 def check_bark_shear():
@@ -894,8 +896,7 @@ def check_bark_shear():
     for species in ("conifer", "broadleaf"):
         spec = assets.foliage_species(species)
         params = dict(spec["params"], seed=11, cards=0)
-        apply_op({"op": "build_geonodes", "recipe": "foliage", "name": f"shear_{species}",
-                  "params": params, "reset": True})
+        foliage_build.build_recipe(f"shear_{species}", params, reset=True)
         ev = bpy.data.objects[f"shear_{species}"].evaluated_get(
             bpy.context.evaluated_depsgraph_get())
         mesh = ev.to_mesh()
@@ -1099,8 +1100,7 @@ def check_species():
         # state, not a mistake. Everything else the validator says is an authoring bug.
         warn = [w for w in assets.validate_foliage_species(name) if "missing: textures/" not in w]
         check(f"species '{name}' validates clean", not warn, "; ".join(warn))
-        apply_op({"op": "build_geonodes", "recipe": "foliage", "name": f"sp_{name}",
-                  "params": dict(spec["params"], seed=11), "reset": True})
+        foliage_build.build_recipe(f"sp_{name}", dict(spec["params"], seed=11), reset=True)
         ev = bpy.data.objects[f"sp_{name}"].evaluated_get(bpy.context.evaluated_depsgraph_get())
         mesh = ev.to_mesh()
         zs = [v.co.z for v in mesh.vertices]
@@ -1134,8 +1134,8 @@ def check_render():
     background with a sun, so the variation is the tree.
     """
     os.makedirs(OUT, exist_ok=True)
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Shot",
-              "params": dict(assets.foliage_species("broadleaf")["params"], seed=4), "reset": True})
+    foliage_build.build_recipe("Shot", dict(assets.foliage_species("broadleaf")["params"], seed=4),
+                               reset=True)
     for obj in list(bpy.data.objects):
         if obj.name != "Shot":
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -1807,8 +1807,7 @@ def check_lods():
         ladder = foliage_variants.fit_ladder(base)
         shots = []
         for level, rung in ladder:
-            apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Rung",
-                      "params": dict(rung), "reset": True})
+            foliage_build.build_recipe("Rung", dict(rung), reset=True)
             shots.append((level, foliage_variants.measure(bpy.data.objects["Rung"])))
         zero = shots[0][1]
         for level, got in shots:
@@ -1843,8 +1842,7 @@ def check_lods():
     ladder = dict(foliage_variants.fit_ladder(conifer))
     got = {}
     for level, rung in sorted(ladder.items()):
-        apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Budget",
-                  "params": dict(rung), "reset": True})
+        foliage_build.build_recipe("Budget", dict(rung), reset=True)
         got[level] = foliage_variants.measure(bpy.data.objects["Budget"])
     check("LOD1 costs about a quarter of LOD0", got[1]["verts"] < 0.30 * got[0]["verts"],
           f"{got[1]['verts']} of {got[0]['verts']} ({got[1]['verts'] / got[0]['verts'] * 100:.1f}%)")
@@ -1975,9 +1973,9 @@ def check_season():
     if getattr(bpy.context.scene, "bbt_env", None) is None:
         bbt_env.register()
     os.makedirs(OUT, exist_ok=True)
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Season",
-              "params": dict(assets.foliage_species("broadleaf")["params"], seed=4, wind=0.0),
-              "reset": True})
+    foliage_build.build_recipe("Season",
+                               dict(assets.foliage_species("broadleaf")["params"], seed=4,
+                                    wind=0.0), reset=True)
     for obj in list(bpy.data.objects):
         if obj.name != "Season":
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -2003,9 +2001,9 @@ def check_season():
               summer[0] < winter[0] < autumn[0] + 1e-4,
               f"winter {winter[0]:+.4f} between summer {summer[0]:+.4f} and autumn {autumn[0]:+.4f}")
     # The season must not be a global tint: with no cards at all, nothing may change.
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Season",
-              "params": dict(assets.foliage_species("broadleaf")["params"], seed=4, wind=0.0,
-                             cards=0), "reset": True})
+    foliage_build.build_recipe("Season",
+                               dict(assets.foliage_species("broadleaf")["params"], seed=4,
+                                    wind=0.0, cards=0), reset=True)
     bare_summer = _season_render("summer", os.path.join(OUT, "season_bare_summer"))
     bare_autumn = _season_render("autumn", os.path.join(OUT, "season_bare_autumn"))
     if bare_summer is not None and bare_autumn is not None:
@@ -2043,11 +2041,18 @@ def check_stand():
     apply_op({"op": "build_geonodes", "recipe": "heightmap_terrain", "name": "Ground",
               "params": {"heightmap": HEIGHTMAP, "size": 220.0, "resolution": 128,
                          "height": 24.0, "sea_level": 0.2}, "reset": True})
-    apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
-              "params": {"emitter": "Ground", "assets": pool.name, "align": "up",
-                         "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
-                         "min_scale": 0.85, "max_scale": 1.25}})
-    bpy.context.view_layer.update()
+    # One stand definition, rebuilt against whichever pool is being measured. Written once because
+    # the comparison below is only honest if every rung is scattered at the SAME density, spacing
+    # and scale range -- three copies of five numbers is three chances for one of them to drift.
+    def stand_on(pool_coll):
+        scatter_build.build_recipe(
+            "scatter", "Stand",
+            {"emitter": "Ground", "assets": pool_coll.name, "align": "up", "density": 0.02,
+             "distance_min": 6.0, "min_normal_z": 0.75, "min_scale": 0.85, "max_scale": 1.25},
+            reset=True)
+        bpy.context.view_layer.update()
+
+    stand_on(pool)
     host = bpy.data.objects["Stand"]
     count, sources = foliage_variants.stand_report(host)
     check("the scatter layer instances the baked pool", count > 60, f"{count} trees on 220 m")
@@ -2085,22 +2090,14 @@ def check_stand():
         for obj in members:
             if obj.name not in rung_coll.objects:
                 rung_coll.objects.link(obj)
-        apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
-                  "params": {"emitter": "Ground", "assets": rung_coll.name, "align": "up",
-                             "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
-                             "min_scale": 0.85, "max_scale": 1.25}})
-        bpy.context.view_layer.update()
+        stand_on(rung_coll)
         rung_count, _src = foliage_variants.stand_report(bpy.data.objects["Stand"])
         per = foliage_variants.measure(members[0])["verts"]
         print(f"    {f'LOD{level}, {len(members)} live variants':34} {rung_count:6} "
               f"{per:11,} {frame_ms():9.2f}")
 
     # Back to LOD0 for the frame.
-    apply_op({"op": "build_geonodes", "recipe": "scatter", "name": "Stand", "reset": True,
-              "params": {"emitter": "Ground", "assets": pool.name, "align": "up",
-                         "density": 0.02, "distance_min": 6.0, "min_normal_z": 0.75,
-                         "min_scale": 0.85, "max_scale": 1.25}})
-    bpy.context.view_layer.update()
+    stand_on(pool)
 
     # The frame. Every check above passes on a stand of invisible trees.
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 120))
@@ -2224,12 +2221,21 @@ def check_panel():
     # 7. The two texture pickers exist, their Generate buttons are real operators, and Make Variants
     # is HERE now: wind and season kept it off the panel rather than shipping it greyed, and the
     # variant pass brings it with the thing it does (docs/FOLIAGE.md 6).
+    # The two set pickers live on the TREE now, not on the panel: `bark_set` and `atlas` are fields of
+    # `foliage_build.BBT_FoliageTree` and the panel writes them through an operator each. So the check
+    # is that the tree carries them and the panel does NOT -- a panel-side copy is the defect that
+    # made a Build discard what an agent had set.
     from bob_blender_tools.ui import foliage as ui_foliage
     props = {p for p in ui_foliage.BBT_FoliageProps.__annotations__}
-    check("the panel carries both texture-set pickers", {"bark_set", "atlas"} <= props,
-          str(sorted(props & {"bark_set", "atlas"})))
+    cfg_props = {p for p in foliage_build.BBT_FoliageTree.__annotations__}
+    check("the TREE carries both texture-set pickers", {"bark_set", "atlas"} <= cfg_props,
+          str(sorted(cfg_props)))
+    check("and the panel keeps no copy of any structural param",
+          not (set(foliage_build.STRUCTURAL_KEYS) & props),
+          str(sorted(set(foliage_build.STRUCTURAL_KEYS) & props)))
     for op in ("foliage_generate_bark", "foliage_generate_atlas", "foliage_add",
-               "foliage_load_species", "foliage_build", "foliage_make_variants"):
+               "foliage_load_species", "foliage_build", "foliage_make_variants",
+               "foliage_set_bark", "foliage_set_atlas"):
         check(f"{op} is a registered operator", hasattr(bpy.ops.bob_blender_tools, op))
     check("and the panel has the knobs Make Variants needs",
           {"variant_count", "variant_lods", "variant_pack"} <= props,
@@ -2386,8 +2392,7 @@ def check_generation(args):
           not [k for k, _l, _v in assets.foliage_missing_sets("conifer") if k == "bark_set"],
           str(assets.foliage_missing_sets("conifer")))
     params = dict(assets.foliage_species("conifer")["params"], atlas=atlas_name, seed=9)
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Gen", "params": params,
-              "reset": True})
+    foliage_build.build_recipe("Gen", params, reset=True)
     ev = bpy.data.objects["Gen"].evaluated_get(bpy.context.evaluated_depsgraph_get())
     gmesh = ev.to_mesh()
     check("the generated tree still builds", len(gmesh.polygons) > 0,
@@ -2531,8 +2536,7 @@ def main(argv=None):
     ev_one.to_mesh_clear()
 
     # 8. Skeleton Only emits curves, so the sweep is skipped entirely rather than hidden.
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": "Skel",
-              "params": dict(BASE, skeleton=True), "reset": True})
+    foliage_build.build_recipe("Skel", dict(BASE, skeleton=True), reset=True)
     skel = bpy.data.objects["Skel"].evaluated_get(bpy.context.evaluated_depsgraph_get())
     skel_mesh = skel.to_mesh()
     check("Skeleton Only produces no swept mesh", len(skel_mesh.polygons) == 0,
@@ -2599,7 +2603,17 @@ def main(argv=None):
     check_stand()       # a terrain, a real density, and the frame beside the scene reference
 
     check_season()      # renders its own frames the same way, one per season
-    check_generation(args)  # needs a server; renders its own frame
+    # Needs a server, and renders its own frame. Wrapped because a ComfyUI failure here is an
+    # ENVIRONMENT condition rather than a defect in what this gate measures -- a card starved by
+    # another process OOMs mid-job -- and the alternative is what happened: the exception escaped, the
+    # gate died between its 269th check and its summary, and Blender exited 0. A SKIP is printed and
+    # visible; a silent death after a screenful of PASSes reads as a pass.
+    from bob_blender_tools.core import comfy
+
+    try:
+        check_generation(args)
+    except comfy.ComfyError as exc:
+        skip("the generation section", f"ComfyUI failed mid-job: {str(exc)[:160]}")
     # Last, because it registers the addon: once bbt_env exists a build seeds its wind from the
     # world, and every measurement above was taken on a still tree.
     check_panel()

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the op-vocabulary table in docs/API.md from the source of truth.
+"""Generate the tables the docs cannot hand-maintain, each from its source of truth.
+
+Two of them, and the second is why this file is not named after the first: the op-vocabulary table in
+docs/API.md (from the contract models plus the dispatch registry), and the bar-vocabulary table in
+docs/ROADMAP.md (from `core/gen_bars.py`). Both had a hand-written version that drifted -- the bar
+table listed three bars of twenty-nine and none of the five added on the day it was last edited by
+hand, which is exactly the failure a generated table cannot have.
+
 
 The op contract is the Pydantic models in the extension's `mcp_agent/contracts.py`; the handlers are
 the `_HANDLERS` registry in `core/dispatch.py`. This introspects the models (fields, types,
@@ -19,6 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 API_DOC = REPO / "docs" / "API.md"
+ROADMAP_DOC = REPO / "docs" / "ROADMAP.md"
 EXT = REPO / "blender" / "extensions" / "bob_blender_tools"
 DISPATCH = EXT / "core" / "dispatch.py"
 
@@ -29,6 +37,10 @@ from mcp_agent import contracts  # noqa: E402
 
 BEGIN = "<!-- BEGIN GENERATED: op-vocabulary (tools/scripts/gen_api_docs.py) -->"
 END = "<!-- END GENERATED -->"
+BARS_BEGIN = "<!-- BEGIN GENERATED: bar-vocabulary (tools/scripts/gen_api_docs.py) -->"
+
+sys.path.insert(0, str(EXT / "core"))
+import gen_bars  # noqa: E402
 
 
 def _handlers() -> dict[str, str]:
@@ -108,16 +120,46 @@ def _table() -> str:
     return "\n".join(lines) + note
 
 
+def _bar_table() -> str:
+    """The bar table, from `core/gen_bars.py`.
+
+    Generated for the same reason the op table is: a hand-written one drifts, and this one had already
+    drifted before it was replaced -- it listed three bars of twenty-nine, and none of the five added
+    on the day it was last edited. The row FORMAT comes from `gen_bars.table_rows` rather than from
+    here, because what "10 real, 1 synthetic" means is a fact about that data model.
+    """
+    lines = ["| Bar | Value | Unit | Evidence | Read by | Catches |",
+             "|---|---|---|---|---|---|"]
+    for name, value, unit, evidence, reader, catches in gen_bars.table_rows():
+        cells = [f"`{name}`", f"`{value}`", unit, evidence, reader, catches]
+        lines.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
+    thin = [k for k, b in gen_bars.BARS.items() if b.provisional]
+    lines.append("")
+    lines.append(f"_{len(gen_bars.BARS)} bars: {len(gen_bars.asset_bars())} judged on the ASSET "
+                 f"(a receipt sentence reads each), {len(gen_bars.code_bars())} on the CODE (a gate "
+                 f"asserts each). {len(thin)} are declared **provisional** -- under "
+                 f"{gen_bars.MIN_REAL_SAMPLES} real samples, or measured wrong and kept because they "
+                 f"still catch something. `tools/tests/test_gen_bars.py` fails when a thin bar judges "
+                 f"a shipped asset without saying so._")
+    return "\n".join(lines)
+
+
+def _replace_region(path, begin, end, body):
+    doc = path.read_text(encoding="utf-8")
+    if begin not in doc or end not in doc:
+        raise SystemExit(f"markers not found in {path}; add {begin} / {end}")
+    head, rest = doc.split(begin, 1)
+    _, tail = rest.split(end, 1)
+    path.write_text(f"{head}{begin}\n\n{body}\n\n{end}{tail}", encoding="utf-8")
+
+
 def main() -> int:
-    doc = API_DOC.read_text(encoding="utf-8")
-    if BEGIN not in doc or END not in doc:
-        raise SystemExit(f"markers not found in {API_DOC}; add {BEGIN} / {END}")
-    head, rest = doc.split(BEGIN, 1)
-    _, tail = rest.split(END, 1)
-    new = f"{head}{BEGIN}\n\n{_table()}\n\n{END}{tail}"
-    API_DOC.write_text(new, encoding="utf-8")
+    _replace_region(API_DOC, BEGIN, END, _table())
     print(f"updated op-vocabulary table in {API_DOC.relative_to(REPO)} "
           f"({len(_models())} ops)")
+    _replace_region(ROADMAP_DOC, BARS_BEGIN, END, _bar_table())
+    print(f"updated bar-vocabulary table in {ROADMAP_DOC.relative_to(REPO)} "
+          f"({len(gen_bars.BARS)} bars)")
     return 0
 
 

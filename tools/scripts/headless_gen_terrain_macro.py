@@ -54,11 +54,13 @@ from bob_blender_tools.core import heightfields as hf  # noqa: E402
 from bob_blender_tools.core.heightfields import ops_erode  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, Vram, empty_scene, section  # noqa: E402
+from _gate import comfy_family, gpu_sample  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("macro-mask gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -87,81 +89,7 @@ RENDER_PX = 512
 RENDER_SAMPLES = 32
 
 
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-
-
 # -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
-_OURS = {os.getpid()}
-
-
-def _gpu_sample():
-    try:
-        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, {}
-    procs = {}
-    for line in apps.splitlines():
-        bits = [b.strip() for b in line.split(",")]
-        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
-            procs[int(bits[0])] = int(bits[1])
-    return (int(card.splitlines()[0]) if card else None), procs
-
-
-class Vram:
-    """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
-    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as
-    the one-shot-against-staged, stylise and block-out-control gates, because the numbers have to
-    be comparable with theirs."""
-
-    def __init__(self, interval=0.5):
-        self.interval = interval
-        self.card_peak = self.comfy_peak = 0
-        self.card_start = self.comfy_start = 0
-        self._stop = threading.Event()
-        self._thread = None
-
-    def _family(self, procs):
-        return sum(mib for pid, mib in procs.items() if pid not in _OURS)
-
-    def _loop(self):
-        while not self._stop.is_set():
-            card, procs = _gpu_sample()
-            if card is not None:
-                self.card_peak = max(self.card_peak, card)
-                self.comfy_peak = max(self.comfy_peak, self._family(procs))
-            self._stop.wait(self.interval)
-
-    def __enter__(self):
-        card, procs = _gpu_sample()
-        self.card_start = self.card_peak = card or 0
-        self.comfy_start = self.comfy_peak = self._family(procs)
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        return False
-
-    def report(self):
-        return {"card_start": self.card_start, "card_peak": self.card_peak,
-                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak,
-                "rise": self.comfy_peak - self.comfy_start}
-
-
 # -- The measurements ---------------------------------------------------------------------------
 def resample(a, n):
     """Bilinear resample to n x n, the same way the macro op does it, so a comparison between a mask
@@ -730,8 +658,8 @@ def part_d(args, reachable):
     if not reachable:
         print("[SKIP] no ComfyUI server")
         return
-    card, procs = _gpu_sample()
-    family = sum(mib for pid, mib in procs.items() if pid not in _OURS)
+    card, procs = gpu_sample()
+    family = comfy_family(procs)
     note("card before", f"{card} MiB used, {family} MiB of it the ComfyUI family "
                         f"({len(procs)} processes)")
     with Vram() as vram:
@@ -747,8 +675,8 @@ def part_d(args, reachable):
         time.sleep(2.0)
     except comfy.ComfyError as exc:
         note("POST /free", f"failed: {exc}")
-    card_after, procs_after = _gpu_sample()
-    held = sum(mib for pid, mib in procs_after.items() if pid not in _OURS)
+    card_after, procs_after = gpu_sample()
+    held = comfy_family(procs_after)
     note("after POST /free", f"{card_after} MiB on the card, {held} MiB still held by the family")
     check("heightmap_macro ran without needing the card to itself", info["path"] and elapsed < 120,
           f"{elapsed:.1f}s at a {report['comfy_start']} MiB starting occupancy")

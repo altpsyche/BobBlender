@@ -738,19 +738,6 @@ def apply_scene_preset(scene, look):
 
 
 # -- Object resolution + MCP handlers --------------------------------------------------------
-def _mesh_object(name):
-    """Resolve a mesh object by name for an op, with a clear error when it is missing or the wrong
-    type: fail loudly, do not no-op."""
-    if not name:
-        raise ValueError("no object name given")
-    obj = bpy.data.objects.get(name)
-    if obj is None:
-        raise ValueError(f"no object named {name!r} in the scene")
-    if obj.type != "MESH":
-        raise ValueError(f"object {name!r} is a {obj.type}, not a MESH")
-    return obj
-
-
 def build_clouds(op: dict) -> dict:
     """MCP op: build the volumetric cloud layer."""
     scene = bpy.context.scene
@@ -830,7 +817,7 @@ def build_motes(op: dict) -> dict:
 def build_snow_cover(op: dict) -> dict:
     """MCP op: write the snow-coverage pass (snow_cover + snow_occlusion) onto a terrain surface."""
     scene = bpy.context.scene
-    surface = _mesh_object(op.get("object"))
+    surface = util.object_of(op.get("object"), "MESH", label="object")
     build_snow_cover_on(scene, surface)
     return {"op": "build_snow_cover", "created": [f"{surface.name}:BOB_Snow"],
             "info": f"snow coverage written on {surface.name}"}

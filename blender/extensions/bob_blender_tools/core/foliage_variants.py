@@ -170,10 +170,7 @@ def _measure_linked(obj):
 
 def _probe(params):
     """Build the scratch tree at these params and measure it. Not left behind."""
-    from .dispatch import apply_op
-
-    apply_op({"op": "build_geonodes", "recipe": "foliage", "name": _FIT_OBJECT,
-              "params": dict(params), "reset": True})
+    foliage_build.build_recipe(_FIT_OBJECT, params, reset=True)
     obj = bpy.data.objects.get(_FIT_OBJECT)
     return measure(obj) if obj is not None else None
 
@@ -252,17 +249,21 @@ def variant_params(tree, overrides=None):
     """Everything needed to rebuild THIS tree: its stamped build params plus its TUNED live knobs.
 
     Both halves are load-bearing and they come from different places. The structural params are
-    Python arguments to the recipe and survive only on the object's own stamp
-    (`foliage_build.BUILD_STAMP`); the live knobs are on the modifier and are the whole point of the
+    Python arguments to the recipe and survive only on the object's own config group
+    (`foliage_build.CONFIG_PROP`); the live knobs are on the modifier and are the whole point of the
     panel. Baking from the species preset alone -- which is what `foliage_build.build_params`
     returns and what the obvious implementation would have used -- would discard every slider the
     artist moved and hand back eight variants of a tree nobody authored.
 
     The knobs are read through `recipe.param_socket`, so the two vocabularies are tied together in
     the recipe that owns them both and a renamed socket is a gate failure rather than a silent drop.
-    `Wind` and `Wind Direction` are not among them by construction: they carry no param key because
-    they belong to the world, and a variant picks the live world's wind up at build time anyway
-    (`_env_wind`) and keeps it through the applier after that.
+
+    `Wind` and `Wind Direction` carry no param key of their own (they belong to the world, not to the
+    tree's shape), so they are copied separately below. They used to be left out entirely, on the
+    argument that a variant picks the live world's wind up at build time -- which is true only when
+    there IS a world: with Firmament absent, `apply_wind` reaches nothing and the variant built at the
+    recipe's default instead of at its source tree's wind. That the gate did not catch it is an
+    accident of the old storage, which copied `wind` through a blob of every param.
     """
     params = foliage_build.build_params(tree)
     for key in assets.FOLIAGE_PARAM_KEYS:
@@ -276,6 +277,16 @@ def variant_params(tree, overrides=None):
             params[key] = inp.value
         except (AttributeError, TypeError):
             continue
+    # The world's knobs, off the source tree. Harmless where a world exists -- the applier overwrites
+    # them on the next world change -- and the difference between a stand that blows and one that
+    # stands still where it does not.
+    for socket, key in (("Wind", "wind"), ("Wind Direction", "wind_direction")):
+        inp = foliage_build.live_input(tree, socket)
+        if inp is not None:
+            try:
+                params[key] = inp.value
+            except (AttributeError, TypeError):
+                pass
     if overrides:
         params.update({k: v for k, v in overrides.items() if v is not None})
     return params

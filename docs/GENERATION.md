@@ -9,6 +9,13 @@ baselines, the review findings that shaped the design, and the answered decision
 [GENERATION-BASELINES.md](GENERATION-BASELINES.md). What is still open is four questions at the end
 of this file, and only two of them belong here. Reopen on a named trigger, not for coverage.
 
+**Every threshold this file quotes lives in `core/gen_bars.py`**, one entry each, with the evidence
+behind it and whether it is trustworthy yet; the generated table is in
+[ROADMAP.md](ROADMAP.md#the-bars-generated-from-coregen_barspy). The numbers stay in the prose here
+because the prose is where they are argued, but the prose is not where they are DEFINED — a bar quoted
+in two places is a bar that will eventually disagree with itself, and one of them already did (the
+flatness figure was recorded over seven sets at the constant and ten here).
+
 Binding facts, because they decide the shape of everything below:
 
 - **Fully local. No API calls.** The six `api_hunyuan3d_*` templates and every `comfy_api_nodes`
@@ -455,7 +462,7 @@ Two additions, both in `comfy_maps` and both numpy:
   every set's `meta.json`. `low_freq_variation` is the standard deviation of the low-frequency
   luminance over its mean, so it is scale-free and a dark set and a pale one are on one axis. Across
   the ten sets that gate shipped it runs **0.0247** (`bark_conifer`, flat) to **0.0989** (the forest
-  floor, lit), and `gen_receipt.FLATNESS_MAX` is 0.075 -- above everything that reads as flat, below the
+  floor, lit), and the `flatness` bar is 0.075 -- above everything that reads as flat, below the
   two the artist could see were not. `total_variation` sits beside it so the two are never confused:
   a mossy floor should have plenty of that, because that is texture.
 - **`delight`** is the correction, and it is **off by default**. It divides a heavily blurred
@@ -793,6 +800,34 @@ Measured by the stylise gate, eight views of a 3,910-face boulder in 50.9 s: **9
 directly, adjacent-view seam **22.3 to 26.5 of 255**, front-against-180-degrees drift **30.1**. The
 route works; the drift is the honest limit, and MV-Adapter is the known fix with a number to beat.
 
+Re-measured on 2026-07-30 through the shipped route (`core/gen_paint.paint_stylised`, the
+`paint_stylised` op and Shaders > Paint (stylised)), eight views of a 1,280-face displaced ico-sphere
+at 1024: **57.4 s** total (5.4 render, 47.4 restyle, 2.9 project), **99.9%** painted directly with 0
+texels left to the fill, seam **1.8 to 2.9**, drift **2.8**.
+
+**Those seam figures are not an improvement, and reading them as one is the trap this route sets.**
+An order of magnitude below the boulder's means the restyle barely changed the render, and looking at
+the map is what showed it: in-chart spread **1.31 of 255** — one flat grey, no ochre, no green, on a
+prompt that asked for both. At the shipped `PAINT_DENOISE` of 0.40 the render dominates BY DESIGN,
+which is right for a mesh whose render already carries an albedo (the generated asset this route was
+measured on) and leaves an untextured primitive exactly as it went in. The same mesh, seed and prompt
+at denoise **0.75**: in-chart spread **14.83**, mean 171.89, mossy grey-green per chart, and seam
+**15.7 to 26.5** — the boulder's band. So the seam figure tracks how much the paint CHANGED, and a low
+one means nothing happened rather than that the views agreed.
+
+The receipt now says so instead of leaving it to whoever opens the PNG: `gen_paint.chart_stats` feeds
+the existing `map_spread` bar through `gen_receipt.empty_map_warning`, measured IN-CHART because a
+projected atlas is black everywhere else (whole-file spread on that flat paint was 62.0, which would
+have passed the 6.0 bar comfortably). Same bar, same reader, one route-specific remedy clause: on a
+bake a flat map means the texture pass returned nothing, on a paint it means Strength.
+
+**And the floor does not predict the peak on this route.** The same run peaked at **14,136 MiB** of
+ComfyUI's own sampling on a card that read 13.2 GB free, against a `paint` floor of 4,000 — SDXL plus
+two ControlNets plus the IPAdapter and its vision encoder do not fit, and ComfyUI offloads to fit
+rather than failing (the ~30% slowdown already recorded here). So for the MAIN-process SDXL routes the
+floor is a cheap early refusal, not a prediction; it is the mesh routes, whose worker cannot share that
+cache, where the number is load-bearing.
+
 **`mesh_part.json`** Hunyuan3D-Part / P3-SAM part segmentation for part-swap variation. Not built.
 
 The Hunyuan 2.1 paint wrapper route is **deleted**, superseded by `mesh_texture`.
@@ -1126,9 +1161,14 @@ Each also returns the OP that consumes its result, ready to send: `comfy_mesh` a
 `comfy_texture_set` an `apply_op`, `comfy_heightmap` the `bake_params` fragment. An agent that has to
 assemble those itself will get one wrong and stop using the feature.
 
-`comfy_paint_mesh` serves the PBR route only (`mesh_texture`). The stylised route renders turntable views, which
-needs Blender, so it stays a panel action; `texture_chain()` already documents that asymmetry and
-hiding it behind one tool would hide the fact that one route needs Blender in the middle.
+`comfy_paint_mesh` serves the PBR route only (`mesh_texture`). The stylised route renders turntable
+views and projects them back, so Blender is in the MIDDLE of it and no `comfy_*` tool can hold it: it
+is the **`paint_stylised` op** (`core/gen_paint.paint_stylised`), and the same route is
+**Shaders > Paint (stylised)** in the panel. Both surfaces, one implementation, one receipt — measured
+end to end at 57.4 s for eight views, 99.9% of chart texels painted directly. `comfy.TEXTURE_ROUTES`
+still names the two routes in one place; what a name reaches is a whole entry point rather than a
+function, which is why the old `texture_chain()` selector is gone (it returned one of two functions
+with different signatures, and nothing ever called it).
 
 Four ops, one batched contract change: `apply_texture_set` (a set name plus a terrain layer index, or
 a material by name), `import_generated` (either `staged` from `comfy_mesh`, which runs pipeline steps 6
@@ -1386,7 +1426,11 @@ does to a card. The earlier answered ones, with what answered them, are in
   fixed. The generation tools preflight: `comfy.VRAM_FLOOR_MIB` carries a per-route floor
   (mesh 5000, mesh_hero 7000 for `1536_cascade`, texture 3000, paint 4000, heightmap 3000,
   stylize 3500), `preflight_vram` tries one recovery before refusing, and a server that cannot
-  report its VRAM at all is let through -- an unknown is not a reason to block work. And
+  report its VRAM at all is let through -- an unknown is not a reason to block work. The check sits
+  in `generate_image` and `generate_mesh`, the two functions every job in the module queues through,
+  so a panel operator and a gate script inherit the same floor an MCP tool gets; `route` is a
+  required argument there, and the graphs that load no model (`mesh_simplify_uv`, `mesh_process`,
+  the tiling reset) pass `None` with the reason beside them. And
   `render_scene` releases Blender's render buffers after the frame (`Render.release_gpu`, default
   true), since an agent that generates and renders in one session is now the normal case.
 

@@ -955,12 +955,17 @@ white outwards and produced a *harder* halo than doing nothing. The floor is 0.9
 
 ### Code surfaces
 
-- **Recipe:** `foliage` under `core/geonodes/recipes/`, registered the ordinary way and
-  built through `build_geonodes`, so it already works over MCP and in a headless `.blend`.
-- **Ops:** the live knobs are modifier inputs and the structural ones are `build_geonodes` params,
-  which is why there is no new op vocabulary and no MCP gap. **No op reads a PropertyGroup**: the
-  panel's props feed params on press, exactly as the Scatter panel feeds the `scatter` recipe. That is
-  deliberate — reading `ui/`-registered state from an op is what made every curve op live-bridge-only
+- **Recipe:** `foliage` under `core/geonodes/recipes/`, registered the ordinary way, and OWNED by
+  `core/foliage_build.py` (`geonodes.OWNED_RECIPES`) — a raw `build_geonodes` on it is refused and
+  points at `grow_foliage`, because that route built a tree recording no species and the foliage panel
+  had nothing to show for it.
+- **Ops:** `grow_foliage` grows a species by NAME, re-speciesing an existing tree in place, and takes
+  a `location`, a `collection` (name a pool and the tree is a scatter source) and an explicit `seed`.
+  The live knobs stay modifier inputs; the five structural params are recipe arguments recorded on the
+  object.
+- **State:** `Object.bbt_foliage_tree`, declared AND registered by `core/foliage_build.py`. Core owns
+  it rather than the panel because a headless gate and the `build` tool grow trees with no addon
+  registered — reading `ui/`-registered state from an op is what leaves every curve op live-bridge-only
   (the [known gap](MCP.md#known-gap-ops-that-need-the-addon)), and this track does not repeat it.
 - **Assets:** a baked variant is a normal asset in the pack, so `import_generated`, the scatter layers
   and the biome manifests need no new vocabulary.
@@ -988,15 +993,22 @@ What the panel holds, and what it deliberately does not:
 
 | Lives on | What |
 |---|---|
-| The OBJECT | the tree itself, stamped `bbt_foliage`, filed in `BOB_Foliage`, with the species it was built from |
+| The OBJECT | the tree itself, stamped `bbt_foliage`, filed in `BOB_Foliage`, and its STRUCTURAL config on `Object.bbt_foliage_tree` — the species name, `levels`, `profile_segments`, `skeleton`, `bark_set`, `atlas` |
 | The MODIFIER | every live knob — trunk, per level, cards, wind. Edited in place; no sync code, nothing to drift |
-| `Scene.bbt_foliage` | UI state only: the active index, and the structural choices staged for the next Build |
+| `Scene.bbt_foliage` | UI state only: the active index and the transient pickers. Nothing a build reads |
 
-**No panel state reaches a recipe except as a plain param.** Every operator resolves its context and
-calls `core/foliage_build.py`, which imports no ui module and reads no PropertyGroup; the headless
-gate builds trees through the same functions with the addon not registered at all. That is why
-BobFoliage adds no MCP op and is not on the live-bridge-only list every curve op is on
-([known gap](MCP.md#known-gap-ops-that-need-the-addon)) — and the gate checks it as a source fact
+**The panel draws the structural params straight off the object**, so there is no panel-side copy to
+disagree with the build and no sync code either. They were staged on `Scene.bbt_foliage` until
+2026-07-30, and that was the defect rather than a style: the panel's copy always won on a Build, so
+selecting a tree an agent grew and nudging anything rebuilt it from panel defaults and discarded what
+the agent had set. The five keys are the params that are NOT modifier sockets, which is exactly why the
+object has to hold them — everything else in a species preset becomes a socket and the modifier already
+restores it by name across a rebuild.
+
+Every operator resolves its context and calls `core/foliage_build.py`, which imports no ui module; that
+module also REGISTERS `bbt_foliage_tree`, so the headless gate and the `build` tool grow trees with the
+addon not registered at all. That is what keeps BobFoliage off the live-bridge-only list every curve op
+is on ([known gap](MCP.md#known-gap-ops-that-need-the-addon)) — and the gate checks it as a source fact
 rather than as an intention.
 
 ### Many trees, many species

@@ -25,12 +25,76 @@ class AddMesh(BaseModel):
 
 class BuildGeoNodes(BaseModel):
     op: Literal["build_geonodes"] = "build_geonodes"
-    recipe: str = "wave_grid"  # a named recipe in core/geonodes/recipes/
+    # A named recipe in core/geonodes/recipes/. The recipes an owning builder is responsible for are
+    # REFUSED here and named their op instead (core/geonodes OWNED_RECIPES: `foliage` ->
+    # grow_foliage, `scatter`/`scatter_along` -> scatter_layer), because this op builds geometry and
+    # records nothing about what it is. The check lives in Blender, not in this model: the model is
+    # validated in a venv with no bpy and cannot import the table, and a copy of it here would be a
+    # second table to drift.
+    recipe: str = "wave_grid"
     name: str | None = None
     params: dict = Field(default_factory=dict)  # recipe-specific, checked by the builder
     target: Literal["new_object", "library"] = "new_object"
     mark_asset: bool = False  # mark the node group as an Asset Browser asset
     reset: bool = False  # rebuild in place but discard tuned knobs, reapply params
+
+
+# BobFoliage and Scatter: the two recipes a BUILDER owns (core/geonodes OWNED_RECIPES), so
+# build_geonodes refuses them and these are the way in. They exist because the raw recipe call built
+# real geometry that recorded nothing about itself -- no species on a tree, no kind or emitter on a
+# layer -- and a panel cannot show, and a rebuild cannot restore, a fact that was never written down.
+class GrowFoliage(BaseModel):
+    op: Literal["grow_foliage"] = "grow_foliage"
+    # A species preset NAME off the asset-pack search path (the list_library_assets tool lists them).
+    # The whole point of the op: over build_geonodes a species was a parameter dict expanded by hand,
+    # so the tree never recorded that it IS a conifer and the foliage panel showed nothing. Empty is
+    # legitimate and means the recipe's own defaults, which is a tree belonging to no species.
+    species: str = ""
+    # An existing tree here is RE-SPECIESED IN PLACE: its transform, collections and everything
+    # pointing at it survive, because loading a species is params applied to a tree and not a new
+    # tree. Any other name grows a new one; omitted derives the name from the species.
+    name: str | None = None
+    location: Vector3 | None = None
+    # Where the tree is filed. Omitted it joins BOB_Foliage with the artist's own trees; naming
+    # `BOB_Assets_Trees` (or any pool) makes it a scatter SOURCE instead, which is the difference
+    # between a stand of trees and one tree standing at the origin -- a pool is instanced by a scatter
+    # layer and is deliberately not linked to the scene.
+    collection: str | None = None
+    # Explicit for reproducibility -- an agent's op list has to replay to the same tree. Omitted, a
+    # NEW tree gets a random seed, because the recipe's default 0 makes every tree in a stand
+    # identical, and a rebuild keeps whatever seed the tree already has.
+    seed: int | None = None
+    # Overrides on top of the species preset, in the recipe's param vocabulary (core/assets.py
+    # FOLIAGE_PARAM_KEYS). The structural ones (levels, profile_segments, skeleton, bark_set, atlas)
+    # are recorded on the object; every other key is a modifier socket and lives there.
+    params: dict = Field(default_factory=dict)
+
+
+class ScatterLayer(BaseModel):
+    op: Literal["scatter_layer"] = "scatter_layer"
+    emitter: str  # the mesh to scatter on; recorded ON the layer, so a rebuild cannot re-bind it
+    kind: Literal["trees", "rocks", "plants", "grass", "empty"] = "trees"
+    knobs: dict = Field(default_factory=dict)  # over the kind's preset: density, distance_min, ...
+    align: Literal["up", "normal"] | None = None  # else the kind's default
+    camera: str | None = None  # for the camera-culled variants; no camera is a valid layer
+    # Path awareness (BobSplines). "clear" pulls instances off carved paths, "keep" confines them to
+    # the path band, "verge" keeps to ONE path's edge ring, and "along" switches the layer to the
+    # `scatter_along` recipe, which places instances ON the curve rather than over the surface. Every
+    # one but "clear"/"keep" needs `curve`; "along" without one is an error rather than an empty
+    # layer, since a curve resolved at build time is what all four read.
+    curve: str | None = None
+    curve_mode: Literal["clear", "keep", "verge", "along"] | None = None
+    # Along only: rotate each instance to the curve's direction. None rather than a literal default,
+    # so the ONE default lives beside the property it seeds (scatter_build.ALONG_ALIGN_DEFAULT) and
+    # this model does not become a second copy of it.
+    curve_align: bool | None = None
+    assets_exclude: list[str] | None = None  # asset names to leave out of the pool
+    name: str | None = None  # else "<emitter> <Kind>"
+    # True by default, unlike the panel's Add Layer button: an op list gets REPLAYED, and a replay
+    # that adds another layer every time is not idempotent. Reuse rebuilds this emitter's layer of
+    # this kind in place, keeping its tuned knobs.
+    reuse: bool = True
+    convert: bool = True  # weather the layer's assets into BobShaders so they react to the world
 
 
 class MakeProxies(BaseModel):
@@ -250,6 +314,29 @@ class MakeBlockout(BaseModel):
     replace: bool = False  # rebuild in place rather than refusing a name that exists
 
 
+class PaintStylised(BaseModel):
+    op: Literal["paint_stylised"] = "paint_stylised"
+    # The stylised texture route (`mesh_paint_views`), the alternative to `comfy_paint_mesh`'s PBR
+    # one. It is an op rather than a comfy_* tool because Blender is in the middle of it: Bob renders
+    # a turntable, ComfyUI restyles every view under depth and normal ControlNet with the stylised
+    # front as a shared reference, and Bob projection-bakes the result into the object's own UVs.
+    #
+    # What it buys over `comfy_paint_mesh`: `mesh_texture` conditions on ONE image and invents every
+    # surface that image cannot see -- a measured barn came back with door panels painted onto its
+    # roof. Here every surface is painted by a camera that could see it, and the receipt says what
+    # share was (`painted`). What it costs: one job per view instead of one, and a COLOUR map with
+    # the rest of the set derived, rather than native PBR.
+    object: str  # the mesh to paint; it needs a UV layer, which is what the projection writes into
+    prompt: str  # the style, e.g. "hand-painted stylised bark, warm ochre"
+    seed: int = 0
+    views: int = 6  # the RING count; two extra elevations are added on top, so 6 renders 8
+    size: int = 1024  # render and texture resolution
+    denoise: float | None = None  # else comfy.PAINT_DENOISE, which keeps the real render dominant
+    lora: str | None = None  # a style LoRA by filename, as ComfyUI lists it
+    lora_strength: float = 0.8
+    pack_dir: str | None = None  # else the registered or $BOB_GENERATED generated pack
+
+
 class ExportControl(BaseModel):
     op: Literal["export_control"] = "export_control"
     object: str  # the block-out proxy whose shape should condition generation (`mesh_geom_ctrl`)
@@ -403,6 +490,8 @@ Operation = Annotated[
     Union[
         AddMesh,
         BuildGeoNodes,
+        GrowFoliage,
+        ScatterLayer,
         MakeProxies,
         MakePath,
         DrapeCurve,
@@ -421,6 +510,7 @@ Operation = Annotated[
         ApplyTextureSet,
         ImportGenerated,
         MakeBlockout,
+        PaintStylised,
         ExportControl,
         ApplyBiome,
         WorldBiome,

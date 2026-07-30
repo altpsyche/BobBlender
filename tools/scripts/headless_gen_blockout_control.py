@@ -56,6 +56,7 @@ sys.path.insert(0, os.path.join(REPO, "blender", "extensions"))
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
     gen_assets,
+    gen_bars,
     gen_receipt,
     gen_views,
     materials,
@@ -63,11 +64,13 @@ from bob_blender_tools.core import (  # noqa: E402
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, Vram, empty_scene, section, stamp  # noqa: E402
+from _gate import comfy_family, gpu_sample  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("control gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -85,13 +88,10 @@ GRID = 48
 SAMPLES = 8000
 
 # How much of a block-out's surface may be INSIDE it. A control mesh is read as an area-weighted
-# surface sample, so an interior face is a conditioning point that describes nothing, and the bar is
-# on the fraction rather than the area because that is what decides how much of the point budget goes
-# to it. The shed built as a wall cube plus a roof prism measured 125.94 m of 425.98, 29.6%, and came
-# back an A-frame; built as one shell it measures 2.95 of 313.98, 0.9%, all of it the doorway jamb
-# boxes' backs against the wall. 5% leaves room for that kind of proud detail and no room for a
-# hidden storey.
-HIDDEN_AREA_MAX = 0.05
+# The hidden-surface bar is the RECEIPT's (`gen_bars` "control_hidden"), read here rather than
+# restated. It was declared twice at 0.05 -- once there, once here -- until the registry counted the
+# bars and found the pair: two files, two names, one calibration, and nothing keeping them equal.
+HIDDEN_AREA_MAX = gen_bars.value("control_hidden")
 
 # How many height bands `plan_profile` cuts a shape into, and how far any one band may drift before
 # "this is a different building" is the honest reading. Calibrated on a synthetic A-frame -- the
@@ -109,88 +109,14 @@ HIDDEN_AREA_MAX = 0.05
 # the exact shape it was written to catch. The discrimination lives in the upper bands, where the shed
 # holds 0.37 to 0.43 and the A-frame has already fallen to 0.16 to 0.18.
 PROFILE_SLICES = 8
-PROFILE_DEVIATION_MAX = 0.10
+PROFILE_DEVIATION_MAX = gen_bars.value("profile_deviation")
 
 # Every class `mesh_geom_ctrl` needs that is not in ComfyUI core or TRELLIS.2. Absent means SKIP,
 # not FAIL.
 OMNI_CLASSES = ("Hy3DOmniLoadPipeline", "Hy3DOmniPointGenerate")
 
 
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-
-
 # -- VRAM, per process and summed over the ComfyUI family -----------------------------------------
-_OURS = {os.getpid()}
-
-
-def _gpu_sample():
-    try:
-        card = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-                               "--format=csv,noheader,nounits"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, {}
-    procs = {}
-    for line in apps.splitlines():
-        bits = [b.strip() for b in line.split(",")]
-        if len(bits) == 2 and bits[0].isdigit() and bits[1].isdigit():
-            procs[int(bits[0])] = int(bits[1])
-    return (int(card.splitlines()[0]) if card else None), procs
-
-
-class Vram:
-    """Peak VRAM across a job, sampled from a thread: per process, summed over the ComfyUI family,
-    with the RISE over this stage's own baseline reported beside the absolute peak. Same class as
-    the one-shot-against-staged and stylise gates, because the numbers have to be comparable with
-    theirs."""
-
-    def __init__(self, interval=0.5):
-        self.interval = interval
-        self.card_peak = self.comfy_peak = 0
-        self.card_start = self.comfy_start = 0
-        self._stop = threading.Event()
-        self._thread = None
-
-    def _family(self, procs):
-        return sum(mib for pid, mib in procs.items() if pid not in _OURS)
-
-    def _loop(self):
-        while not self._stop.is_set():
-            card, procs = _gpu_sample()
-            if card is not None:
-                self.card_peak = max(self.card_peak, card)
-                self.comfy_peak = max(self.comfy_peak, self._family(procs))
-            self._stop.wait(self.interval)
-
-    def __enter__(self):
-        card, procs = _gpu_sample()
-        self.card_start = self.card_peak = card or 0
-        self.comfy_start = self.comfy_peak = self._family(procs)
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        return False
-
-    def report(self):
-        return {"card_start": self.card_start, "card_peak": self.card_peak,
-                "comfy_start": self.comfy_start, "comfy_peak": self.comfy_peak,
-                "rise": self.comfy_peak - self.comfy_start}
-
-
 # -- Shape maths, scored where it lands -----------------------------------------------------------
 # `glb_extents` and `hidden_surface` are `core.gen_assets`'. This gate carried its own copy of both,
 # which is the shape of duplication that costs most: the gate is where the numbers below were
@@ -356,21 +282,6 @@ def best_axis_map(reference, candidate, grid=GRID):
             "proper": int(np.linalg.det(np.eye(3)[list(best[1])] * np.array(best[2])[:, None])) == 1}
 
 
-def _stamp(target, data=None):
-    """Read or write the timing and VRAM beside a cached artifact, so a rerun reports what the
-    generating run measured rather than what the cache cost."""
-    path = target + ".json"
-    if data is None:
-        try:
-            with open(path) as fh:
-                return json.load(fh) or {}
-        except (OSError, ValueError):
-            return {}
-    with open(path, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True, default=str)
-    return data
-
-
 # -- The block-outs ------------------------------------------------------------------------------
 def _sun_and_world(scene, strength=4.0):
     light = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
@@ -519,7 +430,9 @@ def part_a(args, reachable):
     graph["1"]["inputs"]["mesh_path"] = comfy.upload_mesh(control)
     target = os.path.join(GEN, "orient_round_trip.glb")
     try:
-        data, info = comfy.generate_mesh((graph, {}), {}, timeout=300, preflight_graph=False)
+        # A load-and-export round trip through the Trellis2 nodes: no sampler, so no floor.
+        data, info = comfy.generate_mesh((graph, {}), {}, route=None, timeout=300,
+                                         preflight_graph=False)
     except comfy.ComfyError as exc:
         check("Trellis2 round trip returned a mesh", False, str(exc)[:160])
         return
@@ -552,7 +465,7 @@ def part_a(args, reachable):
           f"{after['footprint_iou']:.4f} of {ceiling['footprint_iou']:.4f}, aspect "
           f"{after['aspect']}, against {before['iou']:.4f} / {before['footprint_iou']:.4f} "
           f"untouched")
-    _stamp(os.path.join(OUT, "part_a"), {"exporter_map": best, "before": before, "after": after,
+    stamp(os.path.join(OUT, "part_a"), {"exporter_map": best, "before": before, "after": after,
                                          "local_map": local_map, "ceiling": ceiling})
 
 
@@ -571,15 +484,15 @@ def generate_cached(target, run, fresh):
     if fresh and os.path.isfile(target):
         os.remove(target)
     if os.path.isfile(target):
-        stamp = _stamp(target)
-        if stamp:
-            return stamp
+        cached = stamp(target)
+        if cached:
+            return cached
     try:
         with Vram() as sampler:
             info = run()
     except comfy.ComfyError as exc:
         return {"error": str(exc)[:200]}
-    return _stamp(target, {"seconds": info["seconds"], "vram": sampler.report()})
+    return stamp(target, {"seconds": info["seconds"], "vram": sampler.report()})
 
 
 def part_b(args, reachable, ready):
@@ -611,9 +524,10 @@ def part_b(args, reachable, ready):
                                v, os.path.join(GEN, f"{k}_w6t.glb"), seed=SEED, remesh=True),
                            None)
         for label, (target, run, orient) in runs.items():
-            stamp = generate_cached(target, run, args.fresh)
-            if stamp.get("error") or not os.path.isfile(target):
-                check(f"{kind} {label} generated a mesh", False, stamp.get("error", "no file"))
+            cached = generate_cached(target, run, args.fresh)
+            if cached.get("error") or not os.path.isfile(target):
+                check(f"{kind} {label} generated a mesh", False,
+                      cached.get("error", "no file"))
                 continue
             empty_scene()
             got = gen_assets.import_glb(target, name=f"{kind}_{label}", orient=orient)
@@ -630,9 +544,9 @@ def part_b(args, reachable, ready):
             agree["best_footprint_iou"] = at_best["footprint_iou"]
             agree["best_map"] = f"{best['perm']}{best['signs']}"
             scores[(kind, label)] = dict(agree, faces=gen_assets.face_count(got),
-                                         seconds=stamp.get("seconds", 0.0),
-                                         peak=stamp.get("vram", {}).get("comfy_peak", 0),
-                                         rise=stamp.get("vram", {}).get("rise", 0),
+                                         seconds=cached.get("seconds", 0.0),
+                                         peak=cached.get("vram", {}).get("comfy_peak", 0),
+                                         rise=cached.get("vram", {}).get("rise", 0),
                                          ceiling_iou=ceiling["iou"],
                                          ceiling_footprint=ceiling["footprint_iou"])
             rows.append((kind, label, scores[(kind, label)]))
@@ -714,10 +628,10 @@ def part_c(args, reachable, ready):
     os.makedirs(staged_dir, exist_ok=True)
     raw = os.path.join(GEN, f"{kind}_w7.glb")
     if not os.path.isfile(raw):
-        stamp = generate_cached(raw, lambda: comfy.mesh_geom_ctrl(control, views[0], raw, seed=SEED),
-                                args.fresh)
-        if stamp.get("error"):
-            check("mesh_geom_ctrl generated a mesh to finish", False, stamp["error"])
+        cached = generate_cached(raw, lambda: comfy.mesh_geom_ctrl(control, views[0], raw,
+                                                                   seed=SEED), args.fresh)
+        if cached.get("error"):
+            check("mesh_geom_ctrl generated a mesh to finish", False, cached["error"])
             return
     simp = os.path.join(staged_dir, "simp.glb")
     tex = os.path.join(staged_dir, "tex.glb")
@@ -816,7 +730,7 @@ def part_d(args, reachable, ready):
     if not reachable or not ready:
         print("[SKIP] part D needs a server with the Omni pack and its weights")
         return
-    card, _procs = _gpu_sample()
+    card, _procs = gpu_sample()
     note("card", f"{card} MiB in use right now")
     comfy.free()
     time.sleep(6.0)
@@ -854,7 +768,7 @@ def part_d(args, reachable, ready):
         check("mesh_geom_ctrl needs a /free between stages, and one is enough", os.path.isfile(target),
               f"shared peak {shared['comfy_peak']} MiB then failed; alone "
               f"{alone['comfy_peak']} MiB in {info['seconds']:.1f} s")
-        _stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "alone": alone,
+        stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "alone": alone,
                                              "resident": False})
         return
     check("mesh_geom_ctrl is resident-safe: it runs with SDXL still loaded", os.path.isfile(target),
@@ -867,8 +781,8 @@ def part_d(args, reachable, ready):
     # reach it.
     comfy.free()
     time.sleep(6.0)
-    card_after_free, procs = _gpu_sample()
-    held = sum(mib for pid, mib in procs.items() if pid not in _OURS)
+    card_after_free, procs = gpu_sample()
+    held = comfy_family(procs)
     note("after a /free with Omni resident", f"{held} MiB still held by the ComfyUI family "
                                              f"(the card reads {card_after_free})")
     styled = os.path.join(GEN, "residency_styled.png")
@@ -891,7 +805,7 @@ def part_d(args, reachable, ready):
              f"the stylise route survives with Omni resident: peak {stylise['comfy_peak']} MiB of "
              f"16,303, rise {stylise['rise']} into the {16303 - held} MiB Omni left free, "
              f"{stylise['seconds']:.1f} s against 10.3 to 10.8 s and 14,194 MiB measured alone")
-    _stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "resident": True,
+    stamp(os.path.join(OUT, "part_d"), {"sdxl": sdxl, "shared": shared, "resident": True,
                                          "held_after_free": held, "stylise": stylise,
                                          "stylise_error": stylise_error})
 

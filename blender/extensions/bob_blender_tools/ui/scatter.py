@@ -7,19 +7,29 @@ has no venv side: it is pure geometry nodes, so this drives the existing bbmcp
 Data model is object-native, so each datum has one home and there is no
 panel-vs-modifier drift:
 
-- Each layer is one object in a per-emitter scatter collection. The emitter points
- at that collection via Object.bbt_scatter_coll. Structural config (kind, assets,
- align) lives on the layer object's Object.bbt_scatter_layer.
+- Each layer is one object, marked with the `bbt_scatter` stamp and filed in a per-emitter scatter
+ collection. The emitter points at that collection via Object.bbt_scatter_coll. Structural config
+ (kind, assets, align, AND the emitter and camera it was built against) lives on the layer object's
+ Object.bbt_scatter_layer. The stamp is what makes a layer findable at all: the PropertyGroup exists
+ on every object once registered, so only an absent-by-default custom property can answer "is this
+ a layer". **Both properties are declared and registered by `core/scatter_build.py`, not here**, and
+ this module's `register` just calls it: a layer is built by the `scatter_layer` op on paths where
+ this module is not registered at all.
 - The live knobs (Density, Seed, scale, slope, path clearing) live on the layer
  modifier's inputs (mod.properties.inputs.<id>.value in Blender 5.2, the surface
  the modifier actually evaluates), drawn directly in the panel. Editing one is
  live; no rebuild, no sync code.
-- Scene.bbt_scatter holds only UI state (active emitter, path, active index).
+- Scene.bbt_scatter holds only UI state: the active index, and an emitter PIN that overrides the
+ derived one. Nothing a build reads. The emitter and camera used to live here, and a rebuild took
+ them from here -- so a rebuild while the panel pointed at a different mesh silently re-bound the
+ scatter to that mesh, and a layer nothing had pinned an emitter for could not be rebuilt at all.
 
 Structural edits (assets/align/path presence) apply on an explicit Build press,
 not from a property callback (rebuilding from an update callback risks
-re-entrancy). build_geonodes is non-destructive and restores the live knobs by
-socket name, so a structural rebuild preserves tuned values.
+re-entrancy). The rebuild is `scatter_build.rebuild`, which is non-destructive and restores the live
+knobs by socket name, so a structural rebuild preserves tuned values. The panel used to assemble that
+rebuild op itself, in two operators, with the recipe choice and the params inlined at each -- both are
+now one call, because which recipe a layer builds is a property of the layer and not of a button.
 """
 
 import os
@@ -44,14 +54,14 @@ _HEIGHT_KNOBS = ["Height Strength", "Height Min", "Height Max", "Height Falloff"
 _NOISE_KNOBS = ["Noise Strength", "Noise Scale", "Noise Contrast", "Noise Seed"]
 _CAMERA_KNOBS = ["Camera Distance", "Camera Cone", "Cull Falloff"]
 
-# The layer-type presets, the collection/naming helpers, the structural-params builder, the
-# biome-params merge, and the two build functions live in core/scatter_build.py so the panel
-# operators and the biome/MCP path share one copy (subtract-duplication; docs/CONVENTIONS.md).
-# Bound here for the enum items, the UIList, and the operator bodies. edge_attr_name is re-exported
-# for ui/splines.py, which reads it to bind a Verge layer to a curve's edge ring.
+# The layer-type presets, the naming helper, the structural params, the biome-params merge and every
+# build function (`add_layer`, `rebuild`, `biome_scatter`) live in core/scatter_build.py so the panel
+# operators, the biome path and the `scatter_layer` op share one copy (subtract-duplication;
+# docs/CONVENTIONS.md). What is bound here is only what the enum items, the UIList and the operator
+# bodies read. edge_attr_name is re-exported for ui/splines.py, which reads it to bind a Verge layer
+# to a curve's edge ring.
 LAYER_TYPES = scatter_build.LAYER_TYPES
 _unique_object_name = scatter_build._unique_object_name
-_build_params = scatter_build._build_params
 _count_instances = scatter_build._count_instances
 _convert_layer_assets = scatter_build._convert_layer_assets
 edge_attr_name = scatter_build.edge_attr_name
@@ -109,89 +119,76 @@ def _foliage_species_for(kind):
     return _FOLIAGE_SPECIES_CACHE[kind]
 
 
-def _active_coll(context):
+def _active_emitter(context):
+    """The mesh the panel acts on, DERIVED rather than only picked.
+
+    In order: the explicit pick; the active object's own emitter when the active object IS a layer
+    (clicking a layer in the viewport selects its emitter here); the active object itself when it is
+    any mesh (so a fresh terrain with no layers yet is still scatterable by selecting it); then any
+    already-scattered mesh in the file.
+
+    The last of those is what makes an agent's work visible at all. `scn.emitter` is unset in a
+    session an agent scattered in, and this returned None there -- so the panel drew its empty state
+    over a scene full of layers, which is the artist's report.
+    """
     scn = context.scene.bbt_scatter
-    return scn.emitter.bbt_scatter_coll if scn.emitter is not None else None
+    if scn.emitter is not None:
+        return scn.emitter
+    obj = context.active_object
+    if scatter_build.is_layer(obj):
+        return obj.bbt_scatter_layer.emitter
+    if obj is not None and getattr(obj, "type", None) == "MESH":
+        return obj
+    found = scatter_build.emitters()
+    return found[0] if found else None
+
+
+def _active_coll(context):
+    emitter = _active_emitter(context)
+    return emitter.bbt_scatter_coll if emitter is not None else None
+
+
+def _layers(context):
+    """The active emitter's layers, in the SAME order the template_list shows them.
+
+    Deliberately the collection's own order rather than `scatter_build.layers_of`'s name order:
+    `template_list` can only iterate a real Blender collection, and `scn.active` indexes into what
+    the widget drew. Two different orderings behind one index would let the sub-panels edit a
+    different layer from the highlighted one.
+
+    `layers_of` is still the object-native truth, and it is what `_active_emitter` and Build All use,
+    where order does not matter and completeness does.
+    """
+    coll = _active_coll(context)
+    return [o for o in coll.objects if scatter_build.is_layer(o)] if coll is not None else []
 
 
 def _active_layer(context):
-    coll = _active_coll(context)
-    scn = context.scene.bbt_scatter
-    if coll is None or not coll.objects:
+    """The layer the sub-panels edit: the active object when it IS a layer, else the list index.
+
+    Reading the active object first mirrors the foliage panel: clicking a layer in the viewport is
+    how an artist expects to select it in a per-object editor.
+    """
+    obj = context.active_object
+    if scatter_build.is_layer(obj):
+        return obj
+    layers = _layers(context)
+    if not layers:
         return None
-    idx = max(0, min(scn.active, len(coll.objects) - 1))
-    return coll.objects[idx]
-
-
-def _layer_recipe(lay):
-    """Which recipe a layer builds: along-curve placement vs the surface Poisson scatter."""
-    return "scatter_along" if lay.curve_mode == "along" else "scatter"
+    scn = context.scene.bbt_scatter
+    return layers[max(0, min(scn.active, len(layers) - 1))]
 
 
 # Data model
-def _emitter_poll(self, obj):
-    return obj.type == "MESH"
-
-
-def _path_poll(self, obj):
-    return obj.type == "CURVE"
-
-
-def _camera_poll(self, obj):
-    return obj.type == "CAMERA"
-
-
-class BBT_ScatterLayer(PropertyGroup):
-    """Structural config, stored on the layer object. The name is the object's."""
-
-    kind: StringProperty(default="empty")
-    assets: PointerProperty(
-        name="Assets", type=bpy.types.Collection,
-        description="Collection whose objects are instanced")
-    assets_exclude: StringProperty(
-        name="Skip", default="",
-        description="Comma-separated asset names to leave out of THIS layer's pick, without "
-                    "editing the shared collection (a generated trunk whose root flare does not "
-                    "sit on slopes). Applied on Build")
-    align: EnumProperty(
-        name="Align",
-        items=[("up", "Up", "Keep instances upright (trees)"),
-               ("normal", "Normal", "Tilt instances to the surface (rocks, grass)")],
-        default="up")
-    vgroup: StringProperty(
-        name="Mask Group",
-        description="Emitter vertex group that paints where this layer scatters "
-                    "(blank = off); applied on Build")
-    # Curve binding (BobSplines, the scatter mask). clear/keep read the terrain's baked
-    # bbt_curve_mask; along switches the layer to the scatter_along recipe (instances placed on the
-    # curve itself).
-    curve_mode: EnumProperty(
-        name="Curve",
-        items=[("none", "None", "Ignore curves"),
-               ("clear", "Clear", "Clear this layer along paths (the whole path band)"),
-               ("keep", "Keep only", "Scatter only along paths (the whole path band)"),
-               ("verge", "Verge (path edge)", "Scatter only on the path shoulders / edge ring, "
-                "not the driving surface (the curve overlay's bbt_curve_edge)"),
-               ("along", "Along curve", "Place instances along a chosen curve (fence posts, cobbles)")],
-        default="none")
-    curve: PointerProperty(
-        name="Curve", type=bpy.types.Object, poll=_path_poll,
-        description="The path this layer follows: instances along it (Along curve mode), or its "
-                    "edge ring (Verge mode). Verge needs a curve; empty scatters nothing")
-    curve_align: BoolProperty(
-        name="Align to curve", default=True,
-        description="Orient along-curve instances to follow the path (Along curve mode)")
-
-
 class BBT_ScatterProps(PropertyGroup):
     """Scene-level UI state only, not layer data."""
 
+    # An OVERRIDE of the derived emitter, not the only way to name one: empty means "follow the
+    # selection", which is what lets the panel show a layer an agent built. The camera moved onto the
+    # LAYER (`BBT_ScatterLayer.camera`), because a rebuild has to cull to the camera that layer used.
     emitter: PointerProperty(
-        name="Emitter", type=bpy.types.Object, poll=_emitter_poll,
-        description="Object to scatter on (usually the terrain)")
-    camera: PointerProperty(
-        name="Camera", type=bpy.types.Object, poll=_camera_poll,
-        description="Optional camera; every layer culls scatter outside its view")
+        name="Emitter", type=bpy.types.Object, poll=scatter_build._mesh_poll,
+        description="Pin the mesh to scatter on. Leave empty to follow the selected mesh")
     active: IntProperty(default=0)
     summary: StringProperty(default="")
 
@@ -361,9 +358,9 @@ class BBT_OT_scatter_biome_scatter(Operator):
 
     def execute(self, context):
         scn = context.scene.bbt_scatter
-        emitter = scn.emitter
+        emitter = _active_emitter(context)
         if emitter is None:
-            self.report({"ERROR"}, "Pick an emitter first")
+            self.report({"ERROR"}, "Pick or select a mesh to scatter on first")
             return {"CANCELLED"}
         if not self.biome or self.biome == "NONE":
             self.report({"ERROR"}, "No biome carries a scatter recipe")
@@ -379,7 +376,7 @@ class BBT_OT_scatter_biome_scatter(Operator):
         # keeps the emitter resolution, the active-layer / summary UI writes, and the report. The
         # instances are weathered in Shaders (or by Build Biome), so build without converting here.
         created = scatter_build.biome_scatter(emitter, recipe, scene=context.scene,
-                                              camera=scn.camera)
+                                              camera=context.scene.camera)
         built = [bpy.data.objects[n].bbt_scatter_layer.kind for n in created
                  if n in bpy.data.objects]
         coll = emitter.bbt_scatter_coll
@@ -408,9 +405,9 @@ class BBT_OT_scatter_add(Operator):
 
     def execute(self, context):
         scn = context.scene.bbt_scatter
-        emitter = scn.emitter
+        emitter = _active_emitter(context)
         if emitter is None:
-            self.report({"ERROR"}, "Pick an emitter first")
+            self.report({"ERROR"}, "Pick or select a mesh to scatter on first")
             return {"CANCELLED"}
 
         spec = LAYER_TYPES[self.kind]
@@ -420,7 +417,7 @@ class BBT_OT_scatter_add(Operator):
         # world with no hunt for Shaders > Convert, the same first-class-shader path Build Biome
         # takes.
         obj, _assets = scatter_build.add_layer(
-            emitter, self.kind, scene=context.scene, camera=scn.camera)
+            emitter, self.kind, scene=context.scene, camera=context.scene.camera)
         coll = emitter.bbt_scatter_coll
         if coll is not None:
             scn.active = list(coll.objects).index(obj)
@@ -480,16 +477,16 @@ class BBT_OT_scatter_build_active(Operator):
     bl_description = "Rebuild the active layer from its structural config (keeps tuned knobs)"
 
     def execute(self, context):
-        scn = context.scene.bbt_scatter
         obj = _active_layer(context)
-        if obj is None or scn.emitter is None:
-            self.report({"ERROR"}, "No emitter or active layer")
+        if obj is None:
+            self.report({"ERROR"}, "No active layer")
             return {"CANCELLED"}
-        _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
-                 "name": obj.name, "params": _build_params(obj, scn)}])
+        try:
+            scatter_build.rebuild(obj, scene=context.scene)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
         obj = _active_layer(context)
-        if obj is not None:
-            _convert_layer_assets(obj.bbt_scatter_layer)  # weather its assets (custom or proxy)
         n = _count_instances(context, [obj]) if obj else 0
         self.report({"INFO"}, f"Built {obj.name}: {n} instances")
         return {"FINISHED"}
@@ -502,19 +499,22 @@ class BBT_OT_scatter_build_all(Operator):
 
     def execute(self, context):
         scn = context.scene.bbt_scatter
-        coll = _active_coll(context)
-        if coll is None or scn.emitter is None:
-            self.report({"ERROR"}, "Pick an emitter first")
+        objs = _layers(context)
+        if not objs:
+            self.report({"ERROR"}, "No layers on this emitter")
             return {"CANCELLED"}
-        objs = list(coll.objects)
+        skipped = []
         for obj in objs:
-            _apply([{"op": "build_geonodes", "recipe": _layer_recipe(obj.bbt_scatter_layer),
-                     "name": obj.name, "params": _build_params(obj, scn)}])
-            _convert_layer_assets(obj.bbt_scatter_layer)  # weather its assets (custom or proxy)
-        objs = list(coll.objects)
+            try:
+                scatter_build.rebuild(obj, scene=context.scene)
+            except ValueError as exc:
+                skipped.append(str(exc))  # a layer with no emitter: named, not silently passed over
+        objs = _layers(context)
         total = _count_instances(context, objs)
         scn.summary = f"{len(objs)} layers, ~{total} instances"
-        self.report({"INFO"}, f"Built {len(objs)} layers, {total} instances")
+        self.report({"WARNING"} if skipped else {"INFO"},
+                    f"Built {len(objs) - len(skipped)} layers, {total} instances"
+                    + (f"; skipped {len(skipped)}: {'; '.join(skipped)}" if skipped else ""))
         return {"FINISHED"}
 
 
@@ -578,7 +578,7 @@ class BBT_PT_scatter(Panel):
     def draw(self, context):
         scn = context.scene.bbt_scatter
         layout = self.layout
-        emitter = scn.emitter
+        emitter = _active_emitter(context)
 
         # The context header, or the empty state: what we scatter on + which layer we edit, or the
         # empty-state hint.
@@ -587,10 +587,12 @@ class BBT_PT_scatter(Panel):
         if emitter is not None:
             hdr = f"{emitter.name} / {layer.name}" if layer is not None else emitter.name
         helpers.context_header(layout, "Active mesh", hdr, icon="OUTLINER_OB_MESH",
-                                  empty="Pick an emitter to scatter on.")
+                                  empty="Select a mesh, or pick an emitter, to scatter on.")
 
-        layout.prop(scn, "emitter")
-        layout.prop(scn, "camera")
+        # The pick is an OVERRIDE now, not the only answer: leave it empty and the panel follows the
+        # selection (and finds an agent's layers with nothing selected at all). It stays because
+        # pinning one emitter while working on another object is a real need.
+        layout.prop(scn, "emitter", text="Emitter (pin)")
 
         # No standalone Make Proxies here. Both scatter_add and scatter_biome_scatter call
         # make_proxies themselves, so adding a layer or building a biome already creates the shared
@@ -803,7 +805,8 @@ class BBT_PT_scatter_layer(Panel):
             box.prop(lay, "assets_exclude")
         if not along:
             box.prop(lay, "align", expand=True)
-            box.prop_search(lay, "vgroup", scn.emitter, "vertex_groups", text="Mask Group")
+            if lay.emitter is not None:
+                box.prop_search(lay, "vgroup", lay.emitter, "vertex_groups", text="Mask Group")
         helpers.structural_action(box, "bob_blender_tools.scatter_build_active",
                                      note="rebuilds this layer's graph (keeps tuned knobs)")
 
@@ -863,27 +866,32 @@ class BBT_PT_scatter_camera(Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        scn = context.scene.bbt_scatter
         layout = self.layout
         obj = _active_layer(context)
         if obj is None or util.nodes_mod(obj) is None:
             layout.label(text="No active layer: add one on the Scatter panel", icon="INFO")
             return
-        if obj.bbt_scatter_layer.curve_mode == "along":
+        lay = obj.bbt_scatter_layer
+        if lay.curve_mode == "along":
             layout.label(text="Along-curve layer: no camera cull; use an area layer to cull",
                          icon="INFO")
             return
-        if scn.camera is None:
-            layout.label(text="Set a Camera on the Scatter panel", icon="INFO")
+        # The camera is THIS layer's, drawn where it applies. It moved off Scene.bbt_scatter with the
+        # emitter and for the same reason: a rebuild has to use the camera this layer was culled to.
+        layout.prop(lay, "camera")
+        if lay.camera is None:
+            layout.label(text="No camera: this layer is not culled", icon="INFO")
             return
-        if foliage_build.live_input(obj,"Camera Distance") is None:
-            layout.label(text="Build this layer to cull", icon="INFO")
+        if foliage_build.live_input(obj, "Camera Distance") is None:
+            helpers.structural_action(layout, "bob_blender_tools.scatter_build_active",
+                                      note="rebuilds this layer so it culls to the camera")
             return
         _draw_knobs(layout, obj, _CAMERA_KNOBS)
 
 
+# BBT_ScatterLayer is NOT here: `scatter_build.register()` owns it, because a layer is built on paths
+# where this module is not registered at all.
 CLASSES = (
-    BBT_ScatterLayer,
     BBT_ScatterProps,
     BBT_OT_scatter_make_proxies,
     BBT_OT_scatter_generate_asset,
@@ -907,14 +915,12 @@ def register():
     _FOLIAGE_SPECIES_CACHE.clear()  # a reload may have added a pack
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Object.bbt_scatter_coll = PointerProperty(type=bpy.types.Collection)
-    bpy.types.Object.bbt_scatter_layer = PointerProperty(type=BBT_ScatterLayer)
+    scatter_build.register()  # the per-object layer config: core owns it, see its CONFIG_PROP
     bpy.types.Scene.bbt_scatter = PointerProperty(type=BBT_ScatterProps)
 
 
 def unregister():
     del bpy.types.Scene.bbt_scatter
-    del bpy.types.Object.bbt_scatter_layer
-    del bpy.types.Object.bbt_scatter_coll
+    scatter_build.unregister()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

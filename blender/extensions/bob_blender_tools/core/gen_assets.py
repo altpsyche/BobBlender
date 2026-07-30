@@ -1803,7 +1803,7 @@ def import_generated(name, kind="rocks", pack_dir=None):
 # talks to ComfyUI runs in the MCP process over HTTP with no bpy (`mcp_agent/server.py`'s comfy_*
 # tools); what has to cross the bridge is the work that needs Blender, which is exactly this module
 # plus `shading.apply_texture_set`.
-def _resolve_pack(pack_dir):
+def resolve_pack(pack_dir):
     """The generated pack an op works in: explicit, else the registered or `$BOB_GENERATED` root."""
     pack = pack_dir or assets.generated_root()
     if not pack:
@@ -1831,7 +1831,7 @@ def import_generated_op(op: dict) -> dict:
     from . import comfy, gen_receipt  # bpy-free; imported here so a bpy-less unit test can still
     # read this module
 
-    pack = _resolve_pack(op.get("pack_dir"))
+    pack = resolve_pack(op.get("pack_dir"))
     kind = op.get("kind") or "rocks"
     staged = op.get("staged")
     created, info, data = [], "", {}
@@ -1918,7 +1918,7 @@ def export_control_op(op: dict) -> dict:
         out = bpy.path.abspath(out)
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     else:
-        staging = comfy.staging_dir(_resolve_pack(op.get("pack_dir")))
+        staging = comfy.staging_dir(resolve_pack(op.get("pack_dir")))
         os.makedirs(staging, exist_ok=True)
         out = comfy.unique_file_name(staging, f"{comfy.slugify(obj.name)}_control", ".glb")
     exported = export_control(obj, out, points=int(op.get("points", CONTROL_POINTS)))

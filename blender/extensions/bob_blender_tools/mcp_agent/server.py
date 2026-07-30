@@ -81,9 +81,14 @@ def _generation(fn, route=None):
     model, a pack that is not installed, a cloud node) and anything else. The first three are the
     normal ones and all three are the artist's to fix.
 
-    `route` names the VRAM floor to check (core/comfy.VRAM_FLOOR_MIB). The check tries one recovery
-    before it refuses, so the common case -- a card a previous job left full -- costs a `POST /free`
-    rather than a 90-second job that dies inside somebody else's worker process.
+    `route` names the VRAM floor to check (core/comfy.VRAM_FLOOR_MIB), and it is an EARLY-OUT rather
+    than the floor itself: `core.comfy.generate_image` and `generate_mesh` check before every job
+    they queue, so every surface is guarded whether it came through here or not. What this adds is
+    when the refusal lands. A tool like `comfy_mesh` runs a chain -- subject image, then geometry,
+    then simplify -- and checking the PEAK route up front refuses before the first stage is paid for
+    instead of after. The check tries one recovery first, so the common case, a card a previous job
+    left full, costs a `POST /free` rather than a 90-second job that dies inside somebody else's
+    worker process.
     """
     comfy = _comfy()
     ok, detail = comfy.reachable()
@@ -281,7 +286,8 @@ def comfy_leaf_atlas(
 
     The set RECORDS its own grid, so a species preset only has to name the set: the recipe reads the
     layout from it and its `Atlas Columns` / `Atlas Rows` knobs stay as an override. Point a tree at
-    it with the `atlas` param on `build_geonodes`.
+    it with the `atlas` param on the `grow_foliage` op, which is where a tree comes from -- the
+    `foliage` recipe refuses a raw `build_geonodes`, because that route recorded no species.
 
     delight: divide the baked lighting out of the sprites. This is the texture family that needs it
             MOST, because a card is lit from both sides: the renderer lights the back of a leaf with
@@ -475,10 +481,14 @@ def comfy_paint_mesh(
     voxelises in unit-cube space and a metre-scale mesh lands outside the grid. The `export_control`
     op writes exactly that normalisation, so it is the way to get a Bob object into this tool.
 
-    The other route, stylised painting with LoRA control, is not reachable from anywhere yet: it
-    renders turntable views, so it needs Blender in the middle, and neither a panel action nor an
-    MCP tool has been built for it. Named in docs/ROADMAP.md; `comfy.texture_chain("stylised")`
-    selects it and `core.gen_paint` is its Blender half.
+    This is the PBR route and it conditions on ONE image, so it invents every surface that image
+    cannot see -- a measured barn came back with door panels painted onto its roof. The other route
+    is the `paint_stylised` OP: it renders a turntable, restyles every view under depth and normal
+    ControlNet with the stylised front as a shared reference, and projects the result back into the
+    mesh's own UVs, so every surface is painted by a camera that could see it (measured: 99.9% of
+    chart texels painted directly). Send that instead when the look is stylised, when a LoRA is
+    wanted, or when the shape is one a single reference cannot describe. It is an op rather than a
+    tool here because Blender is in the middle of it.
 
     Returns {ok, path, seconds, subject} or {ok: false, error}.
     """

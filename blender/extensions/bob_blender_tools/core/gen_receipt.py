@@ -22,10 +22,16 @@ does not import this -- the dependency runs one way only.
 """
 
 try:
-    from . import comfy, comfy_maps
+    from . import comfy, comfy_maps, gen_bars
 except ImportError:  # `core` itself on sys.path (the venv / headless route), where there is no
     import comfy  # parent package -- the same fallback `comfy` itself uses
     import comfy_maps
+    import gen_bars
+
+
+def _bar(name):
+    """One bar's value, off the registry. Named short because it reads as part of the assignment."""
+    return gen_bars.value(name)
 
 
 # Which kinds READ as leaves, which is a wider set than `comfy.FOLIAGE_KINDS` and a different
@@ -59,34 +65,21 @@ def leaf_opacity_warning(kind, opacity):
             f"(docs/FOLIAGE.md)"]
 
 
-# When a SOLID kind's residual openness is worth saying out loud, as a fraction of its face count
-# plus a floor so a small mesh is not warned for two edges. Both numbers come off five generated
-# solids, measured after the weld and the pinhole fill: stump 73 of 3,840 faces (1.9%) and rock slab
-# 72 of 2,900 (2.5%) are the two the artist could see through, against fallen log 17 of 3,908
-# (0.4%), a gabled structure 11 of 7,502 (0.15%) and boulder 9 of 3,807 (0.24%) which read as
-# closed. A fraction rather than a count because a 500-face rock and a 40,000-face building are not
-# the same claim.
-OPEN_SURFACE_FRACTION = 0.01
-OPEN_SURFACE_FLOOR = 12
+# Every bar below is `core/gen_bars.py`'s, read rather than restated. The number, the evidence
+# behind it and the date it was derived live there, in one auditable table; what lives HERE is
+# the sentence an artist reads when a measurement crosses one. Two concerns, and the registry
+# exists because the numbers used to be scattered across three files with their justification in
+# prose comments -- and a comment cannot fail a test.
+OPEN_SURFACE_FRACTION = _bar("open_surface")
 
-# The same two bars asked of the SEE-THROUGH edges alone, once `gen_assets.openness_report` can tell a
-# hole from a pit. Both are needed because they catch opposite shapes and each is blind to the other:
-#
-#   a sieve    hundreds of tiny holes, so a large share of the faces and no single big opening. The
-#              generated boulder arrived like this (19,623 boundary edges before the pinhole fill)
-#              and the fraction is what catches it.
-#   one wedge  a gabled structure's missing corner under the left eave: ONE loop, 5 edges of 8,839
-#              faces, 1.59 m across. 0.06% of the faces, so no edge fraction will ever fire on it,
-#              and the artist saw it immediately. The opening's own size is what catches that.
-#
-# The opening bar is over the object's longest dimension and sits between the two measured cases: the
-# ground rock's biggest see-through opening is 0.07 of the rock, which the artist accepts as
-# vesicular stone, and the gabled structure's is 0.18, which the artist rejected in a render.
-#
-# TWO POINTS, one batch of generated solids, and the bar is where it is because they are the only
-# two: recalibrate when a second batch of structures and rocks exists (docs/ROADMAP.md).
-SEETHROUGH_FRACTION = 0.01
-SEETHROUGH_OPENING_FRACTION = 0.10
+
+OPEN_SURFACE_FLOOR = gen_bars.BARS["open_surface"].floor
+
+
+SEETHROUGH_FRACTION = _bar("seethrough")
+
+
+SEETHROUGH_OPENING_FRACTION = _bar("seethrough_opening")
 
 
 def open_surface_warning(kind, report):
@@ -207,13 +200,7 @@ def orientation_warning(cells):
             f"specimen: the twig is what both cues read"]
 
 
-# A cell with no sprite in it. `leaf_atlas` measures `opaque` per cell and the bar has existed since
-# the foliage gate -- `all(c["opaque"] > 0.02)` in `headless_foliage.py` -- which is the problem: an
-# atlas that ships a blank cell has a clean RECEIPT, and the card built on that cell renders as
-# nothing. The brief calls it out in words ("a cell with `opaque: 0.0` is a card that renders as
-# nothing") and nothing turned those words into a sentence the artist gets. Same bar, moved to where
-# it reaches somebody.
-CELL_OPAQUE_MIN = 0.02
+CELL_OPAQUE_MIN = _bar("cell_opaque")
 
 
 def blank_cell_warning(cells):
@@ -235,14 +222,7 @@ def blank_cell_warning(cells):
             f"are all filled beats a grid with a hole in it"]
 
 
-# Bark grain that runs across the trunk instead of along it. The bar is 25 degrees off vertical and it
-# is measured on every bark set -- and until now it was gated only in `headless_foliage.py`, with
-# `comfy_bark_set`'s own description telling the artist so. A tileable SDXL pass has no reason to keep
-# an axis: measured, "rough conifer bark" with no clause came back polygonal mud cracks 84 degrees off
-# vertical, and the shipped clause holds it inside 18 across species and seeds. The gate script is the
-# right place to assert the CLAUSE still works; it is the wrong place to tell somebody their bark is
-# sideways.
-GRAIN_OFF_VERTICAL_MAX = 25.0
+GRAIN_OFF_VERTICAL_MAX = _bar("grain_off_vertical")
 
 
 def grain_warning(grain):
@@ -260,16 +240,7 @@ def grain_warning(grain):
               "naming the direction alone measured 71.3 and no clause at all 83.8 -- or reroll"]
 
 
-# How much of a block-out's surface may be INSIDE it. The control is read as an area-weighted surface
-# sample (`Hy3DOmniPointGenerate`), so an interior face is a conditioning point describing a surface
-# that is not there. Measured: a shed built as a wall cube plus a roof prism put 125.94 m of 425.98,
-# 29.6%, on a solid slab at wall height, and the generation came back an A-frame with its walls gone.
-# Built as one shell the same shape measures 2.95 of 313.98, 0.9%.
-#
-# The bar lives here rather than in the block-out gate for the reason the whole module exists: the
-# gate only ever sees the SHIPPED shapes, and an artist's own block-out -- which is the normal case,
-# since `export_control` takes any object -- was measured by nothing at all.
-CONTROL_HIDDEN_MAX = 0.05
+CONTROL_HIDDEN_MAX = _bar("control_hidden")
 
 
 def control_surface_warning(control):
@@ -295,45 +266,60 @@ def control_surface_warning(control):
               f"shell at the same silhouette"]
 
 
-# How faithfully a baked basecolor has to reproduce the texture it came from before the difference
-# is worth saying out loud. Set from both sides of the coincident-bake fix, on three generated
-# assets re-finished through the same code twice, `gen_assets.map_fidelity` in-chart over the whole
-# atlas:
-#
-#   asset       cage projection onto itself   self-bake
-#   structure   0.9015 / 6.48                 0.9980 / 2.28
-#   slab        0.9524 / 5.96                 0.9985 / 2.57
-#   stump       0.9793 / 3.21                 0.9995 / 1.12
-#
-# So 0.99 and 3.0 separate every pair with room on both sides: 0.008 of margin under the worst good
-# bake and 0.011 over the best bad one. A self-bake is still a resample through Cycles and the bake
-# margin, so the bar is not 1.0, and it is nowhere near what a shredded map scores. On the
-# structure's roof charts alone, where the artist saw it, the same two runs measured 0.817 against
-# 0.991.
-BAKE_FIDELITY_MIN = 0.99
-BAKE_DIFF_MAX = 3.0
+PAINT_COVERAGE_MIN = _bar("paint_coverage")
 
 
-# When a generated material's metalness claim is worth saying out loud. Nothing else in the pipeline
-# looks at what an image-to-3D model decided about metalness, and one generated asset came back
-# fully metal. Measured with `gen_assets.metalness_report` over ten staged GLBs, every one of which
-# declares `metallicFactor` 1.0 with a metallicRoughness texture wired, so the map's mean IS the
-# claim:
-#
-#   0.8286  a silvered-timber structure   the rejected one: silvered siding read as metal
-#   0.0191  a dark-timber structure       the one that shipped
-#   0.0027  a mossy granite boulder
-#   0.0012  a broad flat mossy rock slab
-#   0.0011  a fallen mossy log
-#   0.0007  a small grey ground rock
-#   0.0004  a weathered tree stump with roots
-#   0.0003  a low wide mossy rock, a second weathered stump
-#   0.0002  a second low wide mossy rock
-#
-# Nothing a Bob scene ships is a metal -- rocks, bark, timber, litter, thatch and leaves are all
-# dielectric -- so the bar is not a judgement about how much metal is too much. It sits over the
-# noisiest honest answer by a factor of five and under the one real failure by a factor of eight.
-METALNESS_MAX = 0.1
+def paint_coverage_warning(report):
+    """A stylised paint that left its charts to the hole fill, as a list of zero or one sentence.
+
+    Reads `core.gen_paint.paint_maps`'s report. The hole fill is not a defect in itself -- a closed
+    shape always has texels no camera reached -- but it spreads neighbouring colour into them, so a
+    low figure means an asset whose texture LOOKS painted and is invention over whatever share this
+    names. That is the same failure the whole route exists to avoid on the other axis.
+    """
+    painted = (report or {}).get("painted")
+    if painted is None or painted >= PAINT_COVERAGE_MIN:
+        return []
+    views = (report or {}).get("views")
+    unpainted = (report or {}).get("unpainted")
+    return [f"only {painted * 100:.1f}% of this asset's chart texels were painted from a view that "
+            f"could see them, against a {PAINT_COVERAGE_MIN * 100:.0f}% bar"
+            + (f" ({unpainted} texels left to the hole fill" if unpainted is not None else "")
+            + (f" from {views} views)" if views is not None else ")")
+            + ". The rest is neighbouring colour spread inwards, which reads as texture and carries "
+              "no information. Raise the ring count, or add an elevation: a 20-degree ring alone "
+              "left 28% of a closed boulder unseen, which is what the two extra elevations in "
+              "`gen_views.turntable_views` are for"]
+
+
+VIEW_OVERLAP_MIN = _bar("view_overlap")
+
+
+def view_overlap_warning(report):
+    """A turntable too sparse to measure its own seam, as a list of zero or one sentence.
+
+    The pair MADs are the seam measurement, and a MAD over a handful of shared texels is noise
+    wearing a number. This says so rather than letting a clean-looking seam figure stand on nothing.
+    """
+    pairs = (report or {}).get("pairs") or []
+    thin = [pair for pair in pairs if pair.get("texels", 0) < VIEW_OVERLAP_MIN]
+    if not thin:
+        return []
+    smallest = min(pair.get("texels", 0) for pair in thin)
+    return [f"{len(thin)} of {len(pairs)} adjacent view pairs share fewer than "
+            f"{int(VIEW_OVERLAP_MIN)} texels (smallest {smallest}), so the seam figures for those "
+            f"pairs are statistics over too little surface to mean anything. The paint itself may "
+            f"be fine -- what is unmeasured is whether neighbouring views agree. Raise the ring "
+            f"count so consecutive views overlap"]
+
+
+BAKE_FIDELITY_MIN = _bar("bake_fidelity")
+
+
+BAKE_DIFF_MAX = _bar("bake_diff")
+
+
+METALNESS_MAX = _bar("metalness")
 
 
 def metalness_warning(kind, metalness):
@@ -372,40 +358,27 @@ def metalness_warning(kind, metalness):
             f"that does not read as bare metal"]
 
 
-# When a SHIPPED map carries no picture at all. Measured over every basecolor in the generated pack,
-# in 0-255:
-#
-#   mean    std    map
-#   111.60  37.49  a vesicular ground rock    the five honest ones, over two orders of magnitude of
-#    83.63  51.35  a fallen log               subject
-#    67.59  39.97  a stump
-#    60.29  57.51  a boulder
-#    54.09  32.90  a gabled structure
-#     0.17   4.13  the same structure,        the block-out route: `mesh_texture` returned a black
-#                  control-conditioned        texture set
-#     0.00   0.00  the same again             at 2048 square, entirely zero
-#
-# This exists because `bake_fidelity` cannot catch it, and the reason is worth stating:
-# `gen_assets.map_fidelity` returns None when either side has no variation, and
-# `bake_fidelity_warning(None)` returns nothing, so "the measurement declined to answer" and "the
-# bake is fine" reach the receipt as the same empty list. The block-out structure shipped a 2048
-# square of pure black with `warnings: []`.
-#
-# So this gates what SHIPPED rather than a comparison between two things that can both be empty. A
-# uniform map is a failure whatever it is uniform at -- black, white or mid grey -- because no
-# generated surface is one colour, which is why the bar is on the spread; the darkness bar only picks
-# which sentence to write.
-MAP_SPREAD_MIN = 6.0
-MAP_DARK_MAX = 4.0
+MAP_SPREAD_MIN = _bar("map_spread")
+
+
+MAP_DARK_MAX = _bar("map_dark")
 
 
 def empty_map_warning(kind, map_stats):
     """A basecolor that shipped with no picture in it, as a list of zero or one sentence.
 
     Reads `gen_assets.map_stats`, measured on the file that was written rather than on anything the
-    bake reported about itself. The check the block-out route needed and no existing one could give:
-    every other figure in that receipt was healthy -- 13,302 faces, uv_overlap 0.0, no boundary edges,
-    metalness 0.0, `bake_fidelity` correlation 0.9996 -- and the asset was a black box.
+    bake reported about itself -- or `gen_paint.chart_stats` for the paint route, which measures the
+    same figures inside the charts because a projected atlas is black everywhere else. The check the
+    block-out route needed and no existing one could give: every other figure in that receipt was
+    healthy -- 13,302 faces, uv_overlap 0.0, no boundary edges, metalness 0.0, `bake_fidelity`
+    correlation 0.9996 -- and the asset was a black box.
+
+    The REMEDY differs by route and the sentence has to say which, because the same flat map means
+    two different things: on a bake it is a texture pass that returned nothing, and on a paint it is
+    usually Strength -- at the shipped paint denoise the render dominates by design, so an untextured
+    mesh under flat light comes back the grey it went in as. Measured on the same ico-sphere and seed:
+    spread 1.31 at denoise 0.40, spread 14.83 at 0.75.
     """
     stats = (map_stats or {}).get("basecolor")
     if not stats:
@@ -415,12 +388,19 @@ def empty_map_warning(kind, map_stats):
         return []
     what = ("is entirely black" if mean is not None and mean <= MAP_DARK_MAX
             else f"is one flat tone (mean {mean})")
+    if kind == "painted":
+        remedy = ("Raise Strength (the paint denoise): the shipped default keeps the real render "
+                  "dominant, which is right for a mesh whose render already carries an albedo and "
+                  "leaves an untextured one exactly as it was. Measured on one ico-sphere, same "
+                  "seed and prompt: spread 1.31 at 0.40 against 14.83 at 0.75")
+    else:
+        remedy = ("Check the texture pass: a graph that painted nothing still returns a file, and "
+                  "the bake carries the emptiness through faithfully")
     return [f"the basecolor that shipped carries no picture: it {what}, spread {spread} against a "
             f"{MAP_SPREAD_MIN} bar, where every honest map in this pack measures 33 to 58. Nothing "
             f"upstream reports this -- `bake_fidelity` compares the bake to its source and returns "
             f"nothing at all when either side is flat, so an empty bake reaches the receipt as an "
-            f"empty warning list. Check the texture pass: a graph that painted nothing still "
-            f"returns a file, and the bake carries the emptiness through faithfully"]
+            f"empty warning list. {remedy}"]
 
 
 def bake_fidelity_warning(fidelity, metalness=None):
@@ -466,45 +446,10 @@ def bake_fidelity_warning(fidelity, metalness=None):
             f"against a {BAKE_FIDELITY_MIN} / {BAKE_DIFF_MAX} bar): {cause}"]
 
 
-# When a generated albedo is carrying enough LIGHT to say so. Measured over ten generated texture
-# sets, `comfy_maps.flatness_report`'s `low_freq_variation`:
-#
-#   0.0247  bark_conifer                    flat; the bark clause did its job
-#   0.0355  very_dark_green_damp_forest_moss
-#   0.0452  leaf_conifer
-#   0.0492  very_dark_wet_bare_earth_footpath
-#   0.0509  leaf_grass
-#   0.0667  bark_broadleaf
-#   0.0740  very_dark_wet_grey_granite_bedrock
-#   0.0742  weathered_silvered_grey_barn_siding
-#   0.0965  leaf_broadleaf                  lit: the sprite's own key and shadow
-#   0.0989  very_dark_damp_forest_floor      lit: a raking light across the litter
-#
-# 0.075 sits above everything that reads as flat and below the two the artist could see were lit,
-# and delighting takes both of those under it (0.0355 and 0.0662). A threshold rather than a hard
-# failure because a lit albedo is usable -- it just cannot be relit, and on a hero surface that
-# shows.
-FLATNESS_MAX = 0.075
+FLATNESS_MAX = _bar("flatness")
 
-# And the same question asked the way a leaf CARD asks it. The first version of this bar was one
-# stop of TOTAL variation inside the opacity mask (`comfy_maps.mask_stops`), and it was wrong in a
-# way that cost a gate: `leaf_conifer` sat at 1.143 against it, five atlases were generated chasing
-# it, the thing that finally moved the number was describing a flatter SUBJECT -- and that rewrite
-# is what broke the sprite orientation, because a pressed specimen has no twig for `orient_sprite`
-# to read. An unmeasured property regressed while a measured one improved, one level up from the
-# four defects the first round found. The bar was measuring two things at once.
-# `comfy_maps.mask_light_split` separates them: a needle spray's variation is overwhelmingly one
-# needle shadowing the next, which is real geometry a flat card cannot carry and so belongs in the
-# albedo, and only the RAMP across a sprite is light that cannot be relit. Measured per cell over
-# three generated atlases the worst ramp is 0.48 of a stop, and a synthetic half-stop key across
-# the same sprites takes it to 0.60. So the bar is on the ramp, it sits between those two, and the
-# detail figure is reported beside it and deliberately not gated. That is also the answer to the
-# artist's open question about a per-species bar: there does not need to be one. A needle spray and
-# an oak leaf differ in the DETAIL column, which nothing gates.
-#
-# TWO POINTS, and one of them is synthetic: 0.48 is the worst real cell and 0.60 is that same cell
-# with a key painted onto it. Recalibrate when a second batch of atlases exists (docs/ROADMAP.md).
-LEAF_RAMP_STOPS_MAX = 0.55
+
+LEAF_RAMP_STOPS_MAX = _bar("leaf_ramp_stops")
 
 
 def flatness_warning(flatness, *, leafy=False):
@@ -651,13 +596,65 @@ MESH_RECEIPT_KEYS = (
 )
 
 
-def unreviewed(keys, *, texture=False):
+# The same declaration for a PAINTED asset, the third bridge: `core.gen_paint.paint_stylised`, the
+# stylised texture route. Its own vocabulary rather than the mesh one because it judges a different
+# object -- the mesh came from somewhere else and is not touched, and what this route produces is a
+# projection into charts the mesh already had.
+PAINT_GATED = {
+    "painted": "paint_coverage_warning",
+    "pairs": "view_overlap_warning",
+    # The same reader the mesh receipt uses, on in-chart figures rather than whole-file ones
+    # (`gen_paint.chart_stats` says why). It is the check that catches a paint which RAN, reported
+    # 99.9% coverage and changed nothing: at the shipped paint denoise the render dominates by
+    # design, so an untextured mesh under flat light comes back the grey it went in as.
+    "map_stats": "empty_map_warning",
+}
+
+PAINT_INFORMATIONAL = {
+    "name": "the asset's name; the reply is about it rather than gated on it",
+    "object": "the object painted, for an agent's next call",
+    "material": "the material wired onto it, a routing fact like `master_type`",
+    "maps": "the map files written; their COVERAGE is gated through `painted`",
+    "route": "which texture route ran, a routing fact",
+    "prompt": "the style prompt, provenance (the provenance rule)",
+    "seed": "provenance: what makes this paint reproducible",
+    "lora": "which style LoRA was applied, or empty; provenance rather than a property to judge",
+    "coverage": "how much of the atlas is chart at all, a property of the UV layout this route "
+                "inherited rather than of the paint; the paint's own figure is `painted`",
+    "unpainted": "the texel count behind `painted`, named in that sentence so the fix is checkable",
+    "views": "how many views were rendered, context for both gates",
+    "ring": "how many of them were the measurable ring, the denominator `pairs` is read against",
+    "size": "the texture resolution asked for, never in doubt",
+    "drift": "the front-against-180-degrees disagreement. NOT gated, and that is uncomfortable: it "
+             "is the cross-view consistency limit the route is known to have (30.1 of 255 measured) "
+             "and the defect MV-Adapter would fix. There is no measured pass line, and inventing "
+             "one would be the magic number this vocabulary exists to stop. Named in docs/ROADMAP.md",
+    "seconds": "per-stage wall clock, for cost, not correctness",
+    "pack_dir": "which pack the maps were written into (the agent-surface gate)",
+    "warnings": "the output of the gates above",
+}
+
+PAINT_RECEIPT_KEYS = (
+    "name", "object", "material", "maps", "route", "prompt", "seed", "lora",
+    "coverage", "painted", "unpainted", "views", "ring", "size", "pairs", "drift",
+    "map_stats", "pack_dir", "warnings", "seconds",
+)
+
+# The three bridges, so `unreviewed` takes a NAME rather than a boolean and a fourth is one entry
+# rather than a second flag. Two booleans would already have been unreadable at the call site.
+VOCABULARIES = {
+    "mesh": (MESH_GATED, MESH_INFORMATIONAL),
+    "texture": (TEXTURE_GATED, TEXTURE_INFORMATIONAL),
+    "paint": (PAINT_GATED, PAINT_INFORMATIONAL),
+}
+
+
+def unreviewed(keys, kind="mesh"):
     """The keys in `keys` that are neither gated nor declared informational, sorted.
 
     Empty is the contract. A non-empty return is a measurement that would reach a receipt with no
     reader and no decision behind it, which is the exact shape of the four defects this module
     exists for -- so the test that calls this fails rather than reporting.
     """
-    gated = TEXTURE_GATED if texture else MESH_GATED
-    known = TEXTURE_INFORMATIONAL if texture else MESH_INFORMATIONAL
+    gated, known = VOCABULARIES[kind]
     return sorted(set(keys) - set(gated) - set(known))

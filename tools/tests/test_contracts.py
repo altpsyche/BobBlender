@@ -22,6 +22,8 @@ from mcp_agent import contracts  # noqa: E402
 _OP_SAMPLES = {
     "add_mesh": {"op": "add_mesh", "kind": "cube"},
     "build_geonodes": {"op": "build_geonodes", "recipe": "wave_grid"},
+    "grow_foliage": {"op": "grow_foliage", "species": "conifer"},
+    "scatter_layer": {"op": "scatter_layer", "emitter": "Terrain", "kind": "trees"},
     "make_proxies": {"op": "make_proxies"},
     "make_path": {"op": "make_path", "name": "P"},
     "drape_curve": {"op": "drape_curve", "name": "P"},
@@ -56,7 +58,56 @@ _OP_SAMPLES = {
     "import_generated": {"op": "import_generated", "kind": "rocks", "name": "boulder",
                          "height_m": 1.8},
     "export_control": {"op": "export_control", "object": "BOB_Rock_A"},
+    "make_blockout": {"op": "make_blockout", "shape": "shed"},
+    "paint_stylised": {"op": "paint_stylised", "object": "BOB_Rock_A",
+                       "prompt": "hand-painted stylised granite"},
 }
+
+# The one handler with no contract model, named rather than filtered by a pattern: `inspect_river`
+# is a read-only float check the live bridge exposes for debugging, and it is deliberately not part
+# of the op vocabulary an agent composes a scene from.
+_UNTYPED_HANDLERS = {"inspect_river"}
+
+
+def _union_ops():
+    """Every op tag in the discriminated union, read off the models themselves."""
+    return {model.model_fields["op"].default
+            for model in contracts.Operation.__origin__.__args__}
+
+
+def _dispatch_ops():
+    """Every op tag `core/dispatch.py` has a handler for, by ast-parsing it.
+
+    Parsed rather than imported for `gen_api_docs.py`'s reason: dispatch pulls in bpy, and this
+    suite runs in the plain venv.
+    """
+    import ast
+
+    tree = ast.parse((EXT / "core" / "dispatch.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "_HANDLERS" for t in node.targets):
+            return {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
+    raise AssertionError("no _HANDLERS registry in dispatch.py")
+
+
+def test_every_typed_op_has_a_builder_and_every_builder_a_contract():
+    """The two halves of the op vocabulary, checked against each other rather than by intention.
+
+    Both failures are silent otherwise. A contract with no handler validates, crosses the bridge and
+    dies with a KeyError in Blender; a handler with no contract is a capability an agent cannot name
+    -- which is the shape of every parity failure this round has been about.
+    """
+    union, handlers = _union_ops(), _dispatch_ops()
+    assert sorted(union - handlers) == [], "typed ops with no builder in dispatch"
+    assert sorted(handlers - union - _UNTYPED_HANDLERS) == [], \
+        "builders an agent cannot reach, because no contract names them"
+
+
+def test_every_typed_op_is_exercised_by_a_sample():
+    """A model added to the union with no sample here is a model nothing validates. Cheap to write,
+    and the omission is exactly what the samples exist to prevent."""
+    assert sorted(_union_ops() - set(_OP_SAMPLES)) == [], "union ops with no sample payload"
 
 
 @pytest.mark.parametrize("op_tag,payload", sorted(_OP_SAMPLES.items()))
@@ -189,6 +240,53 @@ def test_curve_shape_rejects_a_non_numeric_param():
         contracts.BuildRequest(output_file="x.blend",
                                ops=[{"op": "make_curve", "shape": {"width": "wide"}}])
     assert "width" in str(exc.value)
+
+
+# -- The two owned recipes' ops (the vocabulary an agent's work becomes visible through) ---------
+# These exist because `build_geonodes(recipe="foliage")` built a tree that recorded no species, so the
+# foliage panel had nothing to show. The contract half of that fix is that the species is a FIELD --
+# checked here -- and the Blender half is the ownership guard, which the `scene seams` gate asserts
+# because it needs bpy.
+def test_grow_foliage_carries_the_species_as_a_field():
+    dumped = _round_trip({"op": "grow_foliage", "species": "conifer", "params": {"levels": 2}})
+    assert dumped["species"] == "conifer" and dumped["params"] == {"levels": 2}
+    # No seed asked for is None, not 0: the handler randomises a new tree and keeps an existing
+    # tree's seed, and it can only tell those apart from "not asked for".
+    assert dumped["seed"] is None
+
+
+def test_grow_foliage_needs_no_species_at_all():
+    """A tree tuned from the recipe defaults belongs to no species, so "" is a state and not a
+    missing argument."""
+    assert _round_trip({"op": "grow_foliage"})["species"] == ""
+
+
+def test_scatter_layer_requires_an_emitter():
+    """The field the whole op is about: a layer with no surface to scatter on builds an empty mesh
+    and reports success, and the emitter is recorded ON the layer so a rebuild cannot re-bind it."""
+    with pytest.raises(Exception) as exc:
+        contracts.BuildRequest(output_file="x.blend", ops=[{"op": "scatter_layer"}])
+    assert "emitter" in str(exc.value)
+
+
+def test_scatter_layer_reuses_by_default_because_op_lists_replay():
+    """The one default that differs from the panel's Add Layer button, deliberately: a replayed op
+    list that adds another layer every run is not idempotent."""
+    dumped = _round_trip({"op": "scatter_layer", "emitter": "Terrain"})
+    assert dumped["reuse"] is True and dumped["kind"] == "trees"
+    assert dumped["curve"] is None and dumped["curve_mode"] is None and dumped["curve_align"] is None
+
+
+@pytest.mark.parametrize("payload,bad_field", [
+    ({"op": "scatter_layer", "emitter": "T", "kind": "boulders"}, "kind"),
+    ({"op": "scatter_layer", "emitter": "T", "curve_mode": "beside"}, "curve_mode"),
+    ({"op": "scatter_layer", "emitter": "T", "align": "sideways"}, "align"),
+    ({"op": "grow_foliage", "seed": "random"}, "seed"),
+])
+def test_the_owned_recipe_ops_reject_the_wrong_value(payload, bad_field):
+    with pytest.raises(Exception) as exc:
+        contracts.BuildRequest(output_file="x.blend", ops=[payload])
+    assert bad_field in str(exc.value)
 
 
 def test_build_result_can_report_a_batch_still_running():

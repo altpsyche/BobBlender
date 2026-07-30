@@ -14,7 +14,7 @@ resolve an object by name from the op and call the same builders.
 
 import bpy
 
-from . import assets, env as _env, materials
+from . import assets, env as _env, materials, util
 
 SNOW_SHELL_MOD = "BOB_SnowShell"
 
@@ -351,16 +351,9 @@ def build_terrain_material(obj, *, mat_name=None, stack=None, layers=None):
 
 # -- Object resolution + MCP handlers --------------------------------------------------------
 def _mesh_object(name):
-    """Resolve a mesh object by name for an op, with a clear error when it is missing or wrong
-    type (the fragile bare-name binding the handover flags: fail loudly, do not no-op)."""
-    if not name:
-        raise ValueError("no object name given")
-    obj = bpy.data.objects.get(name)
-    if obj is None:
-        raise ValueError(f"no object named {name!r} in the scene")
-    if obj.type != "MESH":
-        raise ValueError(f"object {name!r} is a {obj.type}, not a MESH")
-    return obj
+    """Resolve a mesh object by name for an op, loudly (`util.object_of`, which every op that binds
+    an object by name now shares -- fail on a bad name, never no-op)."""
+    return util.object_of(name, "MESH", label="object")
 
 
 def shade_terrain(op: dict) -> dict:

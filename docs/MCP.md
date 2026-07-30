@@ -103,7 +103,7 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `comfy_bark_set` | A bark set, measured for grain DIRECTION as well as tiling. Name it what a species preset asks for and every tree of that species wears it. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_leaf_atlas` | A grid of foliage sprites on transparent, as a set with an `opacity` role, for BobFoliage's leaf cards. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_mesh` | Prompt to a staged scatter asset (geometry + PBR). Returns the `import_generated` op. | a local ComfyUI + TRELLIS.2 (or `route="alt"`, which needs no custom pack for the geometry) |
-| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs. | a local ComfyUI + TRELLIS.2 |
+| `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs: native PBR, one job, conditioned on ONE reference image. The stylised alternative is the `paint_stylised` op, not a tool here, because Blender renders the turntable and projects the restyle back. | a local ComfyUI + TRELLIS.2 |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. | a local ComfyUI + SDXL ControlNets |
 | `comfy_free` | Ask ComfyUI for the card back and report what it actually recovered (`POST /free` only drops the main process's cache: about 100 MiB of a 7.3 GB hold, measured). Names restarting the server when that is not enough. | a local ComfyUI |
@@ -115,7 +115,7 @@ The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonod
 `build_rain`, `build_motes`, `build_snow_cover`, `apply_season`, `scene_preset`), the
 shared env (`set_env`, `apply_world`), introspection (`describe_scene`), scene control
 (`add_camera`, `render`, `delete`, `clear_scene`), and generation's Blender half
-(`apply_texture_set`, `import_generated`, `export_control`). All are documented with their
+(`apply_texture_set`, `import_generated`, `export_control`, `make_blockout`, `paint_stylised`). All are documented with their
 fields in [API.md](API.md).
 
 **Why generation is tools and not ops.** Talking to ComfyUI needs no Blender, so the `comfy_*` tools
@@ -173,30 +173,43 @@ failed, so the safe-looking retry created them twice.
 - A failure names how far it got: `failed on op 5/8: 'import_generated'`, with the results of the
   first four in `results`. A batch is not a transaction; what ran, ran.
 
-## Known gap: ops that need the addon
+## Known gap: ops that need the addon, and the rule that closes it
 
 **One limit of headless `build`.** It imports the extension's `core` into a `--factory-startup`
 Blender without enabling the addon, so any op that reads a PropertyGroup the addon registers raises
-there. That is the shared env (`set_env`, `apply_season`, `scene_preset`), and **also `apply_biome`**,
-whose scatter half reads `Object.bbt_scatter_coll` (registered in `ui/scatter.py`) and fails with
-`AttributeError: 'Object' object has no attribute 'bbt_scatter_coll'` even with `world: false`.
+there — `AttributeError: 'Object' object has no attribute '<prop>'`, at the first write.
 
-**Every curve op is in the same position, and that is the wider version of the gap.** `make_curve`,
-`curve_build` and the rest read `Object.bbt_curve`, a PropertyGroup registered by `ui/splines.py`,
-so headless `build` raises `AttributeError: 'Object' object has no attribute 'bbt_curve'` and
-BobSplines is live-bridge-only today. The same is true of anything reading `bbt_scatter_layer` or
-`bbt_world`. Two ways out, neither taken yet: the headless runner registers the addon, or the
-per-curve and per-layer state moves out of `ui/` into `core/`. The second matches the "core is the
-acyclic root" rule the codebase already follows and is the honest answer; it is also the bigger
-change. Note that `tools/scripts/headless_scene_seams.py` calls `bob_blender_tools.register()` for
-exactly this reason, which is what a gate covering curve ops has to do until the gap closes.
+**The rule, and it is settled: state an OP writes belongs to `core`, and `core` registers it.**
+Anything else makes an op's reach depend on which panel module happened to declare its storage, which
+is not a property of the op. Four PropertyGroups follow it today and each registers itself,
+idempotently, from the module that owns the thing:
 
-Use `build_live` for those, or pass explicit params (`build_sky` with a `time_of_day` works
-headlessly; a bare `build_sky` reads the env it cannot see). For a headless `.blend` the pieces work
-one at a time: `shade_terrain` shades and a `build_geonodes` `scatter` recipe scatters, which is
-between them what `apply_biome` composes.
+| State | Registered by | Reached headlessly |
+|---|---|---|
+| `Scene.bbt_env` (the shared world) | `core/env.py` | yes |
+| `Object.bbt_foliage_tree` (a tree's structural config) | `core/foliage_build.py` | yes |
+| `Object.bbt_scatter_layer`, `Object.bbt_scatter_coll` | `core/scatter_build.py` | yes |
+| `Object.bbt_paint` (what a stylised paint did) | `core/gen_paint.py` | yes |
+| `Object.bbt_curve` (a typed curve) | `ui/splines.py` | **no** |
+| `Scene.bbt_world` (the master toggles) | `ui/world.py` | **no** |
 
-The example below is therefore **`build_live` only** where it uses `apply_biome`.
+So `grow_foliage`, `scatter_layer` and `paint_stylised` work on both surfaces, and `apply_biome`'s
+scatter half does too. `bbt_paint` is what makes an agent's paint VISIBLE: the panel draws the
+coverage, the prompt and the receipt's warnings off the object, so a paint an agent ran and one an
+artist ran read identically. **`make_curve`, `curve_build`, `drape_curve` and the erosion ops are still live-bridge-only**,
+because a typed curve's state is still a panel's; so is anything reading `bbt_world`. The way out is
+the row above them, not a special case: move that state into `core` beside the builder that writes it.
+`tools/scripts/headless_scene_seams.py` calls `bob_blender_tools.register()` for exactly this reason,
+which is what a gate covering curve ops has to do until it moves.
+
+The measurement that settled it: `scatter_layer` was written with its config left in `ui/`, and the
+agent-surface gate failed on `'Object' object has no attribute 'bbt_scatter_coll'` — the typed op was
+less capable than the raw recipe it replaced, on the one surface the op exists for.
+
+Use `build_live` for what is still panel-owned, or pass explicit params (`build_sky` with a
+`time_of_day` works headlessly; a bare `build_sky` reads the env it cannot see).
+
+The example below is therefore **`build_live` only** where it uses a curve op.
 
 ## A full scene over MCP
 
@@ -304,8 +317,8 @@ BobShader, write the pack, link into `BOB_Assets_<Kind>`), and `comfy_mesh` hand
 // 2. build_live / build with:
 [
   <the import_op from step 1, verbatim>,
-  {"op": "build_geonodes", "recipe": "scatter", "name": "ScatterRocks",
-   "params": {"emitter": "Terrain", "assets": "BOB_Assets_Rocks", "density": 0.4}}
+  {"op": "scatter_layer", "emitter": "Terrain", "kind": "rocks", "name": "ScatterRocks",
+   "knobs": {"density": 0.4}}
 ]
 ```
 

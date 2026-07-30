@@ -56,15 +56,17 @@ import headless_gen_blockout_control as control_gate  # noqa: E402
 from bob_blender_tools.core import (  # noqa: E402
     comfy,
     gen_assets,
+    gen_bars,
     materials,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
-from _gate import Gate  # noqa: E402
+from _gate import Gate, section  # noqa: E402
 
-# The shared gate harness (`_gate.py`): one `check` / `note` / exit-code implementation for every
-# gate, bound to module-level names so the call sites below read as plain assertions. `FAILURES` is
-# the Gate's own list, not a copy, so anything already reading it keeps working.
+# The shared gate harness (`_gate.py`): one implementation of the verdict (`check` / `note` /
+# `skip` / the exit code) AND of what every gate needs around it -- the section banner, the scene
+# wipe, the VRAM sampler, the cached-artifact sidecar. Bound to module-level names so the call sites
+# below read as plain assertions. `FAILURES` is the Gate's own list, not a copy.
 GATE = Gate("bbox gate")
 check, note, skip = GATE.check, GATE.note, GATE.skip
 FAILURES = GATE.failures
@@ -86,20 +88,16 @@ COLUMNS = ("mesh_geom_ctrl point", "mesh_geom_bbox bbox", "mesh_geom_bbox auto")
 
 # The decision rule, fixed BEFORE the run so the verdict cannot be chosen after seeing the table.
 # `DEFAULT_CONTROL_MODE` moves to "bbox" only if the bbox column wins or draws on footprint IoU on
-# at least two of the three block-outs AND is not slower; a draw is within 0.02 IoU, which is under
-# the smallest gap between any two ceilings the control gate measured.
-DRAW = 0.02
-WIN_THRESHOLD = 2
+# at least WIN_THRESHOLD of the three block-outs AND is not slower. Both bars are the registry's,
+# because the voxel gate declared the identical pair -- 0.02 and 2, verbatim, in a second file -- so
+# the two gates were comparing against the same rule by coincidence rather than by construction.
+DRAW = gen_bars.value("control_draw")
+WIN_THRESHOLD = gen_bars.value("control_win")
 
 # What the agent-surface gate measured the `comfy_aimdo` segfault on (docs/GENERATION.md, the
 # staged-copy fault). Its re-test trigger is a
 # fork update, so the version is the tripwire: same version, same install, nothing to re-test.
 AIMDO_MEASURED = "0.4.10"
-
-
-def section(title):
-    print()
-    print(f"-- {title} " + "-" * max(0, 76 - len(title)))
 
 
 def aimdo_version():

@@ -43,6 +43,16 @@ import zlib
 
 import numpy as np
 
+try:
+    from . import gen_bars
+except ImportError:  # `core` itself on sys.path: the MCP venv and the headless routes, where there
+    import gen_bars  # is no parent package -- the same fallback `gen_receipt` uses
+
+
+def _bar(name):
+    """One bar's value, off the registry (`core/gen_bars.py`)."""
+    return gen_bars.value(name)
+
 # Rec.709 luma. The albedo is sRGB-encoded and stays that way: these are crude perceptual
 # derivations, not a linear-light computation, and the variants gate is where that distinction
 # starts to matter.
@@ -805,11 +815,13 @@ def axis_spread(angles):
 # cost less than 1 at 1024.
 ATLAS_MARGIN = 0.02       # of a cell, kept clear so a sprite's silhouette is not clipped by its edge
 ATLAS_BLEED_PASSES = 8    # how far the leaf colour is pushed into the transparent region
-# Alpha at or above which a pixel is LEAF rather than fringe. The bleed reads only from these, and
-# that floor is load-bearing: at 0.02 the anti-aliased silhouette's own near-transparent BACKGROUND
-# pixels count as known, so the bleed pushed white outwards and every sprite came back with a hard
-# white halo -- measured, and visible in the frame before it was measured.
-ATLAS_OPAQUE = 0.9
+
+
+# The bars below are `core/gen_bars.py`'s, read rather than restated -- their evidence and their
+# derivation dates live there. Everything else in this module that looks like a threshold is not
+# a bar: the delight, roughness, AO, cavity and normal constants SHAPE a map rather than judging
+# one, and no asset passes or fails on them.
+ATLAS_OPAQUE = _bar("atlas_opaque")
 
 
 # How much of the axis, at each end, the base test looks at. The twig is thin only near its cut
@@ -854,24 +866,11 @@ def _mask_axis(mask, band=AXIS_END_BAND):
     return (y0, x0), axis, (lo, hi)
 
 
-# The woody-mass cue, and its guards. A sprig is a green fan on a brown stem, so the direction from
-# the green centroid to the WOODY centroid points at the end that attaches -- which is the question
-# being asked, rather than the proxy "which end is narrow" that the principal axis answers.
-#
-# Measured on the four sprites of one generated atlas: the woody direction disagreed with the
-# geometric answer on exactly the two cells that came out attached by their needle tips, and agreed
-# on the two that came out right. It is better because it is not a proxy: a spray whose twig sticks
-# out SIDEWAYS from its fan has its long axis along the fan, so no end of that axis is the stem and
-# no rotation of it can be correct.
-#
-# Guarded rather than trusted, because it assumes a colour. Below `WOODY_MIN` there is no stem to
-# find (or the matte cut it off); above `WOODY_MAX` the sprite is not a green fan at all, which is
-# what an autumn or dead-foliage atlas looks like; and the two centroids have to be genuinely apart
-# before their difference means a direction. Outside those, the geometric axis is used, which is
-# what this function did before the colour cue and is still right for most sprites.
-WOODY_EXCESS = 2.0        # green excess (G - (R+B)/2) at or below which a texel counts as woody
+WOODY_EXCESS = _bar("woody_excess")
 WOODY_MIN, WOODY_MAX = 0.01, 0.40
-WOODY_SEPARATION = 0.025  # of the sprite's diagonal
+
+
+WOODY_SEPARATION = _bar("woody_separation")
 
 
 def _woody_axis(rgba, mask):
@@ -897,51 +896,16 @@ def _woody_axis(rgba, mask):
     return -delta / length          # green -> woody is base-ward, so the tip is the other way
 
 
-# Whether the GEOMETRIC cue is readable at all, which is the question the orienter never asked. Both
-# cues can be absent at once and `_mask_axis` still returns a direction, so a sprite with no axis to
-# speak of is rotated by an arbitrary angle and every check downstream passes: the cell is full, the
-# sprite reaches the bottom edge, and `base_taper` reads narrow-at-the-base because a compact leaf
-# IS narrow at whichever edge it was set down on. That is how the gate shipped three atlases with
-# the petiole pointing sideways. Both bars come off the twelve cells of those atlases:
-#
-#   anisotropy  sqrt of the mask covariance's eigenvalue ratio -- how much longer than wide
-#     readable:   10.67, 4.49, 4.35, 2.56, 2.28, 2.20   (a spray, a blade, a sprig)
-#     arbitrary:   1.51, 1.46, 1.25, 1.18, 1.12, 1.04   (a pressed cluster, two crossed blades)
-#   end_ratio   the narrow end's RMS width over the wide end's -- how much taper there is to read
-#     readable:    0.17, 0.38, 0.44, 0.46, 0.53, 0.66
-#     arbitrary:   0.89, 0.90, 0.92, 0.94, 0.99         (both ends alike: no stem end at all)
-#
-# 1.6 and 0.75 sit in the gap on both figures (1.51 against 2.20, 0.66 against 0.89). Wanted
-# TOGETHER, because either alone passes a shape with no attaching end: a symmetric ellipse is
-# anisotropic with equal ends, and a lopsided blob tapers along an axis that is noise.
-AXIS_ANISOTROPY_MIN = 1.6
-AXIS_TAPER_MAX = 0.75
+AXIS_ANISOTROPY_MIN = _bar("axis_anisotropy")
 
-# The third condition, which is about the axis cue being WRONG rather than unreadable. Its
-# assumption is "the narrow end is the cut stub", and a needle spray breaks it: a fir sprig tapers
-# at BOTH ends, so the tip can be narrower than the stub and the sprite comes back exactly upside
-# down with healthy taper figures. That is the gate's `leaf_conifer` top-right cell, turned -171
-# degrees at anisotropy 2.56 and end ratio 0.44, both well inside the bars above.
-#
-# What separates the ends is not width, it is whether one is a FAN: a cut stub is one solid strand
-# and a needle tip is several. Counted as the median number of gaps-apart runs a slice across the
-# band cuts, over the same twelve cells:
-#
-#   stub / fan, and the cue is right   1/4, 1/3, 1/8   (conifer 0 and 2, grass 1)
-#   no fan at either end, so no cue    1/1, 1/1        (conifer 3, the cell that shipped upside
-#                                                      down, and grass 0)
-#   fanned at BOTH ends                5/4, 2/2        (conifer 1, broadleaf 0)
-#
-# So the wide end has to be at least two strands wider than the narrow one, which every right answer
-# clears and no wrong one does.
-AXIS_STRAND_CONTRAST_MIN = 2
 
-# With one escape, because a fan is not the only honest stub cue: a single broad leaf on a petiole
-# is one strand at both ends and its taper is still unmistakable, and failing it would flag the very
-# subject this fix wants the prompt to ask for. Provisional, and the one bar here not read off a
-# separating pair: it sits under the thinnest measured end ratio that also had a fan (0.38) and over
-# the one solidly tapered cell in the twelve (0.17). One point, one batch (docs/ROADMAP.md).
-AXIS_STRONG_TAPER_MAX = 0.25
+AXIS_TAPER_MAX = _bar("axis_taper")
+
+
+AXIS_STRAND_CONTRAST_MIN = int(_bar("axis_strand_contrast"))
+
+
+AXIS_STRONG_TAPER_MAX = _bar("axis_strong_taper")
 
 # The gap, across the axis, that separates one strand from the next. A fraction of the mask's own
 # diagonal so a 512 cell and a 2048 one count the same needles, with a floor because two touching

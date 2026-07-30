@@ -699,6 +699,23 @@ def _comfy_job_running():
     return bool(_jobs().active())
 
 
+def _job_row(layout):
+    """Draw the running ComfyUI job's progress line and its Cancel, and say whether one is running.
+
+    One implementation for both generation blocks in this panel: a caller draws its own button only
+    when this returns False, so a second Generate cannot be pressed while the first is in flight.
+    """
+    running = _jobs().active()
+    if not running:
+        return False
+    job = running[0]
+    row = layout.row(align=True)
+    row.label(text=f"{job.label} -- {job.progress or job.state} ({job.seconds:.0f}s)",
+              icon="SORTTIME")
+    row.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
+    return True
+
+
 def _submit(label, fn, on_done):
     """Queue a ComfyUI job on the shared worker and refresh the panel when it lands."""
     def done(job):
@@ -768,6 +785,82 @@ class BBT_OT_shaders_generate_set(Operator):
 
         _submit(f"texture x{count}: {prompt[:32]}", work, landed)
         self.report({"INFO"}, f"Generating {count} variant(s) in the background")
+        return {"FINISHED"}
+
+
+class BBT_OT_shaders_paint_stylised(Operator):
+    bl_idname = "bob_blender_tools.shaders_paint_stylised"
+    bl_label = "Paint Stylised"
+    bl_description = ("Render a turntable of this object, restyle every view in ComfyUI under depth "
+                      "and normal ControlNet, and project the result back into its own UVs. Every "
+                      "surface is painted by a camera that could see it, which is what the "
+                      "one-image texture route cannot do. Writes a colour map plus the derived set "
+                      "and a Principled material; needs a local ComfyUI server")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from ..core import assets, comfy, gen_paint, gen_views, render
+
+        obj = context.active_object
+        props = context.scene.bbt_stylise
+        if obj is None or obj.type != "MESH":
+            self.report({"ERROR"}, "Select a mesh object to paint")
+            return {"CANCELLED"}
+        if not obj.data.uv_layers:
+            self.report({"ERROR"}, f"{obj.name} has no UV layer; this route paints into the charts "
+                                   f"a mesh already has")
+            return {"CANCELLED"}
+        if _comfy_job_running():
+            self.report({"WARNING"}, "A ComfyUI job is already running")
+            return {"CANCELLED"}
+        pack = assets.generated_root()
+        if not pack:
+            self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
+                                   "add-on preferences)")
+            return {"CANCELLED"}
+
+        prompt = (props.prompt or "").strip()
+        stem = comfy.slugify(obj.name) or "painted"
+        out_dir = gen_paint.paint_staging(pack, stem)
+        size, seed = int(props.size), int(props.seed)
+        lora = (props.lora or "").strip() or None
+        denoise = float(props.denoise)
+
+        # The route's three steps, split across the job boundary rather than run through
+        # `gen_paint.paint_stylised`: the render and the projection touch bpy and must stay on the
+        # main thread, and only the restyle in the middle may leave it (the threading rule).
+        try:
+            shot = gen_views.turntable_views(obj, os.path.join(out_dir, "views"),
+                                             count=int(props.views), resolution=size,
+                                             samples=int(props.samples), stem=stem)
+        except Exception as exc:  # a render failure is a message, not a traceback in the console
+            self.report({"ERROR"}, f"Turntable render failed: {exc}")
+            return {"CANCELLED"}
+        # Hand the card back before the restyle asks for it, for the reason measured in
+        # `gen_paint.paint_stylised`: N EEVEE views then N SDXL jobs in one session is the
+        # VRAM-handback rule's worst case, and the render's buffers are the half Bob controls.
+        render.release_gpu()
+
+        def work(job):
+            return comfy.paint_views(shot, os.path.join(out_dir, "styled"), prompt, seed=seed,
+                                     denoise=denoise, size=size, lora=lora,
+                                     on_queued=job.note_prompt_id, on_progress=job.report)
+
+        def landed(job):
+            painted = job.result or {}
+            out = gen_paint.paint_object(obj, shot, painted["images"], out_dir, stem, size=size)
+            # `paint_receipt` stamps the object on its way out, so the panel below reads the same
+            # figures whether this operator or the `paint_stylised` op produced them.
+            receipt = gen_paint.paint_receipt(
+                obj, out, prompt=prompt, seed=seed, lora=lora, pack_dir=pack,
+                seconds={"restyle": painted.get("total_seconds", 0.0)})
+            _COMFY_STATE.update(ok=True,
+                                detail=f"painted {receipt['painted'] * 100:.0f}% of "
+                                       f"{obj.name}'s charts from {receipt['views']} views")
+
+        _submit(f"paint: {obj.name}", work, landed)
+        self.report({"INFO"}, f"Rendered {len(shot)} views of {obj.name}; restyling in the "
+                              f"background")
         return {"FINISHED"}
 
 
@@ -1028,14 +1121,7 @@ def _draw_texture_set(layout, context, mat, index=None):
     row = gen.row(align=True)
     row.prop(scn, "gen_seed", text="Seed")
     row.prop(scn, "gen_variants", text="x")
-    running = _jobs().active()
-    if running:
-        job = running[0]
-        bar = gen.row(align=True)
-        bar.label(text=f"{job.label} -- {job.progress or job.state} ({job.seconds:.0f}s)",
-                  icon="SORTTIME")
-        bar.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
-    else:
+    if not _job_row(gen):
         gen.operator("bob_blender_tools.shaders_generate_set", text="Generate",
                      icon=helpers.STRUCTURAL_ICON).index = slot
 
@@ -1256,6 +1342,55 @@ class BBT_PT_shaders_surface(Panel):
         # colour surface does not read as one flat sheet. Amount 0 = off.
         layout.label(text="Macro break-up", icon="MOD_NOISE")
         _draw_inputs(layout, node, _MACRO_KNOBS)
+
+
+class BBT_PT_shaders_paint(Panel):
+    bl_label = "Paint (stylised)"
+    bl_idname = "BBT_PT_shaders_paint"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "BobBlenderTools"
+    bl_parent_id = "BBT_PT_shaders"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = _active_object(context)
+        return obj is not None and obj.type == "MESH" and bool(obj.data.uv_layers)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = _active_object(context)
+        props = context.scene.bbt_stylise
+
+        # What this object's paint WAS, read off the object rather than off a panel variable, so an
+        # agent's paint shows here exactly as an artist's does (core/gen_paint.py, CONFIG_PROP).
+        painted = getattr(obj, "bbt_paint", None)
+        if painted is not None and painted.views:
+            box = layout.box()
+            box.label(text=f"Painted: {painted.painted * 100:.0f}% of charts from "
+                           f"{painted.views} views", icon="BRUSH_DATA")
+            row = box.row()
+            row.enabled = False
+            row.label(text=f"\"{painted.prompt}\" seed {painted.seed}"
+                           + (f", LoRA {painted.lora}" if painted.lora else ""))
+            for sentence in filter(None, painted.warnings.split("; ")):
+                box.label(text=sentence, icon="ERROR")
+
+        col = layout.column(align=True)
+        col.prop(props, "prompt")
+        row = col.row(align=True)
+        row.prop(props, "denoise")
+        row.prop(props, "views")
+        row = col.row(align=True)
+        row.prop(props, "size")
+        row.prop(props, "seed")
+        if not _job_row(col):
+            col.operator("bob_blender_tools.shaders_paint_stylised",
+                         icon=helpers.STRUCTURAL_ICON)
+        cap = col.row()
+        cap.enabled = False
+        cap.label(text="renders a turntable, restyles every view, projects it back into these UVs")
 
 
 class BBT_PT_shaders_water(Panel):
@@ -1493,6 +1628,7 @@ CLASSES = (
     BBT_OT_shaders_terrain_stack_preset,
     BBT_OT_shaders_texture_set,
     BBT_OT_shaders_generate_set,
+    BBT_OT_shaders_paint_stylised,
     BBT_OT_shaders_variant_accept,
     BBT_OT_shaders_variant_reject,
     BBT_OT_shaders_variant_upres,
@@ -1502,6 +1638,7 @@ CLASSES = (
     BBT_OT_shaders_snow_shell_remove,
     BBT_PT_shaders,
     BBT_PT_shaders_surface,
+    BBT_PT_shaders_paint,
     BBT_PT_shaders_water,
     BBT_PT_shaders_water_flow,
     BBT_PT_shaders_water_freeze,
@@ -1513,7 +1650,7 @@ CLASSES = (
 
 def register():
     global _env, _env_owned, _variant_previews
-    from ..core import env
+    from ..core import env, gen_paint
     _env = env
     _variant_previews = bpy.utils.previews.new()
     # Firmament owns the shared world; register it here only if running standalone (e.g. a
@@ -1524,16 +1661,20 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_shaders = bpy.props.PointerProperty(type=BBT_ShadersProps)
+    gen_paint.register()  # the per-object paint record: core owns it, see its CONFIG_PROP
     # Subscribe the surface applier so the World master Live Environment toggle drives it.
     world.register_applier(_apply_world)
 
 
 def unregister():
     global _env_owned, _variant_previews, _variant_preview_key
+    from ..core import gen_paint
+
     if _variant_previews is not None:
         bpy.utils.previews.remove(_variant_previews)
         _variant_previews, _variant_preview_key = None, None
     world.unregister_applier(_apply_world)
+    gen_paint.unregister()
     del bpy.types.Scene.bbt_shaders
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

@@ -48,6 +48,9 @@ from bob_blender_tools.core import (  # noqa: E402
     proxies,
 )
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for `_gate`
+from _gate import empty_scene  # noqa: E402
+
 OUT = os.path.join(REPO, "_generated", "class_rates")
 PACK = os.path.join(OUT, "pack")
 FACES = 4000
@@ -131,10 +134,6 @@ TEXTURE_CLASSES = ("bark", "tileable", "atlas")
 STRUCTURE_HEIGHT = 7.5
 
 SEED = 4242
-
-
-def empty_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
 def sample_dir(cls, i):
