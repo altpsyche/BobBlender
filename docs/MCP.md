@@ -106,7 +106,7 @@ Example `env` block that writes into a chosen scratch folder and adds an art pac
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs: native PBR, one job, conditioned on ONE reference image. The stylised alternative is the `paint_stylised` op, not a tool here, because Blender renders the turntable and projects the restyle back. | a local ComfyUI + TRELLIS.2 |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. | a local ComfyUI + an SDXL checkpoint |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. | a local ComfyUI + SDXL ControlNets |
-| `comfy_free` | Ask ComfyUI for the card back and report what it actually recovered (`POST /free` only drops the main process's cache: about 100 MiB of a 7.3 GB hold, measured). Names restarting the server when that is not enough. | a local ComfyUI |
+| `comfy_free` | Ask ComfyUI for the card back and report what it actually recovered (`POST /free` unloads the main process's models -- 7.6 GB measured, landing about 0.4 s after the call, which is why reading it immediately used to report 100 MiB -- but cannot reach the separate worker processes). Names restarting the server when that is not enough. | a local ComfyUI |
 
 The op vocabulary now spans the whole suite: geometry (`add_mesh`, `build_geonodes`,
 `make_proxies`), shading (`shade_terrain`, `apply_shader`, `snow_shell`), biome

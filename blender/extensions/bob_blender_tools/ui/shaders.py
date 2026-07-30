@@ -39,7 +39,7 @@ from bpy.types import Operator, Panel, PropertyGroup
 
 from ..bridge import server
 from ..core import shading, util
-from . import helpers, world
+from . import comfyui, helpers, world
 
 # The bbmcp modules, imported at register and held so unregister uses the same objects
 # even after Reload Builders purges bbmcp. _env_owned records whether BobShaders had to
@@ -650,34 +650,18 @@ class BBT_OT_shaders_texture_set(Operator):
 # exactly the case the row exists to report.
 _COMFY_STATE = {"ok": None, "detail": "not checked"}
 
-# The staged-variant thumbnail. A preview collection rather than a bpy Image, so the panel can
-# show the pick without adding a datablock the file then carries around.
-_variant_previews = None
-_variant_preview_key = None
-
-
 def _variant_preview(path):
     """The icon id for a staged variant's basecolor, or 0 when there is nothing to show.
 
-    0 is also what `--background` returns for a perfectly good preview (there is no icon manager
-    without a UI), which is why the panel treats it as "draw no thumbnail" rather than an error.
+    One line of path arithmetic over the shared thumbnail cache in `ui/comfyui.py`. It used to own
+    a preview collection of its own that cleared on every change of pick, which was fine for one
+    image and wrong the moment a second wanted to be on screen -- the ComfyUI panel's results list
+    is that second caller.
     """
-    global _variant_preview_key
-    if _variant_previews is None or not path:
+    if not path:
         return 0
     name = os.path.basename(path)
-    png = os.path.join(path, f"{name}_basecolor.png")
-    if not os.path.isfile(png):
-        return 0
-    if _variant_preview_key != png:
-        _variant_previews.clear()
-        try:
-            _variant_previews.load(name, png, "IMAGE")
-        except (KeyError, RuntimeError):
-            return 0
-        _variant_preview_key = png
-    entry = _variant_previews.get(name)
-    return entry.icon_id if entry else 0
+    return comfyui.thumbnail(os.path.join(path, f"{name}_basecolor.png"))
 
 
 def _redraw():
@@ -782,6 +766,13 @@ class BBT_OT_shaders_generate_set(Operator):
             _COMFY_STATE.update(ok=True, detail=f"{len(infos)} variant(s) staged")
             items = _staged_variant_items(None, None)
             scn.gen_staged = infos[0]["dir"] if infos else items[0][0]
+            # Into the ComfyUI panel's results list, with the basecolor as its face: whichever
+            # panel was pressed, one place says what came back (ui/generate.py).
+            first = infos[0]["dir"] if infos else ""
+            comfyui.record(f"texture x{len(infos)}: {prompt[:32]}",
+                            image=os.path.join(first, f"{os.path.basename(first)}_basecolor.png")
+                            if first else None, folder=first,
+                            seconds=sum(i.get("seconds", 0) or 0 for i in infos))
 
         _submit(f"texture x{count}: {prompt[:32]}", work, landed)
         self.report({"INFO"}, f"Generating {count} variant(s) in the background")
@@ -857,6 +848,12 @@ class BBT_OT_shaders_paint_stylised(Operator):
             _COMFY_STATE.update(ok=True,
                                 detail=f"painted {receipt['painted'] * 100:.0f}% of "
                                        f"{obj.name}'s charts from {receipt['views']} views")
+            # The basecolor is the thumbnail because it is the map that says whether the paint did
+            # anything at all -- a flat one is the measured failure mode of this route.
+            comfyui.record(f"paint: {obj.name} ({receipt['painted'] * 100:.0f}% of charts)",
+                            image=receipt["maps"].get("basecolor"),
+                            seconds=sum(receipt["seconds"].values()),
+                            error="; ".join(receipt["warnings"]) or None)
 
         _submit(f"paint: {obj.name}", work, landed)
         self.report({"INFO"}, f"Rendered {len(shot)} views of {obj.name}; restyling in the "
@@ -888,8 +885,6 @@ class BBT_OT_shaders_variant_accept(Operator):
         except (comfy.ComfyError, OSError) as exc:
             self.report({"ERROR"}, f"Accept failed: {exc}")
             return {"CANCELLED"}
-        global _variant_preview_key
-        _variant_preview_key = None
         # _texture_set_items rescans the packs on every call, so the accepted set is in the enum
         # by the time this assignment is validated.
         scn.texture_set = name
@@ -916,8 +911,6 @@ class BBT_OT_shaders_variant_reject(Operator):
         scn = context.scene.bbt_shaders
         targets = _staged_variants() if self.all_of_them else [_staged_pick(scn)]
         gone = sum(1 for t in targets if t and comfy.reject_variant(t))
-        global _variant_preview_key
-        _variant_preview_key = None
         scn.gen_staged = _staged_variant_items(None, None)[0][0]
         self.report({"INFO"}, f"Rejected {gone} variant(s)")
         return {"FINISHED"}
@@ -948,12 +941,15 @@ class BBT_OT_shaders_variant_upres(Operator):
                                        on_progress=job.report)
 
         def landed(job):
-            global _variant_preview_key
-            _variant_preview_key = None
             info = job.result or {}
             _COMFY_STATE.update(ok=True,
                                 detail=f"upres to {info.get('size', '?')}, "
                                        f"seam {info.get('seam', {}).get('ratio', 0):.2f}")
+            variant = info.get("dir") or ""
+            comfyui.record(f"upres: {os.path.basename(variant or staged)}",
+                            image=os.path.join(variant, f"{os.path.basename(variant)}_basecolor.png")
+                            if variant else None, folder=variant or staged,
+                            seconds=info.get("seconds", 0) or 0)
 
         _submit(f"upres: {os.path.basename(staged)}", work, landed)
         self.report({"INFO"}, "Upscaling in the background")
@@ -1649,10 +1645,9 @@ CLASSES = (
 
 
 def register():
-    global _env, _env_owned, _variant_previews
+    global _env, _env_owned
     from ..core import env, gen_paint
     _env = env
-    _variant_previews = bpy.utils.previews.new()
     # Firmament owns the shared world; register it here only if running standalone (e.g. a
     # headless verify), and record ownership so unregister only removes what it created.
     if getattr(bpy.types.Scene, "bbt_env", None) is None:
@@ -1667,12 +1662,9 @@ def register():
 
 
 def unregister():
-    global _env_owned, _variant_previews, _variant_preview_key
+    global _env_owned
     from ..core import gen_paint
 
-    if _variant_previews is not None:
-        bpy.utils.previews.remove(_variant_previews)
-        _variant_previews, _variant_preview_key = None, None
     world.unregister_applier(_apply_world)
     gen_paint.unregister()
     del bpy.types.Scene.bbt_shaders

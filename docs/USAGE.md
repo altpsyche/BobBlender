@@ -61,7 +61,7 @@ None of this is needed to start, but all of it saves friction later. It lives in
 - **Start bridge on launch.** Off by default. Turn it on only if you drive Blender from an agent
   every session.
 - **ComfyUI URL / Folder / Reserve VRAM.** Optional. Empty URL means `http://127.0.0.1:8188`. The
-  Folder is only needed for the Advanced panel's **Start Server** button; everything else works
+  Folder is only needed for the ComfyUI panel's **Start Server** button; everything else works
   over HTTP against a server you started yourself. Reserve VRAM is passed to a Bob-started server
   so Blender keeps enough of the card to hold a viewport.
 
@@ -116,7 +116,7 @@ Eight more need a local ComfyUI:
 | `comfy_paint_mesh` | Texture a mesh you already have, in its own UVs, native PBR from one reference image. For a stylised look, or for a shape one image cannot describe, send the `paint_stylised` op instead: it paints from a turntable so every surface is painted by a camera that could see it. |
 | `comfy_heightmap` | Prompt to a terrain macro mask. Returns the `bake_heightfield` `macro` fragment. |
 | `comfy_stylize` | Restyle a rendered frame while holding its composition. A pitch frame, not geometry. |
-| `comfy_free` | Ask ComfyUI to hand the card back, and report how much it actually gave. Reach for it between a generate and a Cycles render. It only drops what ComfyUI's main process will release, which on the measured case is about 100 MiB of a 7.3 GB hold, and it says so rather than pretending. |
+| `comfy_free` | Ask ComfyUI to hand the card back, and report how much it actually gave. Reach for it between a generate and a Cycles render. It unloads what ComfyUI's main process holds (7.6 GB measured, landing about 0.4 s after the call) and reports the number; what it cannot reach is the separate worker processes the mesh nodes run in, and it says so rather than pretending. |
 
 With no server the eight return `{"ok": false, "error": "...not reachable..."}` and the ten are
 unaffected.
@@ -580,16 +580,44 @@ service, and asset pack management. Collapsed by default on purpose.
   `running on :9876`. **Copy MCP Config** puts a ready snippet on your clipboard with this
   install's resolved path already filled in. **Reload Builders** is a dev reload for when you have
   edited a recipe body.
+- **Rescan Asset Packs**, after you point the add-on preferences at a new pack folder.
+
+Everything ComfyUI used to be here too. It is its own **ComfyUI** panel now, one stage above. Named for what it surfaces: the panel
+generates nothing itself, it shows one external tool's connection, queue and output.
+
+## ComfyUI
+
+Generation runs in the background on one worker, so the press returns at once and this panel is
+where you find out what happened. It is the only panel that is a surface rather than a pipeline
+stage: it owns the server and the results, while the actions that make scene data stay with what
+they make (texture sets and **Paint (stylised)** under Shaders, **Generate Asset** under Scatter).
+Whichever button you pressed, the progress and the output appear here.
+
 - **ComfyUI (generation): optional, never required.** A cached status line showing URL, device,
   free VRAM and queue depth, plus **Test Connection**, **Free VRAM**, **Start Server** and **Stop
   Server**. Stop Server only stops a server Bob started. The status is a cache refreshed by a
   button or a finishing job, never by drawing the panel, so a dead server cannot freeze the UI.
-- **Stylise Last Render**, with three widgets: a style prompt, a **Strength** (the denoise, the one
-  knob that trades style against silhouette) and render **Samples**. It renders the camera plus
-  true depth and normal passes and restyles the frame. That makes a pitch frame, not scene data,
-  which is why it lives here rather than in a pipeline stage.
-- **Rescan Asset Packs**, after you point the add-on preferences at a new pack folder.
-- Any running generation job shows here with its elapsed time and a cancel button.
+- **A running job** shows its label, its progress line ("stylise view 3/8"), its elapsed seconds
+  and a cancel button that reaches the server as well as the local registry.
+- **Results (this session)**, newest first: what it was, how long it took, a thumbnail, and an
+  **Open Folder** button that opens where the file landed. A job that produced a warning shows the
+  warning instead of a picture. Results are session state and clear on file load, like the job
+  registry they belong to.
+- **Stylise Render**, a sub-panel: a style prompt, a **Strength**, render **Samples** and an
+  optional **LoRA** picked from what the server actually has (a filename typed by hand is a
+  validator failure waiting to happen; the stored value stays a plain string so a .blend saved with
+  a LoRA still opens on a machine without it).
+
+  **Strength is the knob that decides whether your geometry is reinterpreted or merely painted**, and
+  it is worth knowing before the first press. Measured on one block-out cube, same seed and prompt:
+  at **0.55** you get a painted cube with a whole city invented around it, because the depth pass
+  says cube; at **0.85** the cube becomes rooftop architecture and your framing survives. 0.55 is for
+  restyling a finished render. 0.8 and up is for turning a block-out into a picture of the real
+  thing. Neither gives you geometry -- for that, `export_control` the proxy and generate from it. It renders the
+  camera plus true depth and normal passes and restyles the frame into
+  `<pack>/_staging/stylise/<prompt-slug>_styled.png`, which the results list will open for you. A
+  pitch frame, not scene data, which is why it is here and not in a pipeline stage. The button is
+  disabled with a reason when the scene has no camera to render from.
 
 ---
 
@@ -615,7 +643,7 @@ Install it if you want generated content. Skip it and you lose nothing described
 | Scatter | **Generate Asset** | A finished scatter asset from a prompt: geometry, PBR texture, real-world scale, LODs, BobShader, in the pack. |
 | Scatter | **Asset from Block-out** | The same, conditioned on a proxy's shape, so it keeps that silhouette and footprint. |
 | Shaders | **Generate Variants** | Seamless PBR texture sets from a prompt or a reference photo, with accept / reject / upres. |
-| Advanced | **Stylise Last Render** | A styled concept frame from your render, composition held by true depth and normal passes. |
+| ComfyUI | **Stylise Render** | A styled concept frame from your render, composition held by true depth and normal passes. Lands in the results list with a thumbnail and Open Folder. |
 | Shaders | **Paint (stylised)** | Paints the selected mesh from a turntable: every view restyled under depth and normal ControlNet, projected back into its own UVs. The route for a stylised look, and for any shape a single reference image cannot describe. |
 | MCP only | `comfy_paint_mesh` | Textures a mesh you already have, in its own UVs, from one reference image. The stylised alternative IS on the panel above, and reaches an agent as the `paint_stylised` op. |
 

@@ -430,13 +430,50 @@ def vram_free_mib(url=None, timeout=3):
     return service_status(url, timeout=timeout).get("vram_free_mib")
 
 
+# How long to keep re-reading free VRAM after `POST /free` before believing the answer, and how
+# often. The endpoint returns in 0.00 s and the unload lands about 0.4 s later, so a reading taken
+# immediately after it measures the card as it was: measured on a loaded SDXL, +160 MiB at 0.00 s and
+# +7,620 MiB at 0.39 s, settling at +7,780. Reading too early is what made `POST /free` look like it
+# recovered "about 100 MiB" and freed nothing -- it recovers 7.6 GB of main-process models, and it is
+# only the separate worker processes it cannot reach.
+#
+# 2.0 s is five times the measured landing with a 0.1 s poll, and the loop returns the moment the
+# target is met, so the common case costs one extra read rather than the ceiling.
+FREE_SETTLE_SECONDS = 2.0
+FREE_SETTLE_POLL = 0.1
+
+
+def _settled_free_mib(url=None, timeout=3, target_mib=None, floor=None):
+    """Free VRAM once the unload has landed: the best reading within `FREE_SETTLE_SECONDS`.
+
+    Returns as soon as `target_mib` is met, so a card with room pays one read. `floor` is the
+    pre-free reading; it is returned when the server cannot report at all, because an unknown must
+    not read as a recovery to zero.
+    """
+    best = None
+    deadline = time.time() + FREE_SETTLE_SECONDS
+    while True:
+        mib = vram_free_mib(url, timeout=timeout)
+        if mib is not None and (best is None or mib > best):
+            best = mib
+        # Only a MET TARGET is grounds for an early return. With no target there is nothing to be
+        # early about, and returning the first reading would be the too-early read this exists to
+        # stop -- which is how the panel's Free VRAM button came to report about 100 MiB.
+        if best is not None and target_mib is not None and best >= target_mib:
+            return best
+        if time.time() >= deadline:
+            return best if best is not None else floor
+        time.sleep(FREE_SETTLE_POLL)
+
+
 def recover_vram(url=None, target_mib=None, timeout=3):
     """Escalate through what the HTTP API can actually do, and report what it recovered.
 
-    Layer one is `POST /free {"unload_models": true, "free_memory": true}`, which is all this can
-    reach: the pages stay in the main process's torch caching allocator, so on the measured case it
-    returns success and about 100 MiB. Saying that out loud is the point -- the panel's Free VRAM
-    button looked like it worked, and the next generate still OOMed.
+    `POST /free {"unload_models": true, "free_memory": true}` is all this can reach, and what it
+    reaches is more than this function used to report: the MAIN process gives its models back (7.6 GB
+    measured), and the generation WORKERS are separate processes whose memory no HTTP call touches.
+    The old reading conflated the two because it read free VRAM immediately, before the unload landed
+    (see `FREE_SETTLE_SECONDS`), so a real 7.6 GB recovery was recorded as about 100 MiB.
 
     Returns {before, after, recovered, enough, advice}. `advice` names the one thing that DOES
     recover the card when the free was not enough, which is a restart of a server Bob did not start
@@ -449,17 +486,18 @@ def recover_vram(url=None, target_mib=None, timeout=3):
     except ComfyError as exc:
         return {"before": before, "after": before, "recovered": 0, "enough": False,
                 "advice": f"could not reach the free endpoint: {exc}"}
-    after = vram_free_mib(url, timeout=timeout)
+    after = _settled_free_mib(url, timeout=timeout, target_mib=target_mib, floor=before)
     recovered = (after - before) if (after is not None and before is not None) else None
     enough = target_mib is None or (after is not None and after >= target_mib)
     advice = ""
     if not enough:
         advice = (
-            "`POST /free` only drops what the main process will give back; the generation workers "
-            "run in separate processes and cannot reuse that cache, so the card stays full. "
-            "Restart ComfyUI to recover it (measured: 0.5 GB free to 12.3 GB), and launch it with "
-            "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True so the fragmentation does not build "
-            "up again. Bob will not restart a server it did not start.")
+            "`POST /free` unloaded what the MAIN process holds and that was not enough. What it "
+            "cannot reach is the generation WORKERS: the mesh nodes run in separate pixi processes "
+            "whose memory no HTTP call touches, and after one block-out generation that is several "
+            "GB. Restart ComfyUI to recover it (measured: 0.5 GB free to 12.3 GB), and launch it "
+            "with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True so the fragmentation does not "
+            "build up again. Bob will not restart a server it did not start.")
     return {"before": before, "after": after, "recovered": recovered, "enough": enough,
             "advice": advice}
 

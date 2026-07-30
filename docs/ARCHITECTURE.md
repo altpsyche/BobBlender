@@ -164,11 +164,20 @@ The tab is ordered along the pipeline so the N-panel teaches the workflow (full 
 rationale in `CONVENTIONS.md`, panel UX conventions): **World** (the shared `bbt_env`, promoted out of Firmament),
 **Biome** (the one-action way to stand up a whole scene), **Terrain**, **Paths** (BobSplines
 typed curves), **Scatter**, **Foliage** (BobFoliage, authoring right after the Scatter stage that
-routes there), **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/weather), and a
-collapsed **Advanced** panel (the MCP Bridge, demoted from the artist's entry point). Order is set
-by `bl_order`, not registration (World 0, Biome 1, Terrain 2, Paths 3, Scatter 4, Foliage 5,
-Shaders 6, Atmosphere 7, Advanced 8), and every value is unique because a tie falls back to
-registration order; a one-line overview at the top of World names the sequence.
+routes there), **Shaders**, **Atmosphere** (Firmament's built sky/clouds/fog/weather), **ComfyUI** (the generator's
+connection, the session's results, and Stylise Render), and a collapsed **Advanced** panel (the MCP
+Bridge, demoted from the artist's entry point). Order is set by `bl_order`, not registration
+(World 0, Biome 1, Terrain 2, Paths 3, Scatter 4, Foliage 5, Shaders 6, Atmosphere 7, ComfyUI 8,
+Advanced 9), and every value is unique because a tie falls back to registration order; a one-line
+overview at the top of World names the sequence.
+
+**ComfyUI is a surface, not a stage**, and the split is deliberate: it owns the SERVICE (is the
+server up, how much of the card is free, what is queued, what came back) and the one action whose
+output is not scene data, Stylise Render. Actions that produce scene data stay with the stage that
+owns their result -- texture sets and Paint (stylised) under Shaders, Generate Asset under Scatter --
+so texturing a material never needs a panel hop. What the results list fixes is that generation runs
+on one worker thread and the old ComfyUI block drew only `comfy_jobs.active()`: a job disappeared
+from the UI the instant it succeeded, and the output landed in a staging folder nothing named.
 
 Suite-wide principles, implemented once in `ui/helpers.py` (a context-header helper, a
 structural-action marker with a shared icon + "rebuilds:" note, and a preset row):

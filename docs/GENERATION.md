@@ -854,6 +854,19 @@ the control the real-passes claim was measured against, and the only stylise rou
 image Bob did not render. **The measurement came back against the real passes on quality and for them
 on speed**: see [the stylise baseline](GENERATION-BASELINES.md#stylise-paint-and-multi-view-conditioning).
 
+**Strength decides whether the GEOMETRY is reinterpreted, and the shipped 0.55 says no.** Measured
+2026-07-30 on one block-out cube in an empty world, same seed and prompt ("painted concept art, warm
+evening light, building, rooftop swimming pool"), ControlNets left at their shipped 0.85 depth / 0.45
+normal: at **0.55** the cube comes back a painted concrete cube with an entire sunset city invented
+around it -- the depth pass says cube, loudly, for 90% of the sample, so the one thing that cannot
+change is the one thing the artist wanted to. At **0.85** the same cube becomes a brick rooftop volume
+with a pool and railings, and the framing and horizon survive. Lowering the ControlNets instead
+(0.35 / 0.25 at denoise 0.80) reaches the same place, so the two knobs are interchangeable here and
+only one of them is on the panel -- which is why the panel now says what 0.55 MEANS rather than only
+what it protects. **0.55 is the value for restyling a FINISHED render; 0.8 and up is the value for
+turning a proxy into a picture of the real thing.** Neither turns the proxy into geometry: that is
+`mesh_geom_ctrl`, the block-out route, and it returns a mesh.
+
 `stylize_render` shares almost all of its graph with `mesh_paint_views`, which is why it was built first and `mesh_paint_views` grown out of it.
 No upscale stage: `tex_upres` already exists and an upres of a pitch frame is a second press, not a second
 graph.
@@ -1409,10 +1422,14 @@ does to a card. The earlier answered ones, with what answered them, are in
   with `torch.OutOfMemoryError` raised INSIDE the TRELLIS2 worker (first in
   `_sample_shape_slat_cascade`, then in BiRefNet matting) while `nvidia-smi` shows ComfyUI's main
   process (`./venv/bin/python main.py`) holding 7.3 GB of a 15.5 GB card. The panel's Free VRAM and a
-  direct `POST /free {"unload_models":true,"free_memory":true}` both return success and free about
-  100 MiB: the pages stay in the main process's torch caching allocator. The TRELLIS2 nodes run in a
-  SEPARATE pixi worker process, so they cannot reuse that cache, which is what makes the leak fatal
-  rather than merely untidy. Only killing and relaunching `main.py` recovered the card (0.5 GB free to
+  direct `POST /free {"unload_models":true,"free_memory":true}` both appeared to return success and
+  free about 100 MiB. **Corrected 2026-07-30, and the correction matters: they free 7.6 GB, and the
+  100 MiB was a measurement artifact.** The endpoint returns in 0.00 s and the unload lands about
+  0.4 s later, so a reading taken immediately after it measures the card as it was -- on a loaded
+  SDXL, +160 MiB at 0.00 s, +7,620 MiB at 0.39 s, settling at +7,780. What genuinely cannot be
+  reached is the WORKERS: the TRELLIS2 nodes run in a SEPARATE pixi worker process holding several GB
+  of their own, which no HTTP call touches, and that is what makes the leak fatal rather than merely
+  untidy. Two holders, two behaviours, and reading too early made one look like the other. Only killing and relaunching `main.py` recovered the card (0.5 GB free to
   12.3 GB). Contributors measured in the same session: the worker parks 3.2 GB of resident weights,
   Blender keeps about 1.1 GB after its own Free VRAM, and each MCP server process that ran
   `bake_heightfield` holds roughly 0.47 GB of CuPy context. This is the VRAM-floor rule arriving in practice.
@@ -1422,8 +1439,10 @@ does to a card. The earlier answered ones, with what answered them, are in
   not enough the advice names the restart (measured 0.5 GB free to 12.3 GB) and the
   `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` launch flag, which Bob now sets on any server
   it starts itself. The panel's button prints the number instead of the word "Freed", because the
-  old button returned success after recovering about 100 MiB and that is what made the leak look
-  fixed. The generation tools preflight: `comfy.VRAM_FLOOR_MIB` carries a per-route floor
+  old button returned success with no number at all. `recover_vram` now waits for the unload to land
+  before it believes the reading (`FREE_SETTLE_SECONDS`, 2.0 s ceiling on a measured 0.4 s landing,
+  returning the moment the target is met), which is what stopped it refusing work that was about to
+  run: measured, a target unreachable on the first read was met in 0.40 s with 8,289 MiB recovered. The generation tools preflight: `comfy.VRAM_FLOOR_MIB` carries a per-route floor
   (mesh 5000, mesh_hero 7000 for `1536_cascade`, texture 3000, paint 4000, heightmap 3000,
   stylize 3500), `preflight_vram` tries one recovery before refusing, and a server that cannot
   report its VRAM at all is let through -- an unknown is not a reason to block work. The check sits
@@ -1434,10 +1453,11 @@ does to a card. The earlier answered ones, with what answered them, are in
   `render_scene` releases Blender's render buffers after the frame (`Render.release_gpu`, default
   true), since an agent that generates and renders in one session is now the normal case.
 
-  Not fixed, and not fixable from here: `POST /free` still only drops what the MAIN process will
-  give back, and the generation workers are separate processes. The floors turn that into a sentence
-  before 90 seconds are spent; they do not recover the card. Bob will not restart a server it did
-  not start.
+  Not fixed, and not fixable from here: the generation WORKERS are separate processes, so their
+  several GB survive every `POST /free`. The main process's models do come back, which is the half
+  that was misread; the worker's do not, which is the half that forces a restart. The floors turn
+  that into a sentence before 90 seconds are spent; they do not recover the card. Bob will not
+  restart a server it did not start.
 
   **And one thing the floors CANNOT turn into a sentence, measured 2026-07-29 on two fresh servers in
   a row: once the Omni control route has run, the SDXL atlas route OOMs whatever the card reports

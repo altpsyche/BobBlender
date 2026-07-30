@@ -132,11 +132,13 @@ def comfy_free() -> dict:
     """Ask ComfyUI to give the card back, and report honestly how much it actually gave.
 
     The tool to reach for between a generate and a Cycles render, and after a generate that failed
-    on VRAM. It is not a fix for the VRAM-handback rule (docs/GENERATION.md) and does not pretend to
-    be: `POST /free` only drops what ComfyUI's MAIN process will release, the generation workers are
-    separate processes that cannot reuse that cache, and on the measured case it recovers about 100
-    MiB of a 7.3 GB hold. When that is not enough this says so and names the thing that does work --
-    restarting the server, which Bob will not do for a server it did not start.
+    on VRAM. What it reaches is the MAIN process's models, and that is worth 7.6 GB (measured; the
+    unload lands about 0.4 s after the call, which is why reading it immediately used to report 100
+    MiB). What it cannot reach is the generation WORKERS -- the mesh nodes run in separate pixi
+    processes holding several GB that no HTTP call touches -- so it is not a fix for the
+    VRAM-handback rule (docs/GENERATION.md) and does not pretend to be. When it is not enough this
+    says so and names the thing that does work: restarting the server, which Bob will not do for a
+    server it did not start.
 
     Returns {ok, before, after, recovered, advice} in MiB.
     """

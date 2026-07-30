@@ -107,11 +107,19 @@ The BobBlenderTools N-panel suite follows one design language. When adding or ed
 keep to it:
 
 - Order along the pipeline with `bl_order`, not registration: World 0, Biome 1, Terrain 2,
-  Paths 3, Scatter 4, Foliage 5, Shaders 6, Atmosphere 7, Advanced 8. A one-line overview at the
+  Paths 3, Scatter 4, Foliage 5, Shaders 6, Atmosphere 7, ComfyUI 8, Advanced 9. A one-line overview at the
   top of World names the sequence (panel labels stay plain, no stage numbers). Every order is
   unique: two panels sharing one fall back to registration order, which the suite does not control.
   A new panel inserted mid-pipeline renumbers the ones after it, here and in the panel lists in
   [ARCHITECTURE.md](ARCHITECTURE.md) and [API.md](API.md).
+- **A background action reports where it got to and what it produced.** Generation runs on one
+  worker thread, so the press returns immediately and the panel is the only thing that can say
+  whether the work finished. `ui/comfyui.py` owns that surface: `record(label, image=, folder=,
+  seconds=, error=)` from a job's `landed` callback puts it in the ComfyUI panel's results list
+  with a thumbnail and an Open Folder button. The rule exists because the ComfyUI block used to
+  draw only `comfy_jobs.active()`, so a job VANISHED from the UI at the moment it succeeded, and
+  the artist's report was "I dont know if the stylisation is ended or not". An action that produces
+  a file an artist has to find must not make them go looking for it.
 - Native identity. Reflect the active thing (active object/material, active emitter/layer),
   never a panel-local name or duplicate target pointer.
 - Use the shared helpers in `ui/helpers.py` so the language stays consistent: `context_header`

@@ -32,6 +32,7 @@ from .core import comfy_jobs  # noqa: F401
 from .ui import (  # noqa: F401
     firmament,
     foliage,
+    comfyui,
     helpers,
     scatter,
     shaders,
@@ -1274,8 +1275,9 @@ class BBT_OT_comfy_free(Operator):
             return {"CANCELLED"}
         state = _refresh_comfy_service()
         got = result.get("recovered")
-        # Say the number. The old report was "Freed." on a call that recovers about 100 MiB of a
-        # 7.3 GB hold, which reads as a fix for a problem it does not fix (the VRAM-handback rule).
+        # Say the number. The old report was the bare word "Freed.", which reads as a fix whether it
+        # recovered 7.6 GB or 160 MiB -- and both are real readings of the same call, 0.4 s apart
+        # (`comfy.FREE_SETTLE_SECONDS`). The number is the only honest version.
         note = f"Freed {got} MiB." if got is not None else "Freed."
         if result.get("advice"):
             self.report({"WARNING"}, f"{note} {state['detail']}. {result['advice']}")
@@ -1316,10 +1318,10 @@ class BBT_OT_comfy_start(Operator):
         # inside the padded window.
         cmd = [python, "main.py", "--reserve-vram", f"{_prefs().comfy_reserve_vram:g}"]
         # expandable_segments (the VRAM-handback rule): torch's default caching allocator fragments
-        # across a session of differently-shaped jobs, and `POST /free` then recovers about 100 MiB
-        # of a 7.3 GB hold because the pages are stranded in the allocator rather than held by a
-        # live tensor. This is the launch-time half of the answer -- it does not free anything
-        # already stranded, it stops the stranding building up. Only reaches a server BOB starts;
+        # across a session of differently-shaped jobs, so pages end up stranded in the allocator
+        # rather than held by a live tensor and no unload returns them. This is the launch-time half
+        # of the answer -- it does not free anything already stranded, it stops the stranding
+        # building up. Only reaches a server BOB starts;
         # one the artist started keeps whatever environment it was launched with.
         env = dict(os.environ)
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -1360,129 +1362,6 @@ class BBT_OT_comfy_stop(Operator):
         return {"FINISHED"}
 
 
-class BBT_StyliseProps(PropertyGroup):
-    """What a stylised restyle needs, for both routes that do one (docs/GENERATION.md).
-
-    Two consumers, one set of knobs, because they are the same graph: "Stylise Last Render" restyles
-    one camera frame, and Shaders > Paint (stylised) restyles a turntable of an object and projects
-    it back. A second property group would have been the same four fields under different names, and
-    an artist who set a style for one would find the other had not heard of it.
-
-    Short, not ten fields: the ControlNet strengths, the sampler and the negative prompt are values
-    in `core/comfy.py` because they have measured defaults. Strength is the one knob that genuinely
-    trades style against silhouette; `views` and `size` are the paint route's own two, and both
-    change what the route COSTS rather than only how it looks.
-    """
-
-    prompt: StringProperty(
-        name="Style",
-        description=("The look to push the render towards. Bob appends a clause naming the "
-                     "composition, camera and layout, because a style prompt that does not is a "
-                     "prompt for a different picture"),
-        default="painted concept art, warm evening light",
-    )
-    denoise: FloatProperty(
-        name="Strength",
-        description=("How far from the render the restyle may travel. 0.4 keeps the frame and "
-                     "changes the paint; 0.7 keeps the composition and little else"),
-        default=0.55, min=0.1, max=0.95,
-    )
-    samples: IntProperty(
-        name="Samples",
-        description="Render samples for the frame Bob stylises. The depth and normal passes are "
-                    "constant per pixel, so they always cost one sample",
-        default=64, min=1, max=4096,
-    )
-    lora: StringProperty(
-        name="LoRA",
-        description=("Optional style LoRA, by filename as ComfyUI lists it. Empty removes the "
-                     "LoRA node from the graph entirely rather than running it at zero strength"),
-        default="",
-    )
-    views: IntProperty(
-        name="Views",
-        description=("Turntable views around the object for the paint route. This is the RING "
-                     "count; Bob adds a high and a low view on top, because a ring alone leaves a "
-                     "closed shape's top and underside to the hole fill. Every view is one "
-                     "ComfyUI job, so this is the route's main cost knob"),
-        default=6, min=3, max=16,
-    )
-    size: IntProperty(
-        name="Size",
-        description=("Render and texture resolution for the paint route. The projection reads "
-                     "render pixels into texels, so a texture much larger than the render gains "
-                     "nothing"),
-        default=1024, min=256, max=2048, step=256,
-    )
-    seed: IntProperty(
-        name="Seed",
-        description="The same seed and prompt repaint the same look; change it to reroll",
-        default=0, min=0,
-    )
-
-
-class BBT_OT_comfy_stylise(Operator):
-    bl_idname = "bob_blender_tools.comfy_stylise"
-    bl_label = "Stylise Last Render"
-    bl_description = ("Render the current camera with TRUE depth and normal passes, then restyle "
-                      "the frame in ComfyUI under both as ControlNet. The passes are Blender's own "
-                      "geometry, not an estimate, which is the whole point of this route. Output is "
-                      "a pitch frame beside the render, never geometry")
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        from .core import assets, comfy, gen_views
-        from .ui.shaders import _COMFY_STATE, _comfy_job_running, _submit
-
-        scene = context.scene
-        props = scene.bbt_stylise
-        if scene.camera is None:
-            self.report({"ERROR"}, "The scene has no camera to render from")
-            return {"CANCELLED"}
-        if _comfy_job_running():
-            self.report({"WARNING"}, "A ComfyUI job is already running")
-            return {"CANCELLED"}
-        pack = assets.generated_root()
-        if not pack:
-            self.report({"ERROR"}, "No generated pack folder (set an output folder in the "
-                                   "add-on preferences)")
-            return {"CANCELLED"}
-
-        out_dir = os.path.join(pack, "_staging", "stylise")
-        stem = comfy.slugify(props.prompt or "stylise")
-        # The render is main-thread work by nature, so it happens HERE, before the job is queued:
-        # a render inside the worker would touch bpy off the main thread, which is the one thing
-        # the job model forbids (the threading rule).
-        try:
-            shot = gen_views.render_passes(out_dir, stem, samples=int(props.samples),
-                                          resolution=max(scene.render.resolution_x,
-                                                         scene.render.resolution_y),
-                                          transparent=False)
-        except Exception as exc:  # a render failure is a message, not a traceback in the console
-            self.report({"ERROR"}, f"Render failed: {exc}")
-            return {"CANCELLED"}
-
-        prompt, denoise = props.prompt, float(props.denoise)
-        lora = (props.lora or "").strip() or None
-        target = os.path.join(out_dir, stem + "_styled.png")
-
-        def work(job):
-            return comfy.stylize_render(shot["beauty"], target, prompt,
-                                       depth=shot["depth"], normal=shot["normal"],
-                                       denoise=denoise, size=shot["resolution"], lora=lora,
-                                       on_queued=job.note_prompt_id, on_progress=job.report)
-
-        def landed(job):
-            info = job.result or {}
-            _COMFY_STATE.update(ok=True, detail=f"stylised in {info.get('seconds', 0):.0f}s: "
-                                               f"{os.path.basename(info.get('path', ''))}")
-
-        _submit(f"stylise: {prompt[:32]}", work, landed)
-        self.report({"INFO"}, f"Rendered {os.path.basename(shot['beauty'])} with depth and normal "
-                              f"passes; stylising in the background")
-        return {"FINISHED"}
-
-
 class BBT_OT_comfy_cancel(Operator):
     bl_idname = "bob_blender_tools.comfy_cancel"
     bl_label = "Cancel Job"
@@ -1499,44 +1378,8 @@ class BBT_OT_comfy_cancel(Operator):
         return {"FINISHED"}
 
 
-def _draw_comfy_service(layout):
-    """The ComfyUI block of the Advanced panel. Reads cached state only."""
-    from .core import comfy_jobs
-
-    layout.label(text="ComfyUI (generation): optional, never required", icon="SHADERFX")
-    ok = _COMFY_SERVICE["ok"]
-    layout.label(text=f"{_COMFY_SERVICE['url'] or 'not checked'}: {_COMFY_SERVICE['detail']}",
-                 icon="PROP_ON" if ok else ("PROP_OFF" if ok is False else "QUESTION"))
-    row = layout.row(align=True)
-    row.operator("bob_blender_tools.comfy_test", icon="LINKED")
-    row.operator("bob_blender_tools.comfy_free", icon="TRASH")
-    row = layout.row(align=True)
-    row.operator("bob_blender_tools.comfy_start", icon="PLAY")
-    row.operator("bob_blender_tools.comfy_stop", icon="PAUSE")
-
-    # The look-dev stylise family lives here rather than in a panel of its own: it makes a pitch
-    # frame, not scene data, so nothing downstream in the suite reads it and no pipeline stage owns
-    # it.
-    stylise = bpy.context.scene.bbt_stylise
-    col = layout.column(align=True)
-    col.prop(stylise, "prompt")
-    row = col.row(align=True)
-    row.prop(stylise, "denoise")
-    row.prop(stylise, "samples")
-    col.operator("bob_blender_tools.comfy_stylise", icon="SHADERFX")
-    cap = col.row()
-    cap.enabled = False
-    cap.label(text="renders the camera plus true depth and normal, then restyles it")
-
-    for job in comfy_jobs.active():
-        row = layout.row(align=True)
-        row.label(text=f"{job.label} -- {job.progress or job.state} ({job.seconds:.0f}s)",
-                  icon="SORTTIME")
-        row.operator("bob_blender_tools.comfy_cancel", text="", icon="X").job_id = job.id
-
-
 # Panel order (docs/CONVENTIONS.md, panel UX conventions): World=0, Biome=1, Terrain=2, Paths=3,
-# Scatter=4, Foliage=5, Shaders=6, Atmosphere=7, Advanced=8. Set via bl_order so the N-panel teaches
+# Scatter=4, Foliage=5, Shaders=6, Atmosphere=7, Generate=8, Advanced=9. Set via bl_order so the N-panel teaches
 # the pipeline sequence regardless of registration order. Advanced is LAST and every other panel's
 # order is unique, because two panels sharing a bl_order fall back to registration order, which the
 # suite does not control. The dev/agent Bridge lives in this collapsed panel rather than greeting an
@@ -1547,7 +1390,7 @@ class BBT_PT_panel(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BobBlenderTools"
-    bl_order = 8
+    bl_order = 9
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1568,9 +1411,6 @@ class BBT_PT_panel(Panel):
         layout.separator()
         layout.label(text="Agent authoring (MCP): drive this session from an agent client", icon="URL")
         layout.operator("bob_blender_tools.copy_mcp_config", icon="COPYDOWN")
-
-        layout.separator()
-        _draw_comfy_service(layout)
 
         layout.separator()
         layout.label(text="Asset packs (folders set in add-on preferences)", icon="ASSET_MANAGER")
@@ -1790,7 +1630,6 @@ _CLASSES = (
     BBT_UL_asset_packs,
     BBT_AddonPreferences,
     BBT_HeightfieldProps,
-    BBT_StyliseProps,
     BBT_OT_start,
     BBT_OT_stop,
     BBT_OT_reload,
@@ -1812,7 +1651,6 @@ _CLASSES = (
     BBT_OT_comfy_free,
     BBT_OT_comfy_start,
     BBT_OT_comfy_stop,
-    BBT_OT_comfy_stylise,
     BBT_OT_comfy_cancel,
     BBT_UL_terrain_ops,
     BBT_PT_panel,
@@ -1847,7 +1685,6 @@ def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bbt_hf = PointerProperty(type=BBT_HeightfieldProps)
-    bpy.types.Scene.bbt_stylise = PointerProperty(type=BBT_StyliseProps)
     _sync_pack_roots()  # feed the resolver the saved preference pack folders
     _sync_comfy_url()   # and the client the saved ComfyUI URL
     comfy_jobs.register()  # load_post clears the job registry: no job outlives a file (the threading rule)
@@ -1856,6 +1693,7 @@ def register():
     firmament.register()  # owns and registers the shared world (bbt_env); subscribes its applier
     world.register()      # World panel + bbt_world master toggles (drive every consumer)
     shaders.register()    # reads bbt_env; subscribes its applier
+    comfyui.register()    # ComfyUI panel: owns bbt_stylise, the results list and previews
     foliage.register()    # BobFoliage authoring panel; subscribes its wind applier
     _preview_coll = bpy.utils.previews.new()
     # Defer autostart until prefs are available.
@@ -1871,12 +1709,12 @@ def unregister():
         bpy.utils.previews.remove(_preview_coll)
         _preview_coll = None
     foliage.unregister()
+    comfyui.unregister()
     shaders.unregister()
     world.unregister()
     firmament.unregister()
     splines.unregister()
     scatter.unregister()
-    del bpy.types.Scene.bbt_stylise
     del bpy.types.Scene.bbt_hf
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

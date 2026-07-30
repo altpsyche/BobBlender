@@ -2378,21 +2378,41 @@ def test_a_failed_reset_does_not_stop_the_generation(mods, monkeypatch, tmp_path
 # number it recovered instead of the word "Freed".
 @pytest.fixture
 def card(mods, monkeypatch):
-    """A stubbed server whose free VRAM the test drives, counting the /free calls."""
+    """A stubbed server whose free VRAM the test drives, counting the /free calls.
+
+    `lands_after` is how many reads pass before the unload shows up, which is the real server's
+    behaviour rather than a hypothetical: `POST /free` returns in 0.00 s and the memory comes back
+    about 0.4 s later. 0 means it is visible on the first read, which is what most of these tests
+    want. The settle window is collapsed to nothing because the fake card has no real latency to
+    wait out and a 2 s ceiling per test would be paid for no measurement.
+    """
     comfy, _ = mods
-    state = {"free_mib": 12000, "frees": 0, "gives_back": 0}
+    state = {"free_mib": 12000, "frees": 0, "gives_back": 0, "lands_after": 0, "reads": 0}
 
     def status(url=None, timeout=3):
+        state["reads"] += 1
+        pending = state.pop("pending_mib", None)
+        if pending is not None:
+            if state["reads"] > state["landing_read"]:
+                state["free_mib"] += pending
+            else:
+                state["pending_mib"] = pending
         return {"ok": True, "url": "stub", "device": "stub", "vram_free_mib": state["free_mib"],
                 "running": 0, "pending": 0, "detail": ""}
 
     def free(url=None, unload_models=True, free_memory=True):
         state["frees"] += 1
-        state["free_mib"] += state["gives_back"]
+        if state["lands_after"]:
+            state["pending_mib"] = state["gives_back"]
+            state["landing_read"] = state["reads"] + state["lands_after"]
+        else:
+            state["free_mib"] += state["gives_back"]
         return True
 
     monkeypatch.setattr(comfy, "service_status", status)
     monkeypatch.setattr(comfy, "free", free)
+    monkeypatch.setattr(comfy, "FREE_SETTLE_SECONDS", 0.3)
+    monkeypatch.setattr(comfy, "FREE_SETTLE_POLL", 0.0)
     return state
 
 
@@ -2420,9 +2440,22 @@ def test_preflight_tries_one_recovery_before_it_refuses(mods, card):
     assert card["frees"] == 1
 
 
+def test_a_free_that_lands_late_is_waited_for_rather_than_refused(mods, card):
+    """The regression this exists for. `POST /free` returns in 0.00 s and the unload lands about
+    0.4 s later, so a reading taken immediately measures the card as it was -- +160 MiB on a load
+    that actually gave back 7,620. Refusing on that reading turns a job that was about to run into a
+    sentence about VRAM, which is what a panel press met once the floor moved to the capability.
+    """
+    comfy, _ = mods
+    card["free_mib"], card["gives_back"], card["lands_after"] = 900, 8000, 2
+    assert comfy.preflight_vram("mesh") == 8900, "the landed reading, not the first one"
+    assert card["frees"] == 1, "one free, then patience"
+
+
 def test_preflight_refuses_with_a_vram_sentence_when_the_free_does_not_help(mods, card):
-    """The measured case: /free returns success and about 100 MiB, because the pages stay in the
-    main process's allocator and the generation workers are separate processes."""
+    """The genuinely stuck case: what a free cannot reach is the WORKER processes, whose several GB
+    no HTTP call touches. The main process's models do come back (7.6 GB measured); that is why this
+    test drives `gives_back` small rather than describing the free as useless."""
     comfy, _ = mods
     card["free_mib"], card["gives_back"] = 900, 100
     with pytest.raises(comfy.ComfyError) as exc:

@@ -353,10 +353,18 @@ eighth, so the two cannot overlap (GENERATION.md, and the comment in `core/mater
 ## Open: the ordering exception the floors cannot catch (the one-surface half is CLOSED)
 
 The leak itself is not news and is not re-derived here: [GENERATION.md](GENERATION.md)'s
-VRAM-handback rule answered it on 2026-07-27 — `POST /free` drops only what the MAIN process's torch
-allocator will release, the mesh nodes run in a SEPARATE pixi worker that cannot reuse that cache, and
-only killing and relaunching `main.py` recovers the card. `comfy.recover_vram`,
-`comfy.VRAM_FLOOR_MIB` and `comfy.preflight_vram` landed as the answer.
+VRAM-handback rule answered it on 2026-07-27 — the mesh nodes run in a SEPARATE pixi worker holding
+several GB that no HTTP call can reach, and only killing and relaunching `main.py` recovers that.
+`comfy.recover_vram`, `comfy.VRAM_FLOOR_MIB` and `comfy.preflight_vram` landed as the answer.
+
+**One half of that was misread, corrected 2026-07-30.** `POST /free` was recorded as recovering
+"about 100 MiB", i.e. as doing nothing. It recovers **7.6 GB**: the endpoint returns in 0.00 s and the
+unload lands about **0.4 s** later, so a reading taken immediately after it measures the card as it
+was (+160 MiB at 0.00 s, +7,620 at 0.39 s, settling at +7,780 on a loaded SDXL). The MAIN process's
+models do come back; the WORKER's do not. `recover_vram` now waits for the landing before it believes
+the number (`FREE_SETTLE_SECONDS`), which matters because the floor moving to the capability made the
+panel refuse too: a measured target unreachable on the first read was met in 0.40 s with 8,289 MiB
+recovered, where the old read would have refused a job that was about to run.
 
 Two findings came out of re-running two gates on 2026-07-30. The first is closed; the second is why
 this section is still here.
@@ -402,7 +410,9 @@ The state that produced it, for whoever picks this up. After one block-out-condi
 generation, of a 15.48 GiB card: ComfyUI main **7,482 MiB**, its TRELLIS.2 node subprocess
 **3,038 MiB**, its geometry-pack node subprocess 260 MiB, **3,119 MiB free** — and `POST /free
 {"unload_models": true, "free_memory": true}` returning HTTP 200 with byte-identical readings either
-side of it.
+side of it. That last observation is now partly explained: the readings were taken immediately, before
+an unload lands. What is NOT explained by timing is the worker's 3,038 MiB, which no free reaches at
+all, and on that state it was the larger share of what was missing.
 
 **What it cost, and what it did not.** With the card in that state the block-out control gate's part C
 reached its finish step and OOMed before the height-profile check ran, and the foliage gate's
